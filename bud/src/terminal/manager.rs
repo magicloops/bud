@@ -89,6 +89,15 @@ const SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 /// Long enough to cover paste→Enter→`command_started`; short enough that a
 /// half-typed line never pins another viewer's geometry noticeably.
 const RESIZE_DEFER_CAP: Duration = Duration::from_secs(3);
+/// Readiness of a freshly launched program for input: PAINTED (output
+/// beyond its `command_started` offset) and damage-QUIET. Bounds both the
+/// input gate (a send into an open command waits for readiness before
+/// typing — raw-mode init discards pending tty input, which is how a brief
+/// typed 3 s after `codex` vanished) and how long a command-await holds
+/// `interactive_started` (codex enables bracketed paste ~250 ms after exec
+/// and paints seconds later; "interactive" is not "ready").
+const PROGRAM_READY_CAP: Duration = Duration::from_secs(10);
+const PROGRAM_READY_POLL: Duration = Duration::from_millis(100);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
 /// Grid-sync emission pacing (§6.8.2): event-driven, not a fixed tick. The
@@ -380,6 +389,7 @@ impl TerminalManager {
                 marker_seen: false,
                 integration_expected,
                 open_command: None,
+                open_command_screen: None,
                 genuine_osc133: false,
                 ring_next_offset: stat.ring_next_offset,
                 cols: stat.cols,
@@ -561,30 +571,34 @@ impl TerminalManager {
             }
         };
 
-        // Declared-intent guard: `terminal.run` (text+submit+await:command)
-        // promises "execute a shell command at a prompt". While a command is
-        // already OPEN (started, unfinished — e.g. an inline TUI like codex),
-        // typing into the PTY would feed the foreground program instead, and
-        // the await could only resolve when that program exits. Refuse loudly;
-        // the service turns this into actionable guidance (send/observe/^C).
-        if submit && frame.r#await == Some(TerminalSendAwait::Command) {
-            let open = entry.shared.facts.lock().unwrap().open_command.clone();
-            if let Some((command_id, _since)) = open {
-                debug!(
-                    session_id = %frame.session_id,
-                    open_command = %command_id,
-                    "terminal_send refused: command_in_flight"
-                );
-                return self.send_result_error(&sender, &frame, "command_in_flight");
+        // Unified send (§6.7.4 `await:"auto"`): the daemon picks the wait
+        // from terminal state — a submitted line at a shell prompt is a
+        // command (boundary + real exit code); anything into a running
+        // program settles. Input goes wherever the foreground is; the old
+        // `command_in_flight` refusal is gone with the run/send split.
+        let effective_await = frame.r#await.map(|kind| match kind {
+            TerminalSendAwait::Auto => {
+                let facts = entry.shared.facts.lock().unwrap();
+                let at_prompt = facts.open_command.is_none()
+                    && matches!(
+                        facts.mode,
+                        stem::events::Mode::Shell | stem::events::Mode::Unknown
+                    );
+                if submit && at_prompt {
+                    TerminalSendAwait::Command
+                } else {
+                    TerminalSendAwait::Settled
+                }
             }
-        }
+            other => other,
+        });
 
         // Fresh-session grace: a command-await that arrives before the shell's
         // first prompt would get sentinel-wrapped even on integrated shells.
         // When integration is expected but no marker has been seen, wait
         // briefly for the first prompt before deciding (bounded; does not
         // hold the session lock).
-        if submit && frame.r#await == Some(TerminalSendAwait::Command) {
+        if submit && effective_await == Some(TerminalSendAwait::Command) {
             let needs_grace = {
                 let facts = entry.shared.facts.lock().unwrap();
                 facts.integration_expected && !facts.marker_seen && !facts.closed
@@ -605,8 +619,28 @@ impl TerminalManager {
             }
         }
 
+        // Input gate: never type into a program that has not painted and gone
+        // quiet yet (bounded by PROGRAM_READY_CAP). At a shell prompt nothing
+        // waits. Reported as `gated_ms` / `program_ready` on the result.
+        let gated = {
+            let open = entry.shared.facts.lock().unwrap().open_command.is_some();
+            if open {
+                Some(wait_program_ready(&entry, PROGRAM_READY_CAP).await)
+            } else {
+                None
+            }
+        };
+        if let Some((false, waited)) = gated {
+            warn!(
+                request_id = %frame.request_id,
+                session_id = %frame.session_id,
+                waited_ms = waited.as_millis() as u64,
+                "terminal_send: program never became ready; typing anyway"
+            );
+        }
+
         // Subscribe BEFORE dispatch so the awaited outcome cannot be missed.
-        let waiter = frame.r#await.map(|_| entry.pump_tx.subscribe());
+        let waiter = effective_await.map(|_| entry.pump_tx.subscribe());
 
         // Live A/C marker evidence for THIS attachment (not the replay-derived
         // integration fact): decides both the sentinel wrap below and whether
@@ -614,7 +648,7 @@ impl TerminalManager {
         // expected and never came).
         let genuine_osc133 = entry.shared.facts.lock().unwrap().genuine_osc133;
         let expect_start_marker =
-            submit && frame.r#await == Some(TerminalSendAwait::Command) && genuine_osc133;
+            submit && effective_await == Some(TerminalSendAwait::Command) && genuine_osc133;
 
         // Dispatch under the per-session lock (gesture ordering); the await
         // below runs after releasing it.
@@ -627,7 +661,8 @@ impl TerminalManager {
                 // wrap decision keys off live A/C marker evidence rather than
                 // the integration fact, because a reattach replay of earlier
                 // sentinel `D` trailers mislabels the session `osc133`.
-                if submit && frame.r#await == Some(TerminalSendAwait::Command) && !genuine_osc133 {
+                if submit && effective_await == Some(TerminalSendAwait::Command) && !genuine_osc133
+                {
                     payload.push_str(SENTINEL_TRAILER);
                     session.mark_sentinel_integration();
                     let mode = session.mode();
@@ -691,11 +726,11 @@ impl TerminalManager {
             return self.send_result_error(&sender, &frame, "send_failed");
         }
 
-        let result = match (frame.r#await, waiter) {
+        let result = match (effective_await, waiter) {
             (Some(kind), Some(rx)) => {
                 match tokio::time::timeout(
                     AWAIT_SAFETY_CAP,
-                    await_outcome(rx, kind, expect_start_marker),
+                    await_outcome(rx, kind, expect_start_marker, Arc::clone(&entry)),
                 )
                 .await
                 {
@@ -739,6 +774,24 @@ impl TerminalManager {
                 Some("CANCELED"),
             ),
         };
+        let mut payload = payload;
+        if let Value::Object(map) = &mut payload {
+            if let Some(kind) = effective_await {
+                let name = match kind {
+                    TerminalSendAwait::Command => "command",
+                    TerminalSendAwait::Settled => "settled",
+                    TerminalSendAwait::Auto => "auto",
+                };
+                map.insert("resolved_await".into(), Value::String(name.into()));
+            }
+            if let Some((ready, waited)) = gated {
+                map.insert(
+                    "gated_ms".into(),
+                    Value::Number(Number::from(waited.as_millis() as u64)),
+                );
+                map.insert("program_ready".into(), Value::Bool(ready));
+            }
+        }
         send_transport_frame(&sender, payload)
     }
 
@@ -1158,23 +1211,94 @@ impl TerminalManager {
 /// `command_finished` that cannot come (the codex-incident shape, kept as a
 /// backstop behind the busy guard). Sentinel sessions never expect a start
 /// marker (their start is synthesized at `D`), so they are excluded.
+/// PAINTED: the screen differs from the one rendered when the open command
+/// started (no open command counts as painted).
+fn program_painted(facts: &SessionFacts, current: &[String]) -> bool {
+    match facts.open_command_screen.as_deref() {
+        Some(start) => start != current,
+        None => true,
+    }
+}
+
+/// Wait (bounded) until the open program is ready for input — painted and
+/// damage-quiet — or until it is no longer open. Returns `(ready, waited)`.
+/// Polls; never holds the session lock across the wait.
+async fn wait_program_ready(entry: &Arc<SessionEntry>, cap: Duration) -> (bool, Duration) {
+    let started = tokio::time::Instant::now();
+    loop {
+        // Session lock first (async), then facts (sync) — never the reverse.
+        let (screen, quiet) = {
+            let session = entry.session.lock().await;
+            (session.screen_lines(), session.is_quiet())
+        };
+        let (open, painted, closed) = {
+            let facts = entry.shared.facts.lock().unwrap();
+            (
+                facts.open_command.is_some(),
+                program_painted(&facts, &screen),
+                facts.closed,
+            )
+        };
+        if !open || closed {
+            return (true, started.elapsed());
+        }
+        if painted && quiet {
+            return (true, started.elapsed());
+        }
+        if started.elapsed() >= cap {
+            return (false, started.elapsed());
+        }
+        tokio::time::sleep(PROGRAM_READY_POLL).await;
+    }
+}
+
+fn interactive_result(data: Value, ready: bool, painted: bool) -> AwaitResult {
+    let mut data = data.as_object().cloned().unwrap_or_default();
+    data.insert("ready".into(), Value::Bool(ready));
+    data.insert("painted".into(), Value::Bool(painted));
+    AwaitResult::Outcome(json!({
+        "event": "interactive_started",
+        "data": Value::Object(data),
+    }))
+}
+
 async fn await_outcome(
     mut rx: broadcast::Receiver<PumpEvent>,
     kind: TerminalSendAwait,
     expect_start_marker: bool,
+    entry: Arc<SessionEntry>,
 ) -> AwaitResult {
     let mut started_after_dispatch: HashSet<String> = HashSet::new();
     let mut absorbed: Option<(tokio::time::Instant, Value)> = None;
+    // An `interactive_started` fact held until the program is READY
+    // (painted + quiet) or the readiness cap expires — the tool result must
+    // mean "you can drive it now", not "it emitted its first escape".
+    let mut interactive: Option<(tokio::time::Instant, Value)> = None;
     loop {
-        let received = match absorbed.as_ref() {
-            Some((deadline, _)) => match tokio::time::timeout_at(*deadline, rx.recv()).await {
+        let deadline = match (absorbed.as_ref(), interactive.as_ref()) {
+            (Some((a, _)), Some((b, _))) => Some((*a).min(*b)),
+            (Some((a, _)), None) => Some(*a),
+            (None, Some((b, _))) => Some(*b),
+            (None, None) => None,
+        };
+        let received = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(received) => received,
                 Err(_elapsed) => {
-                    let (_, data) = absorbed.take().expect("absorbed candidate");
-                    return AwaitResult::Outcome(json!({
-                        "event": "input_absorbed",
-                        "data": data,
-                    }));
+                    let now = tokio::time::Instant::now();
+                    if absorbed.as_ref().is_some_and(|(d, _)| *d <= now) {
+                        let (_, data) = absorbed.take().expect("absorbed candidate");
+                        return AwaitResult::Outcome(json!({
+                            "event": "input_absorbed",
+                            "data": data,
+                        }));
+                    }
+                    if let Some((_, data)) = interactive.take() {
+                        let screen = entry.session.lock().await.screen_lines();
+                        let painted = program_painted(&entry.shared.facts.lock().unwrap(), &screen);
+                        return interactive_result(data, false, painted);
+                    }
+                    continue;
                 }
             },
             None => rx.recv().await,
@@ -1210,6 +1334,15 @@ async fn await_outcome(
                 }
             }
             Ok(PumpEvent::Settled { data }) => {
+                // Settled implies quiet; with a held interactive fact, paint
+                // evidence completes readiness.
+                if interactive.is_some() {
+                    let screen = entry.session.lock().await.screen_lines();
+                    if program_painted(&entry.shared.facts.lock().unwrap(), &screen) {
+                        let (_, data) = interactive.take().expect("interactive pending");
+                        return interactive_result(data, true, true);
+                    }
+                }
                 if kind == TerminalSendAwait::Settled {
                     return AwaitResult::Outcome(json!({ "event": "settled", "data": data }));
                 }
@@ -1223,11 +1356,18 @@ async fn await_outcome(
                 }
             }
             Ok(PumpEvent::InteractiveStarted { data }) => {
-                if kind == TerminalSendAwait::Command {
-                    return AwaitResult::Outcome(json!({
-                        "event": "interactive_started",
-                        "data": data,
-                    }));
+                if kind == TerminalSendAwait::Command && interactive.is_none() {
+                    // A program is running: the line was not absorbed.
+                    absorbed = None;
+                    let (screen, quiet) = {
+                        let session = entry.session.lock().await;
+                        (session.screen_lines(), session.is_quiet())
+                    };
+                    let painted = program_painted(&entry.shared.facts.lock().unwrap(), &screen);
+                    if painted && quiet {
+                        return interactive_result(data, true, true);
+                    }
+                    interactive = Some((tokio::time::Instant::now() + PROGRAM_READY_CAP, data));
                 }
             }
             Ok(PumpEvent::PromptReady { data }) => {

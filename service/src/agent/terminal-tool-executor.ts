@@ -35,9 +35,9 @@ export const TERMINAL_OBSERVE_OUTPUT_CAP_BYTES = 32 * 1024;
 type SessionResolver = (threadId: string) => Promise<TerminalSession>;
 
 type TerminalSendGesture = {
-  kind: "raw_text" | "key";
-  rawText?: string;
-  /** raw_text only: press Enter after the text (default true). */
+  kind: "text" | "key";
+  text?: string;
+  /** text only: press Enter after the text (default true). */
   submit?: boolean;
   key?: string;
 };
@@ -52,17 +52,16 @@ type TerminalSendGestureResolution =
       error: string;
     };
 
-const TERMINAL_BUSY_NOTE =
-  "A command is already running in this terminal (see open_command), so a shell command cannot " +
-  "execute — the foreground program would receive the text as input instead. Use terminal.send to " +
-  "interact with the running program, terminal.observe to inspect the screen, or terminal.send with " +
-  'key "ctrl+c" to interrupt it, then retry terminal.run.';
-
 const INTERACTIVE_STARTED_NOTE =
-  "The command launched an interactive program (it will not finish on its own). Drive it with " +
-  "terminal.send (raw_text submits by default), wait for it to finish working with terminal.wait, " +
-  "inspect it with terminal.observe, and exit it " +
-  '(its own quit command, or terminal.send key "ctrl+c") before running further shell commands.';
+  "The command launched an interactive program and it is now ready for input (it painted its UI " +
+  "and went quiet; it will not finish on its own). Drive it with further terminal.send calls, wait " +
+  "for it to finish working with terminal.wait, inspect it with terminal.observe, and exit it (its " +
+  'own quit command, or terminal.send key "ctrl+c") before running further shell commands.';
+
+const INTERACTIVE_NOT_READY_NOTE =
+  "The command launched an interactive program, but it had not painted a UI and gone quiet within " +
+  "the readiness window. It may still be starting. Use terminal.wait (returns when output stops " +
+  "changing) before sending it input; terminal.observe shows the current screen.";
 
 const STILL_RUNNING_NOTE =
   "The command has not finished within the service wait budget and is still running in the terminal. " +
@@ -70,9 +69,13 @@ const STILL_RUNNING_NOTE =
   'only to glance at progress), or terminal.send with key "ctrl+c" to interrupt it.';
 
 const INPUT_ABSORBED_NOTE =
-  "The text was typed, but no shell command started: a foreground program consumed the input (or the " +
-  "shell ran nothing). Nothing is being awaited. Use terminal.observe to see what the terminal shows " +
-  "now; if a program is in the foreground, interact with it via terminal.send or interrupt it.";
+  "The text was typed, but no shell command started: the shell ran nothing (or a foreground program " +
+  "consumed the input). Nothing is being awaited. Use terminal.observe to see what the terminal shows " +
+  "now, then continue with terminal.send.";
+
+const PROGRAM_NOT_READY_NOTE =
+  "The foreground program had not painted a UI and gone quiet within the readiness window, so the " +
+  "input was typed anyway. Verify with the delta below or terminal.observe that it was accepted.";
 
 const WAIT_TIMEOUT_NOTE =
   "The terminal was still busy when the service wait budget expired. Nothing is wrong: call " +
@@ -105,7 +108,7 @@ const LEGACY_DAEMON_WAIT_NOTE =
   "fewer, spaced-out observations.";
 
 const INTERRUPTED_RUN_NOTE =
-  "The wait was interrupted by the user after the command was dispatched. The command may have been " +
+  "The wait was interrupted by the user after the input was dispatched. The command may have been " +
   "interrupted or may still be running. Use terminal.observe before assuming anything about its outcome.";
 
 const SEND_TIMEOUT_NOTE =
@@ -189,6 +192,8 @@ export class TerminalToolExecutor {
           }
         : {}),
       ...(result.cwd ? { cwd: result.cwd } : {}),
+      ...(typeof result.gatedMs === "number" ? { gated_ms: result.gatedMs } : {}),
+      ...(typeof result.programReady === "boolean" ? { program_ready: result.programReady } : {}),
       ...(result.note ? { note: result.note } : {}),
       ...(result.error !== undefined
         ? {
@@ -205,6 +210,9 @@ export class TerminalToolExecutor {
         return {
           ...base,
           ...(result.status !== undefined ? { status: result.status } : {}),
+          ...(result.readiness !== undefined
+            ? { ready: result.readiness.ready, painted: result.readiness.painted }
+            : {}),
           ...(result.commandId !== undefined ? { command_id: result.commandId } : {}),
           ...(result.exitCode !== undefined ? { exit_code: result.exitCode } : {}),
           ...(result.durationMs !== undefined ? { duration_ms: result.durationMs } : {}),
@@ -219,7 +227,7 @@ export class TerminalToolExecutor {
         return {
           ...base,
           dispatched: result.dispatched === true,
-          ...(result.rawTextSent !== undefined ? { raw_text_sent: result.rawTextSent } : {}),
+          ...(result.textSent !== undefined ? { text_sent: result.textSent } : {}),
           ...(result.interactionExitCode !== undefined
             ? { exit_code: result.interactionExitCode }
             : {}),
@@ -277,8 +285,6 @@ export class TerminalToolExecutor {
     const sessionId = session.sessionId;
 
     switch (directive.tool) {
-      case "terminal.run":
-        return this.executeRun(sessionId, directive);
       case "terminal.send":
         return this.executeSend(sessionId, directive);
       case "terminal.observe":
@@ -286,128 +292,6 @@ export class TerminalToolExecutor {
       case "terminal.wait":
         return this.executeWait(sessionId, directive);
     }
-  }
-
-  private async executeRun(
-    sessionId: string,
-    directive: Extract<TerminalToolCallDirective, { tool: "terminal.run" }>,
-  ): Promise<TerminalCallResult> {
-    if (directive.command.length === 0) {
-      return {
-        kind: "command",
-        error: "empty_command",
-        errorCode: "EXEC_FAILED",
-        retryable: false,
-        errorSummary: "Invalid terminal.run input: command must be a non-empty string",
-        ...this.sessionContextFacts(sessionId),
-      };
-    }
-
-    this.debug("terminal.run", { sessionId, command: directive.command });
-
-    // Declared-intent guard (service half; the daemon enforces the same rule
-    // authoritatively with `command_in_flight`): terminal.run promises shell
-    // execution at a prompt. While a command is open, typing would feed the
-    // foreground program (e.g. an inline TUI like codex) — refuse with
-    // guidance instead of dispatching.
-    const openCommand = await this.resolveOpenCommand(sessionId);
-    if (openCommand) {
-      return this.buildTerminalBusyResult(sessionId, openCommand);
-    }
-
-    let sendResult: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
-    try {
-      sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
-        text: directive.command,
-        submit: true,
-        await: "command",
-      });
-    } catch (err) {
-      if (this.isInterruptedError(err)) {
-        return {
-          kind: "command",
-          status: "still_running",
-          commandId: await this.resolveLatestRunningCommandId(sessionId),
-          error: "interrupted",
-          note: INTERRUPTED_RUN_NOTE,
-          ...this.sessionContextFacts(sessionId),
-        };
-      }
-      if (this.isLocalSendTimeoutError(err)) {
-        // Service wait budget expired without a command_finished outcome. The
-        // command is still running on the Bud — this is a normal still-running
-        // report, never a fabricated failure (docs/proto.md §6.7.8).
-        return this.buildStillRunningResult(sessionId);
-      }
-      if (err instanceof Error && err.message.includes("command_in_flight")) {
-        // Daemon-side authoritative busy guard (races the pre-check).
-        return this.buildTerminalBusyResult(
-          sessionId,
-          await this.resolveOpenCommand(sessionId)
-        );
-      }
-      const transportError = this.normalizeTerminalTransportError(directive, err);
-      if (transportError) {
-        return this.buildTransportFailureResult(directive, transportError);
-      }
-      throw err;
-    }
-
-    if (!sendResult.dispatched) {
-      return {
-        kind: "command",
-        error: "command_not_dispatched",
-        errorCode: "EXEC_FAILED",
-        retryable: true,
-        errorSummary: "The terminal did not accept the command for dispatch.",
-        ...this.sessionContextFacts(sessionId),
-      };
-    }
-
-    const outcome = sendResult.outcome;
-    if (outcome && outcome.event === "interactive_started") {
-      // The daemon detected (alt-screen entry / mid-command bracketed-paste
-      // enable) that the command launched an interactive program and resolved
-      // the await early — a normal, actionable result, not a failure.
-      const data = (outcome.data ?? {}) as { command_id?: string; signal?: string };
-      return {
-        kind: "command",
-        status: "interactive",
-        commandId: typeof data.command_id === "string" ? data.command_id : null,
-        note: INTERACTIVE_STARTED_NOTE,
-        ...this.sessionContextFacts(sessionId),
-        openCommand: await this.resolveOpenCommand(sessionId),
-      };
-    }
-    if (outcome && outcome.event === "input_absorbed") {
-      // The daemon saw a quiet point / fresh prompt with no command_started on
-      // an OSC 133 shell: the text went to a foreground program (or the shell
-      // ran nothing). Honest, actionable — not a failure, nothing pending.
-      return {
-        kind: "command",
-        status: "input_absorbed",
-        commandId: null,
-        note: INPUT_ABSORBED_NOTE,
-        ...this.sessionContextFacts(sessionId),
-        openCommand: await this.resolveOpenCommand(sessionId),
-      };
-    }
-    if (!outcome || outcome.event !== "command_finished") {
-      // Defensive: await:"command" should terminate with command_finished.
-      // Anything else means the daemon could not track the command lifecycle.
-      return {
-        kind: "command",
-        error: outcome ? `unexpected_outcome_${outcome.event}` : "missing_command_outcome",
-        errorCode: "EXEC_FAILED",
-        retryable: true,
-        errorSummary:
-          "The command was dispatched, but no command_finished outcome was reported. " +
-          "Use terminal.observe to inspect the terminal state.",
-        ...this.sessionContextFacts(sessionId),
-      };
-    }
-
-    return this.buildFinishedCommandResult(sessionId, outcome);
   }
 
   private async buildFinishedCommandResult(
@@ -448,7 +332,7 @@ export class TerminalToolExecutor {
       ...this.sessionContextFacts(sessionId),
     };
 
-    this.debug("terminal.run finished", {
+    this.debug("terminal.send command finished", {
       sessionId,
       commandId,
       exitCode,
@@ -457,7 +341,7 @@ export class TerminalToolExecutor {
       truncated: result.truncated,
     });
     if (typeof result.output === "string") {
-      this.logTerminalOutput("terminal.run output", result.output);
+      this.logTerminalOutput("terminal.send command output", result.output);
     }
 
     return result;
@@ -479,20 +363,6 @@ export class TerminalToolExecutor {
     } catch {
       return null;
     }
-  }
-
-  private async buildTerminalBusyResult(
-    sessionId: string,
-    openCommand: { commandId: string; runningMs: number } | null
-  ): Promise<TerminalCallResult> {
-    return {
-      kind: "command",
-      status: "terminal_busy",
-      commandId: openCommand?.commandId ?? null,
-      note: TERMINAL_BUSY_NOTE,
-      ...this.sessionContextFacts(sessionId),
-      openCommand,
-    };
   }
 
   private async buildStillRunningResult(sessionId: string): Promise<TerminalCallResult> {
@@ -531,6 +401,14 @@ export class TerminalToolExecutor {
     }
   }
 
+  /**
+   * terminal.send — the single input tool. The daemon resolves
+   * `await:"auto"` from terminal state: a submitted line at a shell prompt
+   * awaits the command boundary (real exit code, output); input into a
+   * running program is gated on readiness (painted + quiet) and awaits
+   * settle. One call, two result shapes (`kind:"command"` /
+   * `kind:"interaction_ack"`), no classification by the model.
+   */
   private async executeSend(
     sessionId: string,
     directive: Extract<TerminalToolCallDirective, { tool: "terminal.send" }>,
@@ -540,7 +418,7 @@ export class TerminalToolExecutor {
       return {
         kind: "interaction_ack",
         dispatched: false,
-        rawTextSent: false,
+        textSent: false,
         keySent: null,
         delta: null,
         error: gestureResolution.error,
@@ -552,23 +430,33 @@ export class TerminalToolExecutor {
     this.debug("terminal.send", {
       sessionId,
       gesture: gesture.kind,
-      hasRawText: gesture.kind === "raw_text",
+      hasText: gesture.kind === "text",
       key: gesture.kind === "key" ? gesture.key : undefined,
     });
 
     let sendResult: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
     try {
       sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
-        // raw_text submits by default (REPLs, prompts, chat TUIs); explicit
-        // submit:false supports composing without a trailing Enter.
-        ...(gesture.kind === "raw_text"
-          ? { text: gesture.rawText, submit: gesture.submit ?? true }
-          : {}),
+        // text submits by default (commands, REPLs, prompts, chat TUIs);
+        // explicit submit:false supports composing without a trailing Enter.
+        ...(gesture.kind === "text" ? { text: gesture.text, submit: gesture.submit ?? true } : {}),
         ...(gesture.kind === "key" ? { key: gesture.key } : {}),
-        await: "settled",
+        await: "auto",
       });
     } catch (err) {
       if (this.isInterruptedError(err)) {
+        const openCommand = await this.resolveOpenCommand(sessionId);
+        if (this.submittedLineIsACommand(sessionId, gesture, openCommand)) {
+          return {
+            kind: "command",
+            status: "still_running",
+            commandId: openCommand?.commandId ?? (await this.resolveLatestRunningCommandId(sessionId)),
+            error: "interrupted",
+            note: INTERRUPTED_RUN_NOTE,
+            ...this.sessionContextFacts(sessionId),
+            openCommand,
+          };
+        }
         return {
           kind: "interaction_ack",
           dispatched: true,
@@ -576,6 +464,7 @@ export class TerminalToolExecutor {
           delta: null,
           error: "interrupted",
           ...this.sessionContextFacts(sessionId),
+          openCommand,
         };
       }
       if (this.isLocalSendTimeoutError(err)) {
@@ -588,25 +477,73 @@ export class TerminalToolExecutor {
       throw err;
     }
 
-    // A settled-await that resolved via command_finished carries the real
-    // exit code (a shell command typed through terminal.send at a prompt) —
-    // surface it so the wrong-tool path still yields run-quality facts.
-    const interactionOutcome = sendResult.outcome as
-      | { event?: string; data?: { exit_code?: number } }
-      | null
-      | undefined;
-    const interactionExitCode =
-      interactionOutcome?.event === "command_finished"
-        ? (typeof interactionOutcome.data?.exit_code === "number"
-            ? interactionOutcome.data.exit_code
-            : null)
-        : undefined;
+    const gateFacts: Pick<TerminalCallResult, "gatedMs" | "programReady"> = {
+      ...(typeof sendResult.gatedMs === "number" ? { gatedMs: sendResult.gatedMs } : {}),
+      ...(typeof sendResult.programReady === "boolean" ? { programReady: sendResult.programReady } : {}),
+    };
 
-    // Send-plus-proof: after the settled outcome, capture the screen delta so
-    // the model sees what the input actually changed.
+    if (!sendResult.dispatched) {
+      return {
+        kind: "interaction_ack",
+        dispatched: false,
+        ...this.gestureSentFacts(gesture, false),
+        delta: null,
+        error: "input_not_dispatched",
+        errorCode: "EXEC_FAILED",
+        retryable: true,
+        errorSummary: "The terminal did not accept the input for dispatch.",
+        ...this.sessionContextFacts(sessionId),
+      };
+    }
+
+    const outcome = sendResult.outcome;
+    if (outcome && outcome.event === "command_finished") {
+      // The text ran as a shell command: run-quality result.
+      return {
+        ...(await this.buildFinishedCommandResult(sessionId, outcome)),
+        ...gateFacts,
+      };
+    }
+    if (outcome && outcome.event === "interactive_started") {
+      // The command launched a program; the daemon held this result until
+      // the program was READY (painted + quiet) or the readiness cap expired.
+      const data = (outcome.data ?? {}) as {
+        command_id?: string;
+        signal?: string;
+        ready?: boolean;
+        painted?: boolean;
+      };
+      const ready = data.ready !== false;
+      return {
+        kind: "command",
+        status: "interactive",
+        commandId: typeof data.command_id === "string" ? data.command_id : null,
+        readiness: { ready, painted: data.painted === true || ready },
+        note: ready ? INTERACTIVE_STARTED_NOTE : INTERACTIVE_NOT_READY_NOTE,
+        ...gateFacts,
+        ...this.sessionContextFacts(sessionId),
+        openCommand: await this.resolveOpenCommand(sessionId),
+      };
+    }
+    if (outcome && outcome.event === "input_absorbed") {
+      return {
+        kind: "command",
+        status: "input_absorbed",
+        commandId: null,
+        note: INPUT_ABSORBED_NOTE,
+        ...gateFacts,
+        ...this.sessionContextFacts(sessionId),
+        openCommand: await this.resolveOpenCommand(sessionId),
+      };
+    }
+
+    // Input into a running program (settled / prompt_ready / dispatch-only):
+    // send-plus-proof — capture the screen delta so the model sees what the
+    // input actually changed.
     let delta: TerminalCallResult["delta"] = null;
     let observeFacts: Partial<TerminalCallResult> = {};
-    let note: string | undefined;
+    let note: string | undefined =
+      sendResult.programReady === false ? PROGRAM_NOT_READY_NOTE : undefined;
     try {
       const capture = await this.terminalSessionManager.observeTerminal(sessionId, {
         view: "delta",
@@ -630,24 +567,48 @@ export class TerminalToolExecutor {
 
     return {
       kind: "interaction_ack",
-      dispatched: sendResult.dispatched,
-      ...this.gestureSentFacts(gesture, sendResult.dispatched),
-      ...(interactionExitCode !== undefined ? { interactionExitCode } : {}),
+      dispatched: true,
+      ...this.gestureSentFacts(gesture, true),
       delta,
       ...(delta ? { changed: delta.changed } : {}),
       ...(note ? { note } : {}),
+      ...gateFacts,
       ...this.sessionContextFacts(sessionId),
       ...observeFacts,
       openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
 
+  /**
+   * Without a daemon outcome (timeout / interrupt) the service cannot know
+   * how `await:"auto"` resolved. A submitted line is a command when a
+   * command is known to be open, or when the session was at a shell — at a
+   * prompt a submitted line is a command by construction, and the started
+   * event may simply not have landed yet.
+   */
+  private submittedLineIsACommand(
+    sessionId: string,
+    gesture: TerminalSendGesture,
+    openCommand: { commandId: string; runningMs: number } | null,
+  ): boolean {
+    if (gesture.kind !== "text" || !(gesture.submit ?? true)) {
+      return false;
+    }
+    return openCommand !== null || this.sessionContextFacts(sessionId).mode === "shell";
+  }
+
   private async buildSendTimeoutResult(
     sessionId: string,
     gesture: TerminalSendGesture,
   ): Promise<TerminalCallResult> {
-    // Settled wait expired: the program is still actively producing output.
-    // Fall back to a cheap screen observation so the model still gets proof.
+    // The service wait budget expired. A submitted line that opened a
+    // command is a normal still-running report; otherwise the program is
+    // still actively producing output — fall back to a cheap screen
+    // observation so the model still gets proof.
+    const openCommand = await this.resolveOpenCommand(sessionId);
+    if (this.submittedLineIsACommand(sessionId, gesture, openCommand)) {
+      return this.buildStillRunningResult(sessionId);
+    }
     let output: string | undefined;
     let observeFacts: Partial<TerminalCallResult> = {};
     try {
@@ -676,6 +637,7 @@ export class TerminalToolExecutor {
       note: SEND_TIMEOUT_NOTE,
       ...this.sessionContextFacts(sessionId),
       ...observeFacts,
+      openCommand,
     };
   }
 
@@ -903,10 +865,10 @@ export class TerminalToolExecutor {
   private gestureSentFacts(
     gesture: TerminalSendGesture,
     dispatched: boolean,
-  ): Pick<TerminalCallResult, "rawTextSent" | "keySent" | "submitted"> {
+  ): Pick<TerminalCallResult, "textSent" | "keySent" | "submitted"> {
     return {
-      rawTextSent: dispatched && gesture.kind === "raw_text",
-      ...(gesture.kind === "raw_text"
+      textSent: dispatched && gesture.kind === "text",
+      ...(gesture.kind === "text"
         ? { submitted: dispatched && (gesture.submit ?? true) }
         : {}),
       keySent: dispatched && gesture.kind === "key" ? gesture.key ?? null : null,
@@ -922,27 +884,35 @@ export class TerminalToolExecutor {
     }
 
     switch (directive.tool) {
-      case "terminal.run": {
-        const command = truncateForSummary(directive.command);
-        if (result.error === "interrupted") {
-          return `Command ${command} was dispatched, but the wait was interrupted by the user`;
-        }
-        if (result.status === "still_running") {
-          return `Command ${command} is still running; observe the terminal for progress`;
-        }
-        if (typeof result.exitCode === "number") {
-          const duration =
-            typeof result.durationMs === "number" ? ` in ${formatDuration(result.durationMs)}` : "";
-          return `Ran ${command} (exit ${result.exitCode}${duration})`;
-        }
-        return `Ran ${command}`;
-      }
       case "terminal.send": {
         if (result.error === "ambiguous_interaction") {
-          return "Invalid terminal.send input: provide exactly one of raw_text or key";
+          return "Invalid terminal.send input: provide exactly one of text or key";
         }
         if (result.error === "empty_interaction") {
-          return "Invalid terminal.send input: provide raw_text or key (shell commands belong to terminal.run)";
+          return "Invalid terminal.send input: provide text or key";
+        }
+        if (result.kind === "command") {
+          const command = truncateForSummary(directive.text ?? "");
+          if (result.error === "interrupted") {
+            return `Command ${command} was dispatched, but the wait was interrupted by the user`;
+          }
+          if (result.status === "still_running") {
+            return `Command ${command} is still running; wait for it with terminal.wait`;
+          }
+          if (result.status === "interactive") {
+            return result.readiness?.ready === false
+              ? `Launched ${command}; the program has not painted yet`
+              : `Launched ${command}; the program is ready for input`;
+          }
+          if (result.status === "input_absorbed") {
+            return `Typed ${command}; no shell command started`;
+          }
+          if (typeof result.exitCode === "number") {
+            const duration =
+              typeof result.durationMs === "number" ? ` in ${formatDuration(result.durationMs)}` : "";
+            return `Ran ${command} (exit ${result.exitCode}${duration})`;
+          }
+          return `Ran ${command}`;
         }
         if (result.error === "interrupted") {
           return "Terminal send wait was interrupted by the user after the input was sent";
@@ -1005,22 +975,22 @@ export class TerminalToolExecutor {
   private resolveTerminalSendGesture(
     directive: Extract<TerminalToolCallDirective, { tool: "terminal.send" }>,
   ): TerminalSendGestureResolution {
-    const rawTextPresent = typeof directive.rawText === "string";
+    const textPresent = typeof directive.text === "string";
     const keyPresent = typeof directive.key === "string";
 
-    if (rawTextPresent && keyPresent) {
+    if (textPresent && keyPresent) {
       return { ok: false, error: "ambiguous_interaction" };
     }
 
-    if (rawTextPresent) {
-      if ((directive.rawText ?? "").length === 0) {
+    if (textPresent) {
+      if ((directive.text ?? "").length === 0) {
         return { ok: false, error: "empty_interaction" };
       }
       return {
         ok: true,
         gesture: {
-          kind: "raw_text",
-          rawText: directive.rawText,
+          kind: "text",
+          text: directive.text,
           submit: directive.submit ?? true,
         },
       };
@@ -1070,16 +1040,11 @@ export class TerminalToolExecutor {
     };
 
     switch (directive.tool) {
-      case "terminal.run":
-        return {
-          kind: "command",
-          ...base,
-        };
       case "terminal.send":
         return {
           kind: "interaction_ack",
           dispatched: transportError.code === "TIMEOUT",
-          rawTextSent: false,
+          textSent: false,
           keySent: null,
           delta: null,
           ...base,
@@ -1181,8 +1146,8 @@ function truncateForSummary(text: string, maxChars = 96): string {
 function describeSendGesture(
   directive: Extract<TerminalToolCallDirective, { tool: "terminal.send" }>,
 ): string {
-  if (typeof directive.rawText === "string" && directive.rawText.trim()) {
-    return `Type raw text ${truncateForSummary(directive.rawText)}`;
+  if (typeof directive.text === "string" && directive.text.trim()) {
+    return `Type ${truncateForSummary(directive.text)}`;
   }
   if (directive.key) {
     return `Send key ${directive.key}`;

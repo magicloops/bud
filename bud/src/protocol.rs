@@ -121,6 +121,10 @@ pub enum TerminalSendAwait {
     Command,
     /// Resolve on the next `settled` event.
     Settled,
+    /// The daemon picks: `command` when the text is submitted at a shell
+    /// prompt (no open command), `settled` inside a running program. The
+    /// unified `terminal.send` tool always sends this (§6.7.4).
+    Auto,
 }
 
 #[derive(Debug, Deserialize, Clone)]

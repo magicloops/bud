@@ -747,11 +747,11 @@ async fn bash_shim_emits_osc133_markers() {
 }
 
 #[tokio::test]
-async fn run_refused_while_a_command_is_open() {
-    // The codex incident (§A follow-up): an inline TUI keeps the session in
-    // mode=shell with an OPEN command (started, no finish). A terminal.run
-    // (text+submit+await:command) must be refused — typing would feed the
-    // foreground program and the await could only resolve when it exits.
+async fn command_await_into_open_program_is_delivered_after_it_yields() {
+    // Unified send: nothing is refused while a command is open. A run-style
+    // send (text+submit) arriving during `sleep 2` waits at the input gate
+    // (sleep never paints) until the program yields, then the line lands
+    // at the prompt and executes like any command.
     let shell = "/bin/bash";
     if !std::path::Path::new(shell).exists() {
         eprintln!("skipping: {shell} not present on this machine");
@@ -775,10 +775,6 @@ async fn run_refused_while_a_command_is_open() {
             && frame.get("event").and_then(Value::as_str) == Some("prompt_ready")
     })
     .await;
-
-    // Open a command WITHOUT awaiting (mirrors a human launching an inline
-    // TUI through the browser input path). Short sleep: the guard must
-    // refuse DURING it and naturally unblock after it finishes.
     manager
         .handle_send(send_frame(session_id, "req-long", "sleep 2", None))
         .await
@@ -794,82 +790,24 @@ async fn run_refused_while_a_command_is_open() {
     )
     .await;
 
-    // A run-style send must now be refused with the typed error, without
-    // typing anything into the PTY.
-    manager
-        .handle_send(send_frame(
-            session_id,
-            "req-guarded",
-            "echo should-not-run",
-            Some(TerminalSendAwait::Command),
-        ))
-        .await
-        .unwrap();
-    let result = wait_frame(&mut rx, Duration::from_secs(10), "guard result", |frame| {
-        is_type(frame, "terminal_send_result")
-            && frame.get("request_id").and_then(Value::as_str) == Some("req-guarded")
-    })
-    .await;
-    assert_eq!(
-        result.get("error").and_then(Value::as_str),
-        Some("command_in_flight"),
-        "expected the busy guard: {result:?}"
-    );
-    assert_eq!(
-        result.get("dispatched").and_then(Value::as_bool),
-        Some(false)
-    );
-
-    // The sleep finishes on its own; the guard clears and runs work again.
-    wait_frame(
+    let (result, elapsed) = send_auto_result(
+        &manager,
         &mut rx,
-        Duration::from_secs(15),
-        "open command finished",
-        |frame| {
-            is_type(frame, "terminal_event")
-                && frame.get("event").and_then(Value::as_str) == Some("command_finished")
-        },
+        session_id,
+        "req-after",
+        "echo after-marker",
     )
     .await;
-    manager
-        .handle_send(send_frame(
-            session_id,
-            "req-after",
-            "true",
-            Some(TerminalSendAwait::Command),
-        ))
-        .await
-        .unwrap();
-    let after = wait_frame(
-        &mut rx,
-        Duration::from_secs(15),
-        "post-finish run",
-        |frame| {
-            is_type(frame, "terminal_send_result")
-                && frame.get("request_id").and_then(Value::as_str) == Some("req-after")
-        },
-    )
-    .await;
-    assert!(after.get("error").is_none() || after["error"].is_null());
-    // The guarded text never reached the PTY.
-    let recent = collect_frames(&mut rx, Duration::from_millis(600)).await;
-    for frame in &recent {
-        if is_type(frame, "terminal_output") {
-            assert!(
-                !decoded_output(frame).contains("should-not-run"),
-                "guarded text leaked into the PTY"
-            );
-        }
-    }
-
-    manager
-        .handle_close(TerminalCloseFrame {
-            envelope: envelope("terminal_close"),
-            session_id: session_id.to_string(),
-            reason: None,
-        })
-        .await
-        .unwrap();
+    assert!(result["error"].is_null(), "{result}");
+    assert_eq!(result["dispatched"], true, "{result}");
+    // Gated until sleep yielded (~2 s), never typed into it.
+    assert!(result["gated_ms"].as_u64().unwrap_or(0) >= 500, "{result}");
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+    let screen = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        screen.contains("after-marker"),
+        "line not executed after the program yielded:\n{screen}"
+    );
 }
 
 #[tokio::test]
@@ -2602,6 +2540,245 @@ async fn resize_shrink_defers_while_line_pending_at_prompt() {
             envelope: envelope("terminal_close"),
             session_id: session_id.to_string(),
             reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+/// A scripted inline TUI with codex's startup shape: an early bracketed-
+/// paste enable (the interactive signal), a `paint_delay` pause, THEN the
+/// UI paints; afterwards it echoes every submitted line as `GOT: <line>`.
+fn fake_tui_script(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("fake_tui.py");
+    std::fs::write(
+        &path,
+        r#"import sys, time
+w = sys.stdout.write
+w("\x1b[?2004h"); sys.stdout.flush()
+time.sleep(float(sys.argv[1]) if len(sys.argv) > 1 else 2.0)
+w("+------ fake tui ------+\r\n| ask me anything      |\r\n> "); sys.stdout.flush()
+for line in sys.stdin:
+    line = line.replace("\x1b[200~", "").replace("\x1b[201~", "").strip()
+    w("GOT: " + line + "\r\n> "); sys.stdout.flush()
+    if line == "quit":
+        break
+w("\x1b[?2004l"); sys.stdout.flush()
+"#,
+    )
+    .unwrap();
+    path
+}
+
+fn send_auto(session_id: &str, request_id: &str, text: &str) -> TerminalSendFrame {
+    TerminalSendFrame {
+        envelope: envelope("terminal_send"),
+        session_id: session_id.to_string(),
+        request_id: request_id.to_string(),
+        text: Some(text.to_string()),
+        submit: Some(true),
+        key: None,
+        r#await: Some(TerminalSendAwait::Auto),
+    }
+}
+
+async fn send_auto_result(
+    manager: &TerminalManager,
+    rx: &mut FrameRx,
+    session_id: &str,
+    request_id: &str,
+    text: &str,
+) -> (Value, Duration) {
+    let started = Instant::now();
+    manager
+        .handle_send(send_auto(session_id, request_id, text))
+        .await
+        .unwrap();
+    let result = wait_frame(rx, Duration::from_secs(30), request_id, |f| {
+        is_result_for(f, "terminal_send_result", request_id)
+    })
+    .await;
+    (result, started.elapsed())
+}
+
+async fn ensure_bash_prompt(
+    manager: &TerminalManager,
+    rx: &mut FrameRx,
+    tmp: &tempfile::TempDir,
+    session_id: &str,
+) {
+    let home = tmp.path().join(format!("home-{session_id}"));
+    std::fs::create_dir_all(&home).unwrap();
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            "/bin/bash",
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+}
+
+/// Unified send at a shell prompt resolves as a COMMAND (boundary + real
+/// exit code) — `terminal.run` semantics without a second tool.
+#[tokio::test]
+async fn unified_send_at_prompt_is_a_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-auto-cmd";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let (result, _) = send_auto_result(
+        &manager,
+        &mut rx,
+        session_id,
+        "req-cmd",
+        "echo hi && (exit 3)",
+    )
+    .await;
+    assert_eq!(result["resolved_await"], "command", "{result}");
+    assert_eq!(result["outcome"]["event"], "command_finished", "{result}");
+    assert_eq!(result["outcome"]["data"]["exit_code"], 3, "{result}");
+    // Nothing was open: no gate.
+    assert!(result.get("gated_ms").is_none(), "{result}");
+}
+
+/// Launching a program via the unified send holds the result until the
+/// program has PAINTED and gone quiet (ready), not at its first escape
+/// sequence; the follow-up send then lands and is echoed back.
+#[tokio::test]
+async fn unified_send_launching_a_tui_waits_until_ready_then_drives_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-auto-tui";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    let launch = format!("python3 {} 2.0", script.display());
+    let (result, elapsed) =
+        send_auto_result(&manager, &mut rx, session_id, "req-launch", &launch).await;
+    assert_eq!(result["resolved_await"], "command", "{result}");
+    assert_eq!(
+        result["outcome"]["event"], "interactive_started",
+        "{result}"
+    );
+    assert_eq!(result["outcome"]["data"]["ready"], true, "{result}");
+    assert_eq!(result["outcome"]["data"]["painted"], true, "{result}");
+    assert!(
+        elapsed >= Duration::from_millis(1900),
+        "returned before the paint: {elapsed:?}"
+    );
+
+    // Drive it: inside a program the unified send settles; it was already
+    // ready so the gate is ~free.
+    let (result, _) =
+        send_auto_result(&manager, &mut rx, session_id, "req-hello", "hello there").await;
+    assert_eq!(result["resolved_await"], "settled", "{result}");
+    assert_eq!(result["program_ready"], true, "{result}");
+    assert!(result["gated_ms"].as_u64().unwrap() < 1000, "{result}");
+    let screen = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        screen.contains("GOT: hello there"),
+        "input not delivered:\n{screen}"
+    );
+
+    let (result, _) = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
+    assert!(
+        matches!(
+            result["outcome"]["event"].as_str(),
+            Some("prompt_ready") | Some("command_finished") | Some("settled")
+        ),
+        "{result}"
+    );
+}
+
+/// The input gate: a send issued while the program is still starting
+/// (interactive signal seen, nothing painted) waits for readiness before
+/// typing, so the text is not discarded by raw-mode init.
+#[tokio::test]
+async fn unified_send_gates_input_until_the_program_paints() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-auto-gate";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    // Dispatch-only launch (no await) mimics an agent racing ahead.
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-launch".into(),
+            text: Some(format!("python3 {} 2.0", script.display())),
+            submit: Some(true),
+            key: None,
+            r#await: None,
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "launch dispatched", |f| {
+        is_result_for(f, "terminal_send_result", "req-launch")
+    })
+    .await;
+    // Give the shell time to start the program (command_started), then
+    // send immediately — well before the 2 s paint.
+    wait_frame(&mut rx, Duration::from_secs(10), "command started", |f| {
+        is_event(f, "command_started")
+    })
+    .await;
+    let (result, elapsed) =
+        send_auto_result(&manager, &mut rx, session_id, "req-early", "early bird").await;
+    assert_eq!(result["program_ready"], true, "{result}");
+    assert!(
+        result["gated_ms"].as_u64().unwrap() >= 1000,
+        "gate did not wait: {result}"
+    );
+    assert!(elapsed >= Duration::from_millis(1500), "{elapsed:?}");
+    let screen = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        screen.contains("GOT: early bird"),
+        "early input lost:\n{screen}"
+    );
+    let _ = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
+}
+
+/// Readiness cap: a program that signals interactive but never paints
+/// returns `ready:false, painted:false` after PROGRAM_READY_CAP instead of
+/// hanging the launch.
+#[tokio::test]
+async fn unified_send_readiness_cap_when_program_never_paints() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-auto-cap";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    let (result, elapsed) = send_auto_result(
+        &manager,
+        &mut rx,
+        session_id,
+        "req-launch",
+        &format!("python3 {} 40", script.display()),
+    )
+    .await;
+    assert_eq!(
+        result["outcome"]["event"], "interactive_started",
+        "{result}"
+    );
+    assert_eq!(result["outcome"]["data"]["ready"], false, "{result}");
+    assert_eq!(result["outcome"]["data"]["painted"], false, "{result}");
+    assert!(
+        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_secs(20),
+        "{elapsed:?}"
+    );
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-int".into(),
+            text: None,
+            submit: None,
+            key: Some("ctrl+c".into()),
+            r#await: None,
         })
         .await
         .unwrap();

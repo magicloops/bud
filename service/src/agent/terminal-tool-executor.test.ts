@@ -26,7 +26,7 @@ function createExecutor(terminalSessionManager: Record<string, unknown>) {
   );
 }
 
-test("terminal.run dispatches await command and returns exit code 0 with output", async () => {
+test("terminal.send of a command at a prompt returns exit code 0 with output", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
@@ -39,7 +39,7 @@ test("terminal.run dispatches await command and returns exit code 0 with output"
       assert.deepEqual(interaction, {
         text: "pwd",
         submit: true,
-        await: "command",
+        await: "auto",
       });
       return {
         dispatched: true,
@@ -68,8 +68,8 @@ test("terminal.run dispatches await command and returns exit code 0 with output"
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "pwd",
+    tool: "terminal.send",
+    text: "pwd",
     callId: "call_run_ok",
   });
 
@@ -83,7 +83,7 @@ test("terminal.run dispatches await command and returns exit code 0 with output"
   assert.equal(execution.result.mode, "shell");
   assert.equal(execution.result.cwd, "/repo");
   assert.equal(execution.result.error, undefined);
-  assert.deepEqual(execution.args, { command: "pwd" });
+  assert.deepEqual(execution.args, { text: "pwd" });
   assert.equal(execution.payload.exit_code, 0);
   assert.equal(execution.payload.duration_ms, 42);
   assert.equal(execution.payload.output, "/repo\n");
@@ -93,7 +93,7 @@ test("terminal.run dispatches await command and returns exit code 0 with output"
   assert.equal(execution.summary, 'Ran "pwd" (exit 0 in 42ms)');
 });
 
-test("terminal.run with a failing command is a normal tool result, not an error", async () => {
+test("terminal.send with a failing command is a normal tool result, not an error", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "sentinel", cwd: "/repo" };
@@ -119,8 +119,8 @@ test("terminal.run with a failing command is a normal tool result, not an error"
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "grep -r missing_symbol src/",
+    tool: "terminal.send",
+    text: "grep -r missing_symbol src/",
     callId: "call_run_exit1",
   });
 
@@ -135,7 +135,7 @@ test("terminal.run with a failing command is a normal tool result, not an error"
   assert.match(execution.summary, /exit 1/);
 });
 
-test("terminal.run service timeout reports still-running, never a fabricated failure", async () => {
+test("terminal.send service timeout reports still-running, never a fabricated failure", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
@@ -147,8 +147,8 @@ test("terminal.run service timeout reports still-running, never a fabricated fai
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "sleep 999999",
+    tool: "terminal.send",
+    text: "sleep 999999",
     callId: "call_run_timeout",
   });
 
@@ -163,7 +163,7 @@ test("terminal.run service timeout reports still-running, never a fabricated fai
   assert.match(execution.summary, /still running/);
 });
 
-test("terminal.run still-running report carries the dispatched command_id from the command store", async () => {
+test("terminal.send still-running report carries the dispatched command_id from the command store", async () => {
   const lookups: string[] = [];
   let dispatched = false;
   const terminalSessionManager = {
@@ -193,8 +193,8 @@ test("terminal.run still-running report carries the dispatched command_id from t
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "sleep 999999",
+    tool: "terminal.send",
+    text: "sleep 999999",
     callId: "call_run_timeout_cmd_id",
   });
 
@@ -206,7 +206,7 @@ test("terminal.run still-running report carries the dispatched command_id from t
   assert.match(String(execution.payload.note), /terminal\.observe/);
 });
 
-test("terminal.run still-running report keeps command_id null when the latest command already finished", async () => {
+test("terminal.send still-running report keeps command_id null when the latest command already finished", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
@@ -229,8 +229,8 @@ test("terminal.run still-running report keeps command_id null when the latest co
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "sleep 999999",
+    tool: "terminal.send",
+    text: "sleep 999999",
     callId: "call_run_timeout_stale_cmd",
   });
 
@@ -239,7 +239,7 @@ test("terminal.run still-running report keeps command_id null when the latest co
   assert.equal(execution.payload.command_id, null);
 });
 
-test("terminal.run tail-kept truncation is surfaced with a truncation reason", async () => {
+test("terminal.send tail-kept truncation is surfaced with a truncation reason", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: null };
@@ -265,8 +265,8 @@ test("terminal.run tail-kept truncation is surfaced with a truncation reason", a
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "yes | head -c 1000000",
+    tool: "terminal.send",
+    text: "yes | head -c 1000000",
     callId: "call_run_truncated",
   });
 
@@ -276,7 +276,7 @@ test("terminal.run tail-kept truncation is surfaced with a truncation reason", a
   assert.equal(execution.payload.output_truncation_reason, "service_backfill_limit");
 });
 
-test("terminal.run treats a non-command outcome as a structured EXEC_FAILED error", async () => {
+test("a submitted line that settled without a command boundary is a normal interaction ack", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "none", cwd: null };
@@ -285,26 +285,31 @@ test("terminal.run treats a non-command outcome as a structured EXEC_FAILED erro
       return {
         dispatched: true,
         outcome: { event: "settled", data: { mode: "shell", quiet_ms: 500 } },
+        resolvedAwait: "settled",
       };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "$ pwd", linesCaptured: 1, changed: true };
+    },
+    async getLatestCommandForSession() {
+      return null;
     },
   };
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "pwd",
-    callId: "call_run_settled",
+    tool: "terminal.send",
+    text: "pwd",
+    callId: "call_send_settled",
   });
 
-  assert.equal(execution.result.kind, "command");
-  assert.equal(execution.result.error, "unexpected_outcome_settled");
-  assert.equal(execution.result.errorCode, "EXEC_FAILED");
-  assert.equal(execution.result.retryable, true);
-  assert.equal(execution.payload.ok, false);
-  assert.equal(execution.payload.code, "EXEC_FAILED");
+  assert.equal(execution.result.kind, "interaction_ack");
+  assert.equal(execution.result.error, undefined);
+  assert.equal(execution.payload.ok, undefined);
+  assert.deepEqual(execution.result.delta, { changed: true, text: "$ pwd" });
 });
 
-test("terminal.send dispatches await settled and returns the post-send delta", async () => {
+test("terminal.send inside a program awaits auto and returns the post-send delta", async () => {
   const observeCalls: Array<Record<string, unknown>> = [];
   const terminalSessionManager = {
     getSessionContext() {
@@ -318,7 +323,7 @@ test("terminal.send dispatches await settled and returns the post-send delta", a
       assert.deepEqual(interaction, {
         text: "print(1 + 1)",
         submit: true,
-        await: "settled",
+        await: "auto",
       });
       return {
         dispatched: true,
@@ -343,23 +348,23 @@ test("terminal.send dispatches await settled and returns the post-send delta", a
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    rawText: "print(1 + 1)",
+    text: "print(1 + 1)",
     callId: "call_send_raw",
   });
 
   assert.deepEqual(observeCalls, [{ view: "delta" }]);
   assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.dispatched, true);
-  assert.equal(execution.result.rawTextSent, true);
+  assert.equal(execution.result.textSent, true);
   assert.equal(execution.result.keySent, null);
   assert.deepEqual(execution.result.delta, { changed: true, text: ">>> print(1 + 1)" });
   assert.equal(execution.result.changed, true);
   assert.equal(execution.result.mode, "repl");
   assert.equal(execution.result.altScreen, false);
-  assert.deepEqual(execution.args, { raw_text: "print(1 + 1)" });
+  assert.deepEqual(execution.args, { text: "print(1 + 1)" });
   assert.equal(execution.payload.dispatched, true);
   assert.deepEqual(execution.payload.delta, { changed: true, text: ">>> print(1 + 1)" });
-  assert.equal(execution.summary, 'Type raw text "print(1 + 1)"; observed new terminal content');
+  assert.equal(execution.summary, 'Type "print(1 + 1)"; observed new terminal content');
 });
 
 test("terminal.send key gestures dispatch one semantic key with settled proof", async () => {
@@ -371,7 +376,7 @@ test("terminal.send key gestures dispatch one semantic key with settled proof", 
       _sessionId: string,
       interaction: { text?: string; submit?: boolean; key?: string; await?: string },
     ) {
-      assert.deepEqual(interaction, { key: "ctrl+c", await: "settled" });
+      assert.deepEqual(interaction, { key: "ctrl+c", await: "auto" });
       return {
         dispatched: true,
         outcome: { event: "settled", data: { mode: "tui", quiet_ms: 300 } },
@@ -397,7 +402,7 @@ test("terminal.send key gestures dispatch one semantic key with settled proof", 
   });
 
   assert.equal(execution.result.dispatched, true);
-  assert.equal(execution.result.rawTextSent, false);
+  assert.equal(execution.result.textSent, false);
   assert.equal(execution.result.keySent, "ctrl+c");
   assert.deepEqual(execution.result.delta, { changed: false, text: "" });
   assert.equal(execution.result.mode, "shell");
@@ -444,7 +449,7 @@ test("terminal.send settle timeout returns dispatched with a screen fallback not
   assert.match(execution.summary, /still active without settling/);
 });
 
-test("terminal.send rejects command-less empty input with terminal.run guidance", async () => {
+test("terminal.send rejects empty input before touching the runtime", async () => {
   let sendCalls = 0;
   const terminalSessionManager = {
     getSessionContext() {
@@ -467,11 +472,11 @@ test("terminal.send rejects command-less empty input with terminal.run guidance"
   assert.equal(execution.result.dispatched, false);
   assert.equal(
     execution.summary,
-    "Invalid terminal.send input: provide raw_text or key (shell commands belong to terminal.run)",
+    "Invalid terminal.send input: provide text or key",
   );
 });
 
-test("terminal.send rejects ambiguous raw_text plus key before touching the runtime", async () => {
+test("terminal.send rejects ambiguous text plus key before touching the runtime", async () => {
   let sendCalls = 0;
   const terminalSessionManager = {
     getSessionContext() {
@@ -486,7 +491,7 @@ test("terminal.send rejects ambiguous raw_text plus key before touching the runt
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    rawText: "y",
+    text: "y",
     key: "enter",
     callId: "call_send_ambiguous",
   });
@@ -496,7 +501,7 @@ test("terminal.send rejects ambiguous raw_text plus key before touching the runt
   assert.equal(execution.result.dispatched, false);
   assert.equal(
     execution.summary,
-    "Invalid terminal.send input: provide exactly one of raw_text or key",
+    "Invalid terminal.send input: provide exactly one of text or key",
   );
 });
 
@@ -551,7 +556,7 @@ test("terminal.send wait interrupted by the user stays a conservative tool resul
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    rawText: "work on this",
+    text: "work on this",
     callId: "call_send_interrupted",
   });
 
@@ -565,7 +570,7 @@ test("terminal.send wait interrupted by the user stays a conservative tool resul
   );
 });
 
-test("terminal.run wait interrupted by the user reports an unresolved command", async () => {
+test("terminal.send wait interrupted by the user reports an unresolved command", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: null };
@@ -577,8 +582,8 @@ test("terminal.run wait interrupted by the user reports an unresolved command", 
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "npm install",
+    tool: "terminal.send",
+    text: "npm install",
     callId: "call_run_interrupted",
   });
 
@@ -624,12 +629,12 @@ test("bud offline before session resolution returns a retryable structured resul
 
   const execution = await executor.execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "pwd",
+    tool: "terminal.send",
+    text: "pwd",
     callId: "call_run_offline",
   });
 
-  assert.equal(execution.result.kind, "command");
+  assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.error, "bud_offline");
   assert.equal(execution.result.errorCode, "BUD_DISCONNECTED");
   assert.equal(execution.result.retryable, true);
@@ -670,15 +675,26 @@ test("bud disconnect during terminal.send returns a retryable structured result"
   );
 });
 
-test("terminal.run is refused with terminal_busy while a command is open (pre-check, nothing dispatched)", async () => {
-  let dispatched = false;
+test("terminal.send into an open program is delivered (never refused) and carries the gate facts", async () => {
+  let interaction: Record<string, unknown> | null = null;
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
     },
-    async sendInteraction() {
-      dispatched = true;
-      return { dispatched: true, outcome: null };
+    async sendInteraction(_sessionId: string, sent: Record<string, unknown>) {
+      interaction = sent;
+      // The daemon gated the input on readiness (painted + quiet) for 1.8 s
+      // before typing, then settled.
+      return {
+        dispatched: true,
+        outcome: { event: "settled", data: { mode: "shell", quiet_ms: 300 } },
+        resolvedAwait: "settled",
+        gatedMs: 1800,
+        programReady: true,
+      };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "> ls -t debug/*.md", linesCaptured: 1, changed: true };
     },
     async getLatestCommandForSession(sessionId: string) {
       // An inline TUI (codex) launched earlier: open command, mode still shell.
@@ -694,59 +710,58 @@ test("terminal.run is refused with terminal_busy while a command is open (pre-ch
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "ls -t debug/*.md | head -5",
-    callId: "call_busy_guard",
+    tool: "terminal.send",
+    text: "ls -t debug/*.md | head -5",
+    callId: "call_send_into_program",
   });
 
-  assert.equal(dispatched, false, "guarded run must never touch the PTY");
-  assert.equal(execution.result.status, "terminal_busy");
-  assert.equal(execution.result.commandId, "cmd_codex");
+  assert.deepEqual(interaction, { text: "ls -t debug/*.md | head -5", submit: true, await: "auto" });
+  assert.equal(execution.result.kind, "interaction_ack");
+  assert.equal(execution.result.dispatched, true);
+  assert.equal(execution.result.gatedMs, 1800);
+  assert.equal(execution.result.programReady, true);
+  assert.equal(execution.payload.gated_ms, 1800);
+  assert.equal(execution.payload.program_ready, true);
   const openCommand = execution.payload.open_command as { command_id: string; running_ms: number };
   assert.equal(openCommand.command_id, "cmd_codex");
   assert.equal(openCommand.running_ms >= 90_000, true);
-  assert.match(String(execution.payload.note), /terminal\.send/);
-  assert.match(String(execution.payload.note), /ctrl\+c/);
+  assert.deepEqual(execution.result.delta, { changed: true, text: "> ls -t debug/*.md" });
 });
 
-test("daemon command_in_flight errors map to the same terminal_busy result (backstop)", async () => {
-  let calls = 0;
+test("terminal.send typed after the ready window expired notes it for verification", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
     },
     async sendInteraction() {
-      throw new Error("command_in_flight");
-    },
-    async getLatestCommandForSession(sessionId: string) {
-      calls += 1;
-      // Pre-check races: the service store has not seen the started event yet,
-      // but the daemon's authoritative facts refuse the dispatch.
-      if (calls === 1) {
-        return null;
-      }
       return {
-        commandId: "cmd_late",
-        terminalSessionId: sessionId,
-        commandStartedAt: new Date(Date.now() - 5_000),
-        commandFinishedAt: null,
-        exitCode: null,
+        dispatched: true,
+        outcome: { event: "settled", data: { mode: "shell", quiet_ms: 300 } },
+        resolvedAwait: "settled",
+        gatedMs: 10_000,
+        programReady: false,
       };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "", linesCaptured: 0, changed: false };
+    },
+    async getLatestCommandForSession() {
+      return null;
     },
   };
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "echo hi",
-    callId: "call_busy_backstop",
+    tool: "terminal.send",
+    text: "hello",
+    callId: "call_send_not_ready",
   });
 
-  assert.equal(execution.result.status, "terminal_busy");
-  assert.equal(execution.result.commandId, "cmd_late");
+  assert.equal(execution.result.programReady, false);
+  assert.match(String(execution.payload.note), /typed anyway/);
 });
 
-test("terminal.run resolving with interactive_started becomes a normal 'interactive' result", async () => {
+test("terminal.send resolving with interactive_started becomes a normal 'interactive' result", async () => {
   let dispatchedInteractive = false;
   const terminalSessionManager = {
     getSessionContext() {
@@ -758,7 +773,7 @@ test("terminal.run resolving with interactive_started becomes a normal 'interact
         dispatched: true,
         outcome: {
           event: "interactive_started",
-          data: { command_id: "cmd_codex", signal: "bracketed_paste" },
+          data: { command_id: "cmd_codex", signal: "bracketed_paste", ready: true, painted: true },
         },
       };
     },
@@ -779,27 +794,62 @@ test("terminal.run resolving with interactive_started becomes a normal 'interact
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "codex",
+    tool: "terminal.send",
+    text: "codex",
     callId: "call_interactive",
   });
 
   assert.equal(execution.result.status, "interactive");
   assert.equal(execution.result.commandId, "cmd_codex");
   assert.equal(execution.result.error, undefined);
-  assert.match(String(execution.payload.note), /terminal\.send/);
+  assert.deepEqual(execution.result.readiness, { ready: true, painted: true });
+  assert.equal(execution.payload.ready, true);
+  assert.equal(execution.payload.painted, true);
+  assert.match(String(execution.payload.note), /ready for input/);
+  assert.match(execution.summary, /ready for input/);
   const openCommand = execution.payload.open_command as { command_id: string };
   assert.equal(openCommand.command_id, "cmd_codex");
 });
 
-test("terminal.send of a shell command at a prompt carries the real exit code (substitutability)", async () => {
+test("a launch whose program never painted within the ready window says so", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
     },
     async sendInteraction() {
-      // Settled-awaits accept command_finished: typing a command via
-      // terminal.send still produces run-quality facts.
+      return {
+        dispatched: true,
+        outcome: {
+          event: "interactive_started",
+          data: { command_id: "cmd_slow", signal: "bracketed_paste", ready: false, painted: false },
+        },
+      };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: "slow-tui",
+    callId: "call_interactive_not_ready",
+  });
+
+  assert.equal(execution.result.status, "interactive");
+  assert.deepEqual(execution.result.readiness, { ready: false, painted: false });
+  assert.match(String(execution.payload.note), /terminal\.wait/);
+  assert.match(execution.summary, /has not painted yet/);
+});
+
+test("terminal.send of a shell command at a prompt resolves as a command with the real exit code", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      // await:"auto" at a prompt resolved as a command boundary.
       return {
         dispatched: true,
         outcome: {
@@ -819,13 +869,14 @@ test("terminal.send of a shell command at a prompt carries the real exit code (s
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    rawText: "ls /missing",
+    text: "ls /missing",
     callId: "call_send_command",
   });
 
-  assert.equal(execution.result.interactionExitCode, 1);
+  assert.equal(execution.result.kind, "command");
+  assert.equal(execution.result.exitCode, 1);
   assert.equal(execution.payload.exit_code, 1);
-  assert.equal(execution.result.dispatched, true);
+  assert.match(execution.summary, /exit 1/);
 });
 
 test("terminal.wait is knobless: one awaited observe with the stall window, boundary facts win", async () => {
@@ -1054,7 +1105,7 @@ test("terminal.wait against a daemon without awaited observes notes the immediat
   assert.match(String(execution.payload.note), /does not support waiting/);
 });
 
-test("terminal.run maps the daemon's input_absorbed outcome to an honest status", async () => {
+test("terminal.send maps the daemon's input_absorbed outcome to an honest status", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
@@ -1072,8 +1123,8 @@ test("terminal.run maps the daemon's input_absorbed outcome to an honest status"
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
-    tool: "terminal.run",
-    command: "   ",
+    tool: "terminal.send",
+    text: "   ",
     callId: "call_absorbed",
   });
 

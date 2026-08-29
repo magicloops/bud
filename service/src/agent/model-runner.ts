@@ -578,21 +578,17 @@ export class AgentModelRunner {
     const args = toolCall.input;
 
     switch (toolCall.name) {
-      case "terminal_run":
-        if (typeof args.command !== "string") {
-          return null;
-        }
-        return {
-          type: "tool_call",
-          tool: "terminal.run",
-          command: args.command,
-          callId: toolCall.id,
-        };
       case "terminal_send":
         return {
           type: "tool_call",
           tool: "terminal.send",
-          rawText: typeof args.raw_text === "string" ? args.raw_text : undefined,
+          // `raw_text` is the pre-unification field name; tolerate it.
+          text:
+            typeof args.text === "string"
+              ? args.text
+              : typeof args.raw_text === "string"
+                ? args.raw_text
+                : undefined,
           ...(typeof args.submit === "boolean" ? { submit: args.submit } : {}),
           key: normalizeToolKeyInput(args.key, args.keys),
           callId: toolCall.id,

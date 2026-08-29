@@ -42,6 +42,11 @@ pub enum Event {
     CommandStarted {
         command_index: u64,
         output_byte_start: u64,
+        /// Rendered screen right after the chunk carrying the marker: the
+        /// baseline for "has the program PAINTED yet" (any later screen
+        /// difference is output attributable to the program — byte counts
+        /// cannot tell a `?2004h` enable or the Enter echo from a real UI).
+        screen: Vec<String>,
     },
 
     /// OSC 133 `D;<exit>` — the command finished.

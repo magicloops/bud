@@ -185,7 +185,11 @@ export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
   request_id: z.string(),
   dispatched: z.boolean(),
   outcome: TerminalEventOutcomeSchema.nullable().optional(),
-  error: z.string().nullable()
+  error: z.string().nullable(),
+  // §6.7.4 unified-send facts (daemon ≥ v0.1.15).
+  resolved_await: z.enum(["command", "settled", "auto"]).optional(),
+  gated_ms: z.number().optional(),
+  program_ready: z.boolean().optional()
 });
 
 export const ErrorFrameSchema = EnvelopeSchema.extend({

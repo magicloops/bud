@@ -22,8 +22,8 @@ test("system prompt uses the proto 0.3 terminal tool surface without retired voc
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /confidence/);
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /looks_like/);
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /context_after/);
-  // The three-tool surface and the mode model are described.
-  assert.match(AGENT_SYSTEM_PROMPT, /terminal\.run/);
+  // The unified send + wait + observe surface and the mode model are described.
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /terminal\.run/);
   assert.match(AGENT_SYSTEM_PROMPT, /terminal\.send/);
   assert.match(AGENT_SYSTEM_PROMPT, /terminal\.observe/);
   assert.match(AGENT_SYSTEM_PROMPT, /exit_code/);
@@ -140,8 +140,8 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
       {
         type: "tool_use",
         id: "call_legacy_send_1",
-        name: "terminal_run",
-        input: { command: "ls" },
+        name: "terminal_send",
+        input: { text: "ls" },
       },
     ],
   });

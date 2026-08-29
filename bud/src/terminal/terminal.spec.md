@@ -40,7 +40,18 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   — chat TUIs like codex classify unbracketed burst input as a paste and
   swallow the submit), and `submit` follows with a 75ms beat + a real Enter
   keypress (the beat defeats app-side input heuristics; ordering is already
-  guaranteed by the single writer). Awaited
+  guaranteed by the single writer). `await: "auto"` (§6.7.4, the unified
+  `terminal.send`) is resolved by the daemon: a submitted line with no open
+  command in mode shell/unknown → `command`, otherwise `settled`
+  (`resolved_await` on the result); the old `command_in_flight` refusal is
+  gone. Input gate: while a command is open, `wait_program_ready` holds the
+  write until the program is READY — painted (`SessionFacts::
+  open_command_screen`, the screen at `command_started`, differs from the
+  current screen) and damage-quiet — capped at `PROGRAM_READY_CAP` (10 s),
+  reporting `gated_ms`/`program_ready` (raw-mode init discards pending tty
+  input; typing before a TUI paints loses the text — the codex launch→send
+  regression). Command-awaits likewise HOLD `interactive_started` until
+  ready (or the cap: `ready:false`, `painted`). Awaited
   outcomes (`await: "command" | "settled"`) resolve off the pump's broadcast
   channel — settled-awaits ALSO resolve on `prompt_ready` (returning to a
   shell prompt is maximal settlement; an idle prompt never emits `settled`,

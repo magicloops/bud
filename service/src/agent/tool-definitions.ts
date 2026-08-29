@@ -6,38 +6,21 @@ import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 // Canonical tool definitions using standard JSON Schema.
 export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
-    name: "terminal_run",
-    description:
-      "Run one shell command in the thread terminal and wait for it to finish. Returns the real exit_code, duration_ms, and the command's output. Use this for anything that is a shell command; only works while the terminal is at a shell prompt.",
-    parameters: {
-      type: "object",
-      properties: {
-        command: {
-          type: "string",
-          description:
-            "The shell command to run. Multi-line input such as heredocs or small pasted scripts is allowed.",
-        },
-      },
-      required: ["command"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "terminal_send",
     description:
-      "Send one input gesture to the interactive program in the terminal (TUI, REPL, prompt). Provide exactly one of raw_text or key. Waits for the screen to settle and returns the screen delta as proof of what changed. Shell commands belong to terminal_run instead.",
+      "Send input to the thread terminal — the one way to run shell commands and to drive interactive programs. Provide exactly one of text or key. At a shell prompt, text runs as a command and the result carries the real exit_code, duration_ms, and output. Inside a running program (TUI, REPL, prompt, pager), text is typed to it and the result carries the screen delta. The daemon waits for the program to be ready before typing and decides how long to wait; you configure nothing.",
     parameters: {
       type: "object",
       properties: {
-        raw_text: {
+        text: {
           type: "string",
           description:
-            "Literal text to type. Presses Enter afterward by default; set submit to false to type without submitting (e.g. composing text in an editor buffer).",
+            "Text to type: a shell command (multi-line heredocs/scripts allowed) or input for the foreground program. Presses Enter afterward by default; set submit to false to type without submitting (e.g. composing text in an editor buffer).",
         },
         submit: {
           type: "boolean",
           description:
-            "Whether to press Enter after raw_text (default true). Ignored for key gestures.",
+            "Whether to press Enter after text (default true). Ignored for key gestures.",
         },
         key: {
           type: "string",
@@ -238,7 +221,6 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
 ];
 
 const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "terminal_run",
   "terminal_send",
   "terminal_observe",
   "terminal_wait",

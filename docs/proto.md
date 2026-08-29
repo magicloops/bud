@@ -1570,6 +1570,19 @@ mid-command.
 }
 ```
 
+`await` (§6.7.4): `command` (resolve on the command boundary), `settled`
+(resolve on the next settle), or **`auto`** — the daemon picks from terminal
+state: a submitted line at an idle shell prompt (no open command, mode
+`shell`/`unknown`) behaves as `command`, anything else as `settled`. The
+unified `terminal.send` tool always sends `auto`. The result reports
+`resolved_await`. Input into an OPEN command is gated on readiness before
+typing: the program must have PAINTED (screen changed since its
+`command_started`) and be damage-quiet, capped at 10 s; the result reports
+`gated_ms` and `program_ready` (`false` when the cap expired and the bytes
+were typed anyway). Nothing is refused while a command is open (the
+`command_in_flight` error is retired) — input goes wherever the foreground
+is.
+
 Rules:
 - exactly one of `text` (with optional `submit`) or one semantic `key`
   (backend-neutral names: `ctrl+c`, `enter`, `escape`, `up`, `shift+tab`, …)
@@ -1709,7 +1722,7 @@ Rules:
 | `mode_changed` | `{ "mode", "integration" }` | alt-screen enter/exit, REPL pattern match, integration detection |
 | `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen), or — in any mode — at the first quiet point after a programmatic `terminal_send` gesture (input is activity: a gesture the program ignores, or one typed at an idle prompt, still settles); an idle at-prompt shell otherwise stays silent and emits `prompt_ready` instead |
 | `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.1) |
-| `interactive_started` | `{ "command_id", "signal": "alt_screen"\|"bracketed_paste" }` | the OPEN command launched an interactive program (alt-screen entry, or a mid-command bracketed-paste enable — shells keep `?2004` off while a command runs, so an enable is the child speaking) |
+| `interactive_started` | `{ "command_id", "signal": "alt_screen"\|"bracketed_paste", "ready", "painted" }` | the OPEN command launched an interactive program (alt-screen entry, or a mid-command bracketed-paste enable — shells keep `?2004` off while a command runs, so an enable is the child speaking). A command-await HOLDS this outcome until the program is READY — painted (screen changed since `command_started`) and damage-quiet — or the 10 s readiness cap expires (`ready:false`); "interactive" is not "ready" (codex enables bracketed paste ~250 ms after exec and paints seconds later) |
 | `child_exited` | `{ "exit_code"?, "signal"?: string }` | session root process exited (`signal` is a name such as `"SIGTERM"`) |
 
 Rules:
@@ -2367,6 +2380,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - `terminal_send` `await:"auto"` (daemon-resolved: command boundary at an idle shell prompt, settle otherwise) with `resolved_await`, `gated_ms`, `program_ready` on the result; input into an open command is gated on readiness (painted + quiet, 10 s cap); `interactive_started` is held until ready and carries `ready`/`painted`; the `command_in_flight` refusal is retired. Model-facing: `terminal.send { text | key, submit? }` is the single input tool (`terminal.run` retired).
   - Daemon: width-shrinking `terminal_resize` is deferred while a readline line is pending at an idle shell prompt (≤3 s, until `command_started`/`prompt_ready`); `ready` announces the applied geometry. Fixes readline-vs-reflow garbling (duplicated command, overwritten output rows) when a narrow viewer takes geometry mid-command.
   - the awaited observe is now KNOBLESS: `await` values are synonyms, the
     model-facing `terminal.wait.until` parameter is retired, and the daemon

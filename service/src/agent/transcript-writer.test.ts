@@ -114,11 +114,11 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   const execution: ExecutedTerminalTool = {
     directive: {
       type: "tool_call",
-      tool: "terminal.run",
-      command: "pwd",
+      tool: "terminal.send",
+      text: "pwd",
       callId: "call-1",
     },
-    args: { command: "pwd" },
+    args: { text: "pwd" },
     summary: 'Ran "pwd" (exit 0 in 42ms)',
     outputTruncationReason: null,
     result: {
@@ -135,9 +135,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       cwd: "/repo",
     },
     payload: {
-      tool: "terminal.run",
+      tool: "terminal.send",
       call_id: "call-1",
-      command: "pwd",
+      text: "pwd",
       summary: 'Ran "pwd" (exit 0 in 42ms)',
       kind: "command",
       status: "completed",
@@ -222,8 +222,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   });
 
   assert.equal(events.length, 2);
-  assert.deepEqual(emittedToolCall.modelArgs, { command: "pwd" });
-  assert.deepEqual(emittedToolCall.clientArgs, { command: "pwd" });
+  assert.deepEqual(emittedToolCall.modelArgs, { text: "pwd" });
+  assert.deepEqual(emittedToolCall.clientArgs, { text: "pwd" });
   assert.deepEqual(events[0], {
     threadId: "thread-1",
     event: "agent.tool_call",
@@ -231,8 +231,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { command: "pwd" },
+      name: "terminal.send",
+      args: { text: "pwd" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
   });
@@ -242,8 +242,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       pendingTool: {
         client_id: "tool-client-1",
         call_id: "call-1",
-        name: "terminal.run",
-        args: { command: "pwd" },
+        name: "terminal.send",
+        args: { text: "pwd" },
         started_at: "2026-04-21T19:00:01.000Z",
       },
       cursor: "agent.tool_call-cursor",

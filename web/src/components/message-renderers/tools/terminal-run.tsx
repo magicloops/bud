@@ -62,13 +62,27 @@ export function TerminalRunContent({ payload }: ToolContentRendererProps) {
   )
 }
 
-/** proto 0.3 `terminal.send`: interactive gesture with settled-delta proof. */
+/**
+ * `terminal.send` — the single terminal input tool. Two result shapes chosen
+ * by the daemon: `kind:"command"` (the text ran as a shell command: exit
+ * code, duration, output — rendered like the retired terminal.run) and
+ * `kind:"interaction_ack"` (input into a program: settled-delta proof).
+ * Historical rows carry `raw_text` (pre-unification) or `command`/`text`.
+ */
 export function TerminalSendContent({ payload }: ToolContentRendererProps) {
-  const rawText = typeof payload.raw_text === 'string' ? payload.raw_text : null
+  if (payload.kind === 'command') {
+    return <TerminalRunContent payload={{ ...payload, command: payload.text ?? payload.command }} />
+  }
+  const rawText =
+    typeof payload.text === 'string'
+      ? payload.text
+      : typeof payload.raw_text === 'string'
+        ? payload.raw_text
+        : null
   const key = typeof payload.key === 'string' && payload.key.length > 0 ? payload.key : null
   // Legacy 0.2 rows (command / text+submit) keep rendering in old transcripts.
   const legacyCommand = typeof payload.command === 'string' ? payload.command : null
-  const legacyText = typeof payload.text === 'string' ? payload.text : null
+  const legacyText = null
   const delta = isRecord(payload.delta) ? payload.delta : null
   const deltaText = typeof delta?.text === 'string' && delta.text.length > 0 ? delta.text : null
   const changed = payload.changed === true || delta?.changed === true
@@ -97,7 +111,7 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
       </div>
       {rawText ?? legacyText ? (
         <>
-          <div className="text-muted-foreground">Raw text</div>
+          <div className="text-muted-foreground">Text</div>
           <div className="font-mono text-foreground whitespace-pre-wrap">{rawText ?? legacyText}</div>
         </>
       ) : null}

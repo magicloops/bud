@@ -132,12 +132,24 @@ export type SendInteraction = {
   await?: TerminalSendAwait;
 };
 
-export type SendResult = {
+/** Daemon-resolved facts riding on a send result (proto §6.7.4). */
+export type SendResultFacts = {
+  /** How an `await:"auto"` resolved: `command` at a prompt, else `settled`. */
+  resolvedAwait?: "command" | "settled" | "auto";
+  /** Input gate: ms spent waiting for the open program to be ready
+   * (painted + quiet) before typing. Absent when nothing was open. */
+  gatedMs?: number;
+  /** Input gate outcome: false when the readiness cap expired and the bytes
+   * were typed anyway. */
+  programReady?: boolean;
+};
+
+export type SendResult = SendResultFacts & {
   dispatched: boolean;
   outcome: TerminalEventOutcome | null;
 };
 
-export type SendResultPayload = {
+export type SendResultPayload = SendResultFacts & {
   requestId: string;
   dispatched: boolean;
   outcome: TerminalEventOutcome | null;
@@ -610,6 +622,9 @@ export class TerminalRequestDispatcher {
     pending.resolve({
       dispatched: payload.dispatched,
       outcome: payload.outcome ?? null,
+      ...(payload.resolvedAwait !== undefined ? { resolvedAwait: payload.resolvedAwait } : {}),
+      ...(typeof payload.gatedMs === "number" ? { gatedMs: payload.gatedMs } : {}),
+      ...(typeof payload.programReady === "boolean" ? { programReady: payload.programReady } : {}),
     });
   }
 
