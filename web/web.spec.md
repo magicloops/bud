@@ -141,6 +141,7 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 ### Chat Interface
 
 - Message timeline with role-based rendering
+- Agent-work collapse (design/web-agent-work-collapse.md): each turn's reasoning, tool calls, and intermediate commentary render as one expandable group — live groups show `Working… · elapsed · current step` with only the current step visible; completed groups collapse to `Worked for <duration>` with failure badges
 - Stable `client_id`-first message identity across optimistic sends, `/agent/state` bootstrap, agent SSE, and canonical transcript rows
 - Tool call visualization (terminal.run, etc.)
 - Streamdown-backed Markdown for streaming and persisted messages, with code, Mermaid, and math rendering
