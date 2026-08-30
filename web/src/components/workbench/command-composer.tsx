@@ -90,7 +90,7 @@ export function CommandComposer({
   }, [messageText])
 
   return (
-    <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
+    <form onSubmit={onSubmit} className="relative border-t-2 border-black bg-background">
       {error && <div className="whitespace-pre-line px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
       {showBudOfflineNotice && (
@@ -106,12 +106,12 @@ export function CommandComposer({
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={disabledReason ?? 'Describe the task for Bud…'}
-        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-32 md:p-4 md:pb-20"
+        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-28 md:px-4 md:py-3 md:pb-16"
         disabled={inputDisabled}
       />
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
-      <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-4 md:right-4 md:gap-3 md:p-0">
+      <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0">
         {/* Build tag: short release version; click toggles the full
             git-describe string (build forensics without a settings surface). */}
         <button
@@ -127,7 +127,7 @@ export function CommandComposer({
         <select
           value={selectedModel}
           onChange={(event) => onModelChange(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg border-3 border-black bg-card px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none md:max-w-[140px] md:flex-none"
+          className="min-w-0 flex-1 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none md:max-w-[140px] md:flex-none"
           disabled={inputDisabled || models.length === 0}
         >
           {models.length === 0 ? (
@@ -157,7 +157,7 @@ export function CommandComposer({
           <select
             value={reasoningEffort}
             onChange={(event) => onReasoningChange(event.target.value as ReasoningLevel)}
-            className="w-[96px] shrink-0 rounded-lg border-3 border-black bg-card px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none md:w-[112px]"
+            className="w-[96px] shrink-0 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none md:w-[112px]"
             disabled={inputDisabled}
           >
             {reasoningOptions.map((option) => (

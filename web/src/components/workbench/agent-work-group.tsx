@@ -39,7 +39,7 @@ const AgentWorkGroupComponent = ({
 
   return (
     <section
-      className="rounded-xl border-2 border-black/60 bg-background/60 text-sm shadow-[2px_2px_0px_rgba(0,0,0,0.55)]"
+      className="rounded-lg border border-border/60 text-sm"
       style={{ backgroundColor: 'var(--chat-message)' }}
     >
       <button
@@ -47,7 +47,7 @@ const AgentWorkGroupComponent = ({
         onClick={() => onToggle(row.id)}
         aria-expanded={expanded}
         aria-controls={bodyId}
-        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left"
+        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
       >
         <ChevronRight
           className={cn(
@@ -58,12 +58,12 @@ const AgentWorkGroupComponent = ({
         {row.live ? <LiveHeaderLabel row={row} /> : <SummaryHeaderLabel row={row} />}
       </button>
       {showCurrentItem && row.currentItem && (
-        <div className="border-t border-black/10 px-3 py-2">
+        <div className="border-t border-border/40 px-2.5 py-1.5">
           <WorkItemDetail message={row.currentItem} isStreaming />
         </div>
       )}
       {expanded && (
-        <div id={bodyId} className="space-y-2 border-t border-black/10 px-3 py-2">
+        <div id={bodyId} className="space-y-1.5 border-t border-border/40 px-2.5 py-1.5">
           {row.sections.map((section) => (
             <WorkSectionRow
               key={section.message.client_id}
@@ -133,7 +133,7 @@ const StatusBadge = ({ tone, children }: { tone: 'destructive' | 'muted'; childr
       'rounded-full px-2 py-0.5 text-[10px] font-semibold',
       tone === 'destructive'
         ? 'bg-red-500/15 text-red-700 dark:text-red-300'
-        : 'bg-black/10 text-muted-foreground',
+        : 'bg-muted text-muted-foreground',
     )}
   >
     {children}
@@ -161,7 +161,7 @@ const WorkSectionRow = memo(function WorkSectionRow({
     // Assistant commentary separates activity segments (mobile parity).
     const RoleContentRenderer = getRoleContentRenderer('assistant')
     return (
-      <div className="border-l-2 border-black/15 pl-2 text-[13px] text-muted-foreground">
+      <div className="border-l-2 border-border/50 pl-2 text-[13px] text-muted-foreground">
         {RoleContentRenderer ? <RoleContentRenderer content={message.content} /> : <p>{message.content}</p>}
       </div>
     )

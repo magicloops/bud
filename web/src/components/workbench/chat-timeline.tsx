@@ -274,7 +274,7 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
       {onLoadOlderMessages && (
         <div className="flex justify-center pb-1">
           {hasOlderMessages ? (
@@ -282,7 +282,7 @@ const ChatTimelineComponent = ({
               type="button"
               onClick={onLoadOlderMessages}
               disabled={isLoadingOlderMessages}
-              className="rounded-full border-2 border-black bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-foreground shadow-[2px_2px_0px_rgba(0,0,0,1)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+              className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
             </button>
@@ -406,7 +406,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     isUser && systemColor
       ? {
           borderColor: systemColor,
-          boxShadow: `3px 3px 0 ${systemColor}`,
+          boxShadow: `2px 2px 0 ${systemColor}`,
         }
       : undefined
 
@@ -521,8 +521,14 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   return (
     <article
       className={cn(
-        'group/message relative rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
-        isUser ? 'text-card-foreground' : 'text-foreground',
+        'group/message relative rounded-lg p-2.5 text-sm leading-relaxed',
+        // The user↔assistant loop carries the visual weight: user rows keep
+        // the neobrutalist card (solid border + small hard shadow); agent
+        // rows sit flat on a thin theme-aware border so more context fits
+        // on screen and the eye lands on the conversation, not the chrome.
+        isUser
+          ? 'border-2 border-black text-card-foreground shadow-[2px_2px_0px_rgba(0,0,0,1)]'
+          : 'border border-border/60 text-foreground',
         (isAssistant || isTool || isReasoning) && 'bg-background',
       )}
       style={{
@@ -544,7 +550,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
 
-      <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
+      <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono uppercase text-muted-foreground">
         <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
         <time>{timeLabel}</time>
       </div>

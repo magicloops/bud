@@ -174,7 +174,7 @@ export function ThreadPanel({
             variant="ghost"
             size="icon"
             onClick={onOpenSessions}
-            className="h-10 w-10 rounded-lg border-3 border-black text-foreground transition-all hover:-translate-y-0.5"
+            className="h-10 w-10 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
             style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
             title="Terminal Sessions"
           >
@@ -198,13 +198,13 @@ export function ThreadPanel({
             <div
               key={thread.thread_id}
               className={cn(
-                'group relative w-full rounded-xl border-3 border-black px-3 py-2 text-left transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 cursor-pointer',
+                'group relative w-full rounded-lg border-2 px-3 py-2 text-left transition-colors cursor-pointer hover:border-black',
                 isActive && 'border-[color:var(--bud-accent-vibrant)]'
               )}
               style={{
                 backgroundColor: 'var(--card)',
                 borderColor: isActive ? accentBorder : 'var(--border)',
-                boxShadow: isActive ? `3px 3px 0 ${accentBorder}` : undefined
+                boxShadow: isActive ? `2px 2px 0 ${accentBorder}` : undefined
               }}
               onClick={() => onSelectThread(thread.thread_id)}
             >

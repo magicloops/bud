@@ -923,7 +923,7 @@ function ThreadView() {
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div
-          className={`min-h-0 flex-col border-black max-md:w-full md:flex md:w-80 md:border-r-4 lg:w-96 ${
+          className={`min-h-0 flex-col border-black max-md:w-full md:flex md:w-80 md:border-r-2 lg:w-96 ${
             isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'
           }`}
           style={{ backgroundColor: 'var(--chat-bg)' }}

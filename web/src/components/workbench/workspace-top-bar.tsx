@@ -41,7 +41,7 @@ export function WorkspaceTopBar({
             size="icon"
             aria-label="Toggle thread list"
             onClick={onToggleThreads}
-            className="h-10 w-10 shrink-0 rounded-lg border-3 border-black transition-all hover:-translate-y-0.5"
+            className="h-10 w-10 shrink-0 rounded-lg border-2 border-black transition-all hover:-translate-y-0.5"
             style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
           >
             <Menu className="h-5 w-5" />
@@ -101,7 +101,7 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
       // accessible name.
       aria-label={typeof children === 'string' ? children : undefined}
       className={cn(
-        'rounded-lg border-3 border-black font-mono transition-all',
+        'rounded-lg border-2 border-black font-mono transition-all',
         active
           ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5 dark:bg-[var(--bud-accent-muted)] dark:text-white'
           : 'bg-card hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] dark:bg-background dark:hover:bg-[var(--bud-accent-soft)]'
