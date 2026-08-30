@@ -38,7 +38,9 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    <section className="text-sm">
+    // Transparent rail matching the message rows' 3px border keeps the
+    // text columns aligned across the transcript.
+    <section className="border-l-[3px] border-transparent text-sm">
       <button
         type="button"
         onClick={() => onToggle(row.id)}
