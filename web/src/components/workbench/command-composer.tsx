@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
+import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
 import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
+
+const COMPOSER_MIN_HEIGHT_PX = 56
+
+const composerMaxHeight = (): number => {
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  return Math.min(Math.round(viewportHeight * 0.75), 1000)
+}
+
+const autoGrowHeight = (el: HTMLTextAreaElement): number => {
+  el.style.height = 'auto'
+  return Math.min(el.scrollHeight, composerMaxHeight())
+}
 
 type CommandComposerProps = {
   messageText: string
@@ -75,27 +87,79 @@ export function CommandComposer({
   // and programmatic changes also resize): rests at one line on phones /
   // md:min-h-28 on desktop, grows with content, caps at 3/4 of the
   // visual viewport (1000px absolute) and scrolls internally beyond that.
+  // Dragging the top edge sets a manual height that overrides auto-grow
+  // until the next send (or a double-click on the edge).
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [manualHeight, setManualHeight] = useState<number | null>(null)
+  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(
+    null,
+  )
   useEffect(() => {
     const el = textareaRef.current
     if (!el) {
       return
     }
-    el.style.height = 'auto'
-    const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-    const max = Math.min(Math.round(viewportHeight * 0.75), 1000)
-    const next = Math.min(el.scrollHeight, max)
-    el.style.height = `${next}px`
-    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
-  }, [messageText])
+    const height = manualHeight ?? autoGrowHeight(el)
+    el.style.height = `${height}px`
+    el.style.overflowY = el.scrollHeight > height ? 'auto' : 'hidden'
+  }, [messageText, manualHeight])
+
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = textareaRef.current
+    if (!el) {
+      return
+    }
+    event.preventDefault()
+    resizeDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: el.getBoundingClientRect().height,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return
+    }
+    // Dragging up grows the input, down shrinks it.
+    const next = Math.round(drag.startHeight + (drag.startY - event.clientY))
+    setManualHeight(Math.min(Math.max(next, COMPOSER_MIN_HEIGHT_PX), composerMaxHeight()))
+  }
+
+  const endResizeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeDragRef.current?.pointerId === event.pointerId) {
+      resizeDragRef.current = null
+    }
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    setManualHeight(null)
+    onSubmit(event)
+  }
 
   return (
     <form
-      onSubmit={onSubmit}
+      onSubmit={handleSubmit}
       className="relative border-t-2 border-black bg-background"
       // The pinned controls (md+) are absolutely positioned and ignore this.
       style={contentInsetLeftPx !== null ? { paddingLeft: contentInsetLeftPx } : undefined}
     >
+      {/* Drag strip over the top border: resize the input by hand;
+          double-click (or the next send) returns it to auto-grow. */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize message input"
+        title="Drag to resize · double-click to reset"
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={endResizeDrag}
+        onPointerCancel={endResizeDrag}
+        onDoubleClick={() => setManualHeight(null)}
+        className="absolute -top-1.5 left-0 right-0 z-10 h-3 cursor-row-resize touch-none select-none hover:bg-foreground/10 active:bg-foreground/15"
+      />
       {error && <div className="whitespace-pre-line px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
       {showBudOfflineNotice && (
