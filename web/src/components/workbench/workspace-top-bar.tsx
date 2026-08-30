@@ -3,7 +3,8 @@ import { FileText, Menu, MessageSquare, Monitor, TerminalIcon } from 'lucide-rea
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export type ViewMode = 'chat' | 'terminal' | 'web' | 'file'
+/** `none` = viewer collapsed (desktop only): chat fills the workspace and no tab is active. */
+export type ViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'none'
 export type WorkbenchStatus =
   | 'idle'
   | 'dispatching'

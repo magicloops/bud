@@ -148,15 +148,22 @@ function ThreadView() {
     ),
   )
   const handleViewChange = useCallback((view: ViewMode) => {
-    setViewMode(view)
-    writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, view)
-  }, [])
+    // Clicking the already-active viewer tab collapses the viewer: chat
+    // fills the workspace on desktop; on mobile it returns to the chat view.
+    const next = view === viewMode && view !== 'chat' ? (isMobile ? 'chat' : 'none') : view
+    setViewMode(next)
+    writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, next)
+  }, [isMobile, viewMode])
   // Growing past md with 'chat' selected: chat is no longer a peer view.
+  // Shrinking below md with the viewer collapsed: 'none' has no mobile
+  // meaning — chat is the single pane.
   useEffect(() => {
     if (!isMobile && viewMode === 'chat') {
       setViewMode(
         resolveInitialViewMode(false, readStoredWorkbenchView(window.localStorage)),
       )
+    } else if (isMobile && viewMode === 'none') {
+      setViewMode('chat')
     }
   }, [isMobile, viewMode])
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
@@ -927,9 +934,11 @@ function ThreadView() {
       leftPane={(
         <div
           ref={chatPaneRef}
-          className={`relative min-h-0 flex-col border-black max-md:w-full md:flex md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)] ${
-            isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'
-          }`}
+          className={`relative min-h-0 flex-col border-black max-md:w-full md:flex ${
+            viewMode === 'none'
+              ? 'md:flex-1'
+              : 'md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)]'
+          } ${isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'}`}
           style={
             {
               backgroundColor: 'var(--chat-bg)',
@@ -952,13 +961,15 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
-          <ChatPaneResizeHandle paneRef={chatPaneRef} onWidthChange={setChatPaneWidth} />
+          {viewMode !== 'none' && (
+            <ChatPaneResizeHandle paneRef={chatPaneRef} onWidthChange={setChatPaneWidth} />
+          )}
         </div>
       )}
       rightPane={(
         <div
           className={`relative flex-1 overflow-hidden ${
-            isMobile && viewMode === 'chat' ? 'hidden' : 'flex'
+            viewMode === 'none' || (isMobile && viewMode === 'chat') ? 'hidden' : 'flex'
           }`}
         >
           <ThreadTerminalPane
