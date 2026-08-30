@@ -523,7 +523,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         // Flat transcript on one background. User rows carry a rail in the
         // per-bud accent; assistant responses answer in mono with a
         // transparent rail of the same width so text columns align.
-        isUser && 'border-l-[3px]',
+        isUser && 'border-l-[3px] text-[15px]',
         isAssistant && 'border-l-[3px] border-transparent font-mono',
       )}
       style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
