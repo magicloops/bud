@@ -275,22 +275,16 @@ const ChatTimelineComponent = ({
 
   return (
     <div ref={setScrollNode} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-      {onLoadOlderMessages && (
+      {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pb-1">
-          {hasOlderMessages ? (
-            <button
-              type="button"
-              onClick={onLoadOlderMessages}
-              disabled={isLoadingOlderMessages}
-              className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
-            </button>
-          ) : visibleMessages.length > 0 ? (
-            <p className="text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
-              Start of transcript
-            </p>
-          ) : null}
+          <button
+            type="button"
+            onClick={onLoadOlderMessages}
+            disabled={isLoadingOlderMessages}
+            className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
+          </button>
         </div>
       )}
       {timelineItems.length === 0 && (
