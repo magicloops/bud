@@ -70,12 +70,17 @@ Message list with auto-scroll and full-height message rendering.
 **Props**:
 - `messages` - Array of ChatMessage
 - optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
+- optional `liveTurnId` / `turnOutcomes` - Agent-work projection inputs (active run's turn id; session-local `final`-event outcomes) owned by the thread route
 - `accentColor` - CSS color for user message accents
 - optional `activityIndicatorVisible` / `activityIndicatorLabel` - Route-owned active-agent footer state rendered after the latest timeline item
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
+- Projects messages through `createTimelineProjector()` (features/threads/agent-work-projection): reasoning, non-question tool calls, and intermediate assistant commentary render as one `AgentWorkGroup` row per turn; user/system/final-assistant/question/compaction rows stay top-level
+- Work-group and per-item expansion state is ephemeral component state keyed by stable projection ids (turn ULIDs — globally unique, never persisted)
+- The bottom-follow `scrollSyncKey` derives from VISIBLE structure only: a collapsed group's hidden detail growth does not trigger auto-scroll; a live group's current step does
+- The generic thinking indicator is suppressed while a live work group is on screen (its header already says "Working…"); labeled states (compaction) and the pre-first-work gap keep it
 - Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
@@ -95,6 +100,30 @@ Message list with auto-scroll and full-height message rendering.
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
 **Note**: Renders the scrollable message area plus non-transcript timeline footers. Parent component provides the container wrapper.
+
+### `agent-work-group.tsx`
+
+One turn's agent work as a disclosure row (design/web-agent-work-collapse.md,
+Option B — progressive collapse).
+
+**Props**: `row: TimelineWorkRow`, `expanded`, `onToggle(rowId)`,
+`expandedItems: ReadonlySet<client_id>`, `onToggleItem(clientId)`.
+
+**Behavior**:
+- Live: header `Working… · <elapsed> · <current step>` (1s ticker mounted
+  only while live; step label from the pending tool / streaming reasoning);
+  only the current step renders beneath the header — finished steps are
+  already folded in. Expanding while live shows the full inline history.
+- Done: header `Worked for <duration>` (`lib/agent-work-duration`) or
+  `Worked`, plus a tool/reasoning count summary; `failed`/`canceled`/
+  `no_final` render as badges on the collapsed row.
+- Expanded body: chronological sections — intermediate assistant commentary
+  as separators, activity items as compact one-line headers (kind label,
+  first-line/arg summary, per-item duration chip) with per-item detail
+  expansion mounting the existing role/tool renderers lazily. Collapsed
+  content is unmounted (deliberate find-in-page stance).
+- `aria-expanded`/`aria-controls` on both disclosure levels;
+  `motion-reduce:transition-none` on chevrons.
 
 ### `thinking-indicator.tsx`
 

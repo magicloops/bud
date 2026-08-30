@@ -21,6 +21,12 @@ import {
   type OpenFileSource,
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
+import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
+import {
+  createTimelineProjector,
+  type TimelineRow,
+  type TurnOutcome,
+} from '@/features/threads/agent-work-projection'
 
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
@@ -58,6 +64,10 @@ function loadJsonViewComponent() {
 type ChatTimelineProps = {
   messages: ChatMessage[]
   notices?: ChatTimelineNotice[]
+  /** The active run's turn id (`agentState.active ? turn_id : null`); keeps its work group live. */
+  liveTurnId?: string | null
+  /** Session-local `final`-event outcomes for failed/canceled badges. */
+  turnOutcomes?: ReadonlyMap<string, TurnOutcome>
   accentColor: string
   activityIndicatorVisible?: boolean
   activityIndicatorLabel?: string
@@ -76,6 +86,8 @@ type ChatTimelineProps = {
 const ChatTimelineComponent = ({
   messages,
   notices = [],
+  liveTurnId = null,
+  turnOutcomes,
   accentColor,
   activityIndicatorVisible = false,
   activityIndicatorLabel,
@@ -106,27 +118,86 @@ const ChatTimelineComponent = ({
     () => (config.showSystemMessages ? messages : messages.filter((message) => message.role !== 'system')),
     [messages],
   )
+
+  // Agent-work projection (design/web-agent-work-collapse.md): one stable
+  // projector instance so unchanged rows keep object identity across renders.
+  const projectorRef = useRef(createTimelineProjector())
+  const timelineRows = useMemo(
+    () =>
+      projectorRef.current({
+        messages: visibleMessages,
+        liveTurnId,
+        ...(turnOutcomes ? { turnOutcomes } : {}),
+      }),
+    [liveTurnId, turnOutcomes, visibleMessages],
+  )
+
+  // Expansion state is ephemeral presentation state keyed by stable
+  // projection ids (turn ULIDs are globally unique, so no cross-thread
+  // collisions; never persisted).
+  const [expandedWork, setExpandedWork] = useState<ReadonlySet<string>>(new Set())
+  const [expandedItems, setExpandedItems] = useState<ReadonlySet<string>>(new Set())
+  const toggleWorkRow = useCallback((rowId: string) => {
+    setExpandedWork((current) => {
+      const next = new Set(current)
+      if (next.has(rowId)) {
+        next.delete(rowId)
+      } else {
+        next.add(rowId)
+      }
+      return next
+    })
+  }, [])
+  const toggleWorkItem = useCallback((clientId: string) => {
+    setExpandedItems((current) => {
+      const next = new Set(current)
+      if (next.has(clientId)) {
+        next.delete(clientId)
+      } else {
+        next.add(clientId)
+      }
+      return next
+    })
+  }, [])
+
   const timelineItems = useMemo(() => {
+    const rowTime = (row: TimelineRow) =>
+      row.kind === 'message'
+        ? row.message.created_at
+        : row.sections[0]?.message.created_at ?? ''
     const items: Array<
-      | { type: 'message'; message: ChatMessage }
+      | { type: 'row'; row: TimelineRow }
       | { type: 'notice'; notice: ChatTimelineNotice }
     > = [
-      ...visibleMessages.map((message) => ({ type: 'message' as const, message })),
+      ...timelineRows.map((row) => ({ type: 'row' as const, row })),
       ...notices.map((notice) => ({ type: 'notice' as const, notice })),
     ]
     items.sort((a, b) => {
-      const aTime = new Date(a.type === 'message' ? a.message.created_at : a.notice.created_at).getTime()
-      const bTime = new Date(b.type === 'message' ? b.message.created_at : b.notice.created_at).getTime()
+      const aTime = new Date(a.type === 'row' ? rowTime(a.row) : a.notice.created_at).getTime()
+      const bTime = new Date(b.type === 'row' ? rowTime(b.row) : b.notice.created_at).getTime()
       return aTime - bTime
     })
     return items
-  }, [notices, visibleMessages])
+  }, [notices, timelineRows])
 
+  // Bottom-follow reacts to VISIBLE structure only: hidden detail growth
+  // inside a collapsed group must not read as a new row.
   const scrollSyncKey = useMemo(() => {
     const lastItem = timelineItems.at(-1)
-    const lastKey = lastItem?.type === 'message'
-      ? `${lastItem.message.client_id}:${lastItem.message.content.length}`
-      : lastItem?.notice.notice_id ?? ''
+    let lastKey = ''
+    if (lastItem?.type === 'notice') {
+      lastKey = lastItem.notice.notice_id
+    } else if (lastItem?.type === 'row') {
+      const row = lastItem.row
+      if (row.kind === 'message') {
+        lastKey = `${row.message.client_id}:${row.message.content.length}`
+      } else if (row.live) {
+        const current = row.currentItem
+        lastKey = `${row.id}:${row.sections.length}:${current?.client_id ?? '-'}:${current?.content.length ?? 0}`
+      } else {
+        lastKey = row.id
+      }
+    }
     const activityKey = activityIndicatorVisible
       ? `activity:${activityIndicatorLabel ?? 'default'}`
       : 'activity:hidden'
@@ -225,22 +296,44 @@ const ChatTimelineComponent = ({
       {timelineItems.length === 0 && (
         <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
-      {timelineItems.map((item) => item.type === 'message' ? (
-        <ChatTimelineMessage
-          key={item.message.client_id}
-          message={item.message}
-          systemColor={systemColor}
-          JsonView={JsonView}
-          ensureJsonViewLoaded={ensureJsonViewLoaded}
-          onOpenFile={onOpenFile}
-          onSubmitQuestionResponse={onSubmitQuestionResponse}
-          questionSubmitError={questionSubmitError}
-        />
-      ) : (
-        <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
-      ))}
+      {timelineItems.map((item) => {
+        if (item.type === 'notice') {
+          return <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
+        }
+        if (item.row.kind === 'work') {
+          return (
+            <AgentWorkGroup
+              key={item.row.id}
+              row={item.row}
+              expanded={expandedWork.has(item.row.id)}
+              onToggle={toggleWorkRow}
+              expandedItems={expandedItems}
+              onToggleItem={toggleWorkItem}
+            />
+          )
+        }
+        return (
+          <ChatTimelineMessage
+            key={item.row.message.client_id}
+            message={item.row.message}
+            systemColor={systemColor}
+            JsonView={JsonView}
+            ensureJsonViewLoaded={ensureJsonViewLoaded}
+            onOpenFile={onOpenFile}
+            onSubmitQuestionResponse={onSubmitQuestionResponse}
+            questionSubmitError={questionSubmitError}
+          />
+        )
+      })}
       <ThinkingIndicator
-        isVisible={activityIndicatorVisible}
+        // A live work group's header already says "Working…"; the generic
+        // indicator only covers the pre-first-work gap and labeled states
+        // (compaction).
+        isVisible={
+          activityIndicatorVisible &&
+          (activityIndicatorLabel !== undefined ||
+            !timelineRows.some((row) => row.kind === 'work' && row.live))
+        }
         label={activityIndicatorLabel}
       />
     </div>
