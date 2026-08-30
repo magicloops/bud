@@ -22,6 +22,9 @@ type CommandComposerProps = {
   disabledReason?: string | null
   environment?: ApiAgentEnvironment | null
   contextBudget?: ApiContextBudget | null
+  /** Aligns composer content with the transcript column above (the
+   *  composer spans the full workspace width; the chat pane does not). */
+  contentInsetLeftPx?: number | null
 }
 
 export function CommandComposer({
@@ -39,6 +42,7 @@ export function CommandComposer({
   disabledReason = null,
   environment = null,
   contextBudget,
+  contentInsetLeftPx = null,
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
@@ -90,7 +94,12 @@ export function CommandComposer({
   }, [messageText])
 
   return (
-    <form onSubmit={onSubmit} className="relative border-t-2 border-black bg-background">
+    <form
+      onSubmit={onSubmit}
+      className="relative border-t-2 border-black bg-background"
+      // The pinned controls (md+) are absolutely positioned and ignore this.
+      style={contentInsetLeftPx !== null ? { paddingLeft: contentInsetLeftPx } : undefined}
+    >
       {error && <div className="whitespace-pre-line px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
       {showBudOfflineNotice && (
