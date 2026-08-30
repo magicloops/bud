@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Brain, ChevronRight, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getRoleContentRenderer, getToolContentRenderer } from '@/components/message-renderers'
 import { formatWorkDuration } from '@/lib/agent-work-duration'
@@ -115,9 +115,7 @@ const SummaryHeaderLabel = ({ row }: { row: TimelineWorkRow }) => (
     <span className="font-semibold text-foreground">
       {row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}
     </span>
-    <span className="normal-case">
-      {summarizeSections(row.sections)}
-    </span>
+    <SectionCounts sections={row.sections} />
     {row.status === 'failed' && <StatusBadge tone="destructive">Failed</StatusBadge>}
     {row.status === 'canceled' && <StatusBadge tone="muted">Canceled</StatusBadge>}
     {row.status === 'no_final' && <StatusBadge tone="muted">Ended early</StatusBadge>}
@@ -281,7 +279,7 @@ const itemSummary = (message: ApiMessage): string => {
   return firstLine.replace(/^[#>*\-`_\s]+/, '').trim()
 }
 
-const summarizeSections = (sections: TimelineWorkSection[]): string => {
+const SectionCounts = ({ sections }: { sections: TimelineWorkSection[] }) => {
   let tools = 0
   let reasoning = 0
   for (const section of sections) {
@@ -294,14 +292,33 @@ const summarizeSections = (sections: TimelineWorkSection[]): string => {
       reasoning += 1
     }
   }
-  const parts: string[] = []
-  if (tools > 0) {
-    parts.push(`${tools} tool ${tools === 1 ? 'call' : 'calls'}`)
+  if (tools === 0 && reasoning === 0) {
+    return null
   }
-  if (reasoning > 0) {
-    parts.push(`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`)
-  }
-  return parts.join(', ')
+  return (
+    <span className="flex items-center gap-2 normal-case">
+      {tools > 0 && (
+        <span
+          className="flex items-center gap-1"
+          aria-label={`${tools} tool ${tools === 1 ? 'call' : 'calls'}`}
+          title={`${tools} tool ${tools === 1 ? 'call' : 'calls'}`}
+        >
+          <Wrench aria-hidden className="h-3 w-3" />
+          {tools}
+        </span>
+      )}
+      {reasoning > 0 && (
+        <span
+          className="flex items-center gap-1"
+          aria-label={`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`}
+          title={`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`}
+        >
+          <Brain aria-hidden className="h-3 w-3" />
+          {reasoning}
+        </span>
+      )}
+    </span>
+  )
 }
 
 // Same resolution the timeline row uses: canonical tool rows keep the payload
