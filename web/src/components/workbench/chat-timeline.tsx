@@ -281,7 +281,7 @@ const ChatTimelineComponent = ({
     <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
       {/* Gutters keyed to the pane's own width (it's drag-resizable), not
           the viewport: they appear once the pane is @md (28rem) or wider. */}
-      <div className="p-2 @md:px-[30px]">
+      <div className="mx-auto w-full max-w-[940px] p-2 @md:px-[30px]">
       {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pt-3 pb-2">
           <button
