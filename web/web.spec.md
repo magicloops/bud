@@ -177,10 +177,10 @@ weight, the chrome stays quiet.
   inputs/send button, rail/nav buttons, thread cards
 - The transcript is a flat full-width layout on one surface (the
   composer's `--background`) — no bubbles, borders, rounding, shadows, or
-  per-row backgrounds. User rows keep the base text style with a solid
-  foreground (black-in-light) left rail; assistant responses answer in
-  mono with a left rail in the per-bud accent (`--bud-accent-vibrant`),
-  so the eye lands on the message text, not the chrome
+  per-row backgrounds. User rows are plain base text; the agent side —
+  assistant responses in mono, agent-work groups — carries a 3px left
+  rail in the per-bud accent (`--bud-accent-vibrant`), so the eye lands
+  on the message text, not the chrome
 - High contrast colors, monospace labels, and both light/dark themes
   unchanged (softened borders use the theme token, never black-opacity)
 
