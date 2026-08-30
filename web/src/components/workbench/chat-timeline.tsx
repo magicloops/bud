@@ -500,12 +500,13 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       className={cn(
         'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground',
         // Flat full-width transcript: no bubbles, borders, or shadows — the
-        // background alone says who is speaking. User rows sit on the raised
-        // --chat-message surface; agent rows share the composer's
-        // --background so the agent side and the input read as one surface.
+        // background alone says who is speaking. User rows share the ambient
+        // --chat-bg (same surface as the top bar and thread list); agent rows
+        // share the composer's --background so agent output and the input
+        // read as one surface.
         !isUser && 'bg-background',
       )}
-      style={isUser ? { backgroundColor: 'var(--chat-message)' } : undefined}
+      style={isUser ? { backgroundColor: 'var(--chat-bg)' } : undefined}
     >
       <button
         type="button"
