@@ -3,6 +3,8 @@ import type { ThreadSummary } from '@/components/workbench/thread-panel'
 import type { ApiThread } from '@/lib/api-types'
 
 export type BudRouteContextValue = {
+  /** Active bud's human label (display_name ?? name); null before resolution. */
+  budLabel: string | null
   threads: ThreadSummary[]
   upsertThreadSummary: (thread: ApiThread | ThreadSummary) => void
   patchThreadSummary: (threadId: string, patch: Partial<ThreadSummary>) => void

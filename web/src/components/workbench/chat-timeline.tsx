@@ -21,6 +21,7 @@ import {
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 import { useAuthSession } from '@/contexts/auth-session-context'
+import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
   createTimelineProjector,
@@ -101,6 +102,7 @@ const ChatTimelineComponent = ({
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
   const { currentUser } = useAuthSession()
+  const { budLabel } = useBudRouteContext()
   // User rows label with the viewer's first name, falling back to their
   // chosen username, then the generic role.
   const userName =
@@ -316,6 +318,7 @@ const ChatTimelineComponent = ({
             key={item.row.message.client_id}
             message={item.row.message}
             userName={userName}
+            budName={budLabel}
             JsonView={JsonView}
             ensureJsonViewLoaded={ensureJsonViewLoaded}
             onOpenFile={onOpenFile}
@@ -343,9 +346,13 @@ const ChatTimelineComponent = ({
 export const ChatTimeline = memo(ChatTimelineComponent)
 ChatTimeline.displayName = 'ChatTimeline'
 
+const capitalize = (label: string): string =>
+  label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label
+
 type ChatTimelineMessageProps = {
   message: ChatMessage
   userName: string | null
+  budName: string | null
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -359,6 +366,7 @@ type ChatTimelineMessageProps = {
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
   message,
   userName,
+  budName,
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
@@ -436,8 +444,8 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   if (isSystem) {
     return (
       <article className="bg-muted/30 px-4 py-2 text-xs italic text-muted-foreground">
-        <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
-          <span>{message.display_role || 'System'}</span>
+        <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
+          <span>{capitalize(message.display_role || 'System')}</span>
           <time>{timeLabel}</time>
         </div>
         <p>{message.content}</p>
@@ -533,13 +541,15 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
 
-      <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono uppercase text-muted-foreground">
+      <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
         <span>
           {isTool
             ? `Tool • ${toolName}`
             : isUser
-              ? userName ?? (message.display_role || 'User')
-              : message.display_role || message.role}
+              ? capitalize(userName ?? (message.display_role || 'User'))
+              : isAssistant
+                ? capitalize(budName ?? (message.display_role || 'Assistant'))
+                : capitalize(message.display_role || message.role)}
         </span>
         <time>{timeLabel}</time>
       </div>

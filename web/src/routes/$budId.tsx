@@ -295,6 +295,7 @@ function BudLayout() {
         )}
         <BudRouteContext.Provider
           value={{
+            budLabel: activeBudProfile?.label ?? null,
             threads,
             upsertThreadSummary,
             patchThreadSummary,
