@@ -20,6 +20,7 @@ import {
   type OpenFileSource,
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
+import { useAuthSession } from '@/contexts/auth-session-context'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
   createTimelineProjector,
@@ -99,6 +100,11 @@ const ChatTimelineComponent = ({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
+  const { currentUser } = useAuthSession()
+  // User rows label with the viewer's first name, falling back to their
+  // chosen username, then the generic role.
+  const userName =
+    currentUser?.user.name.trim().split(/\s+/)[0] || currentUser?.profile.username || null
 
   const setScrollNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -309,6 +315,7 @@ const ChatTimelineComponent = ({
           <ChatTimelineMessage
             key={item.row.message.client_id}
             message={item.row.message}
+            userName={userName}
             JsonView={JsonView}
             ensureJsonViewLoaded={ensureJsonViewLoaded}
             onOpenFile={onOpenFile}
@@ -338,6 +345,7 @@ ChatTimeline.displayName = 'ChatTimeline'
 
 type ChatTimelineMessageProps = {
   message: ChatMessage
+  userName: string | null
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -350,6 +358,7 @@ type ChatTimelineMessageProps = {
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
   message,
+  userName,
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
@@ -525,7 +534,13 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       </button>
 
       <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono uppercase text-muted-foreground">
-        <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
+        <span>
+          {isTool
+            ? `Tool • ${toolName}`
+            : isUser
+              ? userName ?? (message.display_role || 'User')
+              : message.display_role || message.role}
+        </span>
         <time>{timeLabel}</time>
       </div>
       <div>{contentNode}</div>
