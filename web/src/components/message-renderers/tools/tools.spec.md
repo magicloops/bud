@@ -36,10 +36,10 @@ Renders the revised terminal tool contract:
 - `payload.outcome` / `payload.waited_ms` / `payload.exit_code` - Wait result metadata for `terminal.wait`
 
 **Rendering**:
-- `terminal.send` (`kind:"command"`): the command card — exit chip / still-running badge, duration, output excerpt (historical `terminal.run` rows render the same way)
+- `terminal.send` (`kind:"command"`): the command card — exit chip / still-running badge / interactive badge, duration, output excerpt, and the launch-proof `delta` screen block for `status:"interactive"` / `input_absorbed` results (historical `terminal.run` rows render the same way)
 - `terminal.send` (`kind:"interaction_ack"`): compact delta-first card showing the typed text or key, input dispatch state, and any visible delta excerpt
 - `terminal.observe`: dashed observation badge
-- `terminal.wait`: dashed badge "Waited <duration>: <outcome label>" (settled / command finished (exit N) / back at the prompt / nothing to wait for / still busy / interrupted / ended by a new message) with the mode chip
+- `terminal.wait`: dashed badge "Waited <duration>: <outcome label>" (settled / output stopped changing / no activity — program looks idle / command finished (exit N) / back at the prompt / nothing to wait for / still busy / interrupted / ended by a new message) with the mode chip
 
 **Example Outputs**:
 ```text

@@ -86,10 +86,19 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   comes from a 100ms poll over quiet+UNSEEN persistence (delta vs the
   observe baseline, window `quiet_ms` default `STALL_QUIET_MS` 1500) — an
   at-prompt shell's quiet point emits no event, so events alone cannot
-  drive it; animation resets the timer and silent programs never trip it.
+  drive it; animation resets the timer.
+  **Active hold**: whenever the wait would otherwise hold, a static clock
+  runs against the VISIBLE grid (`screen_lines()` comparison, not damage —
+  identical redraws are static, cursor blink is not content); a grid
+  unchanged for `WAIT_STATIC_CAP` (10s) resolves `no_activity`
+  (`data.static_ms`) — the long budget covers a visibly CHANGING terminal
+  (spinner, progress bar, streaming output), never a static one
+  (design/terminal-launch-proof-and-active-wait.md). Trade-off, accepted:
+  a program working with no painting at all returns `no_activity` per wait
+  instead of holding to its boundary.
   Start snapshot: quiet+unseen → `stalled` immediate; quiet+seen+nothing
-  open → `settled` immediate; quiet+seen+open → hold (re-waiting after a
-  stall is free). Same 4h cap.  Command-waits resolve `idle` immediately with nothing open. Same 4h cap.
+  open → `settled` immediate; quiet+seen+open → hold with the static clock
+  running. Same 4h cap.
 - `handle_input`: raw browser keyboard bytes written verbatim to the PTY.
 - `handle_resize` / `handle_close`: stem resize (+ status with new geometry).
   Width SHRINKS are deferred while `SessionFacts::input_pending_at_prompt`

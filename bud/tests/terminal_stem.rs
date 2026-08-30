@@ -2866,3 +2866,149 @@ async fn unified_send_into_program_waits_for_its_reply_to_settle() {
     );
     let _ = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
 }
+
+/// Active-hold wait: a wait against an open program whose screen is visually
+/// static cedes control with `no_activity` after WAIT_STATIC_CAP (10 s) —
+/// the long wait budget is for a CHANGING terminal, never a static one.
+#[tokio::test]
+async fn wait_returns_no_activity_on_a_static_open_program() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-wait-static";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    let (result, _) = send_auto_result(
+        &manager,
+        &mut rx,
+        session_id,
+        "req-launch",
+        &format!("python3 {} 0.3", script.display()),
+    )
+    .await;
+    assert_eq!(
+        result["outcome"]["event"], "interactive_started",
+        "{result}"
+    );
+
+    // Mark the idle TUI screen as seen: the hold case is quiet + seen + open
+    // (unseen quiet content is an immediate stall, a different path).
+    manager
+        .handle_observe(observe_frame(session_id, "req-baseline", "screen"))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "baseline observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-baseline")
+    })
+    .await;
+
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(session_id, "req-wait", TerminalSendAwait::Settled, None),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "no_activity wait", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait")
+    })
+    .await;
+    let elapsed = started.elapsed();
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("no_activity"),
+        "{result:?}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(9500) && elapsed < Duration::from_secs(15),
+        "static wait must cede control at ~WAIT_STATIC_CAP, took {elapsed:?}"
+    );
+    assert!(
+        result
+            .pointer("/outcome/data/static_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            >= 10_000,
+        "{result:?}"
+    );
+    let _ = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
+}
+
+/// Active-hold wait: visible changes (an animated working indicator) reset
+/// the static clock, so the wait holds through an animation LONGER than
+/// WAIT_STATIC_CAP and then resolves `stalled` once the reply goes quiet.
+#[tokio::test]
+async fn wait_holds_through_animation_then_stalls_on_the_reply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-wait-anim";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    // 12 s working animation: longer than the 10 s static cap.
+    let (result, _) = send_auto_result(
+        &manager,
+        &mut rx,
+        session_id,
+        "req-launch",
+        &format!("python3 {} 0.3 12.0", script.display()),
+    )
+    .await;
+    assert_eq!(
+        result["outcome"]["event"], "interactive_started",
+        "{result}"
+    );
+    manager
+        .handle_observe(observe_frame(session_id, "req-baseline", "screen"))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "baseline observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-baseline")
+    })
+    .await;
+
+    // Dispatch-only send (no await): the wait below, not the send, rides out
+    // the animation.
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-ping".into(),
+            text: Some("ping".into()),
+            submit: Some(true),
+            key: None,
+            r#await: None,
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "ping dispatched", |f| {
+        is_result_for(f, "terminal_send_result", "req-ping")
+    })
+    .await;
+
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(session_id, "req-wait", TerminalSendAwait::Settled, None),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(18), "stalled wait", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait")
+    })
+    .await;
+    let elapsed = started.elapsed();
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("stalled"),
+        "{result:?}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(10_500),
+        "the static cap must not fire mid-animation, took {elapsed:?}"
+    );
+    assert!(
+        decoded_output(&result).contains("GOT: ping"),
+        "the stalled snapshot carries the reply: {:?}",
+        decoded_output(&result)
+    );
+    let _ = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
+}

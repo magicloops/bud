@@ -53,15 +53,17 @@ type TerminalSendGestureResolution =
     };
 
 const INTERACTIVE_STARTED_NOTE =
-  "The command launched an interactive program and it is now ready for input (it painted its UI " +
-  "and went quiet; it will not finish on its own). Drive it with further terminal.send calls, wait " +
-  "for it to finish working with terminal.wait, inspect it with terminal.observe, and exit it (its " +
-  'own quit command, or terminal.send key "ctrl+c") before running further shell commands.';
+  "The command launched an interactive program (it painted its UI and went quiet; it will not " +
+  "finish on its own). The delta shows what it painted — read it before typing: freshly launched " +
+  "programs often show an intermediate prompt (trust/consent/login/update) before their real input " +
+  "surface, and selector prompts are answered with keys, not pasted text. Drive it with further " +
+  "terminal.send calls, wait for it to finish working with terminal.wait, and exit it (its own " +
+  'quit command, or terminal.send key "ctrl+c") before running further shell commands.';
 
 const INTERACTIVE_NOT_READY_NOTE =
   "The command launched an interactive program, but it had not painted a UI and gone quiet within " +
-  "the readiness window. It may still be starting. Use terminal.wait (returns when output stops " +
-  "changing) before sending it input; terminal.observe shows the current screen.";
+  "the readiness window. It may still be starting; the delta shows whatever it has painted so far. " +
+  "Use terminal.wait (returns when output stops changing) before sending it input.";
 
 const STILL_RUNNING_NOTE =
   "The command has not finished within the service wait budget and is still running in the terminal. " +
@@ -70,8 +72,8 @@ const STILL_RUNNING_NOTE =
 
 const INPUT_ABSORBED_NOTE =
   "The text was typed, but no shell command started: the shell ran nothing (or a foreground program " +
-  "consumed the input). Nothing is being awaited. Use terminal.observe to see what the terminal shows " +
-  "now, then continue with terminal.send.";
+  "consumed the input). Nothing is being awaited. The delta shows what the terminal shows now; " +
+  "continue with terminal.send.";
 
 const PROGRAM_NOT_READY_NOTE =
   "The foreground program had not painted a UI and gone quiet within the readiness window, so the " +
@@ -98,6 +100,11 @@ const WAIT_STALLED_NOTE =
   "input or finished a step. Read the output above; if it asked a question, answer with " +
   "terminal.send. Calling terminal.wait again is safe: it holds until new activity or the command " +
   "actually ends.";
+
+const WAIT_NO_ACTIVITY_NOTE =
+  "Nothing happened during the wait and the screen is unchanged. The program is most likely idle " +
+  "and awaiting input — look at the screen and act. Only wait again if you have a concrete reason " +
+  "to believe it is working without painting anything.";
 
 const WAIT_CLOSED_NOTE =
   "The terminal session's root process exited while waiting; the session is closed.";
@@ -216,6 +223,7 @@ export class TerminalToolExecutor {
           ...(result.commandId !== undefined ? { command_id: result.commandId } : {}),
           ...(result.exitCode !== undefined ? { exit_code: result.exitCode } : {}),
           ...(result.durationMs !== undefined ? { duration_ms: result.durationMs } : {}),
+          ...(result.delta !== undefined ? { delta: serializeTerminalDelta(result.delta) } : {}),
           ...(result.output !== undefined ? { output: result.output } : {}),
           ...(result.outputBytes !== undefined ? { output_bytes: result.outputBytes } : {}),
           ...(result.truncated !== undefined ? { truncated: result.truncated } : {}),
@@ -542,25 +550,35 @@ export class TerminalToolExecutor {
         painted?: boolean;
       };
       const ready = data.ready !== false;
+      // Launch proof: what the program painted (a trust prompt, a login
+      // screen, its real input surface) — the agent reads this before typing.
+      const proof = await this.captureDeltaProof(sessionId, "terminal.send launch delta");
       return {
         kind: "command",
         status: "interactive",
         commandId: typeof data.command_id === "string" ? data.command_id : null,
         readiness: { ready, painted: data.painted === true || ready },
-        note: ready ? INTERACTIVE_STARTED_NOTE : INTERACTIVE_NOT_READY_NOTE,
+        delta: proof.delta,
+        note: [ready ? INTERACTIVE_STARTED_NOTE : INTERACTIVE_NOT_READY_NOTE, proof.failureNote]
+          .filter(Boolean)
+          .join(" "),
         ...gateFacts,
         ...this.sessionContextFacts(sessionId),
+        ...proof.observeFacts,
         openCommand: await this.resolveOpenCommand(sessionId),
       };
     }
     if (outcome && outcome.event === "input_absorbed") {
+      const proof = await this.captureDeltaProof(sessionId, "terminal.send absorbed delta");
       return {
         kind: "command",
         status: "input_absorbed",
         commandId: null,
-        note: INPUT_ABSORBED_NOTE,
+        delta: proof.delta,
+        note: [INPUT_ABSORBED_NOTE, proof.failureNote].filter(Boolean).join(" "),
         ...gateFacts,
         ...this.sessionContextFacts(sessionId),
+        ...proof.observeFacts,
         openCommand: await this.resolveOpenCommand(sessionId),
       };
     }
@@ -605,6 +623,47 @@ export class TerminalToolExecutor {
       ...observeFacts,
       openCommand: await this.resolveOpenCommand(sessionId),
     };
+  }
+
+  /**
+   * Send-plus-proof for command-shaped send results (interactive launches,
+   * absorbed input): capture the settled screen delta and observe facts so
+   * the model sees what the terminal shows. Failure degrades to a note —
+   * the send result itself still returns.
+   */
+  private async captureDeltaProof(
+    sessionId: string,
+    label: string,
+  ): Promise<{
+    delta: TerminalCallResult["delta"];
+    observeFacts: Partial<TerminalCallResult>;
+    failureNote?: string;
+  }> {
+    try {
+      const capture = await this.terminalSessionManager.observeTerminal(sessionId, {
+        view: "delta",
+      });
+      this.logTerminalOutput(label, capture.output);
+      return {
+        delta: { changed: capture.changed ?? capture.output.length > 0, text: capture.output },
+        observeFacts: {
+          ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
+          ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
+          ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+        },
+      };
+    } catch (err) {
+      this.logger.warn(
+        { err, sessionId, component: "agent" },
+        "Post-send delta observation failed",
+      );
+      return {
+        delta: null,
+        observeFacts: {},
+        failureNote:
+          "The follow-up delta observation failed; use terminal.observe to inspect the screen.",
+      };
+    }
   }
 
   /** Daemon capability check; managers without the method (tests) count as modern. */
@@ -803,6 +862,7 @@ export class TerminalToolExecutor {
     const waitOutcome: TerminalWaitOutcome =
       outcomeEvent === "settled" ||
       outcomeEvent === "stalled" ||
+      outcomeEvent === "no_activity" ||
       outcomeEvent === "command_finished" ||
       outcomeEvent === "prompt_ready" ||
       outcomeEvent === "idle" ||
@@ -818,11 +878,13 @@ export class TerminalToolExecutor {
       ? LEGACY_DAEMON_WAIT_NOTE
       : waitOutcome === "stalled"
         ? WAIT_STALLED_NOTE
-        : waitOutcome === "idle"
-          ? WAIT_IDLE_NOTE
-          : waitOutcome === "closed"
-            ? WAIT_CLOSED_NOTE
-            : undefined;
+        : waitOutcome === "no_activity"
+          ? WAIT_NO_ACTIVITY_NOTE
+          : waitOutcome === "idle"
+            ? WAIT_IDLE_NOTE
+            : waitOutcome === "closed"
+              ? WAIT_CLOSED_NOTE
+              : undefined;
 
     this.logTerminalOutput("terminal.wait delta", capture.output);
     const capped = capObservedOutput(capture.output);
@@ -998,6 +1060,11 @@ export class TerminalToolExecutor {
             return `Waited ${waited ?? "for the budget"}; the terminal is still busy`;
           case "stalled":
             return `Waited ${waited ?? ""}; output stopped changing — look at it`.replace("  ", " ");
+          case "no_activity":
+            return `Waited ${waited ?? ""}; nothing happened — the program looks idle`.replace(
+              "  ",
+              " ",
+            );
           case "idle":
             return "Nothing to wait for: the terminal is idle at a prompt";
           case "closed":

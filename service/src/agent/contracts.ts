@@ -68,13 +68,18 @@ export type AgentToolCallDirective =
  * boundaries; `stalled` means activity during the wait went quiet for the
  * stall window (a TUI question, a finished step — look at the output);
  * `settled` means the terminal was already idle with nothing new;
- * `timeout` = the service budget expired (call again); `interrupted` = a
- * human interrupted the terminal; `superseded` = a follow-up user message
- * ended the turn. `idle` only arrives from pre-knobless daemons.
+ * `no_activity` means the visible screen stayed static for the daemon's
+ * static cap (~10 s) while a program was open — the long wait budget only
+ * covers a CHANGING terminal, so a static one cedes control (the program is
+ * most likely idle awaiting input); `timeout` = the service budget expired
+ * (call again); `interrupted` = a human interrupted the terminal;
+ * `superseded` = a follow-up user message ended the turn. `idle` only
+ * arrives from pre-knobless daemons.
  */
 export type TerminalWaitOutcome =
   | "settled"
   | "stalled"
+  | "no_activity"
   | "command_finished"
   | "prompt_ready"
   | "idle"
@@ -122,7 +127,8 @@ export type TerminalDeltaSnapshot = {
  *   slice. `status: "still_running"` means the service wait budget expired
  *   before `command_finished` (normal, not a failure); `status:
  *   "interactive"` means the command launched a program that is now READY
- *   for input (painted + quiet) — drive it with further sends.
+ *   for input (painted + quiet) — `delta` carries the launch proof (what the
+ *   program painted: read it before typing into it).
  * - `kind: "interaction_ack"` — the input went to a running program;
  *   dispatch acknowledgement plus a settled screen delta.
  * - `kind: "observation"` — terminal.observe; grid-backed screen/delta/history.
