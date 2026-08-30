@@ -73,8 +73,8 @@ export function CommandComposer({
 
   // Auto-grow (value-driven, not event-driven, so clearing after a send
   // and programmatic changes also resize): rests at one line on phones /
-  // md:min-h-28 on desktop, grows with content, caps at ~40% of the
-  // visual viewport (480px absolute) and scrolls internally beyond that.
+  // md:min-h-28 on desktop, grows with content, caps at 3/4 of the
+  // visual viewport (1000px absolute) and scrolls internally beyond that.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   useEffect(() => {
     const el = textareaRef.current
@@ -83,7 +83,7 @@ export function CommandComposer({
     }
     el.style.height = 'auto'
     const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-    const max = Math.min(Math.round(viewportHeight * 0.4), 480)
+    const max = Math.min(Math.round(viewportHeight * 0.75), 1000)
     const next = Math.min(el.scrollHeight, max)
     el.style.height = `${next}px`
     el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
