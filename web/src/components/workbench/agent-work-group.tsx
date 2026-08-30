@@ -113,7 +113,7 @@ const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
 const SummaryHeaderLabel = ({ row }: { row: TimelineWorkRow }) => (
   <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] tracking-wide text-muted-foreground">
     <span className="font-semibold text-foreground">
-      {row.durationMs !== null ? `worked for ${formatWorkDuration(row.durationMs)}` : 'worked'}
+      {row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}
     </span>
     <SectionCounts sections={row.sections} />
     {row.status === 'failed' && <StatusBadge tone="destructive">Failed</StatusBadge>}
