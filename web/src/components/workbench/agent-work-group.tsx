@@ -44,7 +44,7 @@ const AgentWorkGroupComponent = ({
         onClick={() => onToggle(row.id)}
         aria-expanded={expanded}
         aria-controls={bodyId}
-        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
+        className="flex w-full items-center gap-2 px-4 py-1.5 text-left"
       >
         <ChevronRight
           className={cn(
@@ -55,12 +55,12 @@ const AgentWorkGroupComponent = ({
         {row.live ? <LiveHeaderLabel row={row} /> : <SummaryHeaderLabel row={row} />}
       </button>
       {showCurrentItem && row.currentItem && (
-        <div className="px-2.5 py-1.5 pl-8">
+        <div className="px-4 py-1.5 pl-9">
           <WorkItemDetail message={row.currentItem} isStreaming />
         </div>
       )}
       {expanded && (
-        <div id={bodyId} className="space-y-1.5 px-2.5 py-1.5 pl-8">
+        <div id={bodyId} className="space-y-1.5 px-4 py-1.5 pl-9">
           {row.sections.map((section) => (
             <WorkSectionRow
               key={section.message.client_id}

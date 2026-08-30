@@ -2,7 +2,6 @@ import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, u
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
-import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import {
   ThinkingIndicator,
@@ -68,7 +67,6 @@ type ChatTimelineProps = {
   liveTurnId?: string | null
   /** Session-local `final`-event outcomes for failed/canceled badges. */
   turnOutcomes?: ReadonlyMap<string, TurnOutcome>
-  accentColor: string
   activityIndicatorVisible?: boolean
   activityIndicatorLabel?: string
   hasOlderMessages?: boolean
@@ -88,7 +86,6 @@ const ChatTimelineComponent = ({
   notices = [],
   liveTurnId = null,
   turnOutcomes,
-  accentColor,
   activityIndicatorVisible = false,
   activityIndicatorLabel,
   hasOlderMessages = false,
@@ -102,7 +99,6 @@ const ChatTimelineComponent = ({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
-  const systemColor = getMutedColor(resolveCssVar(accentColor || 'var(--avatar-3)'), 0.4)
 
   const setScrollNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -274,9 +270,9 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+    <div ref={setScrollNode} className="min-h-0 flex-1 overflow-y-auto">
       {onLoadOlderMessages && hasOlderMessages && (
-        <div className="flex justify-center pb-1">
+        <div className="flex justify-center pt-3 pb-2">
           <button
             type="button"
             onClick={onLoadOlderMessages}
@@ -288,7 +284,7 @@ const ChatTimelineComponent = ({
         </div>
       )}
       {timelineItems.length === 0 && (
-        <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
       {timelineItems.map((item) => {
         if (item.type === 'notice') {
@@ -310,7 +306,6 @@ const ChatTimelineComponent = ({
           <ChatTimelineMessage
             key={item.row.message.client_id}
             message={item.row.message}
-            systemColor={systemColor}
             JsonView={JsonView}
             ensureJsonViewLoaded={ensureJsonViewLoaded}
             onOpenFile={onOpenFile}
@@ -339,7 +334,6 @@ ChatTimeline.displayName = 'ChatTimeline'
 
 type ChatTimelineMessageProps = {
   message: ChatMessage
-  systemColor: string
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -352,7 +346,6 @@ type ChatTimelineMessageProps = {
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
   message,
-  systemColor,
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
@@ -366,7 +359,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
   const isSystem = message.role === 'system'
-  const isReasoning = message.role === 'reasoning'
   const isAssistant = message.role === 'assistant' && !isTool
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
   const payload = isTool ? resolveToolPayload(message) : null
@@ -394,15 +386,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       })()
     : undefined
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
-  const backgroundColor = isUser ? 'var(--chat-message)' : undefined
-  const assistantBackground = isAssistant || isTool || isReasoning ? 'var(--chat-message)' : undefined
-  const accentStyles =
-    isUser && systemColor
-      ? {
-          borderColor: systemColor,
-          boxShadow: `2px 2px 0 ${systemColor}`,
-        }
-      : undefined
 
   useEffect(() => {
     return () => {
@@ -439,7 +422,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   if (isSystem) {
     return (
-      <article className="rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 px-3 py-2 text-xs italic text-muted-foreground">
+      <article className="bg-muted/30 px-4 py-2 text-xs italic text-muted-foreground">
         <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
           <span>{message.display_role || 'System'}</span>
           <time>{timeLabel}</time>
@@ -514,21 +497,11 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   return (
     <article
-      className={cn(
-        'group/message relative rounded-lg p-2.5 text-sm leading-relaxed',
-        // The user↔assistant loop carries the visual weight: user rows keep
-        // the neobrutalist card (solid border + small hard shadow); agent
-        // rows sit flat on a thin theme-aware border so more context fits
-        // on screen and the eye lands on the conversation, not the chrome.
-        isUser
-          ? 'border-2 border-black text-card-foreground shadow-[2px_2px_0px_rgba(0,0,0,1)]'
-          : 'border border-border/60 text-foreground',
-        (isAssistant || isTool || isReasoning) && 'bg-background',
-      )}
-      style={{
-        backgroundColor: backgroundColor ?? assistantBackground,
-        ...(accentStyles ?? {}),
-      }}
+      className="group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground"
+      // Flat full-width transcript: no bubbles, borders, or shadows — the
+      // background alone says who is speaking. User rows sit on the raised
+      // --chat-message surface; agent rows stay on the ambient --chat-bg.
+      style={isUser ? { backgroundColor: 'var(--chat-message)' } : undefined}
     >
       <button
         type="button"
@@ -561,7 +534,7 @@ function ChatTimelineNoticeRow({ notice }: { notice: ChatTimelineNotice }) {
   const tokenLabel = formatCompactionNoticeTokens(notice)
 
   return (
-    <div className="flex items-center gap-3 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-center gap-3 px-4 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
       <div className="h-px flex-1 bg-black/15" />
       <div className="rounded-full border border-black/20 bg-background/70 px-3 py-1 shadow-sm">
         <span className={cn('font-semibold', isFailed ? 'text-destructive' : 'text-foreground')}>

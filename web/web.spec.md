@@ -173,13 +173,13 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 Quasi-neobrutalist patterns (2026-08 density pass): the loop carries the
 weight, the chrome stays quiet.
 - Solid black borders and small hard shadows (`border-2`,
-  `shadow-[2px_2px_0…]`) reserved for focal interactive surfaces: user
-  message cards, the composer inputs/send button, rail/nav buttons
-- Agent-side transcript surfaces (assistant/tool/reasoning rows) sit flat
-  on thin theme-aware `border-border` lines — no shadows — so more context
-  fits per screen and the user↔assistant loop reads first; agent-work
-  groups go further and render chromeless (no border or background), just
-  an indented header + detail block
+  `shadow-[2px_2px_0…]`) reserved for interactive chrome: the composer
+  inputs/send button, rail/nav buttons, thread cards
+- The transcript itself is a flat full-width band layout — no bubbles,
+  borders, rounding, or shadows on messages. Background alone signals the
+  speaker: user rows sit on the raised `--chat-message` surface, agent
+  rows (assistant/tool/reasoning, agent-work groups) stay on the ambient
+  `--chat-bg`, so the eye lands on the message text, not the chrome
 - High contrast colors, monospace labels, and both light/dark themes
   unchanged (softened borders use the theme token, never black-opacity)
 

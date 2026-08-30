@@ -933,7 +933,6 @@ function ThreadView() {
             notices={contextCompactionNotices}
             liveTurnId={liveTurnId}
             turnOutcomes={turnOutcomes}
-            accentColor="var(--bud-accent-vibrant)"
             activityIndicatorVisible={activityIndicatorVisible}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
             hasOlderMessages={messagePage.has_more_before}
