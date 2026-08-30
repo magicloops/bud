@@ -38,10 +38,7 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    <section
-      className="rounded-lg border border-border/60 text-sm"
-      style={{ backgroundColor: 'var(--chat-message)' }}
-    >
+    <section className="text-sm">
       <button
         type="button"
         onClick={() => onToggle(row.id)}
@@ -58,12 +55,12 @@ const AgentWorkGroupComponent = ({
         {row.live ? <LiveHeaderLabel row={row} /> : <SummaryHeaderLabel row={row} />}
       </button>
       {showCurrentItem && row.currentItem && (
-        <div className="border-t border-border/40 px-2.5 py-1.5">
+        <div className="px-2.5 py-1.5 pl-8">
           <WorkItemDetail message={row.currentItem} isStreaming />
         </div>
       )}
       {expanded && (
-        <div id={bodyId} className="space-y-1.5 border-t border-border/40 px-2.5 py-1.5">
+        <div id={bodyId} className="space-y-1.5 px-2.5 py-1.5 pl-8">
           {row.sections.map((section) => (
             <WorkSectionRow
               key={section.message.client_id}
