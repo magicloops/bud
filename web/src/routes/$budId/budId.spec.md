@@ -112,6 +112,7 @@ loader: async ({ params }) => {
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
    - Timeline row UI state (copy/payload) is message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
    - Passes active-agent indicator state into `ChatTimeline` so thinking/compaction feedback renders as a non-transcript footer beneath the latest message instead of as an external sibling
+   - Owns the agent-work collapse inputs: `liveTurnId` (from loader/bootstrap agent state, noted on `tool_call`/`reasoning_start`/`message_start` events, cleared by that turn's `final`) and session-local `turnOutcomes` from `final` events (reset on thread switch); both are passed into `ChatTimeline` for the work-group projection
 
 2. **Terminal Integration**
    - Delegates xterm/session/reconnect ownership to `useTerminalSession(...)` in `web/src/features/threads/`
