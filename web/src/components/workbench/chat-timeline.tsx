@@ -499,10 +499,10 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     <article
       className={cn(
         'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground',
-        // Flat transcript on one background. User rows echo the composer
-        // input text (mono, plain); assistant responses answer in mono with
-        // a thin rail in the per-bud accent down their left edge.
-        isUser && 'font-mono',
+        // Flat transcript on one background. User rows keep the base text
+        // style with a solid foreground (black-in-light) rail; assistant
+        // responses answer in mono with a rail in the per-bud accent.
+        isUser && 'border-l-[3px] border-foreground',
         isAssistant && 'border-l-[3px] font-mono',
       )}
       style={isAssistant ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
