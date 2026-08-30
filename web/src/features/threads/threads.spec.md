@@ -51,6 +51,10 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - `/agent/state.draft_reasoning` overlay application
 - latest-bootstrap merges that preserve older already-loaded transcript history
 - per-turn finalization cleanup rules
+- `upsertMessage` preserves object identity for untouched rows, returns the
+  same array for identical re-upserts, and skips the chronological re-sort
+  when an in-place update cannot change order (unchanged `created_at` +
+  `message_id`) — the streaming hot path memoized consumers depend on
 
 **Exports**:
 - `applyAgentStateOverlay(...)`
@@ -75,6 +79,49 @@ Node-runner coverage for transcript reconciliation rules.
 - turn finalization cleanup semantics
 - failed/canceled turn finalization clears draft reasoning rows
 - persisted commentary assistant rows survive draft replacement and successful turn finalization
+- upsert identity preservation and sort-skip on in-place streaming deltas
+
+### `agent-work-projection.ts`
+
+Agent-work timeline projection (design/web-agent-work-collapse.md, Option B):
+pure presentation grouping of one turn's reasoning, non-question tool calls,
+and intermediate assistant commentary into `TimelineWorkRow`s, with
+user/system/final-assistant/`ask_user_questions`/unknown rows staying
+top-level and flushing the group.
+
+**Responsibilities**:
+- group identity `agent-work:<turn_id>` (stable across streaming,
+  draft→canonical reconciliation, and page-split prepend merges); legacy
+  rows without `turn_id` group by contiguity under
+  `agent-work:legacy:<first client_id>`; a boundary interleaved mid-turn
+  produces suffixed segment ids (`:2`, …)
+- `live` from the caller's `liveTurnId` (`agentState.active ? turn_id :
+  null`, cleared by `final`) — no per-item heuristics, no between-tool
+  flicker
+- `currentItem`: the in-progress step (pending tool / draft reasoning) of a
+  live group; null between steps and once the run ends
+- `status`: session-local `final`-event outcomes (failed/canceled), else
+  presence of a canonical final assistant row for the turn (`no_final`
+  otherwise); legacy groups use the immediately following boundary row
+- `durationMs` via `lib/agent-work-duration` (null while live)
+- `createTimelineProjector()` reuses previous row OBJECTS when a row's
+  inputs are unchanged so memoized React rows skip re-rendering during
+  unrelated streams
+
+### `agent-work-projection.test.ts`
+
+Fixture-driven conformance (JSON fixtures in `__fixtures__/agent-work/`,
+platform-neutral for sharing with mobile) plus identity tests: row-object
+reuse across projections, draft→canonical group stability, single-row
+live→summary transition.
+
+### `__fixtures__/agent-work/*.json`
+
+Language-neutral conformance fixtures ({messages, live_turn_id,
+turn_outcomes, expected rows}) adapted from the mobile handoff's scenario
+list: basic turn with duration union, intermediate sectioning, no-final,
+failed, legacy contiguity + tool-duration fallback, split-turn merge,
+question-row splitting, live current step, between-steps liveness.
 
 ### `question-response-submit.ts`
 

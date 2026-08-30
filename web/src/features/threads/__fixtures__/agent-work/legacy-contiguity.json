@@ -1,0 +1,18 @@
+{
+  "name": "legacy-contiguity",
+  "description": "pre-turn_id history groups by contiguity; pure-tool legacy duration falls back to summed tool payload duration_ms; immediate following final assistant marks it ok",
+  "live_turn_id": null,
+  "turn_outcomes": {},
+  "messages": [
+    { "message_id": "m-t1", "client_id": "t1", "role": "tool", "display_role": "shell.run", "content": "{\"tool\":\"shell.run\",\"command\":\"ls\"}", "created_at": "2026-08-30T10:00:01.000Z", "metadata": { "tool": "shell.run", "duration_ms": 1500 } },
+    { "message_id": "m-t2", "client_id": "t2", "role": "tool", "display_role": "shell.run", "content": "{\"tool\":\"shell.run\",\"command\":\"pwd\"}", "created_at": "2026-08-30T10:00:02.000Z", "metadata": { "tool": "shell.run", "duration_ms": 2500 } },
+    { "message_id": "m-a1", "client_id": "a1", "role": "assistant", "display_role": "Bud Agent", "content": "done", "created_at": "2026-08-30T10:00:03.000Z" }
+  ],
+  "expected": [
+    { "kind": "work", "id": "agent-work:legacy:t1", "live": false, "status": "ok", "duration_ms": 4000, "current_item_client_id": null, "sections": [
+      { "kind": "activity", "client_id": "t1" },
+      { "kind": "activity", "client_id": "t2" }
+    ] },
+    { "kind": "message", "client_id": "a1" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "between-steps-live",
+  "description": "between tool steps (last item complete, run still active) the group stays live with no currentItem — no summary flicker",
+  "live_turn_id": "T1",
+  "turn_outcomes": {},
+  "messages": [
+    { "message_id": "m-t1", "client_id": "t1", "role": "tool", "display_role": "terminal.send", "content": "{\"tool\":\"terminal.send\",\"text\":\"ls\"}", "created_at": "2026-08-30T10:00:01.000Z", "metadata": { "tool": "terminal.send", "turn_id": "T1", "started_at": "2026-08-30T10:00:01.000Z", "finished_at": "2026-08-30T10:00:02.000Z", "duration_ms": 1000, "duration_source": "service_wall_clock" } }
+  ],
+  "expected": [
+    { "kind": "work", "id": "agent-work:T1", "live": true, "status": "ok", "duration_ms": null, "current_item_client_id": null, "sections": [
+      { "kind": "activity", "client_id": "t1" }
+    ] }
+  ]
+}

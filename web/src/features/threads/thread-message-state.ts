@@ -36,13 +36,24 @@ export const sortMessagesChronologically = (messages: ApiMessage[]) =>
   })
 
 export const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
-  const nextMessages = [...existing]
   const nextIdentity = getMessageIdentity(next)
-  const index = nextMessages.findIndex((message) => getMessageIdentity(message) === nextIdentity)
+  const index = existing.findIndex((message) => getMessageIdentity(message) === nextIdentity)
   if (index === -1) {
-    nextMessages.push(next)
-  } else {
-    nextMessages[index] = next
+    return sortMessagesChronologically([...existing, next])
+  }
+  const current = existing[index]
+  if (current === next) {
+    // Identical object: keep array identity so memoized consumers skip work.
+    return existing
+  }
+  const nextMessages = [...existing]
+  nextMessages[index] = next
+  // Streaming deltas replace a row in place without touching its sort keys
+  // (`created_at`, `message_id`) — order cannot change, so skip the
+  // re-sort (and its per-comparison Date parsing) on the hot path.
+  // Untouched elements keep their object identity either way.
+  if (current.created_at === next.created_at && current.message_id === next.message_id) {
+    return nextMessages
   }
   return sortMessagesChronologically(nextMessages)
 }
