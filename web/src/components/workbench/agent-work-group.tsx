@@ -38,7 +38,10 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    <section className="border-l-[3px] border-muted-foreground/40 text-sm">
+    <section
+      className="border-l-[3px] text-sm"
+      style={{ borderLeftColor: 'var(--bud-accent-vibrant)' }}
+    >
       <button
         type="button"
         onClick={() => onToggle(row.id)}
