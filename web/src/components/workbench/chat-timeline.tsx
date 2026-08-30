@@ -270,7 +270,10 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div ref={setScrollNode} className="min-h-0 flex-1 overflow-y-auto bg-background">
+    <div
+      ref={setScrollNode}
+      className="min-h-0 flex-1 overflow-y-auto bg-background pl-2 pr-2 md:pl-[30px] md:pr-[30px]"
+    >
       {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pt-3 pb-2">
           <button
