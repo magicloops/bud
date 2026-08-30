@@ -544,3 +544,35 @@ test('persisted commentary assistant rows survive draft cleanup and turn finaliz
   assert.equal(finalized[0]?.metadata?.segment_kind, 'intermediate')
   assert.equal(finalized[1]?.metadata?.assistant_phase, 'final_answer')
 })
+
+test('upsertMessage preserves untouched object identity and skips the re-sort on in-place deltas', () => {
+  const stable = buildMessage({ client_id: 'u1', created_at: '2026-04-21T10:00:00.000Z' })
+  const streaming = buildMessage({
+    client_id: 'a1',
+    role: 'assistant',
+    content: 'hel',
+    created_at: '2026-04-21T10:00:01.000Z',
+    metadata: { draft: true, turn_id: 'T1' },
+  })
+  const messages = [stable, streaming]
+
+  const afterDelta = upsertMessage(messages, { ...streaming, content: 'hello' })
+  assert.notEqual(afterDelta, messages)
+  assert.equal(afterDelta[0], stable)
+  assert.equal(afterDelta[1].content, 'hello')
+
+  // Re-upserting the identical object is a no-op that keeps array identity.
+  const unchanged = upsertMessage(afterDelta, afterDelta[1])
+  assert.equal(unchanged, afterDelta)
+})
+
+test('upsertMessage still re-sorts when sort keys change', () => {
+  const first = buildMessage({ client_id: 'a', created_at: '2026-04-21T10:00:00.000Z' })
+  const second = buildMessage({ client_id: 'b', created_at: '2026-04-21T10:00:05.000Z' })
+  const moved = { ...first, created_at: '2026-04-21T10:00:09.000Z' }
+  const resorted = upsertMessage([first, second], moved)
+  assert.deepEqual(
+    resorted.map((message) => message.client_id),
+    ['b', 'a'],
+  )
+})

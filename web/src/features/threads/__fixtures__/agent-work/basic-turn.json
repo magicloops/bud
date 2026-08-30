@@ -1,0 +1,20 @@
+{
+  "name": "basic-turn",
+  "description": "user -> reasoning -> tool -> final assistant: one work group with overlapping timing intervals counted once, final answer top-level",
+  "live_turn_id": null,
+  "turn_outcomes": {},
+  "messages": [
+    { "message_id": "m-u1", "client_id": "u1", "role": "user", "display_role": "You", "content": "hi", "created_at": "2026-08-30T10:00:00.000Z" },
+    { "message_id": "m-r1", "client_id": "r1", "role": "reasoning", "display_role": "Reasoning", "content": "thinking", "created_at": "2026-08-30T10:00:01.000Z", "metadata": { "turn_id": "T1", "artifact_kind": "reasoning", "started_at": "2026-08-30T10:00:01.000Z", "finished_at": "2026-08-30T10:00:03.000Z", "duration_ms": 2000, "duration_source": "service_wall_clock" } },
+    { "message_id": "m-t1", "client_id": "t1", "role": "tool", "display_role": "terminal.send", "content": "{\"tool\":\"terminal.send\",\"text\":\"ls\"}", "created_at": "2026-08-30T10:00:02.000Z", "metadata": { "tool": "terminal.send", "turn_id": "T1", "started_at": "2026-08-30T10:00:02.000Z", "finished_at": "2026-08-30T10:00:05.000Z", "duration_ms": 3000, "duration_source": "service_wall_clock" } },
+    { "message_id": "m-a1", "client_id": "a1", "role": "assistant", "display_role": "Bud Agent", "content": "done", "created_at": "2026-08-30T10:00:06.000Z", "metadata": { "turn_id": "T1", "segment_kind": "final", "assistant_phase": "final_answer" } }
+  ],
+  "expected": [
+    { "kind": "message", "client_id": "u1" },
+    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": 4000, "current_item_client_id": null, "sections": [
+      { "kind": "activity", "client_id": "r1" },
+      { "kind": "activity", "client_id": "t1" }
+    ] },
+    { "kind": "message", "client_id": "a1" }
+  ]
+}

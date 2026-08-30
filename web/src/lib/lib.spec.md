@@ -111,6 +111,24 @@ Tool transcript note:
 - provider reasoning can arrive as live `agent.reasoning_*` events and persisted `role: "reasoning"` messages; reasoning rows are display-only and should not be treated as assistant final answers or notification previews
 - `/agent/state.last_error` is UI/runtime status only; it is not a transcript row and should be rendered through route-owned error state rather than the timeline
 
+### `agent-message-metadata.ts`
+
+Typed accessors over `ApiMessage.metadata` for service-stamped agent fields
+(design/web-agent-work-collapse.md): `getTurnId`, `getSegmentKind` (absence ⇒
+`final`, the wire-compat default shared with mobile),
+`isIntermediateAssistantMessage`, `getMessageTiming` (non-null only for
+`duration_source: "service_wall_clock"` with parseable bounds — never
+estimates for legacy rows), `getToolName` (metadata `tool`, falling back to
+the content payload). Tested in `agent-message-metadata.test.ts`.
+
+### `agent-work-duration.ts`
+
+`Worked for …` duration for one agent-work group, mobile-parity semantics:
+union of authoritative `service_wall_clock` intervals (overlaps counted
+once), legacy pure-tool payload-`duration_ms` sum as fallback, else null
+(render `Worked`, never an estimate). Plus `formatWorkDuration` (`42s`,
+`1m 28s`). Tested in `agent-work-duration.test.ts`.
+
 ### `route-auth.ts`
 
 Route-level auth helpers shared across loaders and authenticated screens.

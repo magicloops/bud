@@ -1,0 +1,20 @@
+{
+  "name": "intermediate-sections",
+  "description": "intermediate assistant commentary separates activity inside the group; the final answer stays out",
+  "live_turn_id": null,
+  "turn_outcomes": {},
+  "messages": [
+    { "message_id": "m-r1", "client_id": "r1", "role": "reasoning", "display_role": "Reasoning", "content": "plan", "created_at": "2026-08-30T10:00:01.000Z", "metadata": { "turn_id": "T1" } },
+    { "message_id": "m-i1", "client_id": "i1", "role": "assistant", "display_role": "Bud Agent", "content": "Let me check the repo first.", "created_at": "2026-08-30T10:00:02.000Z", "metadata": { "turn_id": "T1", "segment_kind": "intermediate", "assistant_phase": "commentary" } },
+    { "message_id": "m-t1", "client_id": "t1", "role": "tool", "display_role": "terminal.send", "content": "{\"tool\":\"terminal.send\",\"text\":\"git status\"}", "created_at": "2026-08-30T10:00:03.000Z", "metadata": { "tool": "terminal.send", "turn_id": "T1" } },
+    { "message_id": "m-a1", "client_id": "a1", "role": "assistant", "display_role": "Bud Agent", "content": "All clean.", "created_at": "2026-08-30T10:00:04.000Z", "metadata": { "turn_id": "T1", "segment_kind": "final" } }
+  ],
+  "expected": [
+    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": null, "current_item_client_id": null, "sections": [
+      { "kind": "activity", "client_id": "r1" },
+      { "kind": "intermediate", "client_id": "i1" },
+      { "kind": "activity", "client_id": "t1" }
+    ] },
+    { "kind": "message", "client_id": "a1" }
+  ]
+}
