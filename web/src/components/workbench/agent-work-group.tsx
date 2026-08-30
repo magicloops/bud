@@ -38,7 +38,7 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    <section className="text-sm">
+    <section className="border-l-[3px] border-muted-foreground/40 text-sm">
       <button
         type="button"
         onClick={() => onToggle(row.id)}
@@ -103,7 +103,7 @@ const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
 
   return (
     <span className="flex min-w-0 flex-1 items-baseline gap-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-      <span className="font-semibold text-foreground">Working…</span>
+      <span className="font-semibold">Working…</span>
       {elapsedLabel && <span>{elapsedLabel}</span>}
       <span className="truncate normal-case">{stepLabel}</span>
     </span>
@@ -112,7 +112,7 @@ const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
 
 const SummaryHeaderLabel = ({ row }: { row: TimelineWorkRow }) => (
   <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] tracking-wide text-muted-foreground">
-    <span className="font-semibold text-foreground">
+    <span className="font-semibold">
       {row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}
     </span>
     <SectionCounts sections={row.sections} />
