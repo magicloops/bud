@@ -53,10 +53,6 @@
   --bud-accent-vibrant: var(--accent);
   --bud-accent-muted: var(--muted);
   --bud-accent-soft: var(--muted);
-  /* Near-background tint of the bud accent, for large surfaces (user
-     message bands). Derived from the vibrant accent so it tracks the
-     per-bud palette set at runtime; the theme blocks pick the lightness. */
-  --bud-accent-wash: oklch(from var(--bud-accent-vibrant) 0.97 0.02 h);
 }
 
 .dark {
@@ -99,7 +95,6 @@
   --bud-accent-vibrant: var(--accent);
   --bud-accent-muted: var(--muted);
   --bud-accent-soft: var(--muted);
-  --bud-accent-wash: oklch(from var(--bud-accent-vibrant) 0.19 0.02 h);
 }
 
 @theme inline {

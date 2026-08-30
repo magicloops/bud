@@ -175,11 +175,12 @@ weight, the chrome stays quiet.
 - Solid black borders and small hard shadows (`border-2`,
   `shadow-[2px_2px_0…]`) reserved for interactive chrome: the composer
   inputs/send button, rail/nav buttons, thread cards
-- The transcript itself is a flat full-width band layout — no bubbles,
-  borders, rounding, or shadows on messages. Background alone signals the
-  speaker: user rows sit on the raised `--chat-message` surface, agent
-  rows (assistant/tool/reasoning, agent-work groups) stay on the ambient
-  `--chat-bg`, so the eye lands on the message text, not the chrome
+- The transcript is a flat full-width layout on one surface (the
+  composer's `--background`) — no bubbles, borders, rounding, shadows, or
+  per-row backgrounds. User rows read as the prompts: mono semibold type,
+  a thin left rail in the per-bud accent (`--bud-accent-vibrant`), and a
+  `❯` marker; assistant prose and agent-work groups beneath are the
+  response, so the eye lands on the message text, not the chrome
 - High contrast colors, monospace labels, and both light/dark themes
   unchanged (softened borders use the theme token, never black-opacity)
 

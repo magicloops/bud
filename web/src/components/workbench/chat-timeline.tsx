@@ -270,7 +270,7 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div ref={setScrollNode} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={setScrollNode} className="min-h-0 flex-1 overflow-y-auto bg-background">
       {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pt-3 pb-2">
           <button
@@ -499,14 +499,12 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     <article
       className={cn(
         'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground',
-        // Flat full-width transcript: no bubbles, borders, or shadows — the
-        // background alone says who is speaking. User rows wear a light wash
-        // of the per-bud accent (--bud-accent-wash, theme-aware); agent rows
-        // share the composer's --background so agent output and the input
-        // read as one surface.
-        !isUser && 'bg-background',
+        // Flat transcript on one background. User rows read as the prompts:
+        // mono type, a thin rail in the bud accent, and a ❯ marker; the
+        // assistant's prose beneath is the response.
+        isUser && 'border-l-[3px] font-mono font-semibold',
       )}
-      style={isUser ? { backgroundColor: 'var(--bud-accent-wash)' } : undefined}
+      style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
     >
       <button
         type="button"
@@ -526,7 +524,16 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
         <time>{timeLabel}</time>
       </div>
-      <div>{contentNode}</div>
+      {isUser ? (
+        <div className="flex gap-2">
+          <span aria-hidden className="select-none" style={{ color: 'var(--bud-accent-vibrant)' }}>
+            ❯
+          </span>
+          <div className="min-w-0 flex-1">{contentNode}</div>
+        </div>
+      ) : (
+        <div>{contentNode}</div>
+      )}
     </article>
   )
 })
