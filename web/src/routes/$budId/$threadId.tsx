@@ -124,6 +124,18 @@ function ThreadView() {
   const [contextCompactionNotices, setContextCompactionNotices] = useState<ChatTimelineNotice[]>([])
   const [error, setError] = useState<string | null>(() => getAgentStateRuntimeErrorMessage(initialAgentState))
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
+  // Agent-work collapse inputs (design/web-agent-work-collapse.md): the
+  // active run's turn id keeps its work group live; final-event outcomes
+  // drive failed/canceled badges (session-local — no persisted run status).
+  const [liveTurnId, setLiveTurnId] = useState<string | null>(
+    initialAgentState.active ? initialAgentState.turn_id : null,
+  )
+  const [turnOutcomes, setTurnOutcomes] = useState<ReadonlyMap<string, 'succeeded' | 'failed' | 'canceled'>>(
+    () => new Map(),
+  )
+  const noteLiveTurn = useCallback((turnId: string) => {
+    setLiveTurnId((current) => (current === turnId ? current : turnId))
+  }, [])
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const isMobile = useIsMobile()
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
@@ -230,6 +242,7 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
+    setLiveTurnId(initialAgentState.active ? initialAgentState.turn_id : null)
     applyAgentStateError(initialAgentState)
     resetAssistantActivityGate(initialAgentState)
   }, [applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
@@ -237,6 +250,7 @@ function ThreadView() {
   useEffect(() => {
     setActiveCompaction(null)
     setContextCompactionNotices([])
+    setTurnOutcomes(new Map())
   }, [threadId])
 
   useEffect(() => {
@@ -325,6 +339,7 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
+    setLiveTurnId(nextAgentState.active ? nextAgentState.turn_id : null)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
@@ -486,6 +501,13 @@ function ThreadView() {
         type: 'final',
       }),
     )
+    setTurnOutcomes((current) => {
+      const next = new Map(current)
+      next.set(turnId, finalStatus)
+      return next
+    })
+    // A final for an older turn must not clear a newer live run.
+    setLiveTurnId((current) => (current === turnId ? null : current))
     finalizeTurn(turnId, finalStatus)
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after final event', error)
@@ -553,13 +575,22 @@ function ThreadView() {
     initialStreamCursor: initialAgentState.stream_cursor,
     onStatusChange: setStatus,
     onError: setError,
-    onToolCall: applyToolCall,
+    onToolCall: (event) => {
+      noteLiveTurn(event.turnId)
+      applyToolCall(event)
+    },
     onToolResultMessage: handleToolResultMessage,
-    onAssistantMessageStart: handleAssistantMessageStart,
+    onAssistantMessageStart: (event) => {
+      noteLiveTurn(event.turnId)
+      handleAssistantMessageStart(event)
+    },
     onAssistantMessageDelta: handleAssistantMessageDelta,
     onAssistantMessageDone: handleAssistantMessageDone,
     onAssistantMessageEvent: handleAssistantMessageEvent,
-    onReasoningStart: applyReasoningStart,
+    onReasoningStart: (event) => {
+      noteLiveTurn(event.turnId)
+      applyReasoningStart(event)
+    },
     onReasoningDelta: applyReasoningDelta,
     onReasoningDone: applyReasoningDone,
     onCompactionStart: handleCompactionStart,
@@ -900,6 +931,8 @@ function ThreadView() {
           <ChatTimeline
             messages={messages}
             notices={contextCompactionNotices}
+            liveTurnId={liveTurnId}
+            turnOutcomes={turnOutcomes}
             accentColor="var(--bud-accent-vibrant)"
             activityIndicatorVisible={activityIndicatorVisible}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
