@@ -127,14 +127,44 @@ Three PRs, each independently shippable; 1 and partially 2 are invisible.
 5. Spec + docs updates (below), screenshots in PR description.
 
 ## Spec Files to Update
-- [ ] `web/src/features/threads/threads.spec.md` (projection, fixtures,
-      identity fix, structure token)
-- [ ] `web/src/components/workbench/workbench.spec.md` (AgentWorkGroup,
-      timeline integration, expansion state, indicator scope)
-- [ ] `web/src/components/message-renderers/message-renderers.spec.md`
-      (renderer reuse inside groups, markdown affordance split)
-- [ ] `web/src/lib/lib.spec.md` (metadata accessors, duration function)
-- [ ] `web/web.spec.md` (feature summary)
+- [x] `web/src/features/threads/threads.spec.md` (projection, fixtures,
+      identity fix, structure token) — PR 1
+- [x] `web/src/components/workbench/workbench.spec.md` (AgentWorkGroup,
+      timeline integration, expansion state, indicator scope) — PR 2
+- [x] `web/src/components/message-renderers/message-renderers.spec.md`
+      (renderer reuse inside groups, markdown affordance split) — PR 3
+- [x] `web/src/lib/lib.spec.md` (metadata accessors, duration function) — PR 1
+- [x] `web/web.spec.md` (feature summary) — PR 3
+
+## Audit Results (PR 3)
+
+Findings from the side-effect audit in the design doc:
+
+- **Markdown affordances**: already correct by construction. File-open/link
+  actions are gated on the `fileActions` prop, which only final assistant
+  rows receive; reasoning, intermediate commentary, and all work-group
+  detail render without it. Documented in message-renderers.spec.md; no
+  code change needed (the PR 3 `MarkdownContent` prop from the original
+  scope was unnecessary).
+- **Copy semantics**: work-group rows expose no copy button; per-message
+  copy exists only on top-level rows. Collapsed content cannot be copied
+  wholesale. No change needed.
+- **Bottom-follow structure token**: shipped in PR 2 (`scrollSyncKey`
+  derives from visible structure only).
+- **Thread previews (cross-team observation, no web change)**:
+  `thread.last_message_preview` is SERVER-owned and is updated from tool
+  summaries and intermediate assistant text
+  (`service/src/db/thread-metadata.ts`, transcript-writer call sites), not
+  just final answers. Mobile's stated boundary ("preview/notification text
+  do not use reasoning or intermediate text") is therefore only as strong
+  as the server's policy — reasoning never feeds it, but tool summaries
+  and commentary do, apparently by design (live-activity previews). Flag
+  to backend + mobile if final-answer-only previews are wanted; web
+  renders the server value verbatim either way.
+- **Reduced motion**: the group/item chevrons carry
+  `motion-reduce:transition-none`; no other animation was added.
+- **Rendered-row-position side effects**: none remain — the old
+  `scrollSyncKey` was the only one, fixed in PR 2.
 
 ## Impacted Contracts
 - [ ] WSS protocol — none

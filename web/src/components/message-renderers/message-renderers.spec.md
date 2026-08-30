@@ -54,6 +54,17 @@ type MessageContentRenderer = ComponentType<MessageContentRendererProps>
 `MessageFileActionContext` lets parent routes attach explicit user-click handlers for parsed file references. Renderers receive candidate metadata and source message identity but must not open sessions while rendering.
 `isStreaming` lets a role renderer use the same component for live assistant drafts and persisted static rows.
 
+## Consumers and action-semantics boundaries
+
+Renderers are mounted from two places: top-level timeline rows
+(`ChatTimeline`) and inside collapsed agent-work groups
+(`AgentWorkGroup`, design/web-agent-work-collapse.md). The Markdown
+file-open/link affordances are gated on the `fileActions` prop, which only
+final assistant rows receive — reasoning rows, intermediate assistant
+commentary, and everything rendered inside a work group never get it, so
+grouping cannot widen action semantics (mobile-parity boundary). Work-group
+rows expose no copy button; per-message copy stays on top-level rows only.
+
 ## Subfolders
 
 ### `roles/` → [roles/roles.spec.md](./roles/roles.spec.md)
