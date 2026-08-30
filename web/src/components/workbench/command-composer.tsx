@@ -71,23 +71,19 @@ export function CommandComposer({
     }
   }
 
-  // Mobile auto-grow (value-driven, not event-driven, so clearing after a
-  // send and programmatic changes also resize): ONE line at rest, grows
-  // with content, caps at ~40% of the visual viewport and scrolls
-  // internally beyond that. Desktop keeps the fixed h-32 box.
+  // Auto-grow (value-driven, not event-driven, so clearing after a send
+  // and programmatic changes also resize): rests at one line on phones /
+  // md:min-h-28 on desktop, grows with content, caps at ~40% of the
+  // visual viewport (480px absolute) and scrolls internally beyond that.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   useEffect(() => {
     const el = textareaRef.current
     if (!el) {
       return
     }
-    if (!window.matchMedia('(max-width: 767px)').matches) {
-      el.style.height = ''
-      el.style.overflowY = ''
-      return
-    }
     el.style.height = 'auto'
-    const max = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4)
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+    const max = Math.min(Math.round(viewportHeight * 0.4), 480)
     const next = Math.min(el.scrollHeight, max)
     el.style.height = `${next}px`
     el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
@@ -115,7 +111,7 @@ export function CommandComposer({
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={disabledReason ?? 'Describe the task for Bud…'}
-        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-28 md:px-4 md:py-3 md:pb-16"
+        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:min-h-28 md:px-4 md:py-3 md:pb-16"
         disabled={inputDisabled}
       />
       {/* Static row below the textarea on phones (the absolute pinning
