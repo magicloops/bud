@@ -548,7 +548,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
             : isUser
               ? capitalize(userName ?? (message.display_role || 'User'))
               : isAssistant
-                ? capitalize(budName ?? (message.display_role || 'Assistant'))
+                ? (budName ?? (message.display_role || 'Assistant')).toUpperCase()
                 : capitalize(message.display_role || message.role)}
         </span>
         <time>{timeLabel}</time>
