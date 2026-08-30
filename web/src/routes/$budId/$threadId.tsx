@@ -11,8 +11,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useIsMobile } from '@/lib/use-viewport'
 import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
-import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
@@ -138,6 +139,8 @@ function ThreadView() {
   }, [])
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const isMobile = useIsMobile()
+  const { width: chatPaneWidth, setWidth: setChatPaneWidth } = useChatPaneWidth()
+  const chatPaneRef = useRef<HTMLDivElement | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     resolveInitialViewMode(
       typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
@@ -923,10 +926,16 @@ function ThreadView() {
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div
-          className={`min-h-0 flex-col border-black max-md:w-full md:flex md:w-80 md:border-r-2 lg:w-96 ${
+          ref={chatPaneRef}
+          className={`relative min-h-0 flex-col border-black max-md:w-full md:flex md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)] ${
             isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'
           }`}
-          style={{ backgroundColor: 'var(--chat-bg)' }}
+          style={
+            {
+              backgroundColor: 'var(--chat-bg)',
+              ...(chatPaneWidth !== null ? { '--chat-pane-width': `${chatPaneWidth}px` } : {}),
+            } as CSSProperties
+          }
         >
           <ChatTimeline
             messages={messages}
@@ -943,6 +952,7 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
+          <ChatPaneResizeHandle paneRef={chatPaneRef} onWidthChange={setChatPaneWidth} />
         </div>
       )}
       rightPane={(

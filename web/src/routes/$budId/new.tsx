@@ -9,8 +9,9 @@
  */
 
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, useRef, useEffect, type FormEvent } from 'react'
+import { useState, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
@@ -36,6 +37,8 @@ function NewThreadView() {
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { toggleThreadPanel } = useLayout()
+  const { width: chatPaneWidth, setWidth: setChatPaneWidth } = useChatPaneWidth()
+  const chatPaneRef = useRef<HTMLDivElement | null>(null)
 
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
@@ -193,13 +196,23 @@ function NewThreadView() {
       onToggleThreads={toggleThreadPanel}
       status={status}
       leftPane={(
-        <div className="flex w-full flex-col border-black md:w-80 md:border-r-4 lg:w-96" style={{ backgroundColor: 'var(--chat-bg)' }}>
+        <div
+          ref={chatPaneRef}
+          className="relative flex w-full flex-col border-black md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)]"
+          style={
+            {
+              backgroundColor: 'var(--chat-bg)',
+              ...(chatPaneWidth !== null ? { '--chat-pane-width': `${chatPaneWidth}px` } : {}),
+            } as CSSProperties
+          }
+        >
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">Start a new conversation</p>
               <p className="mt-1 text-sm">Send a message to create a thread and terminal session</p>
             </div>
           </div>
+          <ChatPaneResizeHandle paneRef={chatPaneRef} onWidthChange={setChatPaneWidth} />
         </div>
       )}
       rightPane={(
