@@ -520,12 +520,12 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     <article
       className={cn(
         'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground',
-        // Flat transcript on one background. User rows are plain base text;
-        // the agent side (assistant responses in mono, work groups) carries
-        // a rail in the per-bud accent.
-        isAssistant && 'border-l-[3px] font-mono',
+        // Flat transcript on one background. User rows carry a rail in the
+        // per-bud accent; assistant responses answer in mono, unrailed.
+        isUser && 'border-l-[3px]',
+        isAssistant && 'font-mono',
       )}
-      style={isAssistant ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
+      style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
     >
       <button
         type="button"
