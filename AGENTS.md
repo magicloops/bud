@@ -256,6 +256,32 @@ Implementation guardrails:
 - When adding a new write path, verify both authorization and owner stamping in the same change.
 - When adding a new read/stream path, add the corresponding multi-user validation item to the auth checklist in `plan/init-auth/validation-checklist.md`.
 
+### 4.7) Service ↔ Daemon Deploy Order Independence
+
+The service auto-deploys from `main` on merge; daemons upgrade later (per box,
+via `bud upgrade`) and old daemon versions stay in the field indefinitely. So
+**any change touching the Bud↔Service wire contract or cross-tier behavior
+must be order-independent**: a new service against an old daemon AND an old
+service against a new daemon must both degrade gracefully — never tear down
+connections, corrupt sessions, or mislead the agent. Deviate only when
+explicitly requested, and say so in the PR.
+
+Ways to achieve it (pick the cheapest that fits):
+- **Capability gate**: the daemon advertises new request-side behavior in
+  `hello.capabilities` (e.g. `terminal_send_auto`); the service sends the new
+  form only when advertised. Required whenever an old daemon would choke on a
+  new request field/value (unknown enum variants fail serde and tear down the
+  connection).
+- **Tolerant result handling**: new daemon→service data (new outcome events,
+  extra fields) rides tolerant schemas (`z.string()` events, optional fields)
+  and unknown values degrade to a safe default on old services.
+- **Service-side implementation**: when the daemon already provides the data,
+  prefer implementing in the service — it ships on merge and works with every
+  deployed daemon (e.g. launch-proof deltas via an extra observe).
+
+State the rollout story in the PR/design doc: what each mixed-version pairing
+does, and whether a daemon release/`bud upgrade` is required for full effect.
+
 ---
 
 ## 5) Task Templates
@@ -445,4 +471,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-04-23*
+*Last updated: 2026-08-29*

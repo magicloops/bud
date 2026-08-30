@@ -790,6 +790,19 @@ test("terminal.send resolving with interactive_started becomes a normal 'interac
         exitCode: null,
       };
     },
+    async observeTerminal() {
+      // Launch proof: the screen the program painted — here an intermediate
+      // consent prompt, exactly what the agent must read before typing.
+      return {
+        view: "delta",
+        output: "Do you trust the files in this directory?\n> Yes, continue",
+        linesCaptured: 2,
+        changed: true,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+      };
+    },
   };
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
@@ -805,7 +818,14 @@ test("terminal.send resolving with interactive_started becomes a normal 'interac
   assert.deepEqual(execution.result.readiness, { ready: true, painted: true });
   assert.equal(execution.payload.ready, true);
   assert.equal(execution.payload.painted, true);
-  assert.match(String(execution.payload.note), /ready for input/);
+  assert.deepEqual(execution.result.delta, {
+    changed: true,
+    text: "Do you trust the files in this directory?\n> Yes, continue",
+  });
+  const payloadDelta = execution.payload.delta as { changed: boolean; text: string };
+  assert.equal(payloadDelta.changed, true);
+  assert.match(payloadDelta.text, /trust the files/);
+  assert.match(String(execution.payload.note), /read it before typing/);
   assert.match(execution.summary, /ready for input/);
   const openCommand = execution.payload.open_command as { command_id: string };
   assert.equal(openCommand.command_id, "cmd_codex");
@@ -827,6 +847,17 @@ test("a launch whose program never painted within the ready window says so", asy
     },
     async getLatestCommandForSession() {
       return null;
+    },
+    async observeTerminal() {
+      return {
+        view: "delta",
+        output: "",
+        linesCaptured: 0,
+        changed: false,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+      };
     },
   };
 
@@ -957,6 +988,42 @@ test("terminal.wait maps a stalled outcome to look-at-it guidance", async () => 
   assert.equal(execution.payload.output, "Apply this patch? [y/n]");
   assert.match(String(execution.payload.note), /answer with terminal\.send/);
   assert.match(execution.summary, /output stopped changing/);
+});
+
+test("terminal.wait maps no_activity to act-instead-of-waiting guidance", async () => {
+  // Active-hold wait: a static screen ceded control after the daemon's
+  // static cap — the program is most likely idle awaiting input.
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return { commandId: "cmd_codex", commandStartedAt: new Date(Date.now() - 60_000), commandFinishedAt: null };
+    },
+    async observeTerminal() {
+      return {
+        view: "delta",
+        output: "",
+        linesCaptured: 0,
+        changed: false,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+        outcome: { event: "no_activity", data: { mode: "shell", static_ms: 10_000 } },
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_no_activity",
+  });
+
+  assert.equal(execution.result.waitOutcome, "no_activity");
+  assert.equal(execution.payload.outcome, "no_activity");
+  assert.match(String(execution.payload.note), /look at the screen and act/);
+  assert.match(execution.summary, /nothing happened/);
 });
 
 test("terminal.wait already-idle terminals resolve as settled immediately", async () => {
@@ -1119,6 +1186,17 @@ test("terminal.send maps the daemon's input_absorbed outcome to an honest status
         outcome: { event: "input_absorbed", data: { signal: "prompt_ready" } },
       };
     },
+    async observeTerminal() {
+      return {
+        view: "delta",
+        output: "$ ",
+        linesCaptured: 1,
+        changed: true,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+      };
+    },
   };
 
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
@@ -1132,6 +1210,7 @@ test("terminal.send maps the daemon's input_absorbed outcome to an honest status
   assert.equal(execution.result.status, "input_absorbed");
   assert.equal(execution.result.error, undefined);
   assert.equal(execution.payload.status, "input_absorbed");
+  assert.deepEqual(execution.result.delta, { changed: true, text: "$ " });
   assert.match(String(execution.payload.note), /no shell command started/);
 });
 

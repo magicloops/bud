@@ -1652,12 +1652,21 @@ model-facing tool layer defaults to `delta`). `history` takes optional `lines`
   (delta vs the observe baseline) stays quiet for the stall window
   (`quiet_ms`, service-owned, daemon default 1500ms) — detected by a 100ms
   quiet+unseen poll, since an at-prompt shell's quiet point emits no event;
-  animation resets the timer and silent programs never trip it (no unseen
-  content → no stall, so a silent `sleep` holds to its real boundary).
+  animation resets the timer.
+  **Active hold (v0.1.17)**: the long hold covers a terminal that is visibly
+  CHANGING (a spinner, a progress bar, streaming output). A visible grid
+  that stays static for the daemon's static cap (10s) while the wait would
+  otherwise hold resolves `no_activity` — the program is most likely idle
+  awaiting input, and the caller gets control back in seconds instead of
+  holding to the service budget. Static is judged on the visible grid, not
+  damage: identical redraws count as static, cursor blink is not content;
+  any visible change resets the static clock. Consequence: a program that
+  works with NO painting at all (no spinner, no output) now returns
+  `no_activity` per wait rather than holding to its boundary — shell
+  commands are still covered exactly by `command_finished`.
   Start snapshot: already quiet with unseen content → `stalled` immediately;
   already quiet, seen, nothing open → `settled` immediately; already quiet,
-  seen, command open → HOLD (the caller just saw this screen; re-waiting
-  after a stall is therefore free — at most one wake per quiet stretch).
+  seen, command open → hold with the static clock running.
   The service owns the timeout budget (30 minutes for `terminal.wait`); the
   daemon's 4h safety cap resolves with `error: "TIMEOUT"`. Daemons predating
   this field ignore it and return a plain snapshot without `outcome`.
@@ -1811,9 +1820,13 @@ service-side read from `terminal_session_output` by offset range.
 `outcome` is present only for awaited observes (§6.1 `await`): the
 terminating fact `{ event, data }` — `settled` (idle terminal, nothing
 unseen; `data.immediate: true` when true at wait start), `stalled` (unseen
-content stayed quiet for the stall window — look at it), `command_finished`
-(with its exit code), `prompt_ready`, or `closed`. (`idle` was the
-pre-knobless command-await vocabulary; consumers keep tolerating it.)
+content stayed quiet for the stall window — look at it), `no_activity`
+(v0.1.17 active hold: the visible grid stayed static for the daemon's 10s
+static cap while a command was open — the program is most likely idle
+awaiting input; `data.static_ms` reports the static stretch),
+`command_finished` (with its exit code), `prompt_ready`, or `closed`.
+(`idle` was the pre-knobless command-await vocabulary; consumers keep
+tolerating it.)
 
 `ring_next_offset` is the output-stream offset the emulator state reflects at
 observe time: a client can render an observation as a snapshot and resume the
@@ -1854,10 +1867,13 @@ did).
   "wait for the program to exit" during inline-TUI sessions). Tool result
   `{ outcome, waited_ms, output (delta since the last look), changed,
   exit_code?, mode, open_command }` with `outcome ∈ settled | stalled |
-  command_finished | prompt_ready | closed | timeout | interrupted |
-  superseded` — `stalled` means unseen output went quiet (a TUI question, a
-  finished step): read it and act; re-waiting is free (holds until NEW
-  activity or a boundary). One provider call per wake: the turn parks in
+  no_activity | command_finished | prompt_ready | closed | timeout |
+  interrupted | superseded` — `stalled` means unseen output went quiet (a
+  TUI question, a finished step): read it and act; `no_activity` means the
+  screen stayed static for the daemon's 10s static cap (the program looks
+  idle: act instead of re-waiting). Re-waiting after a stall holds while
+  the terminal is visibly changing; against a static screen it costs one
+  static cap per call. One provider call per wake: the turn parks in
   `/agent/state.phase: "waiting_for_terminal"` (§3.2) for up to the
   30-minute service budget (`timeout` = call again); a human interrupt ends
   it as `interrupted`; a follow-up user message ends it as `superseded` and
@@ -2399,6 +2415,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - Active-hold wait (v0.1.17): an awaited `terminal_observe` holds only while the visible grid is CHANGING; a screen static for the daemon's 10s cap resolves a new `no_activity` outcome (`data.static_ms`) instead of holding to the service budget (design/terminal-launch-proof-and-active-wait.md). Service-side launch proof: `status:"interactive"` and `input_absorbed` send results now attach the settled screen `delta` (send-plus-proof for launches — the trust-prompt incident, debug/terminal-send-interactive-launch-blind-screen.md).
   - `terminal_send` `await:"settled"` (and `auto` inside a program) resolves on the program's settled REACTION (stall window from the last change since dispatch, boundaries win, `data.reacted`) instead of the first quiet point after the echo.
   - `terminal_send` `await:"auto"` (daemon-resolved: command boundary at an idle shell prompt, settle otherwise) with `resolved_await`, `gated_ms`, `program_ready` on the result; input into an open command is gated on readiness (painted + quiet, 10 s cap); `interactive_started` is held until ready and carries `ready`/`painted`; the `command_in_flight` refusal is retired. Model-facing: `terminal.send { text | key, submit? }` is the single input tool (`terminal.run` retired).
   - Daemon: width-shrinking `terminal_resize` is deferred while a readline line is pending at an idle shell prompt (≤3 s, until `command_started`/`prompt_ready`); `ready` announces the applied geometry. Fixes readline-vs-reflow garbling (duplicated command, overwritten output rows) when a narrow viewer takes geometry mid-command.

@@ -73,6 +73,14 @@ const INPUT_ABSORBED_GRACE: Duration = Duration::from_millis(1500);
 /// finished a step. Silent programs never trip it (no activity, no stall).
 /// The service may override per request via `terminal_observe.quiet_ms`.
 const STALL_QUIET_MS: u64 = 1500;
+/// Active-hold wait: the long wait budget exists for a terminal that is
+/// visibly CHANGING (a spinner, a progress bar, streaming output). A screen
+/// that stays visually static this long cedes control back to the caller
+/// (`no_activity`) instead of holding — a mispredicted wait costs seconds,
+/// not the service budget. Static is judged on the visible grid, not damage:
+/// a program redrawing identical content is static; cursor blink is not
+/// content. Must comfortably exceed STALL_QUIET_MS and normal repaint gaps.
+const WAIT_STATIC_CAP: Duration = Duration::from_secs(10);
 /// Fresh-session grace: how long a command-await will wait for the shell's
 /// FIRST prompt before falling back to the visible sentinel trailer. Only
 /// applies when a shim was installed and no marker has arrived yet (the shell
@@ -1499,12 +1507,18 @@ async fn await_send_settled(
 ///   cannot drive this. Animation resets the timer (quiet flickers); silent
 ///   programs never trip it (nothing unseen).
 /// - `settled`: a quiet, fully-seen terminal with nothing open (idle).
+/// - `no_activity`: the visible grid stayed static for `WAIT_STATIC_CAP`
+///   while the wait would otherwise hold. The long budget covers a CHANGING
+///   terminal (spinner, progress bar, streaming output); a static screen
+///   means the program is most likely idle awaiting input, and the caller
+///   gets control back in seconds instead of holding until the service
+///   budget. Any visible change resets the static clock.
 /// - Start snapshot (after subscribing, so nothing is missed): already quiet
 ///   with unseen content resolves `stalled` immediately; already quiet,
 ///   seen, nothing open resolves `settled` immediately; already quiet,
-///   seen, command open HOLDS — the caller just saw this exact screen, so
-///   only new content or a boundary should wake it. This makes re-waiting
-///   after a stall free: at most one wake per quiet stretch.
+///   seen, command open holds with the static clock running — the caller
+///   just saw this exact screen, so new content, a boundary, or the static
+///   cap wakes it.
 ///
 /// Never holds the session lock across a wait.
 async fn await_observe_outcome(
@@ -1538,11 +1552,16 @@ async fn await_observe_outcome(
                 "data": { "mode": mode_str(mode), "quiet_ms": 0, "immediate": true },
             });
         }
-        // Quiet, seen, command open: hold for new facts.
+        // Quiet, seen, command open: hold for new facts (static clock below).
     }
 
     let quiet_poll = Duration::from_millis(100);
     let mut quiet_unseen_since: Option<tokio::time::Instant> = None;
+    // Active-hold static clock, seeded with the start-snapshot screen: judged
+    // on the visible grid (not damage) so identical-redraw loops still count
+    // as static and cursor blink does not count as content.
+    let mut last_screen = screen;
+    let mut static_since = tokio::time::Instant::now();
     loop {
         tokio::select! {
             received = rx.recv() => match received {
@@ -1562,6 +1581,18 @@ async fn await_observe_outcome(
                     let session = entry.session.lock().await;
                     (session.is_quiet(), session.mode(), session.screen_lines())
                 };
+                if screen != last_screen {
+                    last_screen = screen.clone();
+                    static_since = tokio::time::Instant::now();
+                } else if static_since.elapsed() >= WAIT_STATIC_CAP {
+                    return json!({
+                        "event": "no_activity",
+                        "data": {
+                            "mode": mode_str(mode),
+                            "static_ms": static_since.elapsed().as_millis() as u64,
+                        },
+                    });
+                }
                 if !quiet {
                     quiet_unseen_since = None;
                     continue;

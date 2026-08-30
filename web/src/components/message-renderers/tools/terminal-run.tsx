@@ -20,12 +20,21 @@ export function TerminalRunContent({ payload }: ToolContentRendererProps) {
   const output = typeof payload.output === 'string' && payload.output.length > 0 ? payload.output : null
   const truncated = payload.truncated === true
   const stillRunning = payload.status === 'still_running'
+  const interactive = payload.status === 'interactive'
+  // Launch proof (interactive/input_absorbed): what the program painted.
+  const delta = isRecord(payload.delta) ? payload.delta : null
+  const deltaText = typeof delta?.text === 'string' && delta.text.length > 0 ? delta.text : null
 
   if (!command) return null
 
   return (
     <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
       <div className="mb-2 flex flex-wrap items-center gap-2">
+        {interactive ? (
+          <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300">
+            Interactive
+          </span>
+        ) : null}
         {stillRunning ? (
           <span className="rounded-full bg-yellow-500/15 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-yellow-700 dark:text-yellow-300">
             Still running
@@ -53,6 +62,12 @@ export function TerminalRunContent({ payload }: ToolContentRendererProps) {
       {output ? (
         <div className="mt-1 max-h-64 overflow-y-auto rounded-md bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">
           {output}
+        </div>
+      ) : null}
+      {deltaText ? (
+        <div className="mt-1 max-h-64 overflow-y-auto rounded-md bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">Screen</div>
+          <div className="whitespace-pre-wrap">{deltaText}</div>
         </div>
       ) : null}
       {truncated ? (
@@ -153,6 +168,7 @@ export function TerminalObserveContent({ payload }: ToolContentRendererProps) {
 const WAIT_OUTCOME_LABELS: Record<string, string> = {
   settled: 'terminal settled',
   stalled: 'output stopped changing',
+  no_activity: 'no activity — program looks idle',
   command_finished: 'command finished',
   prompt_ready: 'back at the prompt',
   idle: 'nothing to wait for',
