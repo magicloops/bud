@@ -270,10 +270,10 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div
-      ref={setScrollNode}
-      className="min-h-0 flex-1 overflow-y-auto bg-background pl-2 pr-2 md:pl-[30px] md:pr-[30px]"
-    >
+    <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
+      {/* Gutters keyed to the pane's own width (it's drag-resizable), not
+          the viewport: they appear once the pane is @md (28rem) or wider. */}
+      <div className="@md:px-[30px]">
       {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pt-3 pb-2">
           <button
@@ -328,6 +328,7 @@ const ChatTimelineComponent = ({
         }
         label={activityIndicatorLabel}
       />
+      </div>
     </div>
   )
 }
