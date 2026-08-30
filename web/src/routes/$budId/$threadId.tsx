@@ -160,14 +160,17 @@ function ThreadView() {
     writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, next)
   }, [isMobile, viewMode])
   // Growing past md with 'chat' selected: chat is no longer a peer view.
-  // Shrinking below md with the viewer collapsed: 'none' has no mobile
-  // meaning — chat is the single pane.
+  // Shrinking below md: land on the chat view (the desktop viewer selection
+  // must not carry over), and 'none' has no mobile meaning either.
+  const wasMobileRef = useRef(isMobile)
   useEffect(() => {
+    const wasMobile = wasMobileRef.current
+    wasMobileRef.current = isMobile
     if (!isMobile && viewMode === 'chat') {
       setViewMode(
         resolveInitialViewMode(false, readStoredWorkbenchView(window.localStorage)),
       )
-    } else if (isMobile && viewMode === 'none') {
+    } else if (isMobile && (!wasMobile || viewMode === 'none')) {
       setViewMode('chat')
     }
   }, [isMobile, viewMode])

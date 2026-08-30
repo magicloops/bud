@@ -196,7 +196,7 @@ export function CommandComposer({
         <select
           value={selectedModel}
           onChange={(event) => onModelChange(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none md:max-w-[140px] md:flex-none"
+          className="min-w-0 max-w-[140px] flex-none rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
           disabled={inputDisabled || models.length === 0}
         >
           {models.length === 0 ? (
@@ -236,13 +236,17 @@ export function CommandComposer({
             ))}
           </select>
         )}
-        <ContextSendButton
-          contextBudget={contextBudget}
-          disabled={stopMode ? false : inputDisabled}
-          dispatching={status === 'dispatching'}
-          stopMode={stopMode}
-          onStop={onCancelAgentTurn}
-        />
+        {/* ml-auto keeps the send button on the right edge of the static
+            phone row; on md+ the row is pinned bottom-right and it's a no-op. */}
+        <div className="ml-auto shrink-0">
+          <ContextSendButton
+            contextBudget={contextBudget}
+            disabled={stopMode ? false : inputDisabled}
+            dispatching={status === 'dispatching'}
+            stopMode={stopMode}
+            onStop={onCancelAgentTurn}
+          />
+        </div>
       </div>
     </form>
   )
