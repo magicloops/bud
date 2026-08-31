@@ -566,7 +566,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
             : isUser
               ? capitalize(userName ?? (message.display_role || 'User'))
               : isAssistant
-                ? 'BUD'
+                ? 'Bud'
                 : capitalize(message.display_role || message.role)}
         </span>
         <MessageTimestamp createdAt={message.created_at} />
