@@ -54,14 +54,17 @@ export function useChatPaneWidth() {
 /**
  * Left inset that aligns the full-width composer's content with the
  * transcript column inside the chat pane. Mirrors ChatTimeline's wrapper
- * geometry — `mx-auto max-w-[1024px]`, `p-2` base / 30px gutters from the
- * @md (28rem) container query, plus the rows' 3px rail; the rows' `px-4`
- * and the textarea's `px-4` cancel out. Keep in sync with chat-timeline.
+ * geometry — `mx-auto max-w-[1024px]`, gutters of 8px base / 15px from the
+ * @md (28rem) container query / 30px from @3xl (48rem), plus the rows'
+ * 3px rail; the rows' `px-4` and the textarea's `px-4` cancel out. Keep
+ * in sync with chat-timeline.
  */
 const TRANSCRIPT_MAX_WIDTH_PX = 1024
 const TRANSCRIPT_GUTTER_WIDE_PX = 30
+const TRANSCRIPT_GUTTER_MID_PX = 15
 const TRANSCRIPT_GUTTER_NARROW_PX = 8
-const TRANSCRIPT_GUTTER_BREAKPOINT_PX = 448
+const TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX = 768
+const TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX = 448
 const TRANSCRIPT_RAIL_PX = 3
 
 export function useComposerContentInset(paneRef: RefObject<HTMLDivElement | null>): number | null {
@@ -79,9 +82,11 @@ export function useComposerContentInset(paneRef: RefObject<HTMLDivElement | null
       }
       const centering = Math.max(0, (width - TRANSCRIPT_MAX_WIDTH_PX) / 2)
       const gutter =
-        width >= TRANSCRIPT_GUTTER_BREAKPOINT_PX
+        width >= TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX
           ? TRANSCRIPT_GUTTER_WIDE_PX
-          : TRANSCRIPT_GUTTER_NARROW_PX
+          : width >= TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX
+            ? TRANSCRIPT_GUTTER_MID_PX
+            : TRANSCRIPT_GUTTER_NARROW_PX
       setInset(Math.round(centering + gutter + TRANSCRIPT_RAIL_PX))
     })
     observer.observe(node)
