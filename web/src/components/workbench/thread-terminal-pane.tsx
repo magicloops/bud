@@ -101,9 +101,10 @@ export function ThreadTerminalPane({
         </div>
       )}
       {viewMode === 'terminal' && (
-        // Translucent overlay: the terminal runs underneath and its content
-        // shows through a dark wash that keeps the controls legible.
-        <div className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between bg-black/40 px-3 text-xs">
+        // In-flow header: the terminal starts below it (an overlay hid the
+        // top line whenever there were only a few rows of output). Solid
+        // fixed dark colors — the terminal ground is black in both themes.
+        <div className="flex h-8 items-center justify-between border-b border-white/10 bg-zinc-900 px-3 text-xs">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span
