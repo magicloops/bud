@@ -39,7 +39,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudR
   }
 
   return (
-    <aside className="flex w-20 flex-col border-r-3 border-black" style={{ backgroundColor: 'var(--sidebar)' }}>
+    <aside className="flex w-20 flex-col border-r-2 border-black" style={{ backgroundColor: 'var(--sidebar)' }}>
       <div className="flex flex-1 flex-col gap-3 p-3">
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId

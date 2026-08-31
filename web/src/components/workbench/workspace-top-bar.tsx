@@ -34,7 +34,7 @@ export function WorkspaceTopBar({
   showChatTab = false,
 }: WorkspaceTopBarProps) {
   return (
-    <div className="flex h-16 items-center justify-between gap-2 border-b-3 border-black px-3 md:px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
+    <div className="flex h-16 items-center justify-between gap-2 border-b-2 border-black px-3 md:px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
         <div className="flex min-w-0 items-center gap-2 md:gap-4">
           <Button
             type="button"
