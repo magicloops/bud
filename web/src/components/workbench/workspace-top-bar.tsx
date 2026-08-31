@@ -18,7 +18,6 @@ type WorkspaceTopBarProps = {
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
-  status: WorkbenchStatus
   fileViewLabel?: string | null
   /** Below md the chat pane is a peer view with its own tab. */
   showChatTab?: boolean
@@ -29,7 +28,6 @@ export function WorkspaceTopBar({
   view,
   onViewChange,
   onToggleThreads,
-  status,
   fileViewLabel = null,
   showChatTab = false,
 }: WorkspaceTopBarProps) {
@@ -52,17 +50,6 @@ export function WorkspaceTopBar({
           </div>
         </div>
       <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
-        <span className="hidden text-xs font-mono uppercase tracking-wide text-muted-foreground lg:inline">
-          {status === 'dispatching'
-            ? 'Dispatching'
-            : status === 'streaming'
-              ? 'Streaming'
-              : status === 'waiting_for_user'
-                ? 'Waiting'
-                : status === 'waiting_for_terminal'
-                  ? 'Waiting on terminal'
-                  : 'Idle'}
-        </span>
         {showChatTab && (
           <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4 md:mr-2" />}>
             Chat

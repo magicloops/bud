@@ -203,7 +203,6 @@ function NewThreadView() {
       view={viewMode}
       onViewChange={handleViewChange}
       onToggleThreads={toggleThreadPanel}
-      status={status}
       leftPane={(
         <div
           ref={chatPaneRef}

@@ -971,7 +971,6 @@ function ThreadView() {
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
-      status={status}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div
