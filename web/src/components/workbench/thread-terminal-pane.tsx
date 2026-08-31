@@ -101,7 +101,7 @@ export function ThreadTerminalPane({
         </div>
       )}
       {viewMode === 'terminal' && (
-        <div className="flex h-8 items-center justify-between border-b border-border/50 bg-muted/20 px-3 text-xs">
+        <div className="flex h-8 items-center justify-between border-b border-border/50 bg-muted/10 px-3 text-xs">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span
