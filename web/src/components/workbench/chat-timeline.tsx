@@ -22,6 +22,7 @@ import {
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
+import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
   createTimelineProjector,
@@ -278,10 +279,9 @@ const ChatTimelineComponent = ({
 
   return (
     <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
-      {/* Gutters keyed to the pane's own width (it's drag-resizable), not
-          the viewport: 8px base, 15px from @md (28rem), 30px from @3xl
-          (48rem). Mirrored by useComposerContentInset. */}
-      <div className="mx-auto w-full max-w-[1024px] p-2 @md:px-[15px] @3xl:px-[30px]">
+      {/* Rows are full-bleed (hover highlights span the pane); each row
+          constrains its own content via TRANSCRIPT_COLUMN_CLASSES. */}
+      <div className="py-2">
       {onLoadOlderMessages && hasOlderMessages && (
         <div className="flex justify-center pt-3 pb-2">
           <button
@@ -459,12 +459,16 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   if (isSystem) {
     return (
-      <article className="group/message bg-muted/30 px-4 py-2 text-xs italic text-muted-foreground">
-        <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
-          <span>{capitalize(message.display_role || 'System')}</span>
-          <MessageTimestamp createdAt={message.created_at} />
+      <article className="group/message bg-muted/30 text-xs italic text-muted-foreground">
+        <div className={TRANSCRIPT_COLUMN_CLASSES}>
+          <div className="border-l-[3px] border-transparent px-4 py-2">
+            <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
+              <span>{capitalize(message.display_role || 'System')}</span>
+              <MessageTimestamp createdAt={message.created_at} />
+            </div>
+            <p>{message.content}</p>
+          </div>
         </div>
-        <p>{message.content}</p>
       </article>
     )
   }
@@ -535,43 +539,48 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   return (
     <article
       className={cn(
-        'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground transition-colors hover:bg-[var(--chat-bg)]',
-        // Flat transcript on one background. Both speakers share the mono
-        // face and size; user rows carry a rail in the per-bud accent,
-        // assistant rows a transparent rail of the same width so text
-        // columns align.
-        isUser && 'border-l-[3px] font-mono',
-        isAssistant && 'border-l-[3px] border-transparent font-mono',
+        // Full-bleed row: the hover highlight (thread-list background) runs
+        // edge to edge; content sits in the shared centered column.
+        'group/message text-sm leading-relaxed text-foreground transition-colors hover:bg-secondary/40',
+        (isUser || isAssistant) && 'font-mono',
       )}
-      style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
     >
-      <button
-        type="button"
-        onClick={handleCopyMessage}
-        className={cn(
-          'absolute bottom-2 right-2 z-10 rounded-md p-1.5 transition-all',
-          'opacity-0 group-hover/message:opacity-100',
-          'bg-black/10 text-muted-foreground hover:bg-black/20 hover:text-foreground',
-          isCopied && 'opacity-100 bg-green-500/20 text-green-600',
-        )}
-        title="Copy message"
-      >
-        {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      </button>
+      <div className={TRANSCRIPT_COLUMN_CLASSES}>
+        <div
+          // User rows carry a rail in the per-bud accent; everything else a
+          // transparent rail of the same width so text columns align.
+          className="relative border-l-[3px] border-transparent px-4 py-2.5"
+          style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
+        >
+          <button
+            type="button"
+            onClick={handleCopyMessage}
+            className={cn(
+              'absolute bottom-2 right-2 z-10 rounded-md p-1.5 transition-all',
+              'opacity-0 group-hover/message:opacity-100',
+              'bg-black/10 text-muted-foreground hover:bg-black/20 hover:text-foreground',
+              isCopied && 'opacity-100 bg-green-500/20 text-green-600',
+            )}
+            title="Copy message"
+          >
+            {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
 
-      <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
-        <span>
-          {isTool
-            ? `Tool • ${toolName}`
-            : isUser
-              ? capitalize(userName ?? (message.display_role || 'User'))
-              : isAssistant
-                ? 'Bud'
-                : capitalize(message.display_role || message.role)}
-        </span>
-        <MessageTimestamp createdAt={message.created_at} />
+          <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+            <span>
+              {isTool
+                ? `Tool • ${toolName}`
+                : isUser
+                  ? capitalize(userName ?? (message.display_role || 'User'))
+                  : isAssistant
+                    ? 'Bud'
+                    : capitalize(message.display_role || message.role)}
+            </span>
+            <MessageTimestamp createdAt={message.created_at} />
+          </div>
+          <div>{contentNode}</div>
+        </div>
       </div>
-      <div>{contentNode}</div>
     </article>
   )
 })

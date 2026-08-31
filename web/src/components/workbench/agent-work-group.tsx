@@ -6,6 +6,7 @@ import { formatWorkDuration } from '@/lib/agent-work-duration'
 import { getMessageTiming, getToolName } from '@/lib/agent-message-metadata'
 import type { ApiMessage } from '@/lib/api-types'
 import type { TimelineWorkRow, TimelineWorkSection } from '@/features/threads/agent-work-projection'
+import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 
 /**
  * One turn's agent work (design/web-agent-work-collapse.md, Option B).
@@ -38,9 +39,11 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    // Transparent rail matching the message rows' 3px border keeps the
-    // text columns aligned across the transcript.
-    <section className="border-l-[3px] border-transparent text-sm">
+    // Full-bleed row like the message rows: content sits in the shared
+    // centered column, behind a transparent rail for text alignment.
+    <section className="text-sm">
+      <div className={TRANSCRIPT_COLUMN_CLASSES}>
+        <div className="border-l-[3px] border-transparent">
       <button
         type="button"
         onClick={() => onToggle(row.id)}
@@ -75,6 +78,8 @@ const AgentWorkGroupComponent = ({
           ))}
         </div>
       )}
+        </div>
+      </div>
     </section>
   )
 }
