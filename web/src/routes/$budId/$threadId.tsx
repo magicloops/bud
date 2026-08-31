@@ -68,6 +68,7 @@ import type {
   ApiThread,
 } from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
+import { getToolName } from '@/lib/agent-message-metadata'
 import type { ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
@@ -228,6 +229,37 @@ function ThreadView() {
     shouldAbortForUnauthorized,
   })
   const agentStreamCursorSetterRef = useRef<(cursor: string | null) => void>(() => {})
+  // Auto-open the terminal on the agent's FIRST terminal use in a fresh
+  // chat — derived from the transcript, no storage: fires once per thread
+  // visit, only when the loaded history shows no prior terminal activity,
+  // and only expands a collapsed viewer (never yanks an open web/file
+  // view; mobile keeps the chat pane).
+  const messagesRef = useRef(messages)
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+  const terminalAutoOpenCheckedRef = useRef(false)
+  useEffect(() => {
+    terminalAutoOpenCheckedRef.current = false
+  }, [threadId])
+  const maybeAutoOpenTerminalForTool = useCallback(
+    (toolName: string) => {
+      if (terminalAutoOpenCheckedRef.current || !toolName.startsWith('terminal.')) {
+        return
+      }
+      // First terminal event of this visit settles the question either way.
+      terminalAutoOpenCheckedRef.current = true
+      const historyHasTerminal = messagesRef.current.some(
+        (message) =>
+          message.role === 'tool' && (getToolName(message) ?? '').startsWith('terminal.'),
+      )
+      if (historyHasTerminal || isMobile) {
+        return
+      }
+      setViewMode((current) => (current === 'none' ? 'terminal' : current))
+    },
+    [isMobile],
+  )
   const {
     activeEntry: activeFileEntry,
     openFileCandidate,
@@ -595,6 +627,8 @@ function ThreadView() {
     onError: setError,
     onToolCall: (event) => {
       noteLiveTurn(event.turnId)
+      // Check BEFORE applyToolCall adds this event's own row to history.
+      maybeAutoOpenTerminalForTool(event.name)
       applyToolCall(event)
     },
     onToolResultMessage: handleToolResultMessage,
