@@ -202,7 +202,7 @@ export function CommandComposer({
         value={messageText}
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabledReason ?? 'Describe the task for Bud…'}
+        placeholder={disabledReason ?? 'Describe a task for Bud…'}
         className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:min-h-28 md:px-4 md:py-3 md:pb-16"
         disabled={inputDisabled}
       />
