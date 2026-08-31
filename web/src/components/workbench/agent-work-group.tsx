@@ -41,7 +41,7 @@ const AgentWorkGroupComponent = ({
   return (
     // Full-bleed row like the message rows: content sits in the shared
     // centered column, behind a transparent rail for text alignment.
-    <section className="text-sm">
+    <section className="text-sm transition-colors hover:bg-secondary/40">
       <div className={TRANSCRIPT_COLUMN_CLASSES}>
         <div className="border-l-[3px] border-transparent">
       <button
