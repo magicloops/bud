@@ -535,7 +535,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   return (
     <article
       className={cn(
-        'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground',
+        'group/message relative px-4 py-2.5 text-sm leading-relaxed text-foreground transition-colors hover:bg-[var(--chat-bg)]',
         // Flat transcript on one background. Both speakers share the mono
         // face and size; user rows carry a rail in the per-bud accent,
         // assistant rows a transparent rail of the same width so text
