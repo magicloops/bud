@@ -22,7 +22,6 @@ import {
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
-import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
   createTimelineProjector,
@@ -103,7 +102,6 @@ const ChatTimelineComponent = ({
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
   const { currentUser } = useAuthSession()
-  const { budLabel } = useBudRouteContext()
   // User rows label with the viewer's first name, falling back to their
   // chosen username, then the generic role.
   const userName =
@@ -320,7 +318,6 @@ const ChatTimelineComponent = ({
             key={item.row.message.client_id}
             message={item.row.message}
             userName={userName}
-            budName={budLabel}
             JsonView={JsonView}
             ensureJsonViewLoaded={ensureJsonViewLoaded}
             onOpenFile={onOpenFile}
@@ -374,7 +371,6 @@ const capitalize = (label: string): string =>
 type ChatTimelineMessageProps = {
   message: ChatMessage
   userName: string | null
-  budName: string | null
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -388,7 +384,6 @@ type ChatTimelineMessageProps = {
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
   message,
   userName,
-  budName,
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
@@ -571,7 +566,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
             : isUser
               ? capitalize(userName ?? (message.display_role || 'User'))
               : isAssistant
-                ? (budName ?? (message.display_role || 'Assistant')).toUpperCase()
+                ? 'BUD'
                 : capitalize(message.display_role || message.role)}
         </span>
         <MessageTimestamp createdAt={message.created_at} />
