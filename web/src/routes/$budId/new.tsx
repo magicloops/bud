@@ -269,6 +269,7 @@ function NewThreadView() {
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
           contentInsetLeftPx={composerInsetLeft}
+          autoFocusKey={budId}
         />
       )}
       debugPanel={(

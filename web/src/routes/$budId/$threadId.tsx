@@ -1096,6 +1096,7 @@ function ThreadView() {
           environment={agentEnvironment}
           contextBudget={contextBudget}
           contentInsetLeftPx={composerInsetLeft}
+          autoFocusKey={threadId}
         />
       )}
       debugPanel={(

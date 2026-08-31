@@ -37,6 +37,9 @@ type CommandComposerProps = {
   /** Aligns composer content with the transcript column above (the
    *  composer spans the full workspace width; the chat pane does not). */
   contentInsetLeftPx?: number | null
+  /** Auto-focus the input on mount and whenever this key changes (pass the
+   *  thread id). Skipped on coarse pointers — no surprise soft keyboards. */
+  autoFocusKey?: string | null
 }
 
 export function CommandComposer({
@@ -55,6 +58,7 @@ export function CommandComposer({
   environment = null,
   contextBudget,
   contentInsetLeftPx = null,
+  autoFocusKey = null,
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
@@ -138,6 +142,30 @@ export function CommandComposer({
     setManualHeight(null)
     onSubmit(event)
   }
+
+  // Focus on navigation: mount + thread switches (fine pointers only).
+  useEffect(() => {
+    if (hasCoarsePointer()) {
+      return
+    }
+    textareaRef.current?.focus()
+  }, [autoFocusKey])
+
+  // Keep focus across sends: dispatching disables the textarea, which
+  // ejects focus to <body>; when it re-enables, take focus back — but only
+  // from <body>, never from somewhere the user deliberately moved it.
+  const prevInputDisabledRef = useRef(inputDisabled)
+  useEffect(() => {
+    const wasDisabled = prevInputDisabledRef.current
+    prevInputDisabledRef.current = inputDisabled
+    if (!wasDisabled || inputDisabled || hasCoarsePointer()) {
+      return
+    }
+    const active = document.activeElement
+    if (!active || active === document.body) {
+      textareaRef.current?.focus()
+    }
+  }, [inputDisabled])
 
   return (
     <form
