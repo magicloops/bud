@@ -21,6 +21,7 @@ import {
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 import { useAuthSession } from '@/contexts/auth-session-context'
+import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
@@ -347,6 +348,26 @@ const ChatTimelineComponent = ({
 export const ChatTimeline = memo(ChatTimelineComponent)
 ChatTimeline.displayName = 'ChatTimeline'
 
+/**
+ * Hover-revealed timestamp: relative ("3 hours ago") by default, clicking
+ * toggles the absolute date and time.
+ */
+const MessageTimestamp = ({ createdAt }: { createdAt: string }) => {
+  const [showAbsolute, setShowAbsolute] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => setShowAbsolute((value) => !value)}
+      title={showAbsolute ? undefined : new Date(createdAt).toLocaleString()}
+      className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-visible:opacity-100"
+    >
+      <time dateTime={createdAt}>
+        {showAbsolute ? new Date(createdAt).toLocaleString() : formatRelativeTimestamp(createdAt)}
+      </time>
+    </button>
+  )
+}
+
 const capitalize = (label: string): string =>
   label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label
 
@@ -407,7 +428,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         }
       })()
     : undefined
-  const timeLabel = new Date(message.created_at).toLocaleTimeString()
 
   useEffect(() => {
     return () => {
@@ -444,10 +464,10 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   if (isSystem) {
     return (
-      <article className="bg-muted/30 px-4 py-2 text-xs italic text-muted-foreground">
+      <article className="group/message bg-muted/30 px-4 py-2 text-xs italic text-muted-foreground">
         <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
           <span>{capitalize(message.display_role || 'System')}</span>
-          <time>{timeLabel}</time>
+          <MessageTimestamp createdAt={message.created_at} />
         </div>
         <p>{message.content}</p>
       </article>
@@ -554,15 +574,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
                 ? (budName ?? (message.display_role || 'Assistant')).toUpperCase()
                 : capitalize(message.display_role || message.role)}
         </span>
-        {/* Agent-side timestamps only surface on hover; the user's anchor
-            rows keep theirs visible. */}
-        <time
-          className={cn(
-            !isUser && 'opacity-0 transition-opacity group-hover/message:opacity-100',
-          )}
-        >
-          {timeLabel}
-        </time>
+        <MessageTimestamp createdAt={message.created_at} />
       </div>
       <div>{contentNode}</div>
     </article>
