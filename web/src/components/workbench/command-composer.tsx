@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
+import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
 import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
+
+const COMPOSER_MIN_HEIGHT_PX = 56
+
+const composerMaxHeight = (): number => {
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  return Math.min(Math.round(viewportHeight * 0.75), 1000)
+}
+
+const autoGrowHeight = (el: HTMLTextAreaElement): number => {
+  el.style.height = 'auto'
+  return Math.min(el.scrollHeight, composerMaxHeight())
+}
 
 type CommandComposerProps = {
   messageText: string
@@ -22,6 +34,12 @@ type CommandComposerProps = {
   disabledReason?: string | null
   environment?: ApiAgentEnvironment | null
   contextBudget?: ApiContextBudget | null
+  /** Aligns composer content with the transcript column above (the
+   *  composer spans the full workspace width; the chat pane does not). */
+  contentInsetLeftPx?: number | null
+  /** Auto-focus the input on mount and whenever this key changes (pass the
+   *  thread id). Skipped on coarse pointers — no surprise soft keyboards. */
+  autoFocusKey?: string | null
 }
 
 export function CommandComposer({
@@ -39,6 +57,8 @@ export function CommandComposer({
   disabledReason = null,
   environment = null,
   contextBudget,
+  contentInsetLeftPx = null,
+  autoFocusKey = null,
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
@@ -67,30 +87,107 @@ export function CommandComposer({
     }
   }
 
-  // Mobile auto-grow (value-driven, not event-driven, so clearing after a
-  // send and programmatic changes also resize): ONE line at rest, grows
-  // with content, caps at ~40% of the visual viewport and scrolls
-  // internally beyond that. Desktop keeps the fixed h-32 box.
+  // Auto-grow (value-driven, not event-driven, so clearing after a send
+  // and programmatic changes also resize): rests at one line on phones /
+  // md:min-h-28 on desktop, grows with content, caps at 3/4 of the
+  // visual viewport (1000px absolute) and scrolls internally beyond that.
+  // Dragging the top edge sets a manual height that overrides auto-grow
+  // until the next send (or a double-click on the edge).
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [manualHeight, setManualHeight] = useState<number | null>(null)
+  const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(
+    null,
+  )
   useEffect(() => {
     const el = textareaRef.current
     if (!el) {
       return
     }
-    if (!window.matchMedia('(max-width: 767px)').matches) {
-      el.style.height = ''
-      el.style.overflowY = ''
+    const height = manualHeight ?? autoGrowHeight(el)
+    el.style.height = `${height}px`
+    el.style.overflowY = el.scrollHeight > height ? 'auto' : 'hidden'
+  }, [messageText, manualHeight])
+
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = textareaRef.current
+    if (!el) {
       return
     }
-    el.style.height = 'auto'
-    const max = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4)
-    const next = Math.min(el.scrollHeight, max)
-    el.style.height = `${next}px`
-    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
-  }, [messageText])
+    event.preventDefault()
+    resizeDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: el.getBoundingClientRect().height,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return
+    }
+    // Dragging up grows the input, down shrinks it.
+    const next = Math.round(drag.startHeight + (drag.startY - event.clientY))
+    setManualHeight(Math.min(Math.max(next, COMPOSER_MIN_HEIGHT_PX), composerMaxHeight()))
+  }
+
+  const endResizeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeDragRef.current?.pointerId === event.pointerId) {
+      resizeDragRef.current = null
+    }
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    setManualHeight(null)
+    onSubmit(event)
+  }
+
+  // Focus on navigation: mount + thread switches (fine pointers only).
+  useEffect(() => {
+    if (hasCoarsePointer()) {
+      return
+    }
+    textareaRef.current?.focus()
+  }, [autoFocusKey])
+
+  // Keep focus across sends: dispatching disables the textarea, which
+  // ejects focus to <body>; when it re-enables, take focus back — but only
+  // from <body>, never from somewhere the user deliberately moved it.
+  const prevInputDisabledRef = useRef(inputDisabled)
+  useEffect(() => {
+    const wasDisabled = prevInputDisabledRef.current
+    prevInputDisabledRef.current = inputDisabled
+    if (!wasDisabled || inputDisabled || hasCoarsePointer()) {
+      return
+    }
+    const active = document.activeElement
+    if (!active || active === document.body) {
+      textareaRef.current?.focus()
+    }
+  }, [inputDisabled])
 
   return (
-    <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
+    <form
+      onSubmit={handleSubmit}
+      className="relative border-t-2 border-black bg-background"
+      // The pinned controls (md+) are absolutely positioned and ignore this.
+      style={contentInsetLeftPx !== null ? { paddingLeft: contentInsetLeftPx } : undefined}
+    >
+      {/* Drag strip over the top border: resize the input by hand;
+          double-click (or the next send) returns it to auto-grow. */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize message input"
+        title="Drag to resize · double-click to reset"
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={endResizeDrag}
+        onPointerCancel={endResizeDrag}
+        onDoubleClick={() => setManualHeight(null)}
+        className="absolute -top-1.5 left-0 right-0 z-10 h-3 cursor-row-resize touch-none select-none hover:bg-foreground/10 active:bg-foreground/15"
+      />
       {error && <div className="whitespace-pre-line px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
       {showBudOfflineNotice && (
@@ -105,13 +202,13 @@ export function CommandComposer({
         value={messageText}
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabledReason ?? 'Describe the task for Bud…'}
-        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-32 md:p-4 md:pb-20"
+        placeholder={disabledReason ?? 'Describe a task for Bud…'}
+        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:min-h-28 md:px-4 md:py-3 md:pb-16"
         disabled={inputDisabled}
       />
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
-      <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-4 md:right-4 md:gap-3 md:p-0">
+      <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0">
         {/* Build tag: short release version; click toggles the full
             git-describe string (build forensics without a settings surface). */}
         <button
@@ -127,7 +224,7 @@ export function CommandComposer({
         <select
           value={selectedModel}
           onChange={(event) => onModelChange(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg border-3 border-black bg-card px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none md:max-w-[140px] md:flex-none"
+          className="min-w-0 max-w-[140px] flex-none rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
           disabled={inputDisabled || models.length === 0}
         >
           {models.length === 0 ? (
@@ -157,7 +254,7 @@ export function CommandComposer({
           <select
             value={reasoningEffort}
             onChange={(event) => onReasoningChange(event.target.value as ReasoningLevel)}
-            className="w-[96px] shrink-0 rounded-lg border-3 border-black bg-card px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none md:w-[112px]"
+            className="w-[96px] shrink-0 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none md:w-[112px]"
             disabled={inputDisabled}
           >
             {reasoningOptions.map((option) => (
@@ -167,13 +264,17 @@ export function CommandComposer({
             ))}
           </select>
         )}
-        <ContextSendButton
-          contextBudget={contextBudget}
-          disabled={stopMode ? false : inputDisabled}
-          dispatching={status === 'dispatching'}
-          stopMode={stopMode}
-          onStop={onCancelAgentTurn}
-        />
+        {/* ml-auto keeps the send button on the right edge of the static
+            phone row; on md+ the row is pinned bottom-right and it's a no-op. */}
+        <div className="ml-auto shrink-0">
+          <ContextSendButton
+            contextBudget={contextBudget}
+            disabled={stopMode ? false : inputDisabled}
+            dispatching={status === 'dispatching'}
+            stopMode={stopMode}
+            onStop={onCancelAgentTurn}
+          />
+        </div>
       </div>
     </form>
   )

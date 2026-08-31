@@ -11,8 +11,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useIsMobile } from '@/lib/use-viewport'
 import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
-import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import {
+  ChatPaneResizeHandle,
+  useChatPaneWidth,
+  useComposerContentInset,
+} from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
@@ -63,6 +68,7 @@ import type {
   ApiThread,
 } from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
+import { getToolName } from '@/lib/agent-message-metadata'
 import type { ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
@@ -138,6 +144,9 @@ function ThreadView() {
   }, [])
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const isMobile = useIsMobile()
+  const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
+  const chatPaneRef = useRef<HTMLDivElement | null>(null)
+  const composerInsetLeft = useComposerContentInset(chatPaneRef)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     resolveInitialViewMode(
       typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
@@ -145,15 +154,25 @@ function ThreadView() {
     ),
   )
   const handleViewChange = useCallback((view: ViewMode) => {
-    setViewMode(view)
-    writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, view)
-  }, [])
+    // Clicking the already-active viewer tab collapses the viewer: chat
+    // fills the workspace on desktop; on mobile it returns to the chat view.
+    const next = view === viewMode && view !== 'chat' ? (isMobile ? 'chat' : 'none') : view
+    setViewMode(next)
+    writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, next)
+  }, [isMobile, viewMode])
   // Growing past md with 'chat' selected: chat is no longer a peer view.
+  // Shrinking below md: land on the chat view (the desktop viewer selection
+  // must not carry over), and 'none' has no mobile meaning either.
+  const wasMobileRef = useRef(isMobile)
   useEffect(() => {
+    const wasMobile = wasMobileRef.current
+    wasMobileRef.current = isMobile
     if (!isMobile && viewMode === 'chat') {
       setViewMode(
         resolveInitialViewMode(false, readStoredWorkbenchView(window.localStorage)),
       )
+    } else if (isMobile && (!wasMobile || viewMode === 'none')) {
+      setViewMode('chat')
     }
   }, [isMobile, viewMode])
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
@@ -210,6 +229,37 @@ function ThreadView() {
     shouldAbortForUnauthorized,
   })
   const agentStreamCursorSetterRef = useRef<(cursor: string | null) => void>(() => {})
+  // Auto-open the terminal on the agent's FIRST terminal use in a fresh
+  // chat — derived from the transcript, no storage: fires once per thread
+  // visit, only when the loaded history shows no prior terminal activity,
+  // and only expands a collapsed viewer (never yanks an open web/file
+  // view; mobile keeps the chat pane).
+  const messagesRef = useRef(messages)
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+  const terminalAutoOpenCheckedRef = useRef(false)
+  useEffect(() => {
+    terminalAutoOpenCheckedRef.current = false
+  }, [threadId])
+  const maybeAutoOpenTerminalForTool = useCallback(
+    (toolName: string) => {
+      if (terminalAutoOpenCheckedRef.current || !toolName.startsWith('terminal.')) {
+        return
+      }
+      // First terminal event of this visit settles the question either way.
+      terminalAutoOpenCheckedRef.current = true
+      const historyHasTerminal = messagesRef.current.some(
+        (message) =>
+          message.role === 'tool' && (getToolName(message) ?? '').startsWith('terminal.'),
+      )
+      if (historyHasTerminal || isMobile) {
+        return
+      }
+      setViewMode((current) => (current === 'none' ? 'terminal' : current))
+    },
+    [isMobile],
+  )
   const {
     activeEntry: activeFileEntry,
     openFileCandidate,
@@ -577,6 +627,8 @@ function ThreadView() {
     onError: setError,
     onToolCall: (event) => {
       noteLiveTurn(event.turnId)
+      // Check BEFORE applyToolCall adds this event's own row to history.
+      maybeAutoOpenTerminalForTool(event.name)
       applyToolCall(event)
     },
     onToolResultMessage: handleToolResultMessage,
@@ -919,21 +971,27 @@ function ThreadView() {
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
-      status={status}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div
-          className={`min-h-0 flex-col border-black max-md:w-full md:flex md:w-80 md:border-r-4 lg:w-96 ${
-            isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'
-          }`}
-          style={{ backgroundColor: 'var(--chat-bg)' }}
+          ref={chatPaneRef}
+          className={`relative min-h-0 flex-col border-black max-md:w-full md:flex ${
+            viewMode === 'none'
+              ? 'md:flex-1'
+              : 'md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)]'
+          } ${isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'}`}
+          style={
+            {
+              backgroundColor: 'var(--chat-bg)',
+              ...(chatPaneWidth !== null ? { '--chat-pane-width': chatPaneWidth } : {}),
+            } as CSSProperties
+          }
         >
           <ChatTimeline
             messages={messages}
             notices={contextCompactionNotices}
             liveTurnId={liveTurnId}
             turnOutcomes={turnOutcomes}
-            accentColor="var(--bud-accent-vibrant)"
             activityIndicatorVisible={activityIndicatorVisible}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
             hasOlderMessages={messagePage.has_more_before}
@@ -944,12 +1002,15 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
+          {viewMode !== 'none' && (
+            <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
+          )}
         </div>
       )}
       rightPane={(
         <div
           className={`relative flex-1 overflow-hidden ${
-            isMobile && viewMode === 'chat' ? 'hidden' : 'flex'
+            viewMode === 'none' || (isMobile && viewMode === 'chat') ? 'hidden' : 'flex'
           }`}
         >
           <ThreadTerminalPane
@@ -1033,6 +1094,8 @@ function ThreadView() {
           onReasoningChange={handleReasoningChange}
           environment={agentEnvironment}
           contextBudget={contextBudget}
+          contentInsetLeftPx={composerInsetLeft}
+          autoFocusKey={threadId}
         />
       )}
       debugPanel={(

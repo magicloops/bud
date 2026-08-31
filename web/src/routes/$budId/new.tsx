@@ -9,8 +9,13 @@
  */
 
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, useRef, useEffect, type FormEvent } from 'react'
+import { useState, useCallback, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import {
+  ChatPaneResizeHandle,
+  useChatPaneWidth,
+  useComposerContentInset,
+} from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
@@ -36,6 +41,9 @@ function NewThreadView() {
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { toggleThreadPanel } = useLayout()
+  const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
+  const chatPaneRef = useRef<HTMLDivElement | null>(null)
+  const composerInsetLeft = useComposerContentInset(chatPaneRef)
 
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
@@ -45,7 +53,11 @@ function NewThreadView() {
   // the selected model (e.g. Luna defaults to "high"); the pre-load 'low'
   // seed must not stick just because the default model also supports low.
   const reasoningTouchedRef = useRef(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
+  const [viewMode, setViewMode] = useState<ViewMode>('none')
+  // Clicking the already-active viewer tab collapses the viewer.
+  const handleViewChange = useCallback((view: ViewMode) => {
+    setViewMode((current) => (view === current && view !== 'chat' ? 'none' : view))
+  }, [])
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
 
   // Terminal state (no connection in "new thread" mode)
@@ -189,21 +201,40 @@ function NewThreadView() {
     <WorkspaceShell
       title="New Thread"
       view={viewMode}
-      onViewChange={setViewMode}
+      onViewChange={handleViewChange}
       onToggleThreads={toggleThreadPanel}
-      status={status}
       leftPane={(
-        <div className="flex w-full flex-col border-black md:w-80 md:border-r-4 lg:w-96" style={{ backgroundColor: 'var(--chat-bg)' }}>
+        <div
+          ref={chatPaneRef}
+          className={`relative flex w-full flex-col border-black ${
+            viewMode === 'none'
+              ? 'md:flex-1'
+              : 'md:w-[var(--chat-pane-width,20rem)] md:shrink-0 md:border-r-2 lg:w-[var(--chat-pane-width,24rem)]'
+          }`}
+          style={
+            {
+              backgroundColor: 'var(--chat-bg)',
+              ...(chatPaneWidth !== null ? { '--chat-pane-width': chatPaneWidth } : {}),
+            } as CSSProperties
+          }
+        >
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">Start a new conversation</p>
               <p className="mt-1 text-sm">Send a message to create a thread and terminal session</p>
             </div>
           </div>
+          {viewMode !== 'none' && (
+            <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
+          )}
         </div>
       )}
       rightPane={(
-        <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-black">
+        <div
+          className={`relative flex-1 flex-col overflow-hidden border-l-2 border-black bg-black ${
+            viewMode === 'none' ? 'hidden' : 'flex'
+          }`}
+        >
           {viewMode === 'web' && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
               <div className="rounded-2xl border-4 border-black bg-card px-10 py-8 shadow-[6px_6px_0px_rgba(0,0,0,1)]">
@@ -236,6 +267,8 @@ function NewThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
+          contentInsetLeftPx={composerInsetLeft}
+          autoFocusKey={budId}
         />
       )}
       debugPanel={(

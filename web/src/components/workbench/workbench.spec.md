@@ -101,6 +101,30 @@ Message list with auto-scroll and full-height message rendering.
 
 **Note**: Renders the scrollable message area plus non-transcript timeline footers. Parent component provides the container wrapper.
 
+### `chat-pane-resize.tsx`
+
+Drag-to-resize for the chat-pane ↔ terminal/web/file divider (md+ only).
+
+**Exports**:
+- `useChatPaneWidth()` — `{ width: string | null, setFraction }`; the
+  dragged split is stored as a FRACTION of the pane row (localStorage
+  `bud:chat-pane-fraction`, shared by the `$threadId` and `new` routes),
+  so opening the thread panel or resizing the window shrinks both sides
+  proportionally. `width` is the CSS value `clamp(280px, N%, 70%)`; null
+  means the responsive defaults (`20rem` md / `24rem` lg).
+- `ChatPaneResizeHandle` — absolutely-positioned strip over the pane's
+  right border, rendered inside the (relative) chat pane. Pointer capture
+  keeps the drag alive over the terminal/iframe; double-click resets to
+  the defaults; arrow keys nudge ±24px when focused (`role="separator"`).
+- `useComposerContentInset(paneRef)` — ResizeObserver-backed left inset
+  aligning the full-width composer with the transcript column (mirrors
+  chat-timeline's wrapper geometry: 1024px centering, 8/15/30px gutter
+  tiers, 3px rail).
+
+The pane consumes the width via a CSS variable
+(`md:w-[var(--chat-pane-width,20rem)]`), so mobile's `w-full` never sees
+custom widths.
+
 ### `agent-work-group.tsx`
 
 One turn's agent work as a disclosure row (design/web-agent-work-collapse.md,

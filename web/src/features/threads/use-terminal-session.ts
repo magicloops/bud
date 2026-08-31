@@ -74,7 +74,7 @@ export type TerminalSessionFacts = {
 
 export type { TerminalCommandChip }
 
-type TerminalViewMode = 'chat' | 'terminal' | 'web' | 'file'
+type TerminalViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'none'
 
 type QueueTerminalInput = (text: string, options?: { flushImmediately?: boolean }) => void
 

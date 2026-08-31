@@ -63,7 +63,7 @@ export function ContextSendButton({
               aria-label={ariaLabel}
               disabled={disabled}
               onClick={handleClick}
-              className="relative flex h-10 w-10 items-center justify-center rounded-full p-[3px] text-black shadow-[3px_3px_0_rgba(0,0,0,1)] outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+              className="relative flex h-10 w-10 items-center justify-center rounded-full p-[3px] text-black shadow-[2px_2px_0_rgba(0,0,0,1)] outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-black/30 disabled:cursor-not-allowed disabled:opacity-60"
               style={ringStyle}
             >
               <span
@@ -81,7 +81,7 @@ export function ContextSendButton({
             </button>
           </span>
         </TooltipTrigger>
-        <TooltipContent side="top" align="end" className="max-w-72 border-2 border-black bg-card p-3 font-mono text-xs text-card-foreground shadow-[4px_4px_0_rgba(0,0,0,1)]">
+        <TooltipContent side="top" align="end" className="max-w-72 border-2 border-black bg-card p-3 font-mono text-xs text-card-foreground shadow-[2px_2px_0_rgba(0,0,0,1)]">
           <div className="space-y-2">
             <div className="font-semibold">{presentation.title}</div>
             <div className="space-y-1 text-muted-foreground">

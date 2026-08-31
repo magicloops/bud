@@ -66,7 +66,7 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
         'overflow-hidden transition-[max-height] duration-200 ease-out',
         isExpanded ? 'max-h-10' : 'max-h-0'
       )}
-      style={{ backgroundColor: 'var(--chat-bg)' }}
+      style={{ backgroundColor: 'var(--background)' }}
     >
       <div className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-muted-foreground">
         <LoaderCircle className="h-3.5 w-3.5 animate-spin flex-shrink-0" />

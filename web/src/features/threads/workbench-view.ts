@@ -2,10 +2,10 @@
  * Workbench view-mode resolution and persistence
  * (design/responsive-web-layout.md §3.2, decision record #2).
  *
- * The last-used WORKBENCH view (terminal | web) is persisted globally so
- * tablets/desktops restore the user's working context. `chat` is only a
- * peer view below the md breakpoint (phones start there); `file` is
- * transient and never persisted.
+ * The workspace opens chat-first: phones start on the chat peer view,
+ * larger screens start with the viewer collapsed (`none`). The last-used
+ * WORKBENCH view (terminal | web) is still recorded globally for a future
+ * "restore last view"; `chat`, `file`, and `none` are never persisted.
  */
 
 import type { ViewMode } from '@/components/workbench/workspace-top-bar'
@@ -16,12 +16,15 @@ type PersistableView = 'terminal' | 'web'
 
 export function resolveInitialViewMode(
   isMobile: boolean,
-  stored: string | null,
+  _stored: string | null,
 ): ViewMode {
   if (isMobile) {
     return 'chat'
   }
-  return stored === 'web' ? 'web' : 'terminal'
+  // Chat-first: the workspace opens with the viewer collapsed; the stored
+  // view is currently just a record of the last opened viewer (a future
+  // "restore last view" can consult it again).
+  return 'none'
 }
 
 export function persistableWorkbenchView(view: ViewMode): PersistableView | null {

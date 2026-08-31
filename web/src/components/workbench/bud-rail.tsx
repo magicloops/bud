@@ -39,7 +39,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudR
   }
 
   return (
-    <aside className="flex w-20 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--sidebar)' }}>
+    <aside className="flex w-20 flex-col border-r-2 border-black" style={{ backgroundColor: 'var(--sidebar)' }}>
       <div className="flex flex-1 flex-col gap-3 p-3">
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId
@@ -52,9 +52,9 @@ export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudR
               key={bud.id}
               onClick={() => onSelectBud(bud.id)}
               className={cn(
-                'group relative flex h-14 w-14 flex-col items-center justify-center rounded-xl border-3 border-black text-center transition-all',
+                'group relative flex h-14 w-14 flex-col items-center justify-center rounded-xl border-2 border-black text-center transition-all',
                 'hover:-translate-y-0.5 active:translate-y-0',
-                isActive ? 'translate-y-0 border-black shadow-none' : 'shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
+                isActive ? 'translate-y-0 border-black shadow-none' : 'shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]'
               )}
               style={{
                 backgroundColor: accent,
@@ -71,7 +71,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudR
           )
         })}
         <button
-          className="flex h-14 w-14 items-center justify-center rounded-xl border-3 border-dashed border-black bg-muted/60 text-muted-foreground transition-all hover:-translate-y-0.5"
+          className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-black bg-muted/60 text-muted-foreground transition-all hover:-translate-y-0.5"
           style={{ boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)' }}
         >
           <Plus className="h-5 w-5" />

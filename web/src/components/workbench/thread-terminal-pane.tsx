@@ -101,7 +101,10 @@ export function ThreadTerminalPane({
         </div>
       )}
       {viewMode === 'terminal' && (
-        <div className="flex h-8 items-center justify-between border-b border-border/50 bg-muted/20 px-3 text-xs">
+        // In-flow header: the terminal starts below it (an overlay hid the
+        // top line whenever there were only a few rows of output). Solid
+        // fixed dark colors — the terminal ground is black in both themes.
+        <div className="flex h-8 items-center justify-between border-b border-white/10 bg-zinc-900 px-3 text-xs">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span
@@ -112,10 +115,29 @@ export function ThreadTerminalPane({
                       ? 'animate-pulse bg-yellow-500'
                       : 'bg-red-500'
                 }`}
+                title={[
+                  terminalState,
+                  ...(terminalFacts
+                    ? [
+                        terminalFacts.mode,
+                        terminalFacts.integration === 'osc133'
+                          ? 'shell integration active (exact command results)'
+                          : terminalFacts.integration === 'sentinel'
+                            ? 'sentinel integration (wrapped commands)'
+                            : 'no shell integration',
+                      ]
+                    : []),
+                ].join(' · ')}
               />
-              <span className="font-mono font-semibold uppercase tracking-wide">
-                {terminalConnectionLabel ?? `Terminal: ${terminalState}`}
-              </span>
+              {/* Text only when the terminal isn't simply working: healthy
+                  states (ready/active/idle) are the lone green dot, with the
+                  state in the dot's tooltip. */}
+              {(terminalConnectionLabel !== null ||
+                !['ready', 'active', 'idle'].includes(terminalState)) && (
+                <span className="font-mono font-semibold uppercase tracking-wide">
+                  {terminalConnectionLabel ?? terminalState}
+                </span>
+              )}
               {terminalInputQueued && (
                 <span
                   className="rounded border border-yellow-600/50 bg-yellow-900/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-yellow-400"
@@ -125,67 +147,24 @@ export function ThreadTerminalPane({
                 </span>
               )}
             </div>
-            {terminalFacts && terminalConnection === 'connected' && (
-              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    terminalFacts.mode === 'shell'
-                      ? 'bg-green-400'
-                      : terminalFacts.mode === 'tui'
-                        ? 'bg-blue-400'
-                        : terminalFacts.mode === 'repl'
-                          ? 'bg-cyan-400'
-                          : 'bg-zinc-400'
-                  }`}
-                  title={
-                    terminalFacts.integration === 'osc133'
-                      ? 'Shell integration active (exact command results)'
-                      : terminalFacts.integration === 'sentinel'
-                        ? 'Sentinel integration (wrapped commands)'
-                        : 'No shell integration'
-                  }
-                />
-                <span className="font-mono uppercase tracking-wide text-muted-foreground">
-                  {terminalFacts.mode}
-                </span>
-              </div>
-            )}
+            {/* Command chip only when it says something: running, or a
+                failure. Success is the default — no standing "exit 0". */}
             {terminalCommand && terminalConnection === 'connected' && (
-              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
-                {terminalCommand.status === 'running' ? (
-                  <>
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-400" />
-                    <span className="font-mono uppercase tracking-wide text-muted-foreground">
-                      running
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        terminalCommand.exitCode === null
-                          ? 'bg-zinc-400'
-                          : terminalCommand.exitCode === 0
-                            ? 'bg-green-500'
-                            : 'bg-red-500'
-                      }`}
-                    />
-                    <span
-                      className={`font-mono uppercase tracking-wide ${
-                        terminalCommand.exitCode === null
-                          ? 'text-muted-foreground'
-                          : terminalCommand.exitCode === 0
-                            ? 'text-green-400'
-                            : 'text-red-400'
-                      }`}
-                    >
-                      {terminalCommand.exitCode === null
-                        ? 'done'
-                        : `exit ${terminalCommand.exitCode}`}
-                    </span>
-                  </>
-                )}
-              </div>
+              terminalCommand.status === 'running' ? (
+                <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-400" />
+                  <span className="font-mono uppercase tracking-wide text-muted-foreground">
+                    running
+                  </span>
+                </div>
+              ) : terminalCommand.exitCode !== null && terminalCommand.exitCode !== 0 ? (
+                <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                  <span className="h-2 w-2 rounded-full bg-red-500" />
+                  <span className="font-mono uppercase tracking-wide text-red-400">
+                    exit {terminalCommand.exitCode}
+                  </span>
+                </div>
+              ) : null
             )}
             {showInterrupt && (
               <button

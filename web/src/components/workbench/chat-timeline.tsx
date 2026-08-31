@@ -2,7 +2,6 @@ import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, u
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
-import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import {
   ThinkingIndicator,
@@ -21,6 +20,9 @@ import {
   type OpenFileSource,
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
+import { useAuthSession } from '@/contexts/auth-session-context'
+import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
+import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
 import {
   createTimelineProjector,
@@ -68,7 +70,6 @@ type ChatTimelineProps = {
   liveTurnId?: string | null
   /** Session-local `final`-event outcomes for failed/canceled badges. */
   turnOutcomes?: ReadonlyMap<string, TurnOutcome>
-  accentColor: string
   activityIndicatorVisible?: boolean
   activityIndicatorLabel?: string
   hasOlderMessages?: boolean
@@ -88,7 +89,6 @@ const ChatTimelineComponent = ({
   notices = [],
   liveTurnId = null,
   turnOutcomes,
-  accentColor,
   activityIndicatorVisible = false,
   activityIndicatorLabel,
   hasOlderMessages = false,
@@ -102,7 +102,11 @@ const ChatTimelineComponent = ({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
-  const systemColor = getMutedColor(resolveCssVar(accentColor || 'var(--avatar-3)'), 0.4)
+  const { currentUser } = useAuthSession()
+  // User rows label with the viewer's first name, falling back to their
+  // chosen username, then the generic role.
+  const userName =
+    currentUser?.user.name.trim().split(/\s+/)[0] || currentUser?.profile.username || null
 
   const setScrollNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -274,27 +278,24 @@ const ChatTimelineComponent = ({
   }, [activityIndicatorVisible])
 
   return (
-    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-      {onLoadOlderMessages && (
-        <div className="flex justify-center pb-1">
-          {hasOlderMessages ? (
-            <button
-              type="button"
-              onClick={onLoadOlderMessages}
-              disabled={isLoadingOlderMessages}
-              className="rounded-full border-2 border-black bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-foreground shadow-[2px_2px_0px_rgba(0,0,0,1)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
-            >
-              {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
-            </button>
-          ) : visibleMessages.length > 0 ? (
-            <p className="text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
-              Start of transcript
-            </p>
-          ) : null}
+    <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
+      {/* Rows are full-bleed (hover highlights span the pane); each row
+          constrains its own content via TRANSCRIPT_COLUMN_CLASSES. */}
+      <div className="py-2">
+      {onLoadOlderMessages && hasOlderMessages && (
+        <div className="flex justify-center pt-3 pb-2">
+          <button
+            type="button"
+            onClick={onLoadOlderMessages}
+            disabled={isLoadingOlderMessages}
+            className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
+          </button>
         </div>
       )}
       {timelineItems.length === 0 && (
-        <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
       {timelineItems.map((item) => {
         if (item.type === 'notice') {
@@ -316,7 +317,7 @@ const ChatTimelineComponent = ({
           <ChatTimelineMessage
             key={item.row.message.client_id}
             message={item.row.message}
-            systemColor={systemColor}
+            userName={userName}
             JsonView={JsonView}
             ensureJsonViewLoaded={ensureJsonViewLoaded}
             onOpenFile={onOpenFile}
@@ -336,6 +337,7 @@ const ChatTimelineComponent = ({
         }
         label={activityIndicatorLabel}
       />
+      </div>
     </div>
   )
 }
@@ -343,9 +345,32 @@ const ChatTimelineComponent = ({
 export const ChatTimeline = memo(ChatTimelineComponent)
 ChatTimeline.displayName = 'ChatTimeline'
 
+/**
+ * Hover-revealed timestamp: relative ("3 hours ago") by default, clicking
+ * toggles the absolute date and time.
+ */
+const MessageTimestamp = ({ createdAt }: { createdAt: string }) => {
+  const [showAbsolute, setShowAbsolute] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => setShowAbsolute((value) => !value)}
+      title={showAbsolute ? undefined : new Date(createdAt).toLocaleString()}
+      className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-visible:opacity-100"
+    >
+      <time dateTime={createdAt}>
+        {showAbsolute ? new Date(createdAt).toLocaleString() : formatRelativeTimestamp(createdAt)}
+      </time>
+    </button>
+  )
+}
+
+const capitalize = (label: string): string =>
+  label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label
+
 type ChatTimelineMessageProps = {
   message: ChatMessage
-  systemColor: string
+  userName: string | null
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -358,7 +383,7 @@ type ChatTimelineMessageProps = {
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
   message,
-  systemColor,
+  userName,
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
@@ -372,7 +397,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
   const isSystem = message.role === 'system'
-  const isReasoning = message.role === 'reasoning'
   const isAssistant = message.role === 'assistant' && !isTool
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
   const payload = isTool ? resolveToolPayload(message) : null
@@ -399,16 +423,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         }
       })()
     : undefined
-  const timeLabel = new Date(message.created_at).toLocaleTimeString()
-  const backgroundColor = isUser ? 'var(--chat-message)' : undefined
-  const assistantBackground = isAssistant || isTool || isReasoning ? 'var(--chat-message)' : undefined
-  const accentStyles =
-    isUser && systemColor
-      ? {
-          borderColor: systemColor,
-          boxShadow: `3px 3px 0 ${systemColor}`,
-        }
-      : undefined
 
   useEffect(() => {
     return () => {
@@ -445,12 +459,16 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   if (isSystem) {
     return (
-      <article className="rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 px-3 py-2 text-xs italic text-muted-foreground">
-        <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
-          <span>{message.display_role || 'System'}</span>
-          <time>{timeLabel}</time>
+      <article className="group/message bg-muted/30 text-xs italic text-muted-foreground">
+        <div className={TRANSCRIPT_COLUMN_CLASSES}>
+          <div className="border-l-[3px] border-transparent px-4 py-2">
+            <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
+              <span>{capitalize(message.display_role || 'System')}</span>
+              <MessageTimestamp createdAt={message.created_at} />
+            </div>
+            <p>{message.content}</p>
+          </div>
         </div>
-        <p>{message.content}</p>
       </article>
     )
   }
@@ -521,34 +539,48 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   return (
     <article
       className={cn(
-        'group/message relative rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
-        isUser ? 'text-card-foreground' : 'text-foreground',
-        (isAssistant || isTool || isReasoning) && 'bg-background',
+        // Full-bleed row: the hover highlight (thread-list background) runs
+        // edge to edge; content sits in the shared centered column.
+        'group/message text-sm leading-relaxed text-foreground transition-colors hover:bg-secondary/40',
+        (isUser || isAssistant) && 'font-mono',
       )}
-      style={{
-        backgroundColor: backgroundColor ?? assistantBackground,
-        ...(accentStyles ?? {}),
-      }}
     >
-      <button
-        type="button"
-        onClick={handleCopyMessage}
-        className={cn(
-          'absolute bottom-2 right-2 z-10 rounded-md p-1.5 transition-all',
-          'opacity-0 group-hover/message:opacity-100',
-          'bg-black/10 text-muted-foreground hover:bg-black/20 hover:text-foreground',
-          isCopied && 'opacity-100 bg-green-500/20 text-green-600',
-        )}
-        title="Copy message"
-      >
-        {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      </button>
+      <div className={TRANSCRIPT_COLUMN_CLASSES}>
+        <div
+          // User rows carry a rail in the per-bud accent; everything else a
+          // transparent rail of the same width so text columns align.
+          className="relative border-l-[3px] border-transparent px-4 py-2.5"
+          style={isUser ? { borderLeftColor: 'var(--bud-accent-vibrant)' } : undefined}
+        >
+          <button
+            type="button"
+            onClick={handleCopyMessage}
+            className={cn(
+              'absolute bottom-2 right-2 z-10 rounded-md p-1.5 transition-all',
+              'opacity-0 group-hover/message:opacity-100',
+              'bg-black/10 text-muted-foreground hover:bg-black/20 hover:text-foreground',
+              isCopied && 'opacity-100 bg-green-500/20 text-green-600',
+            )}
+            title="Copy message"
+          >
+            {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
 
-      <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
-        <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
-        <time>{timeLabel}</time>
+          <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+            <span>
+              {isTool
+                ? `Tool • ${toolName}`
+                : isUser
+                  ? capitalize(userName ?? (message.display_role || 'User'))
+                  : isAssistant
+                    ? 'Bud'
+                    : capitalize(message.display_role || message.role)}
+            </span>
+            <MessageTimestamp createdAt={message.created_at} />
+          </div>
+          <div>{contentNode}</div>
+        </div>
       </div>
-      <div>{contentNode}</div>
     </article>
   )
 })
@@ -561,7 +593,7 @@ function ChatTimelineNoticeRow({ notice }: { notice: ChatTimelineNotice }) {
   const tokenLabel = formatCompactionNoticeTokens(notice)
 
   return (
-    <div className="flex items-center gap-3 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-center gap-3 px-4 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
       <div className="h-px flex-1 bg-black/15" />
       <div className="rounded-full border border-black/20 bg-background/70 px-3 py-1 shadow-sm">
         <span className={cn('font-semibold', isFailed ? 'text-destructive' : 'text-foreground')}>

@@ -170,12 +170,19 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 
 ### UI Design
 
-Neobrutalist patterns:
-- Thick black borders (`border-3`, `border-4`)
-- Hard shadows (`shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]`)
-- Hover lift effects
-- High contrast colors
-- Monospace typography
+Quasi-neobrutalist patterns (2026-08 density pass): the loop carries the
+weight, the chrome stays quiet.
+- Solid black borders and small hard shadows (`border-2`,
+  `shadow-[2px_2px_0…]`) reserved for interactive chrome: the composer
+  inputs/send button, rail/nav buttons, thread cards
+- The transcript is a flat full-width layout on one surface (the
+  composer's `--background`) — no bubbles, borders, rounding, shadows, or
+  per-row backgrounds. User rows are plain base text; the agent side —
+  assistant responses in mono, agent-work groups — carries a 3px left
+  rail in the per-bud accent (`--bud-accent-vibrant`), so the eye lands
+  on the message text, not the chrome
+- High contrast colors, monospace labels, and both light/dark themes
+  unchanged (softened borders use the theme token, never black-opacity)
 
 ## Dependencies
 

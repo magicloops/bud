@@ -1,11 +1,12 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Brain, ChevronRight, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getRoleContentRenderer, getToolContentRenderer } from '@/components/message-renderers'
 import { formatWorkDuration } from '@/lib/agent-work-duration'
 import { getMessageTiming, getToolName } from '@/lib/agent-message-metadata'
 import type { ApiMessage } from '@/lib/api-types'
 import type { TimelineWorkRow, TimelineWorkSection } from '@/features/threads/agent-work-projection'
+import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 
 /**
  * One turn's agent work (design/web-agent-work-collapse.md, Option B).
@@ -38,16 +39,17 @@ const AgentWorkGroupComponent = ({
   const showCurrentItem = row.live && !expanded && row.currentItem !== null
 
   return (
-    <section
-      className="rounded-xl border-2 border-black/60 bg-background/60 text-sm shadow-[2px_2px_0px_rgba(0,0,0,0.55)]"
-      style={{ backgroundColor: 'var(--chat-message)' }}
-    >
+    // Full-bleed row like the message rows: content sits in the shared
+    // centered column, behind a transparent rail for text alignment.
+    <section className="text-sm transition-colors hover:bg-secondary/40">
+      <div className={TRANSCRIPT_COLUMN_CLASSES}>
+        <div className="border-l-[3px] border-transparent">
       <button
         type="button"
         onClick={() => onToggle(row.id)}
         aria-expanded={expanded}
         aria-controls={bodyId}
-        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left"
+        className="flex w-full items-center gap-2 px-4 py-1.5 text-left"
       >
         <ChevronRight
           className={cn(
@@ -58,12 +60,12 @@ const AgentWorkGroupComponent = ({
         {row.live ? <LiveHeaderLabel row={row} /> : <SummaryHeaderLabel row={row} />}
       </button>
       {showCurrentItem && row.currentItem && (
-        <div className="border-t border-black/10 px-3 py-2">
+        <div className="px-4 py-1.5 pl-9">
           <WorkItemDetail message={row.currentItem} isStreaming />
         </div>
       )}
       {expanded && (
-        <div id={bodyId} className="space-y-2 border-t border-black/10 px-3 py-2">
+        <div id={bodyId} className="space-y-1.5 px-4 py-1.5 pl-9">
           {row.sections.map((section) => (
             <WorkSectionRow
               key={section.message.client_id}
@@ -76,6 +78,8 @@ const AgentWorkGroupComponent = ({
           ))}
         </div>
       )}
+        </div>
+      </div>
     </section>
   )
 }
@@ -106,7 +110,7 @@ const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
 
   return (
     <span className="flex min-w-0 flex-1 items-baseline gap-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-      <span className="font-semibold text-foreground">Working…</span>
+      <span className="font-semibold">Working…</span>
       {elapsedLabel && <span>{elapsedLabel}</span>}
       <span className="truncate normal-case">{stepLabel}</span>
     </span>
@@ -114,13 +118,11 @@ const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
 }
 
 const SummaryHeaderLabel = ({ row }: { row: TimelineWorkRow }) => (
-  <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-    <span className="font-semibold text-foreground">
+  <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] tracking-wide text-muted-foreground">
+    <span className="font-semibold">
       {row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}
     </span>
-    <span className="normal-case">
-      {summarizeSections(row.sections)}
-    </span>
+    <SectionCounts sections={row.sections} />
     {row.status === 'failed' && <StatusBadge tone="destructive">Failed</StatusBadge>}
     {row.status === 'canceled' && <StatusBadge tone="muted">Canceled</StatusBadge>}
     {row.status === 'no_final' && <StatusBadge tone="muted">Ended early</StatusBadge>}
@@ -133,7 +135,7 @@ const StatusBadge = ({ tone, children }: { tone: 'destructive' | 'muted'; childr
       'rounded-full px-2 py-0.5 text-[10px] font-semibold',
       tone === 'destructive'
         ? 'bg-red-500/15 text-red-700 dark:text-red-300'
-        : 'bg-black/10 text-muted-foreground',
+        : 'bg-muted text-muted-foreground',
     )}
   >
     {children}
@@ -161,7 +163,7 @@ const WorkSectionRow = memo(function WorkSectionRow({
     // Assistant commentary separates activity segments (mobile parity).
     const RoleContentRenderer = getRoleContentRenderer('assistant')
     return (
-      <div className="border-l-2 border-black/15 pl-2 text-[13px] text-muted-foreground">
+      <div className="border-l-2 border-border/50 pl-2 text-[13px] text-muted-foreground">
         {RoleContentRenderer ? <RoleContentRenderer content={message.content} /> : <p>{message.content}</p>}
       </div>
     )
@@ -284,7 +286,7 @@ const itemSummary = (message: ApiMessage): string => {
   return firstLine.replace(/^[#>*\-`_\s]+/, '').trim()
 }
 
-const summarizeSections = (sections: TimelineWorkSection[]): string => {
+const SectionCounts = ({ sections }: { sections: TimelineWorkSection[] }) => {
   let tools = 0
   let reasoning = 0
   for (const section of sections) {
@@ -297,14 +299,33 @@ const summarizeSections = (sections: TimelineWorkSection[]): string => {
       reasoning += 1
     }
   }
-  const parts: string[] = []
-  if (tools > 0) {
-    parts.push(`${tools} tool ${tools === 1 ? 'call' : 'calls'}`)
+  if (tools === 0 && reasoning === 0) {
+    return null
   }
-  if (reasoning > 0) {
-    parts.push(`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`)
-  }
-  return parts.join(', ')
+  return (
+    <span className="flex items-center gap-2">
+      {tools > 0 && (
+        <span
+          className="flex items-center gap-1"
+          aria-label={`${tools} tool ${tools === 1 ? 'call' : 'calls'}`}
+          title={`${tools} tool ${tools === 1 ? 'call' : 'calls'}`}
+        >
+          <Wrench aria-hidden className="h-3 w-3" />
+          {tools}
+        </span>
+      )}
+      {reasoning > 0 && (
+        <span
+          className="flex items-center gap-1"
+          aria-label={`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`}
+          title={`${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}`}
+        >
+          <Brain aria-hidden className="h-3 w-3" />
+          {reasoning}
+        </span>
+      )}
+    </span>
+  )
 }
 
 // Same resolution the timeline row uses: canonical tool rows keep the payload

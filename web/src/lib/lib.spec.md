@@ -129,6 +129,14 @@ once), legacy pure-tool payload-`duration_ms` sum as fallback, else null
 (render `Worked`, never an estimate). Plus `formatWorkDuration` (`42s`,
 `1m 28s`). Tested in `agent-work-duration.test.ts`.
 
+### `relative-time.ts`
+
+`formatRelativeTimestamp(iso, nowMs?)` — coarse "3 hours ago" labels for
+transcript timestamps (minute/hour/day/month/year steps, "just now" under
+a minute, empty string for unparseable input, clock-skew safe). Not
+live-ticking; rendered on demand (hover). Tested in
+`relative-time.test.ts`.
+
 ### `route-auth.ts`
 
 Route-level auth helpers shared across loaders and authenticated screens.

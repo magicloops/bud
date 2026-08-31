@@ -213,13 +213,19 @@ loader: async ({ params }) => {
    - The timeline thinking indicator is hidden while paused for user input
    - Normal composer input stays enabled while a pending structured prompt is visible; follow-up sends use the normal message route and let the service close the prompt
 
+**Terminal auto-open**: the agent's FIRST `terminal.*` tool call in a
+fresh chat expands a collapsed viewer to the terminal — derived from the
+transcript (fires only when loaded history has no prior terminal tool
+rows), once per thread visit, desktop only, and never replaces an open
+web/file view. No storage.
+
 **State**:
 ```typescript
 // UI state
 status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
-viewMode: 'terminal' | 'web' | 'file'
+viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
 terminalMenuOpen: boolean
 
 // Feature-hook state exposed to the route
