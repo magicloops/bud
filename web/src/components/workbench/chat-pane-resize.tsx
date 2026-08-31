@@ -68,12 +68,12 @@ export function useChatPaneWidth() {
 /**
  * Left inset that aligns the full-width composer's content with the
  * transcript column inside the chat pane. Mirrors ChatTimeline's wrapper
- * geometry — `mx-auto max-w-[1024px]`, gutters of 8px base / 15px from the
+ * geometry — `mx-auto max-w-[820px]`, gutters of 8px base / 15px from the
  * @md (28rem) container query / 30px from @3xl (48rem), plus the rows'
  * 3px rail; the rows' `px-4` and the textarea's `px-4` cancel out. Keep
  * in sync with chat-timeline.
  */
-const TRANSCRIPT_MAX_WIDTH_PX = 1024
+const TRANSCRIPT_MAX_WIDTH_PX = 820
 const TRANSCRIPT_GUTTER_WIDE_PX = 30
 const TRANSCRIPT_GUTTER_MID_PX = 15
 const TRANSCRIPT_GUTTER_NARROW_PX = 8

@@ -6,4 +6,4 @@
  * with useComposerContentInset (chat-pane-resize).
  */
 export const TRANSCRIPT_COLUMN_CLASSES =
-  'mx-auto w-full max-w-[1024px] px-2 @md:px-[15px] @3xl:px-[30px]'
+  'mx-auto w-full max-w-[820px] px-2 @md:px-[15px] @3xl:px-[30px]'
