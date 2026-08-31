@@ -112,21 +112,29 @@ export function ThreadTerminalPane({
                       ? 'animate-pulse bg-yellow-500'
                       : 'bg-red-500'
                 }`}
-                title={
-                  terminalFacts
-                    ? `${terminalFacts.mode} · ${
+                title={[
+                  terminalState,
+                  ...(terminalFacts
+                    ? [
+                        terminalFacts.mode,
                         terminalFacts.integration === 'osc133'
                           ? 'shell integration active (exact command results)'
                           : terminalFacts.integration === 'sentinel'
                             ? 'sentinel integration (wrapped commands)'
-                            : 'no shell integration'
-                      }`
-                    : undefined
-                }
+                            : 'no shell integration',
+                      ]
+                    : []),
+                ].join(' · ')}
               />
-              <span className="font-mono font-semibold uppercase tracking-wide">
-                {terminalConnectionLabel ?? terminalState}
-              </span>
+              {/* Text only when the terminal isn't simply working: healthy
+                  states (ready/active/idle) are the lone green dot, with the
+                  state in the dot's tooltip. */}
+              {(terminalConnectionLabel !== null ||
+                !['ready', 'active', 'idle'].includes(terminalState)) && (
+                <span className="font-mono font-semibold uppercase tracking-wide">
+                  {terminalConnectionLabel ?? terminalState}
+                </span>
+              )}
               {terminalInputQueued && (
                 <span
                   className="rounded border border-yellow-600/50 bg-yellow-900/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-yellow-400"
