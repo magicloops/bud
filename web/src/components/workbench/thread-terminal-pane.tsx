@@ -125,7 +125,7 @@ export function ThreadTerminalPane({
                 }
               />
               <span className="font-mono font-semibold uppercase tracking-wide">
-                {terminalConnectionLabel ?? `Terminal: ${terminalState}`}
+                {terminalConnectionLabel ?? terminalState}
               </span>
               {terminalInputQueued && (
                 <span
