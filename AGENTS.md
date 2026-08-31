@@ -171,6 +171,24 @@ Before adding or changing any browser-facing route, SSE stream, loader, or DB-ba
 
 Do not add "temporary" global reads for convenience. The prototype-era assumption that authenticated data can be globally visible is no longer valid.
 
+### 3.8) Commits, PRs, and merges require express user intent
+
+Never commit, push, open a PR, or merge on your own initiative. Each of
+those is a separate decision the user makes explicitly ("commit this",
+"open a PR", "merge it"); approval for one does not extend to the next, and
+approval in one task does not carry over to the following one.
+
+Between those moments, keep iterating in the working tree. In particular,
+**do not commit each step of a design or copy iteration** — tweak, build,
+let the user look, adjust again, and only commit when the user says the
+result is settled. Squash-on-merge does not make per-step commits free: a
+branch of "3px → 2px", "gray → accent", "accent → gray" commits is noise in
+review, in `git log` on the branch, and in the PR page (PR #99 accumulated
+64 such commits while iterating on simple styling).
+
+When the user does ask to commit, prefer one commit per coherent change
+with a message that describes the settled result, not the path taken.
+
 ---
 
 ## 4) Core Contracts (Do Not Break)
@@ -471,4 +489,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-08-29*
+*Last updated: 2026-08-31*
