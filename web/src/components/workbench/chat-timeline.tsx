@@ -554,7 +554,15 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
                 ? (budName ?? (message.display_role || 'Assistant')).toUpperCase()
                 : capitalize(message.display_role || message.role)}
         </span>
-        <time>{timeLabel}</time>
+        {/* Agent-side timestamps only surface on hover; the user's anchor
+            rows keep theirs visible. */}
+        <time
+          className={cn(
+            !isUser && 'opacity-0 transition-opacity group-hover/message:opacity-100',
+          )}
+        >
+          {timeLabel}
+        </time>
       </div>
       <div>{contentNode}</div>
     </article>
