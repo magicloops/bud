@@ -150,7 +150,7 @@ export function ThreadPanel({
   return (
     <div className="flex w-72 min-w-60 flex-col border-r-3 border-black bg-secondary/40">
       <div
-        className="flex h-16 items-center justify-between border-b-4 border-black px-4"
+        className="flex h-16 items-center justify-between border-b-3 border-black px-4"
         style={{ backgroundColor: 'var(--chat-bg)' }}
       >
         <div className="flex flex-col">
