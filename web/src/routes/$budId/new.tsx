@@ -53,7 +53,7 @@ function NewThreadView() {
   // the selected model (e.g. Luna defaults to "high"); the pre-load 'low'
   // seed must not stick just because the default model also supports low.
   const reasoningTouchedRef = useRef(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
+  const [viewMode, setViewMode] = useState<ViewMode>('none')
   // Clicking the already-active viewer tab collapses the viewer.
   const handleViewChange = useCallback((view: ViewMode) => {
     setViewMode((current) => (view === current && view !== 'chat' ? 'none' : view))
