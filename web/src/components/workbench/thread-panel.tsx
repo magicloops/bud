@@ -198,13 +198,15 @@ export function ThreadPanel({
             <div
               key={thread.thread_id}
               className={cn(
-                'group relative w-full rounded-lg border-2 px-3 py-2 text-left transition-colors cursor-pointer hover:border-black',
-                isActive && 'border-[color:var(--bud-accent-vibrant)]'
+                // Light gray resting border (muted-foreground alpha, not the
+                // near-black --border token); active cards get the accent.
+                'group relative w-full rounded-lg border-2 border-muted-foreground/30 px-3 py-2 text-left transition-colors cursor-pointer hover:border-muted-foreground/60',
               )}
               style={{
                 backgroundColor: 'var(--card)',
-                borderColor: isActive ? accentBorder : 'var(--border)',
-                boxShadow: isActive ? `2px 2px 0 ${accentBorder}` : undefined
+                ...(isActive
+                  ? { borderColor: accentBorder, boxShadow: `2px 2px 0 ${accentBorder}` }
+                  : {}),
               }}
               onClick={() => onSelectThread(thread.thread_id)}
             >
