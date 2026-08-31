@@ -41,7 +41,7 @@ function NewThreadView() {
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { toggleThreadPanel } = useLayout()
-  const { width: chatPaneWidth, setWidth: setChatPaneWidth } = useChatPaneWidth()
+  const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
   const composerInsetLeft = useComposerContentInset(chatPaneRef)
 
@@ -215,7 +215,7 @@ function NewThreadView() {
           style={
             {
               backgroundColor: 'var(--chat-bg)',
-              ...(chatPaneWidth !== null ? { '--chat-pane-width': `${chatPaneWidth}px` } : {}),
+              ...(chatPaneWidth !== null ? { '--chat-pane-width': chatPaneWidth } : {}),
             } as CSSProperties
           }
         >
@@ -226,7 +226,7 @@ function NewThreadView() {
             </div>
           </div>
           {viewMode !== 'none' && (
-            <ChatPaneResizeHandle paneRef={chatPaneRef} onWidthChange={setChatPaneWidth} />
+            <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
           )}
         </div>
       )}

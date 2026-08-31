@@ -8,29 +8,43 @@ import type {
 /**
  * Drag-to-resize for the chat pane ↔ terminal/web/file divider.
  *
- * The pane keeps its responsive default widths (`md:w-[var(--chat-pane-width,
- * 20rem)] lg:w-[var(--chat-pane-width,24rem)]`); a custom width only sets the
- * CSS variable, so mobile (`max-md:w-full`) is untouched. The width persists
- * per browser in localStorage and is shared by the thread and new-thread
- * routes so the divider does not jump between them.
+ * The dragged position is stored as a FRACTION of the pane row, not
+ * pixels, so opening the thread panel or resizing the window shrinks both
+ * sides proportionally (a 50/50 split stays 50/50). The pane keeps its
+ * responsive default widths (`md:w-[var(--chat-pane-width,20rem)]
+ * lg:w-[var(--chat-pane-width,24rem)]`); a custom split only sets the CSS
+ * variable — to a `clamp(280px, N%, 70%)` value — so mobile
+ * (`max-md:w-full`) is untouched. Persists per browser in localStorage,
+ * shared by the thread and new-thread routes.
  */
 
-const STORAGE_KEY = 'bud:chat-pane-width'
+const STORAGE_KEY = 'bud:chat-pane-fraction'
 const MIN_WIDTH_PX = 280
-const MAX_WIDTH_FRACTION = 0.7
+const MIN_FRACTION = 0.1
+const MAX_FRACTION = 0.7
 const KEYBOARD_STEP_PX = 24
 
-const clampWidth = (width: number): number => {
-  const max = Math.max(MIN_WIDTH_PX, Math.round(window.innerWidth * MAX_WIDTH_FRACTION))
-  return Math.min(Math.max(Math.round(width), MIN_WIDTH_PX), max)
+const clampFraction = (fraction: number): number =>
+  Math.min(Math.max(fraction, MIN_FRACTION), MAX_FRACTION)
+
+const fractionToCssWidth = (fraction: number): string =>
+  `clamp(${MIN_WIDTH_PX}px, ${(fraction * 100).toFixed(2)}%, ${MAX_FRACTION * 100}%)`
+
+/** The pane's share of its flex row, from a proposed pixel width. */
+const fractionForWidth = (pane: HTMLElement, widthPx: number): number | null => {
+  const rowWidth = pane.parentElement?.getBoundingClientRect().width ?? 0
+  if (rowWidth <= 0) {
+    return null
+  }
+  return clampFraction(widthPx / rowWidth)
 }
 
 export function useChatPaneWidth() {
-  const [width, setWidth] = useState<number | null>(() => {
+  const [fraction, setFraction] = useState<number | null>(() => {
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY)
-      const parsed = stored === null ? NaN : Number.parseInt(stored, 10)
-      return Number.isFinite(parsed) ? clampWidth(parsed) : null
+      const parsed = stored === null ? NaN : Number.parseFloat(stored)
+      return Number.isFinite(parsed) ? clampFraction(parsed) : null
     } catch {
       return null
     }
@@ -38,17 +52,17 @@ export function useChatPaneWidth() {
 
   useEffect(() => {
     try {
-      if (width === null) {
+      if (fraction === null) {
         window.localStorage.removeItem(STORAGE_KEY)
       } else {
-        window.localStorage.setItem(STORAGE_KEY, String(width))
+        window.localStorage.setItem(STORAGE_KEY, fraction.toFixed(4))
       }
     } catch {
       // Per-viewer convenience only; losing it is fine.
     }
-  }, [width])
+  }, [fraction])
 
-  return { width, setWidth }
+  return { width: fraction === null ? null : fractionToCssWidth(fraction), setFraction }
 }
 
 /**
@@ -98,7 +112,7 @@ export function useComposerContentInset(paneRef: RefObject<HTMLDivElement | null
 
 type ChatPaneResizeHandleProps = {
   paneRef: RefObject<HTMLDivElement | null>
-  onWidthChange: (width: number | null) => void
+  onFractionChange: (fraction: number | null) => void
 }
 
 /**
@@ -107,7 +121,7 @@ type ChatPaneResizeHandleProps = {
  * the terminal/iframe; double-click resets to the responsive defaults;
  * arrow keys nudge when focused.
  */
-export function ChatPaneResizeHandle({ paneRef, onWidthChange }: ChatPaneResizeHandleProps) {
+export function ChatPaneResizeHandle({ paneRef, onFractionChange }: ChatPaneResizeHandleProps) {
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -126,10 +140,14 @@ export function ChatPaneResizeHandle({ paneRef, onWidthChange }: ChatPaneResizeH
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) {
+    const pane = paneRef.current
+    if (!drag || !pane || drag.pointerId !== event.pointerId) {
       return
     }
-    onWidthChange(clampWidth(drag.startWidth + (event.clientX - drag.startX)))
+    const fraction = fractionForWidth(pane, drag.startWidth + (event.clientX - drag.startX))
+    if (fraction !== null) {
+      onFractionChange(fraction)
+    }
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -148,7 +166,10 @@ export function ChatPaneResizeHandle({ paneRef, onWidthChange }: ChatPaneResizeH
     }
     event.preventDefault()
     const delta = event.key === 'ArrowLeft' ? -KEYBOARD_STEP_PX : KEYBOARD_STEP_PX
-    onWidthChange(clampWidth(pane.getBoundingClientRect().width + delta))
+    const fraction = fractionForWidth(pane, pane.getBoundingClientRect().width + delta)
+    if (fraction !== null) {
+      onFractionChange(fraction)
+    }
   }
 
   return (
@@ -162,7 +183,7 @@ export function ChatPaneResizeHandle({ paneRef, onWidthChange }: ChatPaneResizeH
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onDoubleClick={() => onWidthChange(null)}
+      onDoubleClick={() => onFractionChange(null)}
       onKeyDown={handleKeyDown}
       className="absolute inset-y-0 -right-1.5 z-30 hidden w-3 cursor-col-resize touch-none select-none hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none active:bg-foreground/15 md:block"
     />
