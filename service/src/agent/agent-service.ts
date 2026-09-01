@@ -21,6 +21,7 @@ import type {
   CanonicalContentBlock,
   CanonicalMessage,
   CanonicalResponse,
+  CanonicalTool,
   ModelSelectionSource,
   ReasoningLevel,
   ResolvedModelReasoning,
@@ -505,6 +506,7 @@ export class AgentService {
     try {
 	      const preTurnCompaction = await this.compactConversationIfNeeded({
 	        threadId,
+	        budId: environment.bud_id,
 	        turnId,
 	        sessionId: currentSessionId,
         model,
@@ -512,7 +514,10 @@ export class AgentService {
         providerName,
         phase: "pre_turn",
         reason: "context_limit",
-        conversation,
+        // Mirror the main-loop request shape (runtime instructions +
+        // tool schemas) so the summary request shares its prompt-cache prefix.
+        conversation: applyRuntimeInstructions(conversation, environment),
+        tools: resolveAgentToolsForEnvironment(environment),
         ownerUserId,
         controller,
         compactedBoundaryKeys,
@@ -575,6 +580,7 @@ export class AgentService {
           }
           const retryCompaction = await this.compactConversationIfNeeded({
 	            threadId,
+	            budId: environment.bud_id,
 	            turnId,
 	            sessionId: currentSessionId,
 	            model,
@@ -582,7 +588,8 @@ export class AgentService {
             providerName,
             phase: steps === 0 ? "pre_turn" : "mid_turn",
             reason: "context_error_retry",
-            conversation,
+            conversation: conversationForModel,
+            tools: modelTools,
             ownerUserId,
             controller,
             force: true,
@@ -886,6 +893,7 @@ export class AgentService {
           steps += toolCalls.length;
 	          const midTurnCompaction = await this.compactConversationIfNeeded({
 	            threadId,
+	            budId: environment.bud_id,
 	            turnId,
 	            sessionId: currentSessionId,
             model,
@@ -893,7 +901,8 @@ export class AgentService {
             providerName,
             phase: "mid_turn",
             reason: "context_limit",
-            conversation,
+            conversation: applyRuntimeInstructions(conversation, environment),
+            tools: modelTools,
             ownerUserId,
             controller,
             compactedBoundaryKeys,
@@ -1037,6 +1046,7 @@ export class AgentService {
 
 	  private async compactConversationIfNeeded(args: {
 	    threadId: string;
+	    budId: string;
 	    turnId: string;
 	    sessionId: string | null;
     model: string;
@@ -1045,6 +1055,7 @@ export class AgentService {
     phase: "pre_turn" | "mid_turn";
     reason: "context_limit" | "model_downshift" | "context_error_retry";
     conversation: CanonicalMessage[];
+    tools: CanonicalTool[];
     ownerUserId?: string | null;
     controller: AbortController;
     force?: boolean;
@@ -1157,6 +1168,7 @@ export class AgentService {
     try {
       compaction = await this.contextCompactor.compact({
         threadId: args.threadId,
+        budId: args.budId,
         turnId: args.turnId,
         phase: args.phase,
         trigger,
@@ -1165,6 +1177,7 @@ export class AgentService {
         provider: args.providerName,
         modelReasoning: args.modelReasoning,
         conversation: args.conversation,
+        tools: args.tools,
         inputTokensBefore: estimatedTokens,
         ownerUserId: args.ownerUserId,
         currentTerminalContext: formatTerminalPathContext(pathContext),

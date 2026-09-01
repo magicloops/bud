@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
+import type { ProviderInvocationContext } from "../llm/provider.js";
 import {
   isProviderContextWindowError,
   providerRegistry,
@@ -9,6 +10,7 @@ import {
   type CanonicalResponse,
   type CanonicalStreamEvent,
   type CanonicalStopReason,
+  type CanonicalTool,
   type ModelConfig,
   type ReasoningLevel,
   type ResolvedModelReasoning,
@@ -51,6 +53,7 @@ const MAX_COMPACTION_RETRIES = 4;
 
 export type CompactContextInput = {
   threadId: string;
+  budId: string;
   turnId: string;
   phase: AgentContextCheckpointPhase;
   trigger: AgentContextCheckpointTrigger;
@@ -59,6 +62,13 @@ export type CompactContextInput = {
   provider: CanonicalProviderId;
   modelReasoning: ResolvedModelReasoning;
   conversation: CanonicalMessage[];
+  /**
+   * Tool schemas from the main agent loop. Sent with `tool_choice: "none"` so
+   * the summary request stays prompt-identical to normal turn requests and
+   * reuses the provider/server prompt-cache prefix (tools render into the
+   * prompt root on every backend).
+   */
+  tools?: CanonicalTool[];
   inputTokensBefore?: number | null;
   ownerUserId?: string | null;
   tenantId?: string | null;
@@ -94,7 +104,7 @@ export class AgentContextCompactor {
 
     for (let attempt = 0; attempt <= MAX_COMPACTION_RETRIES; attempt += 1) {
       try {
-        const summary = await this.createSummary(input, compactionMessages);
+        const summary = await this.createSummary(input, compactionMessages, owner.ownerUserId);
         const replacementHistory = buildReplacementHistory({
           conversation: input.conversation,
           summary,
@@ -160,6 +170,7 @@ export class AgentContextCompactor {
   private async createSummary(
     input: CompactContextInput,
     compactionMessages: CanonicalMessage[],
+    ownerUserId: string | null,
   ): Promise<string> {
     const provider = providerRegistry.getProviderForModel(input.model);
     const modelConfig: ModelConfig = {
@@ -169,11 +180,19 @@ export class AgentContextCompactor {
       responseFormat: "text",
       toolChoice: "none",
     };
+    // Bud-local providers route requests over the owning Bud's data-plane
+    // channel and hard-require this context; cloud providers ignore it.
+    const invocationContext: ProviderInvocationContext = {
+      threadId: input.threadId,
+      budId: input.budId,
+      ownerUserId,
+    };
 
+    const tools = input.tools ?? [];
     const response = provider.invokeSync
-      ? await provider.invokeSync(compactionMessages, [], modelConfig, input.signal)
+      ? await provider.invokeSync(compactionMessages, tools, modelConfig, input.signal)
       : await collectProviderResponse(
-          provider.invoke(compactionMessages, [], modelConfig, input.signal),
+          provider.invoke(compactionMessages, tools, modelConfig, input.signal, invocationContext),
         );
     const summary = collectText(response.content).trim();
     if (!summary) {
