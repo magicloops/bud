@@ -121,12 +121,15 @@ export const MarkdownContent = memo(function MarkdownContent({
           <button
             type="button"
             onClick={createFileOpenClickHandler(fileActions, linkAction.candidate)}
-            className="inline-flex max-w-full cursor-pointer flex-wrap items-baseline gap-x-1 text-left align-baseline text-accent underline underline-offset-2 transition hover:text-accent/80"
+            // Inline flow (not flex) with the icon TRAILING the label: long
+            // paths wrap mid-string and the icon rides the last fragment
+            // instead of stranding on its own row above the text.
+            className="inline max-w-full cursor-pointer text-left align-baseline text-accent underline underline-offset-2 transition hover:text-accent/80"
             title={`Open ${displayPath}`}
             aria-label={`Open ${displayPath}`}
           >
-            <FileText className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{label}</span>
+            <FileText className="ml-1 inline-block h-3.5 w-3.5 align-[-2px]" />
           </button>
         )
       }
