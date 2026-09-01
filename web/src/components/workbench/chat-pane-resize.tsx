@@ -86,7 +86,7 @@ const TRANSCRIPT_GUTTER_NARROW_PX = 8
 const TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX = 768
 const TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX = 448
 const TRANSCRIPT_RAIL_PX = 3
-const TRANSCRIPT_ROW_TEXT_PADDING_PX = 16 // the rows' px-4
+export const TRANSCRIPT_ROW_TEXT_PADDING_PX = 16 // the rows' px-4
 const CONTROLS_MIN_RIGHT_PX = 12 // never tighter than the old right-3
 
 export type ComposerColumnAlignment = {
