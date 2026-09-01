@@ -6,6 +6,8 @@ type WorkspaceShellProps = {
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
+  /** Forwarded to the top bar: hide its hamburger while the panel is open. */
+  threadsOpen?: boolean
   fileViewLabel?: string | null
   /** Below md: single-pane shell — chat becomes a peer view with its own
    *  tab, the composer shows only with the chat view, and the debug pill
@@ -25,6 +27,7 @@ export function WorkspaceShell({
   view,
   onViewChange,
   onToggleThreads,
+  threadsOpen = false,
   fileViewLabel = null,
   isMobile = false,
   alignToPaneRef,
@@ -40,6 +43,7 @@ export function WorkspaceShell({
         view={view}
         onViewChange={onViewChange}
         onToggleThreads={onToggleThreads}
+        threadsOpen={threadsOpen}
         fileViewLabel={fileViewLabel}
         showChatTab={isMobile}
         alignToPaneRef={alignToPaneRef}

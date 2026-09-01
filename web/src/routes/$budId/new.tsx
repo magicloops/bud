@@ -36,7 +36,7 @@ function NewThreadView() {
   const navigate = useNavigate()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
-  const { toggleThreadPanel } = useLayout()
+  const { threadPanelOpen, toggleThreadPanel } = useLayout()
   const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
 
@@ -198,6 +198,7 @@ function NewThreadView() {
       view={viewMode}
       onViewChange={handleViewChange}
       onToggleThreads={toggleThreadPanel}
+      threadsOpen={threadPanelOpen}
       alignToPaneRef={chatPaneRef}
       leftPane={(
         <div

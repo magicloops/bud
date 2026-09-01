@@ -224,6 +224,7 @@ function BudLayout() {
       }}
       onThreadDeleted={handleThreadDeleted}
       onOpenSessions={handleOpenSessions}
+      onToggleOpen={() => setThreadPanelOpen(false)}
       onStatusChange={setThreadPanelStatus}
       accentColor={palette.vibrant}
       budLabel={activeBudProfile.label}

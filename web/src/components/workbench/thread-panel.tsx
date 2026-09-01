@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
-import { Trash2, Terminal } from 'lucide-react'
+import { Layers, Menu, Plus, Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,9 @@ type ThreadPanelProps = {
   onSelectThread: (threadId: string | null) => void
   onThreadDeleted?: (threadId: string) => void
   onOpenSessions?: () => void
+  /** Renders the hamburger inside the panel header (closes the panel);
+   *  while the panel is open the workspace top bar hides its own. */
+  onToggleOpen?: () => void
   accentColor: string
   budLabel: string
   budId?: string
@@ -91,6 +94,7 @@ export function ThreadPanel({
   onSelectThread,
   onThreadDeleted,
   onOpenSessions,
+  onToggleOpen,
   accentColor,
   budLabel,
   budId,
@@ -149,37 +153,59 @@ export function ThreadPanel({
 
   return (
     <div className="flex w-72 min-w-60 flex-col border-r-2 border-black bg-secondary/40">
-      <div className="flex h-16 items-center justify-between border-b-2 border-black bg-secondary/40 px-4">
-        <div className="flex flex-col">
-          <p className="line-clamp-1 font-mono text-[15px] font-semibold uppercase tracking-wide">
-            {budLabel}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded-md border-2 border-black px-3 py-1 font-mono text-[11px] font-semibold uppercase transition-transform hover:-translate-y-0.5"
-            onClick={() => onSelectThread(null)}
-            style={{
-              backgroundColor: 'var(--bud-accent-muted)',
-              boxShadow: '2px 2px 0px rgba(0,0,0,1)'
-            }}
+      <div className="flex h-12 items-center gap-2 border-b-2 border-black bg-secondary/40 px-4">
+        {onToggleOpen && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onToggleOpen}
+            className="h-8 w-8 shrink-0 rounded-lg border-2 border-black transition-all hover:-translate-y-0.5"
+            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
+            aria-label="Close thread list"
           >
-            New
-          </button>
+            <Menu className="h-4 w-4" />
+          </Button>
+        )}
+        <p className="line-clamp-1 min-w-0 flex-1 text-center font-mono text-[15px] font-semibold uppercase tracking-wide">
+          {budLabel}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon"
             onClick={onOpenSessions}
-            className="h-10 w-10 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
+            className="h-8 w-8 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
             style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
             title="Terminal Sessions"
           >
-            <Terminal className="h-5 w-5" />
+            <Layers className="h-4 w-4" />
           </Button>
         </div>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
+        {/* New chat lives in the list (card-shaped action, dashed until it
+            is the active "thread" — the new-thread route has no id). */}
+        <button
+          type="button"
+          onClick={() => onSelectThread(null)}
+          className="flex w-full items-center gap-2 rounded-lg border-2 border-dashed border-[oklch(0.8_0.02_90)] px-3 py-2 text-left font-mono text-sm font-semibold text-muted-foreground transition-colors cursor-pointer hover:border-black hover:text-foreground dark:border-[oklch(0.4_0.02_270)] dark:hover:border-white/70"
+          style={{
+            backgroundColor: 'var(--card)',
+            ...(activeThreadId === null
+              ? {
+                  borderColor: accentBorder,
+                  borderStyle: 'solid',
+                  color: 'var(--foreground)',
+                  boxShadow: `2px 2px 0 ${accentBorder}`,
+                }
+              : {}),
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          New chat
+        </button>
         {orderedThreads.length === 0 && (
           <p className="text-sm italic text-muted-foreground">No threads yet. Create one to start chatting.</p>
         )}

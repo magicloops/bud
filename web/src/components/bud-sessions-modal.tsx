@@ -317,7 +317,7 @@ export function BudSessionsModal({
             >
               <h3 className="font-mono text-sm font-bold uppercase">Close Session?</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                This will close the tmux session on the Bud.
+                This will close the terminal session on the Bud.
               </p>
               <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
                 <li>
