@@ -22,6 +22,15 @@ const autoGrowHeight = (el: HTMLTextAreaElement): number => {
   return Math.min(el.scrollHeight, composerMaxHeight())
 }
 
+/** Focus with the caret at the END of any existing draft (programmatic
+ *  focus otherwise lands at position 0 on a fresh render — typing after a
+ *  tab/thread switch prepended to the draft). */
+const focusAtEnd = (el: HTMLTextAreaElement) => {
+  el.focus()
+  const end = el.value.length
+  el.setSelectionRange(end, end)
+}
+
 type CommandComposerProps = {
   messageText: string
   onMessageChange: (value: string) => void
@@ -42,8 +51,9 @@ type CommandComposerProps = {
    *  column's text right edge (the composer spans the full workspace
    *  width; the chat pane does not). */
   alignToPaneRef?: RefObject<HTMLDivElement | null>
-  /** Auto-focus the input on mount and whenever this key changes (pass the
-   *  thread id). Skipped on coarse pointers — no surprise soft keyboards. */
+  /** Auto-focus the input on mount and whenever this key changes (pass
+   *  the thread id, plus the view mode so viewer tab toggles hand focus
+   *  back). Skipped on coarse pointers — no surprise soft keyboards. */
   autoFocusKey?: string | null
 }
 
@@ -150,12 +160,19 @@ export function CommandComposer({
     onSubmit(event)
   }
 
-  // Focus on navigation: mount + thread switches (fine pointers only).
+  // Focus on navigation: mount, thread switches, and viewer tab toggles
+  // (the key includes the view mode) — fine pointers only. Clicking a
+  // terminal/web/file tab moves focus to the tab button; the composer takes
+  // it back so typing continues uninterrupted (the viewer is focused
+  // manually when needed). Already-focused drafts keep their caret.
   useEffect(() => {
     if (hasCoarsePointer()) {
       return
     }
-    textareaRef.current?.focus()
+    const el = textareaRef.current
+    if (el && document.activeElement !== el) {
+      focusAtEnd(el)
+    }
   }, [autoFocusKey])
 
   // Keep focus across sends: dispatching disables the textarea, which
@@ -170,7 +187,10 @@ export function CommandComposer({
     }
     const active = document.activeElement
     if (!active || active === document.body) {
-      textareaRef.current?.focus()
+      const el = textareaRef.current
+      if (el) {
+        focusAtEnd(el)
+      }
     }
   }, [inputDisabled])
 
@@ -217,7 +237,7 @@ export function CommandComposer({
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
       <div
-        className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0"
+        className="flex items-center justify-end gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0"
         // Right-anchor to the transcript column's text edge on md+ (the
         // static phone row ignores `right`).
         style={alignment ? { right: alignment.controlsRight } : undefined}
@@ -277,9 +297,10 @@ export function CommandComposer({
             ))}
           </select>
         )}
-        {/* ml-auto keeps the send button on the right edge of the static
-            phone row; on md+ the row is pinned bottom-right and it's a no-op. */}
-        <div className="ml-auto shrink-0">
+        {/* justify-end on the row right-aligns the whole cluster (build tag,
+            selectors, send) on the static phone row; on md+ the pinned row is
+            content-sized so it's a no-op. */}
+        <div className="shrink-0">
           <ContextSendButton
             contextBudget={contextBudget}
             disabled={stopMode ? false : inputDisabled}

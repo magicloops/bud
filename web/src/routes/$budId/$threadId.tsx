@@ -1091,7 +1091,7 @@ function ThreadView() {
           environment={agentEnvironment}
           contextBudget={contextBudget}
           alignToPaneRef={chatPaneRef}
-          autoFocusKey={threadId}
+          autoFocusKey={`${threadId}:${viewMode}`}
         />
       )}
       debugPanel={(

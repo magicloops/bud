@@ -264,7 +264,7 @@ export function useTerminalSession({
       if (!current || terminalRef.current !== current || !current.element) {
         return
       }
-      current.focus()
+      // No focus grab on reset either — the user may be typing a message.
       fitTerminal()
     })
   }, [fitTerminal, resetGridState])
@@ -363,7 +363,8 @@ export function useTerminalSession({
         const renderService = (term as any)._core?._renderService
         if (renderService?.dimensions) {
           terminalReadyRef.current = true
-          term.focus()
+          // No focus grab on mount: the composer owns keyboard focus until
+          // the user clicks into the terminal (matches the grid renderer).
           fitTerminal()
         } else if (fitAttempts < 10) {
           requestAnimationFrame(tryFit)

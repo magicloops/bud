@@ -264,7 +264,7 @@ function NewThreadView() {
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
           alignToPaneRef={chatPaneRef}
-          autoFocusKey={budId}
+          autoFocusKey={`${budId}:${viewMode}`}
         />
       )}
       debugPanel={(
