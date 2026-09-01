@@ -42,7 +42,7 @@ export function deriveBudPalette(color: string) {
   const resolved = resolveCssVar(color) || resolveCssVar('var(--accent)')
   return {
     vibrant: resolved,
-    muted: getMutedColor(resolved, 0.6),
-    soft: getMutedColor(resolved, 0.35)
+    muted: getMutedColor(resolved, 0.85),
+    soft: getMutedColor(resolved, 0.7)
   }
 }

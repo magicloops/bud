@@ -66,12 +66,18 @@ export function useChatPaneWidth() {
 }
 
 /**
- * Left inset that aligns the full-width composer's content with the
- * transcript column inside the chat pane. Mirrors ChatTimeline's wrapper
- * geometry — `mx-auto max-w-[820px]`, gutters of 8px base / 15px from the
- * @md (28rem) container query / 30px from @3xl (48rem), plus the rows'
- * 3px rail; the rows' `px-4` and the textarea's `px-4` cancel out. Keep
- * in sync with chat-timeline.
+ * Aligns the full-width composer with the transcript column inside the
+ * chat pane. Mirrors ChatTimeline's wrapper geometry — `mx-auto
+ * max-w-[820px]`, gutters of 8px base / 15px from the @md (28rem)
+ * container query / 30px from @3xl (48rem), plus the rows' 3px rail; the
+ * rows' `px-4` and the textarea's `px-4` cancel out on the left. Keep in
+ * sync with chat-timeline / transcript-layout.
+ *
+ * `paddingLeft` indents the composer content to the column's left edge.
+ * `controlsRight` right-anchors the pinned controls (send button) to the
+ * column's TEXT right edge — the composer spans the full workspace, so
+ * this needs both the pane's and the composer's own width (they differ
+ * whenever the viewer pane is open).
  */
 const TRANSCRIPT_MAX_WIDTH_PX = 820
 const TRANSCRIPT_GUTTER_WIDE_PX = 30
@@ -80,34 +86,61 @@ const TRANSCRIPT_GUTTER_NARROW_PX = 8
 const TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX = 768
 const TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX = 448
 const TRANSCRIPT_RAIL_PX = 3
+const TRANSCRIPT_ROW_TEXT_PADDING_PX = 16 // the rows' px-4
+const CONTROLS_MIN_RIGHT_PX = 12 // never tighter than the old right-3
 
-export function useComposerContentInset(paneRef: RefObject<HTMLDivElement | null>): number | null {
-  const [inset, setInset] = useState<number | null>(null)
+export type ComposerColumnAlignment = {
+  paddingLeft: number
+  controlsRight: number
+}
+
+export function useComposerColumnAlignment(
+  paneRef: RefObject<HTMLDivElement | null>,
+  composerRef: RefObject<HTMLElement | null>,
+): ComposerColumnAlignment | null {
+  const [alignment, setAlignment] = useState<ComposerColumnAlignment | null>(null)
 
   useEffect(() => {
-    const node = paneRef.current
-    if (!node || typeof ResizeObserver === 'undefined') {
+    const pane = paneRef.current
+    const composer = composerRef.current
+    if (!pane || !composer || typeof ResizeObserver === 'undefined') {
       return
     }
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0
-      if (width <= 0) {
-        return // hidden pane (mobile non-chat view) — keep the last inset
+    const measure = () => {
+      const paneWidth = pane.getBoundingClientRect().width
+      const composerWidth = composer.getBoundingClientRect().width
+      if (paneWidth <= 0 || composerWidth <= 0) {
+        return // hidden (mobile non-chat view) — keep the last alignment
       }
-      const centering = Math.max(0, (width - TRANSCRIPT_MAX_WIDTH_PX) / 2)
+      const centering = Math.max(0, (paneWidth - TRANSCRIPT_MAX_WIDTH_PX) / 2)
       const gutter =
-        width >= TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX
+        paneWidth >= TRANSCRIPT_GUTTER_WIDE_BREAKPOINT_PX
           ? TRANSCRIPT_GUTTER_WIDE_PX
-          : width >= TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX
+          : paneWidth >= TRANSCRIPT_GUTTER_MID_BREAKPOINT_PX
             ? TRANSCRIPT_GUTTER_MID_PX
             : TRANSCRIPT_GUTTER_NARROW_PX
-      setInset(Math.round(centering + gutter + TRANSCRIPT_RAIL_PX))
-    })
-    observer.observe(node)
+      // Column-aligned controls only when chat is the sole view (composer
+      // and pane share a width); with a viewer open the controls keep the
+      // classic bottom-right position.
+      const viewerOpen = composerWidth - paneWidth > 1
+      setAlignment({
+        paddingLeft: Math.round(centering + gutter + TRANSCRIPT_RAIL_PX),
+        controlsRight: viewerOpen
+          ? CONTROLS_MIN_RIGHT_PX
+          : Math.max(
+              CONTROLS_MIN_RIGHT_PX,
+              Math.round(centering + gutter + TRANSCRIPT_ROW_TEXT_PADDING_PX),
+            ),
+      })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(pane)
+    observer.observe(composer)
+    measure()
     return () => observer.disconnect()
-  }, [paneRef])
+  }, [composerRef, paneRef])
 
-  return inset
+  return alignment
 }
 
 type ChatPaneResizeHandleProps = {

@@ -66,7 +66,7 @@ Streamdown core CSS and KaTeX CSS are imported once from `main.tsx` before the a
 | Charts | `--chart-1` through `--chart-5` |
 | Sidebar | `--sidebar`, `--sidebar-foreground`, `--sidebar-primary`, etc. |
 | Avatar | `--avatar-1` through `--avatar-5` |
-| Custom | `--chat-bg`, `--chat-message`, `--terminal-bg`, `--terminal-text` |
+| Custom | `--chat-message`, `--terminal-bg`, `--terminal-text` (`--chat-bg` folded into `--background`, 2026-08) |
 | Bud | `--bud-accent-vibrant`, `--bud-accent-muted`, `--bud-accent-soft` |
 
 **Dark Mode**: `.dark` class applies alternate OKLCH values.

@@ -159,7 +159,7 @@ function SettingsView() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-[2rem] border-4 border-black bg-[var(--chat-bg)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
+          <section className="rounded-[2rem] border-4 border-black bg-[var(--background)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
             <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center gap-5">
                 {currentUser.user.image ? (

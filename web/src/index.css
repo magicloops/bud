@@ -11,7 +11,7 @@
   --radius: 0.5rem;
   --background: oklch(0.98 0.01 90);
   --foreground: oklch(0.15 0.02 270);
-  --card: oklch(1 0 0);
+  --card: oklch(0.985 0 0);
   --card-foreground: oklch(0.15 0.02 270);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.15 0.02 270);
@@ -46,7 +46,6 @@
   --avatar-3: oklch(0.68 0.22 190);
   --avatar-4: oklch(0.72 0.23 280);
   --avatar-5: oklch(0.66 0.21 140);
-  --chat-bg: oklch(0.96 0.03 90);
   --chat-message: oklch(1 0 0);
   --terminal-bg: oklch(0.18 0.02 240);
   --terminal-text: oklch(0.85 0.05 150);
@@ -56,9 +55,9 @@
 }
 
 .dark {
-  --background: oklch(0.12 0.01 270);
+  --background: oklch(0.18 0.03 270);
   --foreground: oklch(0.95 0.01 90);
-  --card: oklch(0.15 0.02 270);
+  --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.95 0.01 90);
   --popover: oklch(0.15 0.02 270);
   --popover-foreground: oklch(0.95 0.01 90);
@@ -88,7 +87,6 @@
   --avatar-3: oklch(0.63 0.22 190);
   --avatar-4: oklch(0.67 0.23 280);
   --avatar-5: oklch(0.61 0.21 140);
-  --chat-bg: oklch(0.18 0.03 270);
   --chat-message: oklch(0.22 0.02 270);
   --terminal-bg: oklch(0.1 0.02 240);
   --terminal-text: oklch(0.75 0.05 150);
@@ -148,6 +146,14 @@
   html,
   body {
     overscroll-behavior: none;
+  }
+  /* Tailwind v4's preflight resets buttons to `cursor: default` (v3 used
+     `pointer`); restore the pointer for every enabled button-like control. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
   }
 }
 

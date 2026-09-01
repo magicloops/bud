@@ -101,7 +101,7 @@ export function ThreadPanel({
 
   const accentBorder = useMemo(() => {
     const resolved = resolveCssVar(accentColor ?? 'var(--accent)')
-    return getMutedColor(resolved, 0.35)
+    return getMutedColor(resolved, 0.85)
   }, [accentColor])
 
   const orderedThreads = useMemo(
@@ -149,10 +149,7 @@ export function ThreadPanel({
 
   return (
     <div className="flex w-72 min-w-60 flex-col border-r-2 border-black bg-secondary/40">
-      <div
-        className="flex h-16 items-center justify-between border-b-2 border-black px-4"
-        style={{ backgroundColor: 'var(--chat-bg)' }}
-      >
+      <div className="flex h-16 items-center justify-between border-b-2 border-black bg-secondary/40 px-4">
         <div className="flex flex-col">
           <p className="line-clamp-1 font-mono text-[15px] font-semibold uppercase tracking-wide">
             {budLabel}
@@ -175,7 +172,7 @@ export function ThreadPanel({
             size="icon"
             onClick={onOpenSessions}
             className="h-10 w-10 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
-            style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
             title="Terminal Sessions"
           >
             <Terminal className="h-5 w-5" />
@@ -198,9 +195,10 @@ export function ThreadPanel({
             <div
               key={thread.thread_id}
               className={cn(
-                // Light gray resting border (muted-foreground alpha, not the
-                // near-black --border token); active cards get the accent.
-                'group relative w-full rounded-lg border-2 border-muted-foreground/30 px-3 py-2 text-left transition-colors cursor-pointer hover:border-muted-foreground/60',
+                // Warm gray border in the off-white theme's family (light) /
+                // a lifted navy-gray (dark); hover firms it a step; active
+                // cards get the accent.
+                'group relative w-full rounded-lg border-2 border-[oklch(0.9_0.015_90)] px-3 py-2 text-left transition-colors cursor-pointer hover:border-[oklch(0.8_0.02_90)] dark:border-[oklch(0.3_0.02_270)] dark:hover:border-[oklch(0.4_0.02_270)]',
               )}
               style={{
                 backgroundColor: 'var(--card)',

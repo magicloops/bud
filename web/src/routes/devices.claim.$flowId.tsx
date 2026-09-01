@@ -354,7 +354,7 @@ function DeviceClaimView() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8 text-foreground">
-      <div className="w-full max-w-xl rounded-[2rem] border-4 border-black bg-[var(--chat-bg)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
+      <div className="w-full max-w-xl rounded-[2rem] border-4 border-black bg-[var(--background)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
         <div className="space-y-3">
           <p className="inline-flex rounded-full border-2 border-black bg-[var(--bud-accent-soft)] px-3 py-1 font-mono text-xs uppercase tracking-[0.25em] text-black">
             Device Claim

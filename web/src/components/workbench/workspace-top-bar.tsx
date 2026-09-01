@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode, type RefObject } from 'react'
+import { useComposerColumnAlignment } from '@/components/workbench/chat-pane-resize'
 import { FileText, Menu, MessageSquare, Monitor, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -21,7 +22,17 @@ type WorkspaceTopBarProps = {
   fileViewLabel?: string | null
   /** Below md the chat pane is a peer view with its own tab. */
   showChatTab?: boolean
+  /** Chat pane to align the title with (same column geometry the composer
+   *  uses); when the column starts left of the title's natural position
+   *  the title simply stays put. */
+  alignToPaneRef?: RefObject<HTMLDivElement | null>
 }
+
+const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
+// Title's natural left edge on md+: px-6 (24) + menu button (40) + gap-4 (16).
+const TITLE_NATURAL_LEFT_PX = 80
+// Message text sits 16px (the rows' px-4) inside the column's rail edge.
+const ROW_TEXT_PADDING_PX = 16
 
 export function WorkspaceTopBar({
   title,
@@ -30,9 +41,18 @@ export function WorkspaceTopBar({
   onToggleThreads,
   fileViewLabel = null,
   showChatTab = false,
+  alignToPaneRef,
 }: WorkspaceTopBarProps) {
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const alignment = useComposerColumnAlignment(alignToPaneRef ?? NULL_PANE_REF, barRef)
+  const titleOffset = alignment
+    ? Math.max(0, alignment.paddingLeft + ROW_TEXT_PADDING_PX - TITLE_NATURAL_LEFT_PX)
+    : 0
   return (
-    <div className="flex h-16 items-center justify-between gap-2 border-b-2 border-black px-3 md:px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
+    <div
+      ref={barRef}
+      className="flex h-16 items-center justify-between gap-2 border-b-2 border-black bg-secondary/40 px-3 md:px-6"
+    >
         <div className="flex min-w-0 items-center gap-2 md:gap-4">
           <Button
             type="button"
@@ -41,11 +61,11 @@ export function WorkspaceTopBar({
             aria-label="Toggle thread list"
             onClick={onToggleThreads}
             className="h-10 w-10 shrink-0 rounded-lg border-2 border-black transition-all hover:-translate-y-0.5"
-            style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 flex-col" style={titleOffset > 0 ? { marginLeft: titleOffset } : undefined}>
             <p className="truncate font-mono text-lg font-semibold">{title}</p>
           </div>
         </div>
@@ -92,9 +112,9 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
         'rounded-lg border-2 border-black font-mono transition-all',
         active
           ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5 dark:bg-[var(--bud-accent-muted)] dark:text-white'
-          : 'bg-card hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] dark:bg-background dark:hover:bg-[var(--bud-accent-soft)]'
+          : 'bg-card hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)]'
       )}
-      style={active ? { boxShadow: '3px 3px 0px rgba(0,0,0,0.4)' } : { boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+      style={active ? { boxShadow: '2px 2px 0px rgba(0,0,0,0.4)' } : { boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
     >
       {icon}
       <span className="max-md:hidden">{children}</span>
