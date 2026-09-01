@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type {
+  FormEvent,
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  RefObject,
+  SelectHTMLAttributes,
+} from 'react'
 import { useComposerColumnAlignment } from '@/components/workbench/chat-pane-resize'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
@@ -29,6 +36,45 @@ const focusAtEnd = (el: HTMLTextAreaElement) => {
   el.focus()
   const end = el.value.length
   el.setSelectionRange(end, end)
+}
+
+/** Border (2+2) + px-2 padding (8+8) + native chevron allowance, plus
+ *  breathing room — measured text vs. the select's own rendering can differ
+ *  by a few px, and too tight overlaps the label with the chevron. */
+const SELECT_CHROME_PX = 44
+
+/** A select whose width hugs the SELECTED option's label. Native selects
+ *  size to their WIDEST option (across every optgroup), so short selections
+ *  left dead space. The label is measured in a hidden span sharing the
+ *  select's type styles; width = text + chrome, still capped by any max-w
+ *  class. */
+function FitSelect({
+  label,
+  children,
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement> & { label: string; children: ReactNode }) {
+  const measureRef = useRef<HTMLSpanElement | null>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const el = measureRef.current
+    if (el) {
+      setWidth(Math.ceil(el.offsetWidth) + SELECT_CHROME_PX)
+    }
+  }, [label])
+  return (
+    <>
+      <span
+        ref={measureRef}
+        aria-hidden
+        className="invisible absolute -z-10 whitespace-pre font-mono text-[11px]"
+      >
+        {label}
+      </span>
+      <select {...props} style={width !== null ? { width } : undefined}>
+        {children}
+      </select>
+    </>
+  )
 }
 
 type CommandComposerProps = {
@@ -77,6 +123,17 @@ export function CommandComposer({
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
+  // Labels of the CURRENT selections, mirroring the option text exactly —
+  // FitSelect measures these so each select hugs its selection.
+  const selectedModelInfo = models.find((model) => model.id === selectedModel)
+  const selectedModelLabel =
+    models.length === 0
+      ? 'Loading...'
+      : selectedModelInfo
+        ? `${selectedModelInfo.display_name}${selectedModelInfo.source?.kind === 'bud_local' ? ' · Local Bud' : ''}${selectedModelInfo.experimental ? ' · experimental' : ''}`
+        : selectedModel
+  const selectedReasoningLabel =
+    reasoningOptions.find((option) => option.value === reasoningEffort)?.label ?? reasoningEffort
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
   const stopMode =
     Boolean(onCancelAgentTurn) &&
@@ -254,7 +311,8 @@ export function CommandComposer({
           {showFullBuild ? buildDescribe() : shortBuildVersion(buildDescribe())}
         </button>
         {/* Model selector */}
-        <select
+        <FitSelect
+          label={selectedModelLabel}
           value={selectedModel}
           onChange={(event) => onModelChange(event.target.value)}
           className="min-w-0 max-w-[140px] flex-none rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
@@ -281,13 +339,14 @@ export function CommandComposer({
               </optgroup>
             ))
           )}
-        </select>
+        </FitSelect>
         {/* Reasoning effort selector */}
         {showReasoningSelector && (
-          <select
+          <FitSelect
+            label={selectedReasoningLabel}
             value={reasoningEffort}
             onChange={(event) => onReasoningChange(event.target.value as ReasoningLevel)}
-            className="w-[96px] shrink-0 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none md:w-[112px]"
+            className="shrink-0 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
             disabled={inputDisabled}
           >
             {reasoningOptions.map((option) => (
@@ -295,7 +354,7 @@ export function CommandComposer({
                 {option.label}
               </option>
             ))}
-          </select>
+          </FitSelect>
         )}
         {/* justify-end on the row right-aligns the whole cluster (build tag,
             selectors, send) on the static phone row; on md+ the pinned row is
