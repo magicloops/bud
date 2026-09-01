@@ -7,6 +7,7 @@ import type {
   RefObject,
   SelectHTMLAttributes,
 } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useComposerColumnAlignment } from '@/components/workbench/chat-pane-resize'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
@@ -38,10 +39,10 @@ const focusAtEnd = (el: HTMLTextAreaElement) => {
   el.setSelectionRange(end, end)
 }
 
-/** Border (2+2) + px-2 padding (8+8) + native chevron allowance, plus
- *  breathing room — measured text vs. the select's own rendering can differ
- *  by a few px, and too tight overlaps the label with the chevron. */
-const SELECT_CHROME_PX = 44
+/** pr-4 chevron reservation (16) + breathing room — measured text vs. the
+ *  select's own rendering can differ by a few px. The selects are
+ *  appearance-none text with our own chevron, so no border/padding chrome. */
+const SELECT_CHROME_PX = 22
 
 /** A select whose width hugs the SELECTED option's label. Native selects
  *  size to their WIDEST option (across every optgroup), so short selections
@@ -62,7 +63,7 @@ function FitSelect({
     }
   }, [label])
   return (
-    <>
+    <span className="relative inline-flex min-w-0 items-center">
       <span
         ref={measureRef}
         aria-hidden
@@ -73,7 +74,10 @@ function FitSelect({
       <select {...props} style={width !== null ? { width } : undefined}>
         {children}
       </select>
-    </>
+      {/* Our chevron: appearance-none hides the native one. Sits inside the
+          select's pr-4 reservation; clicks fall through to the select. */}
+      <ChevronDown className="pointer-events-none absolute bottom-1 right-0.5 h-3 w-3 text-muted-foreground/70" />
+    </span>
   )
 }
 
@@ -294,7 +298,7 @@ export function CommandComposer({
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
       <div
-        className="flex items-center justify-end gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0"
+        className="flex items-end justify-end gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0"
         // Right-anchor to the transcript column's text edge on md+ (the
         // static phone row ignores `right`).
         style={alignment ? { right: alignment.controlsRight } : undefined}
@@ -305,7 +309,7 @@ export function CommandComposer({
           type="button"
           onClick={() => setShowFullBuild((value) => !value)}
           title={buildDescribe()}
-          className="shrink-0 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+          className="mr-2 shrink-0 pb-0.5 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
           data-testid="web-build-tag"
         >
           {showFullBuild ? buildDescribe() : shortBuildVersion(buildDescribe())}
@@ -315,7 +319,7 @@ export function CommandComposer({
           label={selectedModelLabel}
           value={selectedModel}
           onChange={(event) => onModelChange(event.target.value)}
-          className="min-w-0 max-w-[140px] flex-none rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
+          className="min-w-0 max-w-[140px] flex-none cursor-pointer appearance-none bg-transparent pb-0.5 pt-1.5 pr-4 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground focus:outline-none disabled:cursor-default disabled:opacity-60"
           disabled={inputDisabled || models.length === 0}
         >
           {models.length === 0 ? (
@@ -346,7 +350,7 @@ export function CommandComposer({
             label={selectedReasoningLabel}
             value={reasoningEffort}
             onChange={(event) => onReasoningChange(event.target.value as ReasoningLevel)}
-            className="shrink-0 rounded-lg border-2 border-black bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground shadow-[2px_2px_0_rgba(0,0,0,1)] focus:outline-none"
+            className="shrink-0 cursor-pointer appearance-none bg-transparent pb-0.5 pt-1.5 pr-4 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground focus:outline-none disabled:cursor-default disabled:opacity-60"
             disabled={inputDisabled}
           >
             {reasoningOptions.map((option) => (

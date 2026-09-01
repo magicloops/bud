@@ -203,7 +203,10 @@ Message input form with options.
 - Multi-line textarea
 - Enter to submit (Shift+Enter for newline)
 - The textarea submits with a named form field so route handlers can read the live form payload during submit instead of relying only on possibly stale controlled state
-- Model selector dropdown (grouped by provider)
+- Model selector dropdown (grouped by provider); both selectors render as
+  plain text with a custom chevron (`FitSelect`: `appearance-none` select in a
+  relative wrapper + lucide `ChevronDown`, width hugging the selected label)
+  instead of bordered buttons, so they blend into the controls row
 - Bud-local ds4 options are labeled with a compact local-Bud source marker while
   endpoint/request-mode details remain hidden from the selector
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh`, `max`, and ds4's semantic `Fast`/`Thinking` options
