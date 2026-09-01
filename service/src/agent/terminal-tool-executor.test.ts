@@ -239,6 +239,46 @@ test("terminal.send still-running report keeps command_id null when the latest c
   assert.equal(execution.payload.command_id, null);
 });
 
+test("terminal.send still-running report attaches the current screen", async () => {
+  let observedView: string | null = null;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "sentinel", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      throw new Error("send_timeout");
+    },
+    async observeTerminal(_sessionId: string, options: { view?: string }) {
+      observedView = options.view ?? null;
+      return {
+        view: "screen",
+        output: "\u203a /stop\n Unrecognized command '/stop;'",
+        linesCaptured: 2,
+        changed: true,
+        mode: "shell",
+        integration: "sentinel",
+        altScreen: false,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: "/stop",
+    callId: "call_still_running_screen",
+  });
+
+  // A budget burn must never be blind (codex misroute incident): the report
+  // carries a capped current-screen observation so a misrouted send is
+  // visible on the FIRST timeout.
+  assert.equal(execution.result.status, "still_running");
+  assert.equal(observedView, "screen");
+  assert.match(String(execution.result.output), /Unrecognized command/);
+  assert.match(String(execution.payload.output), /Unrecognized command/);
+  assert.match(String(execution.result.note), /current screen/);
+});
+
 test("terminal.send tail-kept truncation is surfaced with a truncation reason", async () => {
   const terminalSessionManager = {
     getSessionContext() {
@@ -715,7 +755,15 @@ test("terminal.send into an open program is delivered (never refused) and carrie
     callId: "call_send_into_program",
   });
 
-  assert.deepEqual(interaction, { text: "ls -t debug/*.md | head -5", submit: true, await: "auto" });
+  // Reattach-amnesia override: the durable open command row forces an
+  // explicit settled await (the daemon's per-attachment facts may have
+  // forgotten the open command across a reattach and would misroute the
+  // text into the command/sentinel path).
+  assert.deepEqual(interaction, {
+    text: "ls -t debug/*.md | head -5",
+    submit: true,
+    await: "settled",
+  });
   assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.dispatched, true);
   assert.equal(execution.result.gatedMs, 1800);

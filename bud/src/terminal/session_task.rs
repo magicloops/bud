@@ -4,13 +4,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use serde_json::{json, Map, Number, Value};
 use tokio::sync::{broadcast, mpsc};
-use tracing::debug;
+use tracing::{debug, info};
 use ulid::Ulid;
 
 use stem::events::{Event, Integration, Mode};
@@ -20,6 +20,12 @@ use crate::transport::{send_transport_frame, OutboundSender};
 
 /// Wire chunk ceiling for `terminal_output` payloads (bytes, pre-base64).
 pub(crate) const OUTPUT_CHUNK_MAX_BYTES: usize = 16 * 1024;
+
+/// Suppression window for the `interactive_foreground` rule: readline/zle
+/// re-enable `?2004` at every prompt within milliseconds of the preceding
+/// `D`/`prompt_ready`, so an enable this close to a command/prompt boundary
+/// is the SHELL speaking, not a foreground program.
+const INTERACTIVE_FOREGROUND_SUPPRESS: Duration = Duration::from_secs(1);
 
 /// Facts the pump keeps current for the manager (status frames, sentinel
 /// decisions, grid-diff delta baselines).
@@ -70,6 +76,17 @@ pub(crate) struct SessionFacts {
     /// Latest deferred shrink (cols, rows); applied on the next
     /// `command_started`/`prompt_ready` or after `RESIZE_DEFER_CAP`.
     pub deferred_resize: Option<(u16, u16)>,
+    /// A foreground program (not the shell) owns the terminal even though no
+    /// command is open: it enabled bracketed paste with no command/prompt
+    /// boundary in the preceding second (shells keep `?2004` off while a
+    /// command runs; readline's per-prompt re-enable rides a boundary and is
+    /// suppressed). Cleared by `prompt_ready` / `command_started` /
+    /// `command_finished` / close. `await:"auto"` treats it as "not at a
+    /// prompt" — the sentinel-TUI-launch / reattach misroute fix
+    /// (debug/terminal-send-codex-endgame-misclassification.md).
+    pub interactive_foreground: bool,
+    /// Most recent command/prompt boundary — the suppression clock above.
+    pub last_boundary_at: Option<Instant>,
 }
 
 pub(crate) struct SessionShared {
@@ -212,6 +229,8 @@ pub(crate) async fn run_pump(
                     facts.open_command = None;
                     facts.open_command_screen = None;
                     facts.input_pending_at_prompt = false;
+                    facts.interactive_foreground = false;
+                    facts.last_boundary_at = Some(Instant::now());
                 }
                 let mut data = Map::new();
                 if let Some(cwd) = cwd {
@@ -237,6 +256,8 @@ pub(crate) async fn run_pump(
                     // The shell consumed the line: pending input is now a
                     // running command, and deferred shrinks may apply.
                     facts.input_pending_at_prompt = false;
+                    facts.interactive_foreground = false;
+                    facts.last_boundary_at = Some(Instant::now());
                 }
                 let _ = pump_tx.send(PumpEvent::CommandStarted {
                     command_id: command_id.clone(),
@@ -288,6 +309,8 @@ pub(crate) async fn run_pump(
                     let mut facts = shared.facts.lock().unwrap();
                     facts.open_command = None;
                     facts.open_command_screen = None;
+                    facts.interactive_foreground = false;
+                    facts.last_boundary_at = Some(Instant::now());
                 }
                 let data = Value::Object(data);
                 let _ = pump_tx.send(PumpEvent::CommandFinished {
@@ -353,6 +376,7 @@ pub(crate) async fn run_pump(
                     let mut facts = shared.facts.lock().unwrap();
                     facts.closed = true;
                     facts.input_pending_at_prompt = false;
+                    facts.interactive_foreground = false;
                 }
                 let _ = pump_tx.send(PumpEvent::Closed);
                 let mut data = Map::new();
@@ -371,7 +395,33 @@ pub(crate) async fn run_pump(
                 // Shells keep ?2004 OFF while a foreground command runs, so a
                 // mid-command ENABLE means the child itself is interactive
                 // (inline chat TUIs like codex).
-                let open = shared.facts.lock().unwrap().open_command.clone();
+                let (open, became_foreground) = {
+                    let mut facts = shared.facts.lock().unwrap();
+                    let open = facts.open_command.clone();
+                    let mut became = false;
+                    if enabled && open.is_none() && !facts.closed {
+                        // No open command to attribute the enable to: unless
+                        // it rides a command/prompt boundary (readline's
+                        // per-prompt re-enable), a foreground program owns
+                        // the terminal without a tracked command (a TUI
+                        // launched from a sentinel shell, or a reattach with
+                        // an evicted ring).
+                        let recent_boundary = facts
+                            .last_boundary_at
+                            .is_some_and(|at| at.elapsed() < INTERACTIVE_FOREGROUND_SUPPRESS);
+                        if !recent_boundary && !facts.interactive_foreground {
+                            facts.interactive_foreground = true;
+                            became = true;
+                        }
+                    }
+                    (open, became)
+                };
+                if became_foreground {
+                    info!(
+                        session_id = %session_id,
+                        "bracketed paste enabled with no open command; marking interactive foreground"
+                    );
+                }
                 if enabled {
                     if let Some((command_id, _)) = open {
                         vec![interactive_started(
@@ -450,6 +500,8 @@ mod tests {
                 open_command_screen: None,
                 input_pending_at_prompt: false,
                 deferred_resize: None,
+                interactive_foreground: false,
+                last_boundary_at: None,
             }),
         })
     }

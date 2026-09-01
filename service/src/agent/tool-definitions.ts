@@ -8,7 +8,7 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_send",
     description:
-      "Send input to the thread terminal — the one way to run shell commands and to drive interactive programs. Provide exactly one of text or key. At a shell prompt, text runs as a command and the result carries the real exit_code, duration_ms, and output. Inside a running program (TUI, REPL, prompt, pager), text is typed to it and the result carries the screen delta. The daemon waits for the program to be ready before typing and decides how long to wait; you configure nothing.",
+      "Send input to the thread terminal — the one way to run shell commands and to drive interactive programs. Provide exactly one of text or key. At a shell prompt, text runs as a command and the result carries the real exit_code, duration_ms, and output. Inside a running program (TUI, REPL, prompt, pager), text is typed to it and the result carries the screen delta. While a program is running, text goes to the program, not the shell — to interrupt or exit it, send key \"ctrl+c\" or the program's own quit command as text; never type shell commands until it has exited. The daemon waits for the program to be ready before typing and decides how long to wait; you configure nothing.",
     parameters: {
       type: "object",
       properties: {

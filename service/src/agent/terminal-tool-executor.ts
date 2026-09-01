@@ -373,13 +373,48 @@ export class TerminalToolExecutor {
     }
   }
 
-  private async buildStillRunningResult(sessionId: string): Promise<TerminalCallResult> {
+  private async buildStillRunningResult(
+    sessionId: string,
+    options: { includeScreen?: boolean } = {},
+  ): Promise<TerminalCallResult> {
+    // Screen proof on the awaited-send budget burn (codex misroute
+    // incident): a still-running report used to be screenless, leaving the
+    // agent blind exactly when the send had been misrouted into a foreground
+    // program. A capped screen glance costs little on genuine long commands
+    // and shows a misroute immediately.
+    let observed: Partial<TerminalCallResult> = {};
+    if (options.includeScreen) {
+      try {
+        const capture = await this.terminalSessionManager.observeTerminal(sessionId, {
+          view: "screen",
+        });
+        const capped = capObservedOutput(capture.output);
+        observed = {
+          output: capped.output,
+          outputBytes: capped.outputBytes,
+          truncated: capped.truncated,
+          ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
+          ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
+          ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+        };
+        this.logTerminalOutput("terminal.send still-running screen", capture.output);
+      } catch (err) {
+        this.logger.warn(
+          { err, sessionId, component: "agent" },
+          "Screen observation for still-running report failed",
+        );
+      }
+    }
     return {
       kind: "command",
       status: "still_running",
       commandId: await this.resolveLatestRunningCommandId(sessionId),
-      note: STILL_RUNNING_NOTE,
+      note:
+        observed.output !== undefined
+          ? `${STILL_RUNNING_NOTE} The output below is the current screen.`
+          : STILL_RUNNING_NOTE,
       ...this.sessionContextFacts(sessionId),
+      ...observed,
       openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
@@ -449,14 +484,25 @@ export class TerminalToolExecutor {
     // rule (submitted text with no open command → command, else settled)
     // and retries a legacy `command_in_flight` refusal as settled.
     const supportsAuto = await this.daemonSupportsSendAuto(sessionId);
+    // Reattach-amnesia override (debug/terminal-send-codex-endgame-
+    // misclassification.md): the daemon's per-attachment facts forget the
+    // open command across reattaches (deploy reconnects, daemon restarts),
+    // so `await:"auto"` can misroute input meant for a long-lived inline TUI
+    // into the command/sentinel path. The durable `terminal_command` row
+    // survives those reattaches; when it says a command is open, this send
+    // is program input — request `settled` explicitly. Safe on stale rows:
+    // sentinel commands only ever get complete rows (inserted at `D`), so a
+    // stale-open row implies a genuine-OSC133 shell, where settled awaits
+    // still resolve `command_finished` with real exit codes.
+    const dbOpenCommand = await this.resolveOpenCommand(sessionId);
     const interaction = {
       // text submits by default (commands, REPLs, prompts, chat TUIs);
       // explicit submit:false supports composing without a trailing Enter.
       ...(gesture.kind === "text" ? { text: gesture.text, submit: gesture.submit ?? true } : {}),
       ...(gesture.kind === "key" ? { key: gesture.key } : {}),
     };
-    const legacyAwait = async (): Promise<"command" | "settled"> =>
-      gesture.kind === "text" && (gesture.submit ?? true) && !(await this.resolveOpenCommand(sessionId))
+    const legacyAwait = (): "command" | "settled" =>
+      gesture.kind === "text" && (gesture.submit ?? true) && !dbOpenCommand
         ? "command"
         : "settled";
 
@@ -465,7 +511,7 @@ export class TerminalToolExecutor {
       try {
         sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
           ...interaction,
-          await: supportsAuto ? "auto" : await legacyAwait(),
+          await: supportsAuto ? (dbOpenCommand ? "settled" : "auto") : legacyAwait(),
         });
       } catch (err) {
         if (!supportsAuto && err instanceof Error && err.message.includes("command_in_flight")) {
@@ -713,7 +759,7 @@ export class TerminalToolExecutor {
     // observation so the model still gets proof.
     const openCommand = await this.resolveOpenCommand(sessionId);
     if (this.submittedLineIsACommand(sessionId, gesture, openCommand)) {
-      return this.buildStillRunningResult(sessionId);
+      return this.buildStillRunningResult(sessionId, { includeScreen: true });
     }
     let output: string | undefined;
     let observeFacts: Partial<TerminalCallResult> = {};
