@@ -29,7 +29,15 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   `resume_from_offset` (offset-exact backfill) → event pump spawn → proto 0.3
   `terminal_status` `ready` with `{pid, cwd, cols, rows, ring_next_offset,
   mode, integration}`. Re-ensure of a live session = reattach (drop the old
-  attachment, attach fresh with the new resume offset). **Geometry invariant:**
+  attachment, attach fresh with the new resume offset). **Reattach-amnesia
+  fix**: per-attachment facts are seeded from replayed stem state —
+  `Session::open_command()` restores `SessionFacts.open_command` (fresh
+  ULID, `open_command_screen: None` = painted) and
+  `Session::saw_real_markers()` (A/B/C only; bare sentinel `D`s excluded)
+  seeds `genuine_osc133`/`marker_seen` — so a reattach mid-inline-TUI no
+  longer reads as "shell at a prompt" and misroutes sends into the
+  command/sentinel path (debug/terminal-send-codex-endgame-
+  misclassification.md). Seeding is logged. **Geometry invariant:**
   ensure `config.cols/rows` are a spawn-time hint only (used in the
   `SpawnSpec` for a fresh holder) — a surviving holder's PTY keeps its actual
   kernel winsize on reattach and is never resized from ensure config; only
@@ -41,10 +49,13 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   swallow the submit), and `submit` follows with a 75ms beat + a real Enter
   keypress (the beat defeats app-side input heuristics; ordering is already
   guaranteed by the single writer). `await: "auto"` (§6.7.4, the unified
-  `terminal.send`) is resolved by the daemon: a submitted line with no open
-  command in mode shell/unknown → `command`, otherwise `settled`
-  (`resolved_await` on the result); the old `command_in_flight` refusal is
-  gone. Input gate: while a command is open, `wait_program_ready` holds the
+  `terminal.send`) is resolved by the daemon (`resolve_auto_await`, pure +
+  unit-tested): a submitted line with no open command, no
+  `interactive_foreground` evidence, in mode shell/unknown → `command`,
+  otherwise `settled` (`resolved_await` on the result); the old
+  `command_in_flight` refusal is gone. Every auto resolution logs its
+  inputs (mode, open_command, interactive_foreground, genuine_osc133,
+  submit) at info — the misroute-triage instrumentation. Input gate: while a command is open, `wait_program_ready` holds the
   write until the program is READY — painted (`SessionFacts::
   open_command_screen`, the screen at `command_started`, differs from the
   current screen) and damage-quiet — capped at `PROGRAM_READY_CAP` (10 s),
@@ -68,8 +79,14 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   no `command_started` since dispatch and none follows within
   `INPUT_ABSORBED_GRACE` (1.5s): the text went to a foreground program or the
   shell ran nothing — the codex-incident shape, kept as a backstop behind the
-  busy guard. Sentinel sessions are excluded (their start is synthesized at
-  `D`).
+  busy guard. Sentinel command-awaits (no genuine markers) get a parallel
+  backstop: a `settled`/`prompt_ready` while bracketed paste is currently
+  ENABLED (`Session::bracketed_paste_active()`; shells keep `?2004` off
+  while a command runs, so an enabled state at a quiet point cannot be a
+  running shell command) arms the same grace and resolves `input_absorbed`
+  with `bracketed_paste: true` — a misrouted send into an inline TUI fails
+  in seconds with delta proof instead of riding the service budget; a fast
+  real sentinel `D` still wins within the grace.
 - Sentinel fallback (design D6c): submitted `await:"command"` text with no
   genuine OSC 133 evidence gets `; printf '\033]133;D;%s\a' "$?"` appended
   and `mark_sentinel_integration()`. The wrap decision keys off live `A`/`C`
@@ -152,6 +169,14 @@ Per-session event pump: `stem::Event` → proto 0.3 wire frames.
 - feeds the internal broadcast channel (`PumpEvent`) that send-awaits
   correlate against, and keeps `SessionFacts` (mode, integration, marker
   evidence, ring offset, geometry, delta baseline) current
+- `interactive_foreground`: a `BracketedPasteChanged{enabled}` with NO open
+  command and no command/prompt boundary within the preceding second
+  (`INTERACTIVE_FOREGROUND_SUPPRESS` — readline/zle re-enable `?2004` at
+  every prompt within ms of `D`/`prompt_ready`) marks a foreground program
+  that owns the terminal without a tracked command (a TUI launched from a
+  sentinel shell, a reattach with an evicted ring); cleared by
+  `prompt_ready`/`command_started`/`command_finished`/close.
+  `await:"auto"` treats it as "not at a prompt"
 
 ### `repl_registry.rs`
 

@@ -1591,9 +1591,19 @@ ignored the gesture and settles after one window (chat TUIs animate a
 working indicator, which holds the send) — the caller then waits — since
 v0.1.16; earlier daemons resolved on the first 300 ms quiet point, i.e. the
 input echo), or **`auto`** — the daemon picks from terminal
-state: a submitted line at an idle shell prompt (no open command, mode
-`shell`/`unknown`) behaves as `command`, anything else as `settled`. The
-unified `terminal.send` tool always sends `auto`. The result reports
+state: a submitted line at an idle shell prompt (no open command, no
+interactive-foreground evidence, mode `shell`/`unknown`) behaves as
+`command`, anything else as `settled`. "Interactive foreground" = the
+application enabled bracketed paste (`?2004`) with no open command and no
+command/prompt boundary in the preceding second — a foreground program owns
+the terminal without a tracked command (a TUI launched from a sentinel
+shell, a reattach whose ring evicted the launch markers). On (re)attach the
+daemon seeds its open-command and real-marker facts from ring replay, so a
+reattach mid-TUI no longer misroutes sends into the command/sentinel path.
+The unified `terminal.send` tool sends `auto`, EXCEPT when the service's
+durable `terminal_command` rows show an open command — then it sends
+`settled` explicitly (reattach-amnesia override; works with every daemon
+version). The result reports
 `resolved_await`. Input into an OPEN command is gated on readiness before
 typing: the program must have PAINTED (screen changed since its
 `command_started`) and be damage-quiet, capped at 10 s; the result reports
@@ -1618,7 +1628,10 @@ Rules:
   shell has genuine OSC 133 markers and a quiet point / fresh prompt arrives
   with no `command_started` within a short grace: the text went to a
   foreground program or the shell ran nothing, so no `command_finished` can
-  come) | `"settled"` (resolve on the next
+  come; sentinel sessions get a parallel backstop — a quiet point / fresh
+  prompt while bracketed paste is currently ENABLED cannot be a running
+  shell command, so the same grace applies and the outcome data carries
+  `bracketed_paste: true`) | `"settled"` (resolve on the next
   damage-quiet `settled` event, on `prompt_ready` — returning to a shell
   prompt is maximal settlement, covering gestures that exit an interactive
   program — or on `command_finished` when the gesture completed a shell
@@ -2415,6 +2428,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - Inline-TUI misroute fixes (codex endgame; debug/terminal-send-codex-endgame-misclassification.md, plan/terminal-send-codex-misroute-fix.md). Daemon: per-attachment facts (open command, real-marker evidence) are seeded from ring replay on (re)attach; a bracketed-paste enable with no open command and no boundary within 1 s marks `interactive_foreground`, which `await:"auto"` treats as "not at a prompt"; sentinel command-awaits resolve `input_absorbed` (`data.bracketed_paste: true`) at a quiet point while `?2004` is enabled instead of riding the service budget; every auto resolution logs its decision inputs. Service (effective for all daemon versions): a durable open `terminal_command` row forces `await:"settled"` (reattach-amnesia override); still-running send reports attach a capped current-screen observation; the `terminal_send` tool description routes interrupts through `key` gestures. No frame shape changes.
   - Active-hold wait (v0.1.17): an awaited `terminal_observe` holds only while the visible grid is CHANGING; a screen static for the daemon's 10s cap resolves a new `no_activity` outcome (`data.static_ms`) instead of holding to the service budget (design/terminal-launch-proof-and-active-wait.md). Service-side launch proof: `status:"interactive"` and `input_absorbed` send results now attach the settled screen `delta` (send-plus-proof for launches — the trust-prompt incident, debug/terminal-send-interactive-launch-blind-screen.md).
   - `terminal_send` `await:"settled"` (and `auto` inside a program) resolves on the program's settled REACTION (stall window from the last change since dispatch, boundaries win, `data.reacted`) instead of the first quiet point after the echo.
   - `terminal_send` `await:"auto"` (daemon-resolved: command boundary at an idle shell prompt, settle otherwise) with `resolved_await`, `gated_ms`, `program_ready` on the result; input into an open command is gated on readiness (painted + quiet, 10 s cap); `interactive_started` is held until ready and carries `ready`/`painted`; the `command_in_flight` refusal is retired. Model-facing: `terminal.send { text | key, submit? }` is the single input tool (`terminal.run` retired).

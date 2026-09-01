@@ -38,7 +38,7 @@ use crate::transport::{send_transport_frame, OutboundSender};
 use super::grid::grid_frame_fields;
 use super::repl_registry::BudReplRegistry;
 use super::session_task::{
-    integration_str, mode_str, run_pump, PumpEvent, SessionFacts, SessionShared,
+    integration_str, mode_str, new_command_id, run_pump, PumpEvent, SessionFacts, SessionShared,
 };
 use super::shims::prepare_shim;
 
@@ -388,17 +388,40 @@ impl TerminalManager {
         let (mut ctl, _hello) = HolderClient::connect(dir).await.context("holder stat")?;
         let stat = ctl.stat().await.context("holder stat")?;
 
+        // Reattach-amnesia fix (debug/terminal-send-codex-endgame-
+        // misclassification.md): per-attachment facts are seeded from the
+        // replayed stem state instead of blank. Ring replay restores stem's
+        // open-command slot and marker evidence even though the events
+        // themselves are emit-suppressed (below resume_from_offset) — a
+        // blank-facts reattach mid-TUI (deploy reconnect, daemon restart)
+        // read as "shell at a prompt" and misrouted every send into the
+        // command/sentinel path. The seeded command gets a fresh ULID and no
+        // screen baseline (`None` counts as painted: the program painted
+        // long before this attachment). `saw_real_markers` excludes bare
+        // sentinel `D`s, so it is safe evidence for the wrap decision.
+        let replayed_open_command = session.open_command();
+        let replayed_real_markers = session.saw_real_markers();
+        if replayed_open_command.is_some() || replayed_real_markers {
+            info!(
+                session_id = %session_id,
+                replayed_open_command = replayed_open_command.is_some(),
+                replayed_real_markers,
+                "terminal attach: facts seeded from ring replay"
+            );
+        }
+
         let shared = Arc::new(SessionShared {
             session_id: session_id.to_string(),
             grid_dirty: tokio::sync::Notify::new(),
             facts: std::sync::Mutex::new(SessionFacts {
                 mode: session.mode(),
                 integration: Integration::None,
-                marker_seen: false,
+                marker_seen: replayed_real_markers,
                 integration_expected,
-                open_command: None,
+                open_command: replayed_open_command
+                    .map(|_| (new_command_id(), std::time::Instant::now())),
                 open_command_screen: None,
-                genuine_osc133: false,
+                genuine_osc133: replayed_real_markers,
                 ring_next_offset: stat.ring_next_offset,
                 cols: stat.cols,
                 rows: stat.rows,
@@ -408,6 +431,8 @@ impl TerminalManager {
                 last_applied_input_seq: None,
                 input_pending_at_prompt: false,
                 deferred_resize: None,
+                interactive_foreground: false,
+                last_boundary_at: None,
             }),
         });
 
@@ -586,17 +611,33 @@ impl TerminalManager {
         // `command_in_flight` refusal is gone with the run/send split.
         let effective_await = frame.r#await.map(|kind| match kind {
             TerminalSendAwait::Auto => {
-                let facts = entry.shared.facts.lock().unwrap();
-                let at_prompt = facts.open_command.is_none()
-                    && matches!(
+                let (mode, open, foreground, genuine) = {
+                    let facts = entry.shared.facts.lock().unwrap();
+                    (
                         facts.mode,
-                        stem::events::Mode::Shell | stem::events::Mode::Unknown
-                    );
-                if submit && at_prompt {
-                    TerminalSendAwait::Command
-                } else {
-                    TerminalSendAwait::Settled
-                }
+                        facts.open_command.is_some(),
+                        facts.interactive_foreground,
+                        facts.genuine_osc133,
+                    )
+                };
+                let resolved = resolve_auto_await(submit, mode, open, foreground);
+                // Decision instrumentation (codex misroute triage): one line
+                // per auto-send with every input to the resolution.
+                info!(
+                    request_id = %frame.request_id,
+                    session_id = %frame.session_id,
+                    submit,
+                    mode = mode_str(mode),
+                    open_command = open,
+                    interactive_foreground = foreground,
+                    genuine_osc133 = genuine,
+                    resolved = match resolved {
+                        TerminalSendAwait::Command => "command",
+                        _ => "settled",
+                    },
+                    "terminal_send await:auto resolved"
+                );
+                resolved
             }
             other => other,
         });
@@ -1291,6 +1332,30 @@ fn interactive_result(data: Value, ready: bool, painted: bool) -> AwaitResult {
     }))
 }
 
+/// §6.7.4 `await:"auto"` resolution: a submitted line is a COMMAND only when
+/// the session really is a shell sitting at a prompt — no open command, no
+/// interactive-foreground evidence, and mode shell/unknown. Everything else
+/// is input to the foreground program (settle semantics). Pure so the fact
+/// matrix is unit-testable.
+fn resolve_auto_await(
+    submit: bool,
+    mode: stem::events::Mode,
+    open_command: bool,
+    interactive_foreground: bool,
+) -> TerminalSendAwait {
+    let at_prompt = !open_command
+        && !interactive_foreground
+        && matches!(
+            mode,
+            stem::events::Mode::Shell | stem::events::Mode::Unknown
+        );
+    if submit && at_prompt {
+        TerminalSendAwait::Command
+    } else {
+        TerminalSendAwait::Settled
+    }
+}
+
 async fn await_outcome(
     mut rx: broadcast::Receiver<PumpEvent>,
     kind: TerminalSendAwait,
@@ -1383,6 +1448,25 @@ async fn await_outcome(
                         Value::Object(candidate),
                     ));
                 }
+                // Sentinel command-awaits get a parallel backstop: at a
+                // quiet point with bracketed paste ENABLED the submitted
+                // line cannot be a running shell command (shells keep ?2004
+                // off while one runs) — a foreground program absorbed it.
+                // The grace still lets a fast real sentinel `D` win.
+                if kind == TerminalSendAwait::Command
+                    && !expect_start_marker
+                    && started_after_dispatch.is_empty()
+                    && absorbed.is_none()
+                    && entry.session.lock().await.bracketed_paste_active()
+                {
+                    let mut candidate = data.as_object().cloned().unwrap_or_default();
+                    candidate.insert("signal".into(), Value::String("settled".into()));
+                    candidate.insert("bracketed_paste".into(), Value::Bool(true));
+                    absorbed = Some((
+                        tokio::time::Instant::now() + INPUT_ABSORBED_GRACE,
+                        Value::Object(candidate),
+                    ));
+                }
             }
             Ok(PumpEvent::InteractiveStarted { data }) => {
                 if kind == TerminalSendAwait::Command && interactive.is_none() {
@@ -1417,6 +1501,23 @@ async fn await_outcome(
                 if expect_start_marker && started_after_dispatch.is_empty() && absorbed.is_none() {
                     let mut candidate = data.as_object().cloned().unwrap_or_default();
                     candidate.insert("signal".into(), Value::String("prompt_ready".into()));
+                    absorbed = Some((
+                        tokio::time::Instant::now() + INPUT_ABSORBED_GRACE,
+                        Value::Object(candidate),
+                    ));
+                }
+                // Sentinel parallel backstop (see the Settled arm): a fresh
+                // prompt with bracketed paste on and no `D` since dispatch
+                // means the wrapped line never executed.
+                if kind == TerminalSendAwait::Command
+                    && !expect_start_marker
+                    && started_after_dispatch.is_empty()
+                    && absorbed.is_none()
+                    && entry.session.lock().await.bracketed_paste_active()
+                {
+                    let mut candidate = data.as_object().cloned().unwrap_or_default();
+                    candidate.insert("signal".into(), Value::String("prompt_ready".into()));
+                    candidate.insert("bracketed_paste".into(), Value::Bool(true));
                     absorbed = Some((
                         tokio::time::Instant::now() + INPUT_ABSORBED_GRACE,
                         Value::Object(candidate),
@@ -1912,6 +2013,45 @@ mod tests {
         .into_iter()
         .collect::<HashMap<_, _>>();
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("24bit"));
+    }
+
+    #[test]
+    fn auto_await_resolution_matrix() {
+        use stem::events::Mode;
+        // A submitted line at a genuine idle prompt is a command.
+        assert_eq!(
+            resolve_auto_await(true, Mode::Shell, false, false),
+            TerminalSendAwait::Command
+        );
+        assert_eq!(
+            resolve_auto_await(true, Mode::Unknown, false, false),
+            TerminalSendAwait::Command
+        );
+        // Any open command routes input to the program.
+        assert_eq!(
+            resolve_auto_await(true, Mode::Shell, true, false),
+            TerminalSendAwait::Settled
+        );
+        // Interactive-foreground evidence (bracketed-paste enable with no
+        // open command: sentinel TUI launch, reattach) blocks the command
+        // path even in shell mode.
+        assert_eq!(
+            resolve_auto_await(true, Mode::Shell, false, true),
+            TerminalSendAwait::Settled
+        );
+        // Non-shell modes and unsubmitted text always settle.
+        assert_eq!(
+            resolve_auto_await(true, Mode::Tui, false, false),
+            TerminalSendAwait::Settled
+        );
+        assert_eq!(
+            resolve_auto_await(true, Mode::Repl, false, false),
+            TerminalSendAwait::Settled
+        );
+        assert_eq!(
+            resolve_auto_await(false, Mode::Shell, false, false),
+            TerminalSendAwait::Settled
+        );
     }
 
     #[test]

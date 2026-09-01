@@ -185,6 +185,10 @@ struct Inner {
     /// caller asked "what happened after my input", and "nothing" is a
     /// legitimate, promptly reported answer.
     input_pending: bool,
+    /// Genuine OSC 133 `A`/`B`/`C` markers seen by this attachment's parse,
+    /// ring replay INCLUDED (replayed history is real evidence). Bare `D`
+    /// markers are excluded — a sentinel trailer emits exactly those.
+    saw_real_markers: bool,
     /// Grid-sync damage accumulation between `take_grid_frame` calls.
     grid: GridTracker,
 }
@@ -213,6 +217,7 @@ impl Session {
             last_region_start: stat.ring_oldest_offset,
             settled_pending: false,
             input_pending: false,
+            saw_real_markers: false,
             grid: GridTracker::new(),
         }));
         let settle_wake = Arc::new(Notify::new());
@@ -411,6 +416,30 @@ impl Session {
         self.inner.lock().unwrap().emu.alt_screen_active()
     }
 
+    /// The currently open command (`C` seen, no `D`): (session-local index,
+    /// output byte start). Survives ring replay — unlike per-attachment
+    /// daemon facts — so a reattach mid-TUI can restore its open-command
+    /// knowledge (the codex reattach-amnesia fix).
+    pub fn open_command(&self) -> Option<(u64, u64)> {
+        self.inner.lock().unwrap().open_command
+    }
+
+    /// Genuine OSC 133 `A`/`B`/`C` evidence seen by this attachment's parse,
+    /// replay included. Bare `D` markers (a sentinel trailer's own output)
+    /// never set it, so it is safe to seed the daemon's sentinel-wrap
+    /// decision from it after a reattach.
+    pub fn saw_real_markers(&self) -> bool {
+        self.inner.lock().unwrap().saw_real_markers
+    }
+
+    /// Whether the application currently has bracketed paste (`?2004`)
+    /// enabled. Shells keep it OFF while a foreground command runs, so
+    /// "enabled" at a quiet point means a line-editor prompt or an
+    /// interactive program owns the terminal — never a running command.
+    pub fn bracketed_paste_active(&self) -> bool {
+        self.inner.lock().unwrap().emu.key_modes().bracketed_paste
+    }
+
     /// Best-effort cwd: OSC 7 report if seen, else process introspection.
     pub fn cwd(&self) -> Option<String> {
         let from_osc7 = self.inner.lock().unwrap().last_cwd.clone();
@@ -507,6 +536,7 @@ fn process_chunk(
         }
         match ev.kind {
             ScanKind::PromptStart => {
+                inner.saw_real_markers = true;
                 inner.last_region_start = ev.at_offset;
                 inner.open_command = None;
                 // Clear app cursor-style residue (nvim's steady-block exit
@@ -520,9 +550,11 @@ fn process_chunk(
                 }
             }
             ScanKind::CommandInputStart => {
+                inner.saw_real_markers = true;
                 inner.last_region_start = ev.at_offset;
             }
             ScanKind::CommandOutputStart => {
+                inner.saw_real_markers = true;
                 let index = inner.next_command_index;
                 inner.next_command_index += 1;
                 inner.open_command = Some((index, ev.at_offset));
@@ -965,6 +997,7 @@ mod grid_tests {
             last_region_start: 0,
             settled_pending: false,
             input_pending: false,
+            saw_real_markers: false,
             grid: GridTracker::new(),
         }
     }
@@ -1230,6 +1263,34 @@ mod grid_tests {
         );
         // Next take is clean again.
         assert!(take_grid_frame_inner(&mut inner, false).is_none());
+    }
+
+    #[test]
+    fn real_markers_tracked_and_bare_d_excluded() {
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        assert!(!inner.saw_real_markers);
+
+        // A bare sentinel `D` is NOT real-marker evidence.
+        feed(&mut inner, &mut off, b"\x1b]133;D;0\x07");
+        assert!(!inner.saw_real_markers);
+
+        // A prompt marker is.
+        feed(&mut inner, &mut off, b"\x1b]133;A\x07");
+        assert!(inner.saw_real_markers);
+    }
+
+    #[test]
+    fn open_command_slot_tracks_c_and_d() {
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        assert_eq!(inner.open_command, None);
+        feed(&mut inner, &mut off, b"\x1b]133;A\x07$ ");
+        feed(&mut inner, &mut off, b"\x1b]133;C\x07");
+        assert!(inner.open_command.is_some());
+        feed(&mut inner, &mut off, b"\x1b]133;D;0\x07");
+        assert_eq!(inner.open_command, None);
+        assert!(inner.saw_real_markers);
     }
 
     /// The drift regression net: feed the bake-off fixture corpus in
