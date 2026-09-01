@@ -711,7 +711,8 @@ Direct tests for snapshot math and fallback behavior.
 Local summary compaction collaborator used by `AgentService`.
 
 **Responsibilities**:
-- call the selected LLM provider with no tools and a fixed checkpoint-summary prompt
+- call the selected LLM provider with the main loop's tool schemas (under `tool_choice: "none"`), the runtime-instruction-applied conversation, and a fixed checkpoint-summary prompt appended as the final user message, so the summary request shares the main loop's prompt-cache prefix
+- forward the Bud `ProviderInvocationContext` (`threadId`/`budId`/`ownerUserId`) on the summary invoke so Bud-local providers (`bud_local`, Bud-local ds4) can route over the owning Bud's data plane; see `debug/compaction-fails-on-bud-local-providers.md`
 - build replacement history from a checkpoint summary note, recent real user messages, and optional current terminal context
 - persist completed and failed checkpoint rows
 - trim the temporary compaction request against the model's usable input window

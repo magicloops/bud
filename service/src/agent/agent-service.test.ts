@@ -58,6 +58,7 @@ function mockCurrentContextCheckpointBoundary() {
 
 type CompactConversationIfNeeded = (args: {
   threadId: string;
+  budId: string;
   turnId: string;
   sessionId: string | null;
   model: string;
@@ -70,6 +71,7 @@ type CompactConversationIfNeeded = (args: {
   phase: "pre_turn" | "mid_turn";
   reason: "context_limit" | "context_error_retry";
   conversation: Array<{ role: "user"; content: string }>;
+  tools: unknown[];
   ownerUserId?: string | null;
   controller: AbortController;
   force?: boolean;
@@ -93,6 +95,7 @@ function stubNormalEnvironment(service: AgentService): AgentEnvironmentSnapshot 
 function buildCompactionArgs() {
   return {
     threadId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+    budId: "bud-1",
     turnId: "01KQG8FX9YZAR32E4RGWVVA67G",
     sessionId: "sess_test",
     model: "gpt-5.5",
@@ -104,6 +107,7 @@ function buildCompactionArgs() {
     phase: "pre_turn" as const,
     reason: "context_limit" as const,
     conversation: [{ role: "user" as const, content: "Please continue." }],
+    tools: [],
     ownerUserId: "user-1",
     controller: new AbortController(),
     force: true,
