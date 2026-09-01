@@ -1,6 +1,7 @@
 import { memo, useMemo, type ReactNode } from 'react'
 import {
   Streamdown,
+  defaultRehypePlugins,
   defaultRemarkPlugins,
   type Components,
   type ControlsConfig,
@@ -34,6 +35,43 @@ const streamdownControls: ControlsConfig = {
   mermaid: { copy: true, download: false, fullscreen: true, panZoom: false },
 }
 const streamdownRemarkPlugins = [...Object.values(defaultRemarkPlugins), remarkBreaks]
+
+// mdast-util-to-hast synthesizes a trailing "\n" on every fenced code
+// block's text (`node.value + '\n'`). Streamdown trims it for DISPLAY but
+// feeds the raw string to its copy/download controls, so "Copy Code" pasted
+// an extra newline. Strip that one synthetic newline from `pre > code` text
+// nodes before Streamdown sees it; rendering is unaffected (already
+// trimmed) and the copied text becomes byte-exact.
+type HastNode = {
+  type?: string
+  tagName?: string
+  value?: string
+  children?: HastNode[]
+}
+const rehypeStripCodeTrailingNewline = () => (tree: HastNode) => {
+  const visit = (node: HastNode) => {
+    if (node.tagName === 'pre') {
+      for (const child of node.children ?? []) {
+        if (child.tagName !== 'code') {
+          continue
+        }
+        const text = child.children?.[0]
+        if (text?.type === 'text' && typeof text.value === 'string' && text.value.endsWith('\n')) {
+          text.value = text.value.slice(0, -1)
+        }
+      }
+      return // code blocks don't nest
+    }
+    for (const child of node.children ?? []) {
+      visit(child)
+    }
+  }
+  visit(tree)
+}
+const streamdownRehypePlugins = [
+  ...Object.values(defaultRehypePlugins),
+  rehypeStripCodeTrailingNewline,
+]
 
 /**
  * Shared markdown renderer for assistant and user messages.
@@ -123,6 +161,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       lineNumbers={false}
       mode={isStreaming ? 'streaming' : 'static'}
       plugins={streamdownPlugins}
+      rehypePlugins={streamdownRehypePlugins}
       remarkPlugins={streamdownRemarkPlugins}
       skipHtml
     >
