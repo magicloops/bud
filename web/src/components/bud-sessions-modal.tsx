@@ -152,7 +152,7 @@ export function BudSessionsModal({
           {/* Header */}
           <div
             className="flex items-center justify-between border-b-4 border-black px-4 py-3 shrink-0"
-            style={{ backgroundColor: 'var(--chat-bg)' }}
+            style={{ backgroundColor: 'var(--background)' }}
           >
             <div>
               <h2 className="font-mono text-sm font-bold uppercase tracking-wide">
@@ -297,7 +297,7 @@ export function BudSessionsModal({
           {/* Footer */}
           <div className="border-t border-black/20 px-4 py-2 shrink-0">
             <p className="text-xs text-muted-foreground">
-              Sessions auto-cleanup after 24h idle.
+              Sessions are marked idle after 30 minutes and kept until you close them.
             </p>
           </div>
         </div>

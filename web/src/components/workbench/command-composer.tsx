@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
+import { useComposerColumnAlignment } from '@/components/workbench/chat-pane-resize'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
 import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
+
+const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
 
 const COMPOSER_MIN_HEIGHT_PX = 56
 
@@ -34,9 +37,11 @@ type CommandComposerProps = {
   disabledReason?: string | null
   environment?: ApiAgentEnvironment | null
   contextBudget?: ApiContextBudget | null
-  /** Aligns composer content with the transcript column above (the
-   *  composer spans the full workspace width; the chat pane does not). */
-  contentInsetLeftPx?: number | null
+  /** Chat pane to align with: composer content indents to the transcript
+   *  column's left edge and the pinned controls right-anchor to the
+   *  column's text right edge (the composer spans the full workspace
+   *  width; the chat pane does not). */
+  alignToPaneRef?: RefObject<HTMLDivElement | null>
   /** Auto-focus the input on mount and whenever this key changes (pass the
    *  thread id). Skipped on coarse pointers — no surprise soft keyboards. */
   autoFocusKey?: string | null
@@ -57,7 +62,7 @@ export function CommandComposer({
   disabledReason = null,
   environment = null,
   contextBudget,
-  contentInsetLeftPx = null,
+  alignToPaneRef,
   autoFocusKey = null,
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
@@ -94,6 +99,8 @@ export function CommandComposer({
   // Dragging the top edge sets a manual height that overrides auto-grow
   // until the next send (or a double-click on the edge).
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const formRef = useRef<HTMLFormElement | null>(null)
+  const alignment = useComposerColumnAlignment(alignToPaneRef ?? NULL_PANE_REF, formRef)
   const [manualHeight, setManualHeight] = useState<number | null>(null)
   const resizeDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(
     null,
@@ -169,10 +176,11 @@ export function CommandComposer({
 
   return (
     <form
+      ref={formRef}
       onSubmit={handleSubmit}
       className="relative border-t-2 border-black bg-background"
       // The pinned controls (md+) are absolutely positioned and ignore this.
-      style={contentInsetLeftPx !== null ? { paddingLeft: contentInsetLeftPx } : undefined}
+      style={alignment ? { paddingLeft: alignment.paddingLeft } : undefined}
     >
       {/* Drag strip over the top border: resize the input by hand;
           double-click (or the next send) returns it to auto-grow. */}
@@ -208,7 +216,12 @@ export function CommandComposer({
       />
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
-      <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0">
+      <div
+        className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-3 md:right-3 md:gap-2 md:p-0"
+        // Right-anchor to the transcript column's text edge on md+ (the
+        // static phone row ignores `right`).
+        style={alignment ? { right: alignment.controlsRight } : undefined}
+      >
         {/* Build tag: short release version; click toggles the full
             git-describe string (build forensics without a settings surface). */}
         <button

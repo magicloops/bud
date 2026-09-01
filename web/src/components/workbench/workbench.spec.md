@@ -71,7 +71,6 @@ Message list with auto-scroll and full-height message rendering.
 - `messages` - Array of ChatMessage
 - optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
 - optional `liveTurnId` / `turnOutcomes` - Agent-work projection inputs (active run's turn id; session-local `final`-event outcomes) owned by the thread route
-- `accentColor` - CSS color for user message accents
 - optional `activityIndicatorVisible` / `activityIndicatorLabel` - Route-owned active-agent footer state rendered after the latest timeline item
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
@@ -116,10 +115,11 @@ Drag-to-resize for the chat-pane ↔ terminal/web/file divider (md+ only).
   right border, rendered inside the (relative) chat pane. Pointer capture
   keeps the drag alive over the terminal/iframe; double-click resets to
   the defaults; arrow keys nudge ±24px when focused (`role="separator"`).
-- `useComposerContentInset(paneRef)` — ResizeObserver-backed left inset
-  aligning the full-width composer with the transcript column (mirrors
-  chat-timeline's wrapper geometry: 1024px centering, 8/15/30px gutter
-  tiers, 3px rail).
+- `useComposerColumnAlignment(paneRef, elementRef)` — ResizeObserver-backed
+  alignment of a full-width element (composer, top bar) with the transcript
+  column: `paddingLeft` (820px centering + 8/15/30px gutter tiers + 3px
+  rail) and `controlsRight` (column text edge when chat is the only view;
+  classic 12px when a viewer is open).
 
 The pane consumes the width via a CSS variable
 (`md:w-[var(--chat-pane-width,20rem)]`), so mobile's `w-full` never sees

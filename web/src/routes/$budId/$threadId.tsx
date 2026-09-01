@@ -13,11 +13,7 @@ import { useIsMobile } from '@/lib/use-viewport'
 import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
 import { useState, useCallback, useMemo, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
-import {
-  ChatPaneResizeHandle,
-  useChatPaneWidth,
-  useComposerContentInset,
-} from '@/components/workbench/chat-pane-resize'
+import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
@@ -146,7 +142,6 @@ function ThreadView() {
   const isMobile = useIsMobile()
   const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
-  const composerInsetLeft = useComposerContentInset(chatPaneRef)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     resolveInitialViewMode(
       typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
@@ -971,6 +966,7 @@ function ThreadView() {
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
+      alignToPaneRef={chatPaneRef}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div
@@ -982,7 +978,7 @@ function ThreadView() {
           } ${isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'}`}
           style={
             {
-              backgroundColor: 'var(--chat-bg)',
+              backgroundColor: 'var(--background)',
               ...(chatPaneWidth !== null ? { '--chat-pane-width': chatPaneWidth } : {}),
             } as CSSProperties
           }
@@ -1094,7 +1090,7 @@ function ThreadView() {
           onReasoningChange={handleReasoningChange}
           environment={agentEnvironment}
           contextBudget={contextBudget}
-          contentInsetLeftPx={composerInsetLeft}
+          alignToPaneRef={chatPaneRef}
           autoFocusKey={threadId}
         />
       )}

@@ -250,6 +250,29 @@ const ChatTimelineComponent = ({
     })
   }, [scrollSyncKey])
 
+  // Geometry changes must not break bottom-follow: opening/closing the
+  // viewer or dragging the divider narrows the pane (content reflows
+  // taller), and the composer growing shrinks the container. A resize
+  // doesn't move scrollTop, so the stick flag is still trustworthy —
+  // re-pin to the bottom whenever the container or its content resizes
+  // while stuck.
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      if (shouldStickRef.current) {
+        node.scrollTop = node.scrollHeight
+      }
+    })
+    observer.observe(node)
+    if (node.firstElementChild) {
+      observer.observe(node.firstElementChild)
+    }
+    return () => observer.disconnect()
+  }, [])
+
   useEffect(() => {
     const node = scrollRef.current
     if (!node || !activityIndicatorVisible || !shouldStickRef.current) {
@@ -502,7 +525,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
               theme={{
                 base00: 'var(--chat-message)',
                 base01: 'var(--chat-message)',
-                base02: 'var(--chat-bg)',
+                base02: 'var(--background)',
                 base03: 'var(--muted-foreground)',
                 base04: 'var(--foreground)',
                 base05: 'var(--foreground)',

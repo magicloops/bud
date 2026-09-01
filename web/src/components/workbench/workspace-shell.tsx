@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { WorkspaceTopBar, type ViewMode } from '@/components/workbench/workspace-top-bar'
 
 type WorkspaceShellProps = {
@@ -12,6 +12,8 @@ type WorkspaceShellProps = {
    *  is hidden. Panes stay MOUNTED and hide via CSS (the terminal/iframe
    *  state-preservation rule). */
   isMobile?: boolean
+  /** Forwarded to the top bar so the title aligns with the chat column. */
+  alignToPaneRef?: RefObject<HTMLDivElement | null>
   leftPane: ReactNode
   rightPane: ReactNode
   composer: ReactNode
@@ -25,6 +27,7 @@ export function WorkspaceShell({
   onToggleThreads,
   fileViewLabel = null,
   isMobile = false,
+  alignToPaneRef,
   leftPane,
   rightPane,
   composer,
@@ -39,6 +42,7 @@ export function WorkspaceShell({
         onToggleThreads={onToggleThreads}
         fileViewLabel={fileViewLabel}
         showChatTab={isMobile}
+        alignToPaneRef={alignToPaneRef}
       />
       <div className="flex flex-1 overflow-hidden">
         {leftPane}

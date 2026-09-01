@@ -11,11 +11,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useCallback, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
-import {
-  ChatPaneResizeHandle,
-  useChatPaneWidth,
-  useComposerContentInset,
-} from '@/components/workbench/chat-pane-resize'
+import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
@@ -43,7 +39,6 @@ function NewThreadView() {
   const { toggleThreadPanel } = useLayout()
   const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
-  const composerInsetLeft = useComposerContentInset(chatPaneRef)
 
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
@@ -203,6 +198,7 @@ function NewThreadView() {
       view={viewMode}
       onViewChange={handleViewChange}
       onToggleThreads={toggleThreadPanel}
+      alignToPaneRef={chatPaneRef}
       leftPane={(
         <div
           ref={chatPaneRef}
@@ -213,7 +209,7 @@ function NewThreadView() {
           }`}
           style={
             {
-              backgroundColor: 'var(--chat-bg)',
+              backgroundColor: 'var(--background)',
               ...(chatPaneWidth !== null ? { '--chat-pane-width': chatPaneWidth } : {}),
             } as CSSProperties
           }
@@ -267,7 +263,7 @@ function NewThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
-          contentInsetLeftPx={composerInsetLeft}
+          alignToPaneRef={chatPaneRef}
           autoFocusKey={budId}
         />
       )}
