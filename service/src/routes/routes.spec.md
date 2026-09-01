@@ -18,6 +18,11 @@ Claim approval resolves the daemon's requested display name against the
 owner's other Buds via `pickBudName` (`src/bud-name.ts`): collisions get
 numeric suffixes (`host-2`, `host-3`, …), stable across re-claims.
 
+Claim approval also persists `bud.accent_color`: a first claim takes the
+least-used palette color among the owner's other Buds
+(`assignBudAccentColor`, `src/bud-accent.ts`); a re-claim keeps the existing
+(possibly user-chosen) color.
+
 **Endpoints**:
 
 | Method | Path | Description |
@@ -56,6 +61,11 @@ Authenticated install-claim issuance and status routes for one-command Bud setup
 
 Bud management and session listing.
 
+`accent_color` on the wire is never NULL: rows claimed before colors were
+persisted are serialized with `pickBudAccentColor(bud_id)` (same palette/hash
+as the web fallback), so the color never depends on list position. The list
+itself is ordered by `last_seen_at` desc, which moves with every heartbeat.
+
 **Endpoints**:
 
 | Method | Path | Description |
@@ -86,7 +96,9 @@ Direct registration coverage for the Bud route family.
 Focused coverage for daemon bootstrap claim redemption.
 
 **Current Coverage**:
-- valid install claim identifiers passed to `/api/device-auth/start` redeem into owner-stamped Bud rows and mark the install claim consumed
+- valid install claim identifiers passed to `/api/device-auth/start` redeem into owner-stamped Bud rows (with a palette `accent_color`) and mark the install claim consumed
+- requested names collide with the owner's existing Buds → numeric suffix
+- the persisted accent is the least-used palette color among the owner's other Buds
 
 ### `device-install-claims.test.ts`
 

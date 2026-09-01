@@ -78,6 +78,18 @@ reconnect stability rule so a suffixed name survives hellos that re-send
 the raw hostname) plus db-backed `resolveConnectedBudName` shared by the
 WebSocket and gRPC gateways. Node-tested in `bud-name.test.ts`.
 
+### `bud-accent.ts`
+
+Bud accent-color assignment. `BUD_ACCENT_PALETTE` (5 oklch colors) plus
+`fnv1a32`; `pickBudAccentColor(budId)` is the order-independent fallback
+(pure function of the id) used for legacy rows whose `accent_color` is NULL,
+and `assignBudAccentColor(budId, takenColors)` is the claim-time choice
+(least-used palette color among the owner's other Buds, ties broken from the
+id's hash slot). The palette and hash are mirrored verbatim in
+`web/src/lib/theme-colors.ts` and MUST stay in sync. Background:
+`debug/bud-accent-color-flips-between-chats.md`. Node-tested in
+`bud-accent.test.ts` (includes FNV-1a reference vectors).
+
 ### `config.ts`
 
 Environment-based configuration with defaults.

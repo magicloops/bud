@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { requireViewer } from "../auth/session.js";
+import { assignBudAccentColor } from "../bud-accent.js";
 import { pickBudName } from "../bud-name.js";
 import { config } from "../config.js";
 import { db } from "../db/client.js";
@@ -134,13 +135,18 @@ async function approveDeviceAuthFlowForUser(
   // "host-2" (stable across re-claims — see pickBudName).
   const effectiveOwner = existingBud?.createdByUserId ?? ownerUserId;
   const ownedBuds = await tx
-    .select({ budId: budTable.budId, name: budTable.name })
+    .select({ budId: budTable.budId, name: budTable.name, accentColor: budTable.accentColor })
     .from(budTable)
     .where(eq(budTable.createdByUserId, effectiveOwner));
-  const takenNames = ownedBuds
-    .filter((bud) => bud.budId !== budId)
-    .map((bud) => bud.name);
+  const otherBuds = ownedBuds.filter((bud) => bud.budId !== budId);
+  const takenNames = otherBuds.map((bud) => bud.name);
   const resolvedName = pickBudName(flow.requestedName, takenNames, existingBud?.name ?? null);
+  // Accent colors are persisted here so they are stable across list ordering
+  // and clients. A re-claim keeps whatever color the Bud already has (possibly
+  // user-chosen); a first claim takes the least-used palette color.
+  const accentColor =
+    existingBud?.accentColor ??
+    assignBudAccentColor(budId, otherBuds.map((bud) => bud.accentColor));
 
   if (existingBud) {
     await tx
@@ -152,6 +158,7 @@ async function approveDeviceAuthFlowForUser(
         arch: flow.requestedArch,
         version: flow.requestedVersion,
         capabilities: flow.requestedCapabilities,
+        accentColor,
         deviceSecret,
         createdByUserId: existingBud.createdByUserId ?? ownerUserId
       })
@@ -165,6 +172,7 @@ async function approveDeviceAuthFlowForUser(
       arch: flow.requestedArch,
       version: flow.requestedVersion,
       capabilities: flow.requestedCapabilities,
+      accentColor,
       status: "offline",
       deviceSecret,
       createdByUserId: ownerUserId

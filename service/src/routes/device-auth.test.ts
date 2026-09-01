@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
+import { BUD_ACCENT_PALETTE } from "../bud-accent.js";
 import { db } from "../db/client.js";
 import { registerDeviceAuthRoutes } from "./device-auth.js";
 import { hashDeviceInstallClaimToken } from "./device-install-claims.js";
@@ -56,7 +57,7 @@ function makeClaimTx(options: {
   inserts: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
   /** Rows returned by the owner-scoped bud name query (dedupe input). */
-  ownedBuds?: Array<{ budId: string; name: string }>;
+  ownedBuds?: Array<{ budId: string; name: string; accentColor?: string | null }>;
 }) {
   return {
     query: {
@@ -149,6 +150,7 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
   assert.equal(inserts[1]?.createdByUserId, "user-claim-owner");
   assert.equal(inserts[1]?.name, "Test Bud");
   assert.match(String(inserts[1]?.budId), /^b_/);
+  assert.ok(BUD_ACCENT_PALETTE.includes(String(inserts[1]?.accentColor)));
   assert.ok(updates.some((update) => update.approvedByUserId === "user-claim-owner"));
   assert.ok(
     updates.some(
@@ -200,4 +202,49 @@ test("device auth claim suffixes the requested name when the owner already has i
 
   assert.equal(response.statusCode, 201);
   assert.equal(inserts[1]?.name, "mbp-3");
+});
+
+test("device auth claim persists the least-used accent color among the owner's Buds", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const claimToken = "bic_test_accent";
+  const inserts: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, unknown>> = [];
+  // Four of the five palette colors are taken; the new Bud must get the fifth
+  // regardless of where its id hashes.
+  const free = BUD_ACCENT_PALETTE[2]!;
+  const tx = makeClaimTx({
+    claimToken,
+    inserts,
+    updates,
+    ownedBuds: BUD_ACCENT_PALETTE.filter((color) => color !== free).map((color, index) => ({
+      budId: `b_existing_${index}`,
+      name: `bud-${index}`,
+      accentColor: color,
+    })),
+  });
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback(tx),
+  );
+
+  const server = createServer();
+  await registerDeviceAuthRoutes(server);
+
+  const handler = server.handlers.get("POST /api/device-auth/start");
+  assert.ok(handler);
+  const response = await invokeRoute(handler, {
+    body: {
+      installation_id: "install-3",
+      name: "colorful",
+      os: "linux",
+      arch: "x86_64",
+      capabilities: {},
+      claim_id: claimToken,
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(inserts[1]?.accentColor, free);
 });
