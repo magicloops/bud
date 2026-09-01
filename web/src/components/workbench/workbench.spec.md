@@ -472,6 +472,11 @@ Header bar with workspace title and view toggle.
 - Thread panel toggle (hamburger menu) — hidden while the thread panel is
   open (`threadsOpen` prop; the panel header hosts the hamburger then)
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
+- Title aligns with the transcript column's text edge (composer geometry via
+  `useComposerColumnAlignment` + the exported row-text padding constant); the
+  title's natural left edge is *measured* from the DOM (it depends on the
+  responsive padding/gap and whether the hamburger is rendered), never
+  hardcoded, and the title only shifts right, never left of its natural spot
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available

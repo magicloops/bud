@@ -1,5 +1,8 @@
-import { useRef, type ReactNode, type RefObject } from 'react'
-import { useComposerColumnAlignment } from '@/components/workbench/chat-pane-resize'
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import {
+  TRANSCRIPT_ROW_TEXT_PADDING_PX,
+  useComposerColumnAlignment,
+} from '@/components/workbench/chat-pane-resize'
 import { FileText, Menu, MessageSquare, Monitor, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -31,10 +34,6 @@ type WorkspaceTopBarProps = {
 }
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
-// Title's natural left edge on md+: px-6 (24) + menu button (40) + gap-4 (16).
-const TITLE_NATURAL_LEFT_PX = 80
-// Message text sits 16px (the rows' px-4) inside the column's rail edge.
-const ROW_TEXT_PADDING_PX = 16
 
 export function WorkspaceTopBar({
   title,
@@ -47,9 +46,27 @@ export function WorkspaceTopBar({
   alignToPaneRef,
 }: WorkspaceTopBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null)
+  const titleBlockRef = useRef<HTMLDivElement | null>(null)
   const alignment = useComposerColumnAlignment(alignToPaneRef ?? NULL_PANE_REF, barRef)
-  const titleOffset = alignment
-    ? Math.max(0, alignment.paddingLeft + ROW_TEXT_PADDING_PX - TITLE_NATURAL_LEFT_PX)
+  // The title's natural left edge depends on the responsive padding/gap and
+  // on whether the hamburger is rendered (the thread panel hosts it while
+  // open), so measure it instead of hardcoding the layout. The offset margin
+  // lives on the <p> inside the block, so this rect is offset-free.
+  const [titleNaturalLeft, setTitleNaturalLeft] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    const titleBlock = titleBlockRef.current
+    if (!bar || !titleBlock) {
+      return
+    }
+    setTitleNaturalLeft(
+      titleBlock.getBoundingClientRect().left - bar.getBoundingClientRect().left,
+    )
+    // `alignment` changes on every bar/pane resize, re-measuring across
+    // responsive padding/gap breakpoints.
+  }, [threadsOpen, alignment])
+  const titleOffset = alignment && titleNaturalLeft !== null
+    ? Math.max(0, alignment.paddingLeft + TRANSCRIPT_ROW_TEXT_PADDING_PX - titleNaturalLeft)
     : 0
   return (
     <div
@@ -70,8 +87,13 @@ export function WorkspaceTopBar({
               <Menu className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex min-w-0 flex-col" style={titleOffset > 0 ? { marginLeft: titleOffset } : undefined}>
-            <p className="truncate font-mono text-lg font-semibold">{title}</p>
+          <div ref={titleBlockRef} className="flex min-w-0 flex-col">
+            <p
+              className="truncate font-mono text-lg font-semibold"
+              style={titleOffset > 0 ? { marginLeft: titleOffset } : undefined}
+            >
+              {title}
+            </p>
           </div>
         </div>
       <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
