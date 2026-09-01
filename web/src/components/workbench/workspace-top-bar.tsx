@@ -19,6 +19,8 @@ type WorkspaceTopBarProps = {
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
+  /** While the thread panel is open it hosts the hamburger itself. */
+  threadsOpen?: boolean
   fileViewLabel?: string | null
   /** Below md the chat pane is a peer view with its own tab. */
   showChatTab?: boolean
@@ -39,6 +41,7 @@ export function WorkspaceTopBar({
   view,
   onViewChange,
   onToggleThreads,
+  threadsOpen = false,
   fileViewLabel = null,
   showChatTab = false,
   alignToPaneRef,
@@ -51,38 +54,40 @@ export function WorkspaceTopBar({
   return (
     <div
       ref={barRef}
-      className="flex h-16 items-center justify-between gap-2 border-b-2 border-black bg-secondary/40 px-3 md:px-6"
+      className="flex h-12 items-center justify-between gap-2 border-b-2 border-black bg-secondary/40 px-3 md:px-4"
     >
         <div className="flex min-w-0 items-center gap-2 md:gap-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Toggle thread list"
-            onClick={onToggleThreads}
-            className="h-10 w-10 shrink-0 rounded-lg border-2 border-black transition-all hover:-translate-y-0.5"
-            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
-          >
-            <Menu className="h-5 w-5" />
-          </Button>
+          {!threadsOpen && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Toggle thread list"
+              onClick={onToggleThreads}
+              className="h-8 w-8 shrink-0 rounded-lg border-2 border-black transition-all hover:-translate-y-0.5"
+              style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+          )}
           <div className="flex min-w-0 flex-col" style={titleOffset > 0 ? { marginLeft: titleOffset } : undefined}>
             <p className="truncate font-mono text-lg font-semibold">{title}</p>
           </div>
         </div>
       <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
         {showChatTab && (
-          <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4 md:mr-2" />}>
+          <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4" />}>
             Chat
           </ViewToggleButton>
         )}
-        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4 md:mr-2" />}>
+        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4" />}>
           Terminal
         </ViewToggleButton>
-        <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4 md:mr-2" />}>
+        <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4" />}>
           Web view
         </ViewToggleButton>
         {(fileViewLabel || view === 'file') && (
-          <ViewToggleButton active={view === 'file'} onClick={() => onViewChange('file')} icon={<FileText className="h-4 w-4 md:mr-2" />}>
+          <ViewToggleButton active={view === 'file'} onClick={() => onViewChange('file')} icon={<FileText className="h-4 w-4" />}>
             {fileViewLabel ?? 'File'}
           </ViewToggleButton>
         )}
@@ -103,11 +108,11 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
     <Button
       type="button"
       variant="outline"
-      size="sm"
+      size="icon-sm"
       onClick={onClick}
-      // The text label is hidden below md — icon-only buttons still need an
-      // accessible name.
+      // Icon-only buttons: the label survives as accessible name + tooltip.
       aria-label={typeof children === 'string' ? children : undefined}
+      title={typeof children === 'string' ? children : undefined}
       className={cn(
         'rounded-lg border-2 border-black font-mono transition-all',
         active
@@ -117,7 +122,6 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
       style={active ? { boxShadow: '2px 2px 0px rgba(0,0,0,0.4)' } : { boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
     >
       {icon}
-      <span className="max-md:hidden">{children}</span>
     </Button>
   )
 }

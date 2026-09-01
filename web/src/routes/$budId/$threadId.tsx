@@ -966,6 +966,7 @@ function ThreadView() {
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
+      threadsOpen={threadPanelOpen}
       alignToPaneRef={chatPaneRef}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
@@ -1091,7 +1092,7 @@ function ThreadView() {
           environment={agentEnvironment}
           contextBudget={contextBudget}
           alignToPaneRef={chatPaneRef}
-          autoFocusKey={threadId}
+          autoFocusKey={`${threadId}:${viewMode}`}
         />
       )}
       debugPanel={(

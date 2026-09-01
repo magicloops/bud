@@ -43,8 +43,12 @@ Thread list sidebar for conversation navigation.
 
 **Features**:
 - Sorted by last activity (most recent first)
-- "New" button for creating threads
-- Terminal-sessions action in the header
+- "New chat" lives IN the list as the first card-shaped item (dashed border
+  + Plus icon; solid accent border when the new-thread route is active) —
+  no separate header button
+- Header: hamburger (closes the panel via `onToggleOpen`; the workspace top
+  bar hides its own hamburger while the panel is open), centered bud name,
+  terminal-sessions action (Layers icon)
 - Account settings are intentionally not shown here because this header is Bud-scoped
 - Delete button with confirmation dialog
 - Delete success/failure now bubble up through `onStatusChange(...)` so the parent Bud layout can show a visible shared mutation-status banner instead of silently logging or only updating local button state
@@ -465,10 +469,12 @@ Header bar with workspace title and view toggle.
 - `file` - Thread file viewer pane for user-clicked transcript paths
 
 **Components**:
-- Thread panel toggle (hamburger menu)
+- Thread panel toggle (hamburger menu) — hidden while the thread panel is
+  open (`threadsOpen` prop; the panel header hosts the hamburger then)
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
-- Status indicator (Idle/Dispatching/Streaming/Waiting)
-- View mode toggle buttons; the file toggle appears only when an active file is available
+- View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
+  as aria-label + title tooltip); the file toggle appears only when an
+  active file is available
 - Exports the shared `ViewMode` and `WorkbenchStatus` unions used by the workbench frame and child controls
 
 ## Dependencies
