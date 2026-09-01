@@ -37,29 +37,35 @@ Theme context provider for light/dark/system mode.
 
 **Hook**: `useTheme()` - Returns `{ theme, setTheme }`
 
-### `bud-sessions-modal.tsx`
+### `bud-settings-modal.tsx`
 
-Modal dialog for viewing and managing terminal sessions on a bud.
+Per-Bud settings dialog (`BudSettingsModal`) with three tabs. Opened from the
+thread panel header: the Layers button lands on **Sessions**, the gear and the
+Bud name land on **General**. Escape and the backdrop close it;
+`role="dialog"` + `aria-labelledby`.
 
 **Props**:
-- `budId`, `budName` - Bud identification
-- `isOpen`, `onClose` - Modal state
-- `onNavigateToThread` - Navigation callback
+- `bud: ApiBud` - full API row (name, display_name, accent_color, os/arch/version, status, last_seen_at)
+- `isOpen`, `initialTab: 'general' | 'sessions' | 'device'`, `onClose`
+- `onNavigateToThread` - Sessions tab thread links
+- `onBudUpdated(bud)` - fired with the server row after a successful save
 
-**Features**:
-- Fetches sessions from `/api/buds/:id/sessions`
-- Shows session state, thread link, output stats
-- Delete session with confirmation
-- Bud online/offline indicator
-- Auto-refresh on open
-- Uses the shared mutation-status banner for visible close-session success/failure feedback and retryable load failures instead of collapsing every action error into a blank/error-only modal body
+**General tab**:
+- Display-name input (placeholder = daemon `name`; Reset clears it so the
+  daemon name shows again) and a swatch grid of `DEFAULT_AVATAR_COLORS`
+  (palette-only, matching the server's validation)
+- Save sends one `PATCH /api/buds/:budId` with only the changed fields
+  (`display_name` as `null` to reset); button is disabled until dirty; Enter in
+  the input saves; success/error via the shared mutation-status banner
+- Renames write `display_name`, never `name` (`name` is daemon-driven)
 
-**Session Info Displayed**:
-- Session ID (truncated)
-- State with color indicator
-- Linked thread title
-- Last activity time
-- Output bytes
+**Sessions tab** (`SessionsTab`, the former Terminal Sessions modal body, behavior unchanged):
+- Fetches `/api/buds/:id/sessions` on mount, shows state, thread link, output stats
+- Close session with confirmation; bud online/offline gates the close button
+- Mutation-status banner for close success/failure and retryable load failures
+
+**Device tab**: read-only daemon name, Bud ID (copy button), platform, daemon
+version, status, last seen.
 
 ### `debug-panel.tsx`
 

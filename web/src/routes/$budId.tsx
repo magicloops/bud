@@ -1,10 +1,10 @@
-import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useNavigate, useMatches, useRouter } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MutationStatus, type MutationStatusTone } from '@/components/ui/mutation-status'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
-import { BudSessionsModal } from '@/components/bud-sessions-modal'
-import { budAccentColorFor, deriveBudPalette } from '@/lib/theme-colors'
+import { BudSettingsModal, type BudSettingsTab } from '@/components/bud-settings-modal'
+import { deriveBudPalette, withFallbackAccentColors } from '@/lib/theme-colors'
 import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
   apiFetchJson,
@@ -92,6 +92,7 @@ function BudLayout() {
   const { buds: rawBuds, threads: initialThreads } = Route.useLoaderData()
   const { budId } = Route.useParams()
   const navigate = useNavigate()
+  const router = useRouter()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, setThreadPanelOpen } = useLayout()
@@ -107,8 +108,24 @@ function BudLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCompact])
 
-  // Sessions modal state
-  const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
+  // Bud settings modal (general / sessions / device tabs)
+  const [budSettings, setBudSettings] = useState<{ open: boolean; tab: BudSettingsTab }>({
+    open: false,
+    tab: 'general',
+  })
+  // Rows saved from the settings modal, applied instantly over loader data
+  // until the invalidated loader catches up (cleared on every reload).
+  const [budOverrides, setBudOverrides] = useState<Record<string, ApiBud>>({})
+  useEffect(() => {
+    setBudOverrides({})
+  }, [rawBuds])
+  // Every row downstream carries an accent: the service resolves legacy NULL
+  // colors positionally by creation order, and withFallbackAccentColors does
+  // the same here for older services (never by this list's last_seen_at order).
+  const apiBuds = useMemo(
+    () => withFallbackAccentColors(rawBuds.map((apiBud) => budOverrides[apiBud.bud_id] ?? apiBud)),
+    [rawBuds, budOverrides],
+  )
   const [threadPanelStatus, setThreadPanelStatus] = useState<{ tone: MutationStatusTone; message: string } | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads.map(toThreadSummary))
 
@@ -121,19 +138,17 @@ function BudLayout() {
 
   // Convert API buds to BudProfile format
   const buds: BudProfile[] = useMemo(() => {
-    return rawBuds.map((apiBud) => {
+    return apiBuds.map((apiBud) => {
       return {
         id: apiBud.bud_id,
         label: apiBud.display_name ?? apiBud.name,
-        // Fallback is keyed on the id, never the list index: /api/buds is
-        // ordered by last_seen_at, so positions shuffle between navigations.
-        accentColor: apiBud.accent_color ?? budAccentColorFor(apiBud.bud_id),
+        accentColor: apiBud.accent_color ?? 'var(--accent)',
         status: apiBud.status,
         tags: apiBud.tags,
         capabilities: normalizeCapabilities(apiBud.capabilities) as BudCapabilities | null,
       }
     })
-  }, [rawBuds])
+  }, [apiBuds])
 
   useEffect(() => {
     setThreads(initialThreads.map(toThreadSummary))
@@ -142,12 +157,12 @@ function BudLayout() {
   const activeBudProfile = useMemo(() => {
     return buds.find((b) => b.id === budId)
   }, [budId, buds])
+  const activeApiBud = useMemo(() => apiBuds.find((b) => b.bud_id === budId), [apiBuds, budId])
 
   // Compute palette for theming
   const palette = useMemo(() => {
-    const baseColor = activeBudProfile?.accentColor ?? budAccentColorFor(budId)
-    return deriveBudPalette(baseColor)
-  }, [activeBudProfile, budId])
+    return deriveBudPalette(activeBudProfile?.accentColor ?? 'var(--accent)')
+  }, [activeBudProfile])
 
   // Apply CSS custom properties for theming
   useEffect(() => {
@@ -202,9 +217,18 @@ function BudLayout() {
     navigate({ to: '/$budId', params: { budId } })
   }, [budId, navigate, removeThreadSummary])
 
-  const handleOpenSessions = useCallback(() => {
-    setSessionsModalOpen(true)
+  const handleOpenBudSettings = useCallback((tab: BudSettingsTab) => {
+    setBudSettings({ open: true, tab })
   }, [])
+
+  const handleCloseBudSettings = useCallback(() => {
+    setBudSettings((prev) => ({ ...prev, open: false }))
+  }, [])
+
+  const handleBudUpdated = useCallback((bud: ApiBud) => {
+    setBudOverrides((prev) => ({ ...prev, [bud.bud_id]: bud }))
+    void router.invalidate()
+  }, [router])
 
   const handleNavigateToThread = useCallback((threadId: string) => {
     navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
@@ -221,7 +245,7 @@ function BudLayout() {
         }
       }}
       onThreadDeleted={handleThreadDeleted}
-      onOpenSessions={handleOpenSessions}
+      onOpenBudSettings={handleOpenBudSettings}
       onToggleOpen={() => setThreadPanelOpen(false)}
       onStatusChange={setThreadPanelStatus}
       accentColor={palette.vibrant}
@@ -273,14 +297,15 @@ function BudLayout() {
         </div>
       )}
 
-      {/* Sessions Modal */}
-      {activeBudProfile && (
-        <BudSessionsModal
-          budId={budId}
-          budName={activeBudProfile.label}
-          isOpen={sessionsModalOpen}
-          onClose={() => setSessionsModalOpen(false)}
+      {/* Bud settings modal (sessions live in a tab) */}
+      {activeApiBud && (
+        <BudSettingsModal
+          bud={activeApiBud}
+          isOpen={budSettings.open}
+          initialTab={budSettings.tab}
+          onClose={handleCloseBudSettings}
           onNavigateToThread={handleNavigateToThread}
+          onBudUpdated={handleBudUpdated}
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">

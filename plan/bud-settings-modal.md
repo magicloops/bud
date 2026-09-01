@@ -132,11 +132,11 @@ expose this as a **Reset** affordance next to the input.
   Sessions tab directly.
 
 ## Spec Files to Update
-- [ ] `web/src/components/components.spec.md` — `bud-sessions-modal.tsx` → `bud-settings-modal.tsx` (tabs, props)
-- [ ] `web/src/components/workbench/workbench.spec.md` — thread panel header buttons/name button
-- [ ] `web/src/routes/routes.spec.md` — `$budId` modal state (`budSettings: { open, tab }`), `budOverrides`, invalidate flow
-- [ ] `service/src/routes/routes.spec.md` — `PATCH /api/buds/:budId` + `buds.test.ts` coverage
-- [ ] `plan/init-auth/validation-checklist.md` — new write path: owner-only PATCH (AGENTS.md §4.6)
+- [x] `web/src/components/components.spec.md` — `bud-sessions-modal.tsx` → `bud-settings-modal.tsx` (tabs, props)
+- [x] `web/src/components/workbench/workbench.spec.md` — thread panel header buttons/name button
+- [x] `web/src/routes/routes.spec.md` — `$budId` modal state (`budSettings: { open, tab }`), `budOverrides`, invalidate flow
+- [x] `service/src/routes/routes.spec.md` — `PATCH /api/buds/:budId` + `buds.test.ts` coverage
+- [x] `plan/init-auth/validation-checklist.md` — new write path: owner-only PATCH (AGENTS.md §4.6)
 
 ## Impacted Contracts
 - [ ] WSS protocol — none
@@ -151,7 +151,7 @@ expose this as a **Reset** affordance next to the input.
   `device-auth.test.ts`): owner PATCH updates and returns the serialized bud;
   non-owner → 404; invalid color / empty name → 400; `display_name: null`
   resets; `name` is never written.
-- Service: gateway re-resolve keeps `display_name` (bud-name path) — one test.
+- Service: gateway re-resolve keeps `display_name` — verified by inspection: no gateway/daemon-state code path references `displayName` (grep), so nothing can clobber it.
 - Web: `theme-colors` already tested; modal is manual QA (no component test
   harness in `web/`): rename → label updates everywhere; color → avatar +
   theme update instantly and after refresh; Layers → Sessions tab; Escape

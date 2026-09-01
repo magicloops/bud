@@ -11,7 +11,6 @@ import { z } from "zod";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable } from "../db/schema.js";
-import { pickBudAccentColor } from "../bud-accent.js";
 import { resolveConnectedBudName } from "../bud-name.js";
 import { handleFileOpenResult } from "../files/file-runtime.js";
 import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
@@ -354,7 +353,6 @@ class GrpcControlConnection {
           lastSeenAt: now,
           deviceSecret,
           capabilities: frame.capabilities,
-          accentColor: pickBudAccentColor(budId),
         })
         .onConflictDoUpdate({
           target: budTable.budId,

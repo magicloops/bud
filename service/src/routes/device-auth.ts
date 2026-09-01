@@ -135,7 +135,12 @@ async function approveDeviceAuthFlowForUser(
   // "host-2" (stable across re-claims — see pickBudName).
   const effectiveOwner = existingBud?.createdByUserId ?? ownerUserId;
   const ownedBuds = await tx
-    .select({ budId: budTable.budId, name: budTable.name, accentColor: budTable.accentColor })
+    .select({
+      budId: budTable.budId,
+      name: budTable.name,
+      accentColor: budTable.accentColor,
+      createdAt: budTable.createdAt,
+    })
     .from(budTable)
     .where(eq(budTable.createdByUserId, effectiveOwner));
   const otherBuds = ownedBuds.filter((bud) => bud.budId !== budId);
@@ -143,10 +148,9 @@ async function approveDeviceAuthFlowForUser(
   const resolvedName = pickBudName(flow.requestedName, takenNames, existingBud?.name ?? null);
   // Accent colors are persisted here so they are stable across list ordering
   // and clients. A re-claim keeps whatever color the Bud already has (possibly
-  // user-chosen); a first claim takes the least-used palette color.
-  const accentColor =
-    existingBud?.accentColor ??
-    assignBudAccentColor(budId, otherBuds.map((bud) => bud.accentColor));
+  // user-chosen); a first claim takes the next free palette color in creation
+  // order (first Bud pink, second orange, …).
+  const accentColor = existingBud?.accentColor ?? assignBudAccentColor(otherBuds);
 
   if (existingBud) {
     await tx

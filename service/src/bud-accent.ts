@@ -1,14 +1,21 @@
 /**
  * Bud accent-color assignment.
  *
- * Every Bud gets one stable accent color from a small palette. Colors are
- * persisted on `bud.accent_color` at device claim so they survive any list
- * ordering and any client; for legacy rows that are still NULL, callers fall
- * back to `pickBudAccentColor(budId)`, which is a pure function of the id.
+ * Every Bud gets one stable accent color from a small palette. The rule is
+ * positional — the first Bud is pink, the second orange, … — but keyed on
+ * **creation order** (`created_at`, `bud_id` tiebreak; both are
+ * creation-ordered), never on the `/api/buds` list order, which follows
+ * `last_seen_at` and moves with every heartbeat
+ * (see debug/bud-accent-color-flips-between-chats.md).
  *
- * The web client derives the same fallback for the same reason (see
- * `web/src/lib/theme-colors.ts`); the palette and hash MUST stay identical on
- * both sides so a server-assigned color and a client-derived one agree.
+ * Colors are persisted on `bud.accent_color` at device claim; rows that are
+ * still NULL (claimed before persistence, or dev enrollment) are resolved at
+ * read time by `withFallbackAccentColors`. Persisted / user-chosen colors are
+ * treated as taken, so a fallback never collides with a deliberate pick.
+ *
+ * The web client mirrors this (`web/src/lib/theme-colors.ts`) for mixed
+ * service/web versions; the palette order and the first-free rule MUST stay
+ * identical on both sides.
  */
 
 export const BUD_ACCENT_PALETTE: readonly string[] = [
@@ -19,47 +26,72 @@ export const BUD_ACCENT_PALETTE: readonly string[] = [
   "oklch(0.66 0.21 140)", // green
 ];
 
-/** 32-bit FNV-1a over UTF-16 code units. Small, dependency-free, stable. */
-export function fnv1a32(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
-
 /**
- * Order-independent fallback: the palette color a Bud id hashes to. Used for
- * rows whose `accent_color` is NULL (claimed before colors were persisted).
+ * The next color to hand out given the colors already in use: the first
+ * palette color (in palette order) with the fewest uses. Unknown / NULL
+ * entries are ignored.
  */
-export function pickBudAccentColor(budId: string): string {
-  return BUD_ACCENT_PALETTE[fnv1a32(budId) % BUD_ACCENT_PALETTE.length]!;
-}
-
-/**
- * Claim-time assignment: the least-used palette color among the owner's OTHER
- * Buds (`takenColors` must exclude the Bud itself; NULL/custom colors are
- * ignored), ties broken by walking forward from the id's hash slot so the
- * choice stays deterministic and spreads across the palette.
- */
-export function assignBudAccentColor(
-  budId: string,
-  takenColors: Iterable<string | null | undefined>,
-): string {
+export function pickNextAccentColor(takenColors: Iterable<string | null | undefined>): string {
   const counts = new Map<string, number>(BUD_ACCENT_PALETTE.map((color) => [color, 0]));
   for (const color of takenColors) {
     if (color && counts.has(color)) {
       counts.set(color, (counts.get(color) ?? 0) + 1);
     }
   }
-  const minCount = Math.min(...counts.values());
-  const start = fnv1a32(budId) % BUD_ACCENT_PALETTE.length;
-  for (let offset = 0; offset < BUD_ACCENT_PALETTE.length; offset += 1) {
-    const color = BUD_ACCENT_PALETTE[(start + offset) % BUD_ACCENT_PALETTE.length]!;
-    if (counts.get(color) === minCount) {
-      return color;
+  let best = BUD_ACCENT_PALETTE[0]!;
+  let bestCount = Number.POSITIVE_INFINITY;
+  for (const color of BUD_ACCENT_PALETTE) {
+    const count = counts.get(color) ?? 0;
+    if (count < bestCount) {
+      best = color;
+      bestCount = count;
     }
   }
-  return pickBudAccentColor(budId);
+  return best;
+}
+
+type AccentRow = {
+  budId: string;
+  accentColor: string | null;
+  createdAt: Date | string | null;
+};
+
+function creationOrder(a: AccentRow, b: AccentRow): number {
+  const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+  if (at !== bt) {
+    return at - bt;
+  }
+  return a.budId < b.budId ? -1 : a.budId > b.budId ? 1 : 0;
+}
+
+/**
+ * Resolve accent colors for one owner's Buds: rows with a persisted color keep
+ * it; NULL rows are assigned in creation order, each taking the first palette
+ * color not already used. Input order is preserved.
+ */
+export function withFallbackAccentColors<T extends AccentRow>(buds: readonly T[]): T[] {
+  const taken: string[] = buds.map((bud) => bud.accentColor).filter((color): color is string => Boolean(color));
+  const assigned = new Map<string, string>();
+  for (const bud of [...buds].sort(creationOrder)) {
+    if (bud.accentColor) {
+      continue;
+    }
+    const color = pickNextAccentColor(taken);
+    taken.push(color);
+    assigned.set(bud.budId, color);
+  }
+  return buds.map((bud) => {
+    const color = assigned.get(bud.budId);
+    return color ? { ...bud, accentColor: color } : bud;
+  });
+}
+
+/**
+ * Claim-time assignment for a new Bud: the first free color after resolving
+ * the owner's OTHER Buds (`otherBuds` must exclude the Bud itself), so the
+ * persisted color matches what the list would have shown positionally.
+ */
+export function assignBudAccentColor(otherBuds: readonly AccentRow[]): string {
+  return pickNextAccentColor(withFallbackAccentColors(otherBuds).map((bud) => bud.accentColor));
 }

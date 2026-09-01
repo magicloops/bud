@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
-import { Layers, Menu, Plus, Trash2, Terminal } from 'lucide-react'
+import { Layers, Menu, Plus, Settings2, Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,9 @@ type ThreadPanelProps = {
   activeThreadId: string | null
   onSelectThread: (threadId: string | null) => void
   onThreadDeleted?: (threadId: string) => void
-  onOpenSessions?: () => void
+  /** Opens the Bud settings modal on the given tab (Layers → sessions,
+   *  gear / bud name → general). */
+  onOpenBudSettings?: (tab: 'general' | 'sessions') => void
   /** Renders the hamburger inside the panel header (closes the panel);
    *  while the panel is open the workspace top bar hides its own. */
   onToggleOpen?: () => void
@@ -93,7 +95,7 @@ export function ThreadPanel({
   activeThreadId,
   onSelectThread,
   onThreadDeleted,
-  onOpenSessions,
+  onOpenBudSettings,
   onToggleOpen,
   accentColor,
   budLabel,
@@ -167,20 +169,38 @@ export function ThreadPanel({
             <Menu className="h-4 w-4" />
           </Button>
         )}
-        <p className="line-clamp-1 min-w-0 flex-1 text-center font-mono text-[15px] font-semibold uppercase tracking-wide">
+        <button
+          type="button"
+          onClick={() => onOpenBudSettings?.('general')}
+          className="line-clamp-1 min-w-0 flex-1 cursor-pointer text-center font-mono text-[15px] font-semibold uppercase tracking-wide transition-colors hover:text-muted-foreground"
+          title="Bud settings"
+        >
           {budLabel}
-        </p>
+        </button>
         <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            onClick={onOpenSessions}
+            onClick={() => onOpenBudSettings?.('sessions')}
             className="h-8 w-8 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
             style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
-            title="Terminal Sessions"
+            title="Terminal sessions"
+            aria-label="Terminal sessions"
           >
             <Layers className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onOpenBudSettings?.('general')}
+            className="h-8 w-8 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
+            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
+            title="Bud settings"
+            aria-label="Bud settings"
+          >
+            <Settings2 className="h-4 w-4" />
           </Button>
         </div>
       </div>

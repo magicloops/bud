@@ -54,6 +54,11 @@ export type ApiBud = {
   display_name?: string | null
   accent_color?: string | null
   status: string
+  os?: string
+  arch?: string
+  version?: string | null
+  last_seen_at?: string | null
+  created_at?: string
   tags?: string[]
   capabilities?: Record<string, unknown> | null
 }
