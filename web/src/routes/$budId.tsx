@@ -4,7 +4,7 @@ import { MutationStatus, type MutationStatusTone } from '@/components/ui/mutatio
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { BudSessionsModal } from '@/components/bud-sessions-modal'
-import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
+import { budAccentColorFor, deriveBudPalette } from '@/lib/theme-colors'
 import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
   apiFetchJson,
@@ -121,12 +121,13 @@ function BudLayout() {
 
   // Convert API buds to BudProfile format
   const buds: BudProfile[] = useMemo(() => {
-    return rawBuds.map((apiBud, index) => {
-      const fallback = DEFAULT_AVATAR_COLORS[index % DEFAULT_AVATAR_COLORS.length]
+    return rawBuds.map((apiBud) => {
       return {
         id: apiBud.bud_id,
         label: apiBud.display_name ?? apiBud.name,
-        accentColor: apiBud.accent_color ?? fallback,
+        // Fallback is keyed on the id, never the list index: /api/buds is
+        // ordered by last_seen_at, so positions shuffle between navigations.
+        accentColor: apiBud.accent_color ?? budAccentColorFor(apiBud.bud_id),
         status: apiBud.status,
         tags: apiBud.tags,
         capabilities: normalizeCapabilities(apiBud.capabilities) as BudCapabilities | null,
@@ -144,12 +145,9 @@ function BudLayout() {
 
   // Compute palette for theming
   const palette = useMemo(() => {
-    const budIndex = buds.findIndex((b) => b.id === budId)
-    const fallbackIndex = budIndex >= 0 ? budIndex : 0
-    const fallbackColor = DEFAULT_AVATAR_COLORS[fallbackIndex % DEFAULT_AVATAR_COLORS.length] ?? 'var(--accent)'
-    const baseColor = activeBudProfile?.accentColor ?? fallbackColor
+    const baseColor = activeBudProfile?.accentColor ?? budAccentColorFor(budId)
     return deriveBudPalette(baseColor)
-  }, [activeBudProfile, budId, buds])
+  }, [activeBudProfile, budId])
 
   // Apply CSS custom properties for theming
   useEffect(() => {

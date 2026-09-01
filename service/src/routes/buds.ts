@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { desc, eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { budTable, terminalSessionTable, threadTable } from "../db/schema.js";
+import { pickBudAccentColor } from "../bud-accent.js";
 import { isBudOnline } from "../ws/gateway.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import { getAuthorizedBud, requireViewer } from "../auth/session.js";
@@ -26,7 +27,10 @@ function serializeBud(bud: BudRow) {
     os: bud.os,
     arch: bud.arch,
     version: bud.version,
-    accent_color: bud.accentColor,
+    // Rows claimed before colors were persisted are NULL; derive the same
+    // stable fallback the web client would, so the wire value never depends
+    // on list position.
+    accent_color: bud.accentColor ?? pickBudAccentColor(bud.budId),
     tags: bud.tags ?? [],
     capabilities: normalizeCapabilities(bud.capabilities),
     status: bud.status,

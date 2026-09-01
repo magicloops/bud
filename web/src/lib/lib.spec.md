@@ -309,29 +309,36 @@ Parses `oklch(0.70 0.25 330)` format.
 
 | Function | Purpose |
 |----------|---------|
-| `getMutedColor(color, factor)` | Reduce chroma (saturation) |
+| `getMutedColor(color, factor)` | Reduce chroma (saturation); non-oklch input passes through unchanged |
 | `resolveCssVar(variable)` | Resolve CSS variable to computed value |
 | `deriveBudPalette(color)` | Generate vibrant/muted/soft variants |
+| `fnv1a32(input)` | 32-bit FNV-1a hash (mirrors `service/src/bud-accent.ts`) |
+| `budAccentColorFor(budId)` | Order-independent fallback accent: `DEFAULT_AVATAR_COLORS[fnv1a32(budId) % 5]` |
 
-**Default Avatar Colors**:
-```typescript
-export const DEFAULT_AVATAR_COLORS = [
-  'oklch(0.70 0.25 330)',  // Pink
-  'oklch(0.65 0.24 50)',   // Orange
-  'oklch(0.68 0.22 190)',  // Cyan
-  'oklch(0.72 0.23 280)',  // Purple
-  'oklch(0.66 0.21 140)'   // Green
-]
-```
+**Default Avatar Colors** (`DEFAULT_AVATAR_COLORS`): 5 oklch swatches — pink,
+orange, cyan, purple, green. MUST stay identical (colors, order, hash) to
+`BUD_ACCENT_PALETTE` in `service/src/bud-accent.ts`: the service persists a
+palette color at claim time and derives the same fallback for legacy rows, so
+client and server always agree on a Bud's color.
+
+Accent fallbacks are keyed on the Bud id, never on its index in the bud list —
+`/api/buds` is ordered by `last_seen_at`, which moves with every heartbeat, so
+index-based colors reshuffled between navigations
+(`debug/bud-accent-color-flips-between-chats.md`).
 
 **Palette Generation**:
 ```typescript
 deriveBudPalette(color) → {
-  vibrant: color,           // Full saturation
-  muted: getMutedColor(color, 0.6),   // 60% chroma
-  soft: getMutedColor(color, 0.35)    // 35% chroma
+  vibrant: color,                      // Full saturation
+  muted: getMutedColor(color, 0.85),   // 85% chroma
+  soft: getMutedColor(color, 0.7)      // 70% chroma
 }
 ```
+
+### `theme-colors.test.ts`
+
+Node tests: FNV-1a reference vectors (which pin the hash to the service copy)
+and `budAccentColorFor` determinism / palette membership.
 
 ### `build-info.ts`
 

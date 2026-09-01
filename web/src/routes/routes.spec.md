@@ -151,7 +151,7 @@ loader: async ({ params }) => {
 **Features**:
 - Explicit loader-level auth redirect handling via `toLoginRedirect(...)`
 - Fetches all buds and threads for current bud in parallel
-- Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
+- Converts API responses to UI types (`BudProfile`, `ThreadSummary`); a missing `accent_color` falls back to `budAccentColorFor(bud_id)` (id-hashed, never list-index-based — the list order follows `last_seen_at`)
 - Owns mutable thread-summary state so child routes can upsert canonical thread detail, apply streamed `thread.title` updates, optimistically patch thread model preferences, and remove deleted rows without waiting for a parent-loader refresh
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state

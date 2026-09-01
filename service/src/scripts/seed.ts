@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { db, pool } from "../db/client.js";
 import { budTable } from "../db/schema.js";
+import { pickBudAccentColor } from "../bud-accent.js";
 
 async function main() {
   const budId = process.env.SEED_BUD_ID ?? "b_dev_seed";
@@ -15,7 +16,8 @@ async function main() {
       arch: process.env.SEED_BUD_ARCH ?? "x86_64",
       version: "0.0.1",
       status: "offline",
-      lastSeenAt: now
+      lastSeenAt: now,
+      accentColor: pickBudAccentColor(budId)
     })
     .onConflictDoUpdate({
       target: budTable.budId,
