@@ -39,7 +39,7 @@ pub async fn start_device_auth_flow(
         "name": name,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::version::release_version(),
         "capabilities": capabilities,
     });
     if let Some(claim_id) = claim_id {

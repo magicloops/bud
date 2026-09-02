@@ -327,14 +327,20 @@ Browser-mediated device-claim bootstrap.
 - renders human-readable terminal instructions
 - prints a terminal QR code for headless setups
 - derives the HTTP base URL from the configured WebSocket origin
+- reports `version::release_version()` (the release tag / git describe), not
+  the crate version, so the service's `bud.version` matches `bud --version`
 
 ### `version.rs`
 
 Build metadata helpers for release artifacts.
 
 - formats the `bud --version` output
-- exposes package version, build commit, target triple, and Cargo profile from
-  compile-time environment values emitted by `build.rs`
+- exposes the release version, build commit, target triple, and Cargo profile
+  from compile-time environment values emitted by `build.rs`
+- `release_version()` is the daemon's single version identity: `bud upgrade`,
+  `bud --version`, the `hello` frame (`app.rs`), and the device-claim request
+  (`claim.rs`) all use it. `CARGO_PKG_VERSION` (`0.1.0`, never bumped) only
+  feeds the `v<crate>-dev` fallback
 - `is_release_build()` — true only when the release pipeline baked
   `BUD_BUILD_VERSION`; gates the `bud upgrade` dev-build guard and the
   `bud status` update nag
