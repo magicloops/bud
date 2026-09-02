@@ -124,6 +124,16 @@ export function accentColorForHue(hue: number): string {
   return `oklch(${BUD_ACCENT_LIGHTNESS.toFixed(2)} ${BUD_ACCENT_CHROMA.toFixed(2)} ${normalized})`
 }
 
+// A neutral option offered as a preset only: it is not part of the
+// positional auto-assignment rotation (DEFAULT_AVATAR_COLORS), so buds get a
+// vivid color unless the user opts into gray. Same lightness as the palette
+// so black text stays legible; a whisper of cool chroma matches the dark
+// theme's navy-gray.
+export const BUD_ACCENT_GRAY = 'oklch(0.72 0.02 270)'
+
+/** Picker presets: the auto-assignment palette plus gray. */
+export const BUD_ACCENT_PRESETS = [...DEFAULT_AVATAR_COLORS, BUD_ACCENT_GRAY]
+
 /** Hue of an oklch color string, or null for anything else. */
 export function getOklchHue(color: string): number | null {
   return parseOklch(color)?.h ?? null

@@ -314,6 +314,7 @@ Parses `oklch(0.70 0.25 330)` format.
 | `deriveBudPalette(color)` | Generate vibrant/muted/soft variants |
 | `pickNextAccentColor(taken)` | First palette color (palette order) with the fewest uses |
 | `withFallbackAccentColors(buds)` | Assign missing `accent_color`s positionally by creation order (`created_at`, `bud_id` tiebreak), skipping persisted colors; input order preserved |
+| `BUD_ACCENT_GRAY` / `BUD_ACCENT_PRESETS` | Preset-only neutral (`oklch(0.72 0.02 270)`) and the picker's preset list (`DEFAULT_AVATAR_COLORS` + gray); gray is never auto-assigned |
 | `accentColorForHue(hue)` | Custom accent at the palette's fixed L/C (`BUD_ACCENT_LIGHTNESS` 0.70, `BUD_ACCENT_CHROMA` 0.23): `oklch(0.70 0.23 <hue>)`, hue wrapped to 0–359 |
 | `getOklchHue(color)` | Hue of an oklch string, or `null` |
 
