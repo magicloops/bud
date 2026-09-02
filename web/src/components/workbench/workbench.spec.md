@@ -88,7 +88,7 @@ Message list with auto-scroll and full-height message rendering.
 - The generic thinking indicator is suppressed while a live work group is on screen (its header already says "Working…"); labeled states (compaction) and the pre-first-work gap keep it
 - Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
 - "Stick to bottom" behavior with manual scroll override
-- Top-of-timeline "Load older messages" control when older history exists
+- Older history loads automatically while scrolling up: a sentinel above the first row is observed (`IntersectionObserver`, root = the scroll container, 600px top margin so the fetch starts before the user hits the top); the observer is re-created after each load so a still-visible sentinel (short page, tall viewport) keeps loading until the pane overflows. Shows "Loading older messages…" while fetching; after a failed fetch auto-loading pauses and a retry control appears; nothing renders once there is no older history
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
 - Copy message button (appears on hover, bottom-right)
 - Tool payload viewer now lazy-loads `@microlink/react-json-view` only when a payload is expanded, with a plain JSON fallback while the viewer chunk loads

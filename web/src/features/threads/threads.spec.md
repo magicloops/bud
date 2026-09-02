@@ -17,7 +17,7 @@ Message/transcript ownership for the existing-thread route.
 **Responsibilities**:
 - bootstrap transcript state from loader-provided `{ messages, page }` plus `/agent/state` overlays
 - preserve prepended-scroll position when older history loads
-- fetch older transcript pages through `before=<cursor>`
+- fetch older transcript pages through `before=<cursor>`; `loadOlderMessages` is re-entrancy-safe (in-flight ref, since the timeline's scroll sentinel can fire again before state re-renders) and exposes `olderMessagesLoadFailed` so the timeline pauses auto-loading after a failure and shows a retry
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
 - apply runtime draft-reasoning overlays
