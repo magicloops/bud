@@ -102,3 +102,12 @@ export function withFallbackAccentColors<T extends AccentBud>(buds: readonly T[]
     return color ? { ...bud, accent_color: color } : bud
   })
 }
+
+export function deriveBudPalette(color: string) {
+  const resolved = resolveCssVar(color) || resolveCssVar('var(--accent)')
+  return {
+    vibrant: resolved,
+    muted: getMutedColor(resolved, 0.85),
+    soft: getMutedColor(resolved, 0.7)
+  }
+}
