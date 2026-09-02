@@ -314,6 +314,8 @@ Parses `oklch(0.70 0.25 330)` format.
 | `deriveBudPalette(color)` | Generate vibrant/muted/soft variants |
 | `pickNextAccentColor(taken)` | First palette color (palette order) with the fewest uses |
 | `withFallbackAccentColors(buds)` | Assign missing `accent_color`s positionally by creation order (`created_at`, `bud_id` tiebreak), skipping persisted colors; input order preserved |
+| `accentColorForHue(hue)` | Custom accent at the palette's fixed L/C (`BUD_ACCENT_LIGHTNESS` 0.70, `BUD_ACCENT_CHROMA` 0.23): `oklch(0.70 0.23 <hue>)`, hue wrapped to 0–359 |
+| `getOklchHue(color)` | Hue of an oklch string, or `null` |
 
 **Default Avatar Colors** (`DEFAULT_AVATAR_COLORS`): 5 oklch swatches — pink,
 orange, cyan, purple, green. MUST stay identical (colors and order) to
@@ -340,8 +342,9 @@ deriveBudPalette(color) → {
 
 ### `theme-colors.test.ts`
 
-Node tests: `pickNextAccentColor` palette walk and `withFallbackAccentColors`
-creation-order assignment (list-order independent, persisted colors kept).
+Node tests: `pickNextAccentColor` palette walk, `withFallbackAccentColors`
+creation-order assignment (list-order independent, persisted colors kept), and
+`accentColorForHue`/`getOklchHue` formatting + round trip.
 
 ### `build-info.ts`
 

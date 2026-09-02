@@ -3,7 +3,7 @@ import { X, Terminal, ExternalLink, Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MutationStatus } from '@/components/ui/mutation-status'
 import { apiFetch, apiFetchJson, readResponseErrorMessage } from '@/lib/transport'
-import { DEFAULT_AVATAR_COLORS } from '@/lib/theme-colors'
+import { DEFAULT_AVATAR_COLORS, accentColorForHue, getOklchHue } from '@/lib/theme-colors'
 import type { ApiBud } from '@/lib/api-types'
 
 export type BudSettingsTab = 'general' | 'sessions' | 'device'
@@ -26,6 +26,10 @@ const TABS: Array<{ id: BudSettingsTab; label: string }> = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'device', label: 'Device' },
 ]
+
+// Hue slider track: oklch stops every 30° at the picker's fixed L/C, so the
+// track shows exactly the colors the thumb can land on.
+const HUE_TRACK = `linear-gradient(to right, ${Array.from({ length: 13 }, (_, i) => accentColorForHue(i * 30)).join(', ')})`
 
 const ACTION_BUTTON =
   'rounded-md border-2 border-black px-3 py-1.5 font-mono text-[11px] font-bold uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0'
@@ -184,6 +188,9 @@ function GeneralTab({ bud, onBudUpdated }: { bud: ApiBud; onBudUpdated?: (bud: A
     setAccent(currentAccent)
   }, [currentDisplayName, currentAccent])
 
+  const isPreset = DEFAULT_AVATAR_COLORS.includes(accent)
+  const hue = getOklchHue(accent) ?? 0
+
   const trimmedName = displayName.trim()
   const nameDirty = trimmedName !== currentDisplayName
   const accentDirty = accent !== currentAccent
@@ -254,7 +261,7 @@ function GeneralTab({ bud, onBudUpdated }: { bud: ApiBud; onBudUpdated?: (bud: A
 
       <div>
         <p className="font-mono text-[11px] font-bold uppercase tracking-wide">Accent</p>
-        <div className="mt-2 flex flex-wrap gap-3" role="radiogroup" aria-label="Accent color">
+        <div className="mt-2 flex flex-wrap items-center gap-3" role="radiogroup" aria-label="Accent color">
           {DEFAULT_AVATAR_COLORS.map((color) => {
             const selected = color === accent
             return (
@@ -275,7 +282,33 @@ function GeneralTab({ bud, onBudUpdated }: { bud: ApiBud; onBudUpdated?: (bud: A
               </button>
             )
           })}
+          {/* Custom: the current color when it isn't a preset */}
+          <span
+            aria-hidden
+            className={cn(
+              'flex h-9 w-9 items-center justify-center rounded-lg border-2 border-black',
+              isPreset ? 'border-dashed opacity-40' : 'ring-2 ring-black ring-offset-2 ring-offset-background',
+            )}
+            style={{ backgroundColor: accent, boxShadow: '2px 2px 0px 0px rgba(0,0,0,1)' }}
+            title="Custom"
+          >
+            {!isPreset && <Check className="h-4 w-4 text-black" />}
+          </span>
         </div>
+        <label className="mt-3 block">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">Custom hue</span>
+          <input
+            type="range"
+            min={0}
+            max={359}
+            step={1}
+            value={hue}
+            onChange={(e) => setAccent(accentColorForHue(Number(e.target.value)))}
+            aria-label="Custom accent hue"
+            className="mt-1 block h-4 w-full cursor-pointer appearance-none rounded-full border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-background [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-black [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-black [&::-webkit-slider-thumb]:bg-white"
+            style={{ background: HUE_TRACK }}
+          />
+        </label>
       </div>
 
       <div className="flex justify-end">

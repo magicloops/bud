@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BUD_ACCENT_PALETTE,
   assignBudAccentColor,
+  isValidBudAccentColor,
   pickNextAccentColor,
   withFallbackAccentColors,
 } from "./bud-accent.js";
@@ -70,4 +71,27 @@ test("assignBudAccentColor picks the first free color after resolving the owner'
     ]),
     orange,
   );
+});
+
+test("isValidBudAccentColor accepts the palette and hue-picker colors, rejects the rest", () => {
+  for (const color of BUD_ACCENT_PALETTE) {
+    assert.ok(isValidBudAccentColor(color), color);
+  }
+  assert.ok(isValidBudAccentColor("oklch(0.70 0.23 0)"));
+  assert.ok(isValidBudAccentColor("oklch(0.70 0.23 359)"));
+  assert.ok(isValidBudAccentColor("oklch(0.55 0 12.5)"));
+  for (const color of [
+    "#ff00aa",
+    "rgb(1 2 3)",
+    "oklch(0.70 0.23 360)", // hue wraps at 360
+    "oklch(0.50 0.23 100)", // too dark for black text on tints
+    "oklch(0.90 0.23 100)", // too light
+    "oklch(0.70 0.40 100)", // out-of-gamut chroma
+    "oklch(0.70, 0.23, 100)",
+    "oklch(0.70 0.23 100 / 0.5)",
+    " oklch(0.70 0.23 100)",
+    "oklch(.7 .23 100)",
+  ]) {
+    assert.equal(isValidBudAccentColor(color), false, color);
+  }
 });

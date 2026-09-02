@@ -213,7 +213,8 @@ test("PATCH /api/buds/:budId validates the body", async (t) => {
   for (const body of [
     {},
     { accent_color: "#ff0000" },
-    { accent_color: "oklch(0.5 0.1 10)" },
+    { accent_color: "oklch(0.5 0.1 10)" }, // in oklch form but too dark for the tinted chips
+    { accent_color: "oklch(0.70 0.23 360)" },
     { name: "nope" },
     { display_name: "x".repeat(121) },
     { display_name: 42 },
@@ -265,6 +266,12 @@ test("PATCH /api/buds/:budId updates display_name and accent_color for the owner
   assert.equal(payload.name, "mbp");
   assert.equal(payload.display_name, "studio mac");
   assert.equal(payload.accent_color, BUD_ACCENT_PALETTE[3]);
+
+  // Custom (hue-picker) colors are accepted as long as they are in-range oklch.
+  const custom = await invokeRoute(handler, { params: { budId: "bud-1" }, body: { accent_color: "oklch(0.70 0.23 200)" } });
+  assert.equal(custom.statusCode, 200);
+  assert.deepEqual(sets[1], { accentColor: "oklch(0.70 0.23 200)" });
+  sets.splice(1, 1);
 
   // Empty / null display_name resets to the daemon name.
   await invokeRoute(handler, { params: { budId: "bud-1" }, body: { display_name: "" } });

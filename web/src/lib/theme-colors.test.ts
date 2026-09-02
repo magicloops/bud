@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULT_AVATAR_COLORS, pickNextAccentColor, withFallbackAccentColors } from './theme-colors.ts'
+import {
+  DEFAULT_AVATAR_COLORS,
+  accentColorForHue,
+  getOklchHue,
+  pickNextAccentColor,
+  withFallbackAccentColors,
+} from './theme-colors.ts'
 
 const [pink, orange, cyan, purple, green] = DEFAULT_AVATAR_COLORS as [string, string, string, string, string]
 
@@ -31,4 +37,14 @@ test('withFallbackAccentColors assigns by creation order, not list order, and re
     withFallbackAccentColors([...buds].reverse()).map((bud) => bud.accent_color),
     [purple, pink, orange],
   )
+})
+
+test('accentColorForHue emits the fixed-L/C oklch form the service accepts and round-trips the hue', () => {
+  assert.equal(accentColorForHue(200), 'oklch(0.70 0.23 200)')
+  assert.equal(accentColorForHue(360), 'oklch(0.70 0.23 0)')
+  assert.equal(accentColorForHue(-30), 'oklch(0.70 0.23 330)')
+  assert.equal(accentColorForHue(12.6), 'oklch(0.70 0.23 13)')
+  assert.equal(getOklchHue(accentColorForHue(200)), 200)
+  assert.equal(getOklchHue(DEFAULT_AVATAR_COLORS[0]!), 330)
+  assert.equal(getOklchHue('#ff00aa'), null)
 })

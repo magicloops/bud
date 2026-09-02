@@ -111,3 +111,20 @@ export function deriveBudPalette(color: string) {
     soft: getMutedColor(resolved, 0.7)
   }
 }
+
+// Custom accents keep the palette's lightness/chroma and vary only the hue:
+// every result is an oklch color with the same contrast as the presets
+// (black text stays legible on the tinted chips) and the service's
+// oklch(L C H) range check accepts it.
+export const BUD_ACCENT_LIGHTNESS = 0.7
+export const BUD_ACCENT_CHROMA = 0.23
+
+export function accentColorForHue(hue: number): string {
+  const normalized = ((Math.round(hue) % 360) + 360) % 360
+  return `oklch(${BUD_ACCENT_LIGHTNESS.toFixed(2)} ${BUD_ACCENT_CHROMA.toFixed(2)} ${normalized})`
+}
+
+/** Hue of an oklch color string, or null for anything else. */
+export function getOklchHue(color: string): number | null {
+  return parseOklch(color)?.h ?? null
+}

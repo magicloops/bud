@@ -3,7 +3,7 @@ import { desc, eq, isNull, and } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { budTable, terminalSessionTable, threadTable } from "../db/schema.js";
-import { BUD_ACCENT_PALETTE, withFallbackAccentColors } from "../bud-accent.js";
+import { isValidBudAccentColor, withFallbackAccentColors } from "../bud-accent.js";
 import { BUD_NAME_MAX_LENGTH } from "../bud-name.js";
 import { isBudOnline } from "../ws/gateway.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
@@ -23,14 +23,16 @@ function normalizeCapabilities(raw: unknown): Record<string, unknown> {
 
 // User-editable presentation fields. `name` is daemon-driven (re-resolved on
 // every hello), so a rename lands on `display_name`; null/empty resets it.
-// Accent is palette-only: the web derives muted/soft variants from oklch
-// values, so arbitrary CSS colors would flatten the theme.
+// Accent must be an in-range `oklch(L C H)` string (palette entries or the
+// web's hue picker): the web derives muted/soft variants by scaling chroma,
+// so arbitrary CSS colors would flatten the theme, and the lightness range
+// keeps black text legible on the tinted chips.
 const UpdateBudBodySchema = z
   .object({
     display_name: z.string().trim().max(BUD_NAME_MAX_LENGTH).nullable().optional(),
     accent_color: z
       .string()
-      .refine((color) => BUD_ACCENT_PALETTE.includes(color), "accent_color must be a palette color")
+      .refine(isValidBudAccentColor, "accent_color must be an in-range oklch(L C H) color")
       .optional(),
   })
   .strict();

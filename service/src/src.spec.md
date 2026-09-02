@@ -88,8 +88,11 @@ skipping persisted colors; used by `GET /api/buds`), and
 `assignBudAccentColor(otherBuds)` (claim-time: the next free color after
 resolving the owner's other Buds). First Bud pink, second orange, … — the
 original positional scheme, keyed on creation order instead of the
-`last_seen_at` list order. Mirrored in `web/src/lib/theme-colors.ts`; palette
-order and the first-free rule MUST stay in sync. Background:
+`last_seen_at` list order. Also `isValidBudAccentColor` (strict `oklch(L C H)` with L 0.55–0.85,
+C 0–0.35, H 0–<360 — the shape user-chosen accents must have so the web can
+derive muted/soft variants and black text stays legible). Mirrored in
+`web/src/lib/theme-colors.ts`; palette order and the first-free rule MUST
+stay in sync. Background:
 `debug/bud-accent-color-flips-between-chats.md`. Node-tested in
 `bud-accent.test.ts`.
 

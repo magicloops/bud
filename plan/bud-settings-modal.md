@@ -49,11 +49,13 @@ expose this as a **Reset** affordance next to the input.
 - Validation (zod):
   - `display_name`: trim, 1..120 chars, or `null` to reset. Reject
     whitespace-only.
-  - `accent_color`: must be one of `BUD_ACCENT_PALETTE` (`src/bud-accent.ts`).
-    v1 is palette-only on purpose: `getMutedColor` only derives muted/soft
-    variants from `oklch(...)` strings, so a free-form hex would flatten the
-    palette to one shade. If a bigger choice is wanted, **extend the palette**
-    (10–12 oklch swatches) on both sides rather than accepting arbitrary CSS.
+  - `accent_color`: an in-range `oklch(L C H)` string
+    (`isValidBudAccentColor`, `src/bud-accent.ts`: L 0.55–0.85, C 0–0.35).
+    Not arbitrary CSS: `getMutedColor` derives muted/soft variants by scaling
+    oklch chroma (a hex value would flatten the theme), and the lightness
+    range keeps black text legible on the tinted chips. The web offers the 5
+    presets plus a hue slider at the palette's fixed L/C
+    (`accentColorForHue`), so everything it can send passes.
 - Response: `serializeBud(updated)` (same shape as the list item), so the web
   can upsert it straight into its bud list.
 - No daemon interaction, no WS/SSE change; `display_name`/`accent_color` are

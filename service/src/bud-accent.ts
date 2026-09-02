@@ -95,3 +95,33 @@ export function withFallbackAccentColors<T extends AccentRow>(buds: readonly T[]
 export function assignBudAccentColor(otherBuds: readonly AccentRow[]): string {
   return pickNextAccentColor(withFallbackAccentColors(otherBuds).map((bud) => bud.accentColor));
 }
+
+/**
+ * User-chosen accents are OKLCH strings, `oklch(L C H)`, because the web
+ * derives the muted/soft theme variants by scaling chroma — a hex value would
+ * flatten the theme. Ranges keep black text legible on the tinted chips
+ * (lightness) and stay within what displays can show (chroma). The palette
+ * entries and the web's hue picker (fixed L/C, free hue) both satisfy this.
+ */
+export const BUD_ACCENT_LIGHTNESS_RANGE: readonly [number, number] = [0.55, 0.85];
+export const BUD_ACCENT_CHROMA_RANGE: readonly [number, number] = [0, 0.35];
+
+const OKLCH_RE = /^oklch\((\d+(?:\.\d+)?) (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)\)$/;
+
+export function isValidBudAccentColor(color: string): boolean {
+  const match = OKLCH_RE.exec(color);
+  if (!match) {
+    return false;
+  }
+  const l = Number(match[1]);
+  const c = Number(match[2]);
+  const h = Number(match[3]);
+  return (
+    l >= BUD_ACCENT_LIGHTNESS_RANGE[0] &&
+    l <= BUD_ACCENT_LIGHTNESS_RANGE[1] &&
+    c >= BUD_ACCENT_CHROMA_RANGE[0] &&
+    c <= BUD_ACCENT_CHROMA_RANGE[1] &&
+    h >= 0 &&
+    h < 360
+  );
+}

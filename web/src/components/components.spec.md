@@ -52,8 +52,12 @@ Bud name land on **General**. Escape and the backdrop close it;
 
 **General tab**:
 - Display-name input (placeholder = daemon `name`; Reset clears it so the
-  daemon name shows again) and a swatch grid of `DEFAULT_AVATAR_COLORS`
-  (palette-only, matching the server's validation)
+  daemon name shows again), a swatch row of the `DEFAULT_AVATAR_COLORS`
+  presets plus a "custom" swatch, and a hue slider (`accentColorForHue`: the
+  palette's fixed lightness/chroma, free hue — every result is an in-range
+  `oklch(L C H)` string, so black text stays legible on the tinted chips and
+  the server's range check accepts it; the track is an oklch gradient of the
+  reachable colors)
 - Save sends one `PATCH /api/buds/:budId` with only the changed fields
   (`display_name` as `null` to reset); button is disabled until dirty; Enter in
   the input saves; success/error via the shared mutation-status banner
