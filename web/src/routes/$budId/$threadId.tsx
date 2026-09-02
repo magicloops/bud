@@ -199,6 +199,7 @@ function ThreadView() {
     messages,
     messagePage,
     isLoadingOlderMessages,
+    olderMessagesLoadFailed,
     chatScrollRef,
     mergeLatestBootstrap,
     applyAgentState,
@@ -993,6 +994,7 @@ function ThreadView() {
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
             hasOlderMessages={messagePage.has_more_before}
             isLoadingOlderMessages={isLoadingOlderMessages}
+            olderMessagesLoadFailed={olderMessagesLoadFailed}
             onLoadOlderMessages={loadOlderMessages}
             scrollContainerRef={chatScrollRef}
             onOpenFile={handleOpenFile}

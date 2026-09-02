@@ -48,6 +48,11 @@ export type ChatTimelineNotice = {
   error_code?: string | null
 }
 
+// Older pages load automatically as the user scrolls up: a sentinel above
+// the first row is observed against the scroll container, and this margin
+// starts the fetch before the user actually reaches the top.
+const OLDER_MESSAGES_PREFETCH_PX = 600
+
 let jsonViewComponentPromise: Promise<JsonViewComponent> | null = null
 
 function loadJsonViewComponent() {
@@ -74,6 +79,8 @@ type ChatTimelineProps = {
   activityIndicatorLabel?: string
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
+  /** Last older-page fetch failed: pause auto-loading and offer a retry. */
+  olderMessagesLoadFailed?: boolean
   onLoadOlderMessages?: (() => void) | null
   scrollContainerRef?: MutableRefObject<HTMLDivElement | null>
   onOpenFile?: (candidate: OpenFileCandidate) => void
@@ -93,6 +100,7 @@ const ChatTimelineComponent = ({
   activityIndicatorLabel,
   hasOlderMessages = false,
   isLoadingOlderMessages = false,
+  olderMessagesLoadFailed = false,
   onLoadOlderMessages = null,
   scrollContainerRef,
   onOpenFile,
@@ -100,6 +108,7 @@ const ChatTimelineComponent = ({
   questionSubmitError = null,
 }: ChatTimelineProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const olderSentinelRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
   const { currentUser } = useAuthSession()
@@ -222,6 +231,38 @@ const ChatTimelineComponent = ({
       })
   }, [JsonView])
 
+  // Infinite scroll upward. The observer is (re)created whenever a load
+  // finishes, and a fresh observer reports the current intersection right
+  // away — so if the sentinel is still within range after a prepend (short
+  // page, tall viewport) the next page loads without further scrolling.
+  // Paused while loading, after a failure (retry button instead), and once
+  // there is nothing older.
+  useEffect(() => {
+    const root = scrollRef.current
+    const target = olderSentinelRef.current
+    if (
+      !root ||
+      !target ||
+      !onLoadOlderMessages ||
+      !hasOlderMessages ||
+      isLoadingOlderMessages ||
+      olderMessagesLoadFailed ||
+      typeof IntersectionObserver === 'undefined'
+    ) {
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadOlderMessages()
+        }
+      },
+      { root, rootMargin: `${OLDER_MESSAGES_PREFETCH_PX}px 0px 0px 0px` },
+    )
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [hasOlderMessages, isLoadingOlderMessages, olderMessagesLoadFailed, onLoadOlderMessages])
+
   useEffect(() => {
     const node = scrollRef.current
     if (!node) return
@@ -306,15 +347,27 @@ const ChatTimelineComponent = ({
           constrains its own content via TRANSCRIPT_COLUMN_CLASSES. */}
       <div className="py-2">
       {onLoadOlderMessages && hasOlderMessages && (
-        <div className="flex justify-center pt-3 pb-2">
-          <button
-            type="button"
-            onClick={onLoadOlderMessages}
-            disabled={isLoadingOlderMessages}
-            className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
-          </button>
+        <div
+          ref={olderSentinelRef}
+          aria-live="polite"
+          className={cn(
+            'flex justify-center',
+            isLoadingOlderMessages || olderMessagesLoadFailed ? 'pt-3 pb-2' : 'h-px',
+          )}
+        >
+          {isLoadingOlderMessages ? (
+            <span className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Loading older messages…
+            </span>
+          ) : olderMessagesLoadFailed ? (
+            <button
+              type="button"
+              onClick={onLoadOlderMessages}
+              className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+            >
+              Couldn't load older messages — retry
+            </button>
+          ) : null}
         </div>
       )}
       {timelineItems.length === 0 && (

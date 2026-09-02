@@ -92,6 +92,12 @@ export function useThreadMessages({
   )
   const [messagePage, setMessagePage] = useState<ApiMessagePage['page']>(initialMessagePage.page)
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
+  // Last older-page fetch failed: the timeline stops auto-loading on scroll
+  // and shows a retry instead of hammering a failing endpoint.
+  const [olderMessagesLoadFailed, setOlderMessagesLoadFailed] = useState(false)
+  // Synchronous re-entrancy guard: the scroll sentinel can fire again before
+  // the isLoadingOlderMessages state has re-rendered into the callback.
+  const olderLoadInFlightRef = useRef(false)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const pendingPrependAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
     null,
@@ -105,6 +111,8 @@ export function useThreadMessages({
     setMessages(applyAgentStateOverlay(initialMessagePage.messages, initialAgentState))
     setMessagePage(initialMessagePage.page)
     setIsLoadingOlderMessages(false)
+    setOlderMessagesLoadFailed(false)
+    olderLoadInFlightRef.current = false
     pendingPrependAdjustmentRef.current = null
   }, [initialAgentState, initialMessagePage])
 
@@ -150,7 +158,13 @@ export function useThreadMessages({
   }, [])
 
   const loadOlderMessages = useCallback(async () => {
-    if (!threadId || !messagePage.has_more_before || !messagePage.before_cursor || isLoadingOlderMessages) {
+    if (
+      !threadId ||
+      !messagePage.has_more_before ||
+      !messagePage.before_cursor ||
+      isLoadingOlderMessages ||
+      olderLoadInFlightRef.current
+    ) {
       return
     }
 
@@ -159,7 +173,9 @@ export function useThreadMessages({
       ? { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop }
       : null
 
+    olderLoadInFlightRef.current = true
     setIsLoadingOlderMessages(true)
+    setOlderMessagesLoadFailed(false)
 
     try {
       const resp = await apiFetch(
@@ -185,8 +201,10 @@ export function useThreadMessages({
       }))
     } catch (error) {
       pendingPrependAdjustmentRef.current = null
+      setOlderMessagesLoadFailed(true)
       onError(error instanceof Error ? error.message : 'Failed to load older messages')
     } finally {
+      olderLoadInFlightRef.current = false
       setIsLoadingOlderMessages(false)
     }
   }, [
@@ -421,6 +439,7 @@ export function useThreadMessages({
     messages,
     messagePage,
     isLoadingOlderMessages,
+    olderMessagesLoadFailed,
     chatScrollRef,
     mergeLatestBootstrap,
     applyAgentState,
