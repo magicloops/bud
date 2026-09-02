@@ -132,8 +132,9 @@ Buds. Creation order never changes, so the assignment never flips.
   color. Dev-bypass enrollment and seed rows stay NULL and resolve at read
   time. Tests: `bud-accent.test.ts`, `routes/buds.test.ts` (GET ordering),
   `routes/device-auth.test.ts`.
-- Not changed: `/api/buds` ordering (still `last_seen_at` desc — the rail can
-  still reorder between navigations, now without changing colors) and the
+- 2026-09-02: `/api/buds` now orders by `created_at` asc (`bud_id`
+  tiebreak) — the rail no longer reshuffles between navigations, and rail
+  position matches the positional accent order. Still not changed: the
   `--bud-accent-*` inline-var cleanup on unmount (hypothesis 2 transient).
 - Follow-up: user-editable name/color via a Bud settings modal —
   `plan/bud-settings-modal.md`.

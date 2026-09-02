@@ -3,7 +3,9 @@ import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../auth/auth.js";
 import { BUD_ACCENT_PALETTE } from "../bud-accent.js";
+import { asc } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { budTable } from "../db/schema.js";
 import { registerBudRoutes } from "./buds.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
@@ -122,23 +124,26 @@ test("bud routes register the expected inventory, update, and session endpoints"
   );
 });
 
-test("GET /api/buds resolves missing accents by creation order, not list order", async (t) => {
+test("GET /api/buds lists by creation order and resolves missing accents positionally", async (t) => {
   t.after(() => {
     mock.restoreAll();
   });
   mock.method(auth.api, "getSession", async () => SESSION as never);
-  // Most-recently-seen first (the real ordering); creation order is the reverse.
+  // The query orders by created_at asc (bud_id tiebreak); the mock returns
+  // rows in that order and records the orderBy arguments.
   const rows = [
-    { ...BUD_ROW, budId: "b_3", accentColor: null, createdAt: new Date("2026-03-01"), lastSeenAt: new Date("2026-09-03") },
-    { ...BUD_ROW, budId: "b_2", accentColor: BUD_ACCENT_PALETTE[4], createdAt: new Date("2026-02-01"), lastSeenAt: new Date("2026-09-02") },
     { ...BUD_ROW, budId: "b_1", accentColor: null, createdAt: new Date("2026-01-01"), lastSeenAt: new Date("2026-09-01") },
+    { ...BUD_ROW, budId: "b_2", accentColor: BUD_ACCENT_PALETTE[4], createdAt: new Date("2026-02-01"), lastSeenAt: new Date("2026-09-03") },
+    { ...BUD_ROW, budId: "b_3", accentColor: null, createdAt: new Date("2026-03-01"), lastSeenAt: new Date("2026-09-02") },
   ];
+  let orderByArgs: unknown[] = [];
   mock.method(db, "select", () => ({
     from() {
       return {
         where() {
           return {
-            async orderBy() {
+            async orderBy(...args: unknown[]) {
+              orderByArgs = args;
               return rows;
             },
           };
@@ -154,12 +159,14 @@ test("GET /api/buds resolves missing accents by creation order, not list order",
 
   const response = await invokeRoute(handler, {});
   assert.equal(response.statusCode, 200);
+  // Ordered by created_at asc then bud_id asc — never last_seen_at.
+  assert.deepEqual(orderByArgs, [asc(budTable.createdAt), asc(budTable.budId)]);
   assert.deepEqual(
     (response.payload as Array<{ bud_id: string; accent_color: string }>).map((bud) => [bud.bud_id, bud.accent_color]),
     [
-      ["b_3", BUD_ACCENT_PALETTE[1]], // second NULL row in creation order → orange
-      ["b_2", BUD_ACCENT_PALETTE[4]], // persisted green kept
       ["b_1", BUD_ACCENT_PALETTE[0]], // oldest → pink
+      ["b_2", BUD_ACCENT_PALETTE[4]], // persisted green kept
+      ["b_3", BUD_ACCENT_PALETTE[1]], // next NULL row → orange
     ],
   );
 });

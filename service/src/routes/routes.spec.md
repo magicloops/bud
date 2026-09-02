@@ -64,14 +64,16 @@ Bud management and session listing.
 `accent_color` on the wire is never NULL: rows claimed before colors were
 persisted are resolved with `withFallbackAccentColors` (positionally by
 creation order, skipping persisted colors — the same rule the web mirrors),
-so the color never depends on list position. The list itself is ordered by
-`last_seen_at` desc, which moves with every heartbeat.
+so the color never depends on list position. The list is ordered by
+`created_at` asc (`bud_id` tiebreak) — a stable order, so the bud rail never
+reshuffles and rail position matches the positional accent order. (It used to
+be `last_seen_at` desc, which moves with every heartbeat.)
 
 **Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/buds` | List the signed-in user's buds |
+| `GET` | `/api/buds` | List the signed-in user's buds, oldest first (`created_at`, `bud_id`) |
 | `PATCH` | `/api/buds/:bud_id` | Update an owned bud's presentation: `display_name` (trimmed, ≤120, `null`/empty resets to the daemon name) and/or `accent_color` (an in-range `oklch(L C H)` string — `isValidBudAccentColor`: L 0.55–0.85, C 0–0.35, H 0–<360 — which covers the palette and the web's hue picker); at least one field required, strict body; returns the serialized bud; `404` for non-owners |
 | `GET` | `/api/buds/:bud_id/sessions` | List active terminal sessions for an owned bud |
 | `DELETE` | `/api/buds/:bud_id/sessions/:session_id` | Close a specific session on an owned bud |
@@ -92,7 +94,7 @@ Registration and handler coverage for the Bud route family.
 
 **Current Coverage**:
 - the Bud inventory, update, and Bud-session routes register (`PATCH /api/buds/:budId` included)
-- `GET /api/buds` resolves NULL accents by creation order (oldest → pink) while keeping persisted colors, independent of the `last_seen_at` list order
+- `GET /api/buds` orders by `created_at` asc / `bud_id` asc (asserted on the query) and resolves NULL accents positionally (oldest → pink) while keeping persisted colors
 - `PATCH /api/buds/:budId`: `401` unauthenticated and `404` for signed-in non-owners, both before any write; `400` for empty, unknown-field, non-oklch / out-of-range, over-long, or non-string bodies (validation runs before the ownership lookup); the owner path writes `displayName`/`accentColor` (never `name`), accepts custom in-range oklch colors, trims the name, treats empty/`null` as a reset, and returns the serialized row
 
 ### `device-auth.test.ts`

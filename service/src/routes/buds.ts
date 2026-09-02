@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { desc, eq, isNull, and } from "drizzle-orm";
+import { asc, desc, eq, isNull, and } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { budTable, terminalSessionTable, threadTable } from "../db/schema.js";
@@ -68,11 +68,13 @@ export async function registerBudRoutes(
       .select()
       .from(budTable)
       .where(eq(budTable.createdByUserId, viewer.userId))
-      .orderBy(desc(budTable.lastSeenAt));
+      // Creation order, which never changes: last_seen_at moves with every
+      // heartbeat and made the bud rail reshuffle on each refetch. This also
+      // lines rail position up with the positional accent fallback below.
+      .orderBy(asc(budTable.createdAt), asc(budTable.budId));
 
     // Rows claimed before colors were persisted are NULL; resolve them
-    // positionally by creation order (never by this list's last_seen_at
-    // order) so the wire value is never NULL and never flips.
+    // positionally by creation order so the wire value is never NULL.
     return withFallbackAccentColors(buds).map(serializeBud);
   });
 
