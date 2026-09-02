@@ -40,8 +40,8 @@ Theme context provider for light/dark/system mode.
 ### `bud-settings-modal.tsx`
 
 Per-Bud settings dialog (`BudSettingsModal`) with three tabs. Opened from the
-thread panel header: the Layers button lands on **Sessions**, the gear and the
-Bud name land on **General**. Escape and the backdrop close it;
+thread panel header (gear or Bud name) on **General**; `initialTab` still
+allows opening on any tab. Escape and the backdrop close it;
 `role="dialog"` + `aria-labelledby`.
 
 **Props**:
@@ -52,8 +52,9 @@ Bud name land on **General**. Escape and the backdrop close it;
 
 **General tab**:
 - Display-name input (placeholder = daemon `name`; Reset clears it so the
-  daemon name shows again), a swatch row of the `DEFAULT_AVATAR_COLORS`
-  presets plus a "custom" swatch, and a hue slider (`accentColorForHue`: the
+  daemon name shows again), a swatch row of the `BUD_ACCENT_PRESETS`
+  (`DEFAULT_AVATAR_COLORS` + `BUD_ACCENT_GRAY`, a preset-only neutral that
+  auto-assignment never hands out) plus a "custom" swatch, and a hue slider (`accentColorForHue`: the
   palette's fixed lightness/chroma, free hue — every result is an in-range
   `oklch(L C H)` string, so black text stays legible on the tinted chips and
   the server's range check accepts it; the track is an oklch gradient of the

@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
-import { Layers, Menu, Plus, Settings2, Trash2, Terminal } from 'lucide-react'
+import { Menu, Plus, Settings2, Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
@@ -34,8 +34,8 @@ type ThreadPanelProps = {
   activeThreadId: string | null
   onSelectThread: (threadId: string | null) => void
   onThreadDeleted?: (threadId: string) => void
-  /** Opens the Bud settings modal on the given tab (Layers → sessions,
-   *  gear / bud name → general). */
+  /** Opens the Bud settings modal (gear / bud name → General; terminal
+   *  sessions are a tab inside it). */
   onOpenBudSettings?: (tab: 'general' | 'sessions') => void
   /** Renders the hamburger inside the panel header (closes the panel);
    *  while the panel is open the workspace top bar hides its own. */
@@ -178,18 +178,6 @@ export function ThreadPanel({
           {budLabel}
         </button>
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => onOpenBudSettings?.('sessions')}
-            className="h-8 w-8 rounded-lg border-2 border-black text-foreground transition-all hover:-translate-y-0.5"
-            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
-            title="Terminal sessions"
-            aria-label="Terminal sessions"
-          >
-            <Layers className="h-4 w-4" />
-          </Button>
           <Button
             type="button"
             variant="ghost"

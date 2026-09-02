@@ -3,7 +3,7 @@ import { X, Terminal, ExternalLink, Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MutationStatus } from '@/components/ui/mutation-status'
 import { apiFetch, apiFetchJson, readResponseErrorMessage } from '@/lib/transport'
-import { DEFAULT_AVATAR_COLORS, accentColorForHue, getOklchHue } from '@/lib/theme-colors'
+import { BUD_ACCENT_PRESETS, DEFAULT_AVATAR_COLORS, accentColorForHue, getOklchHue } from '@/lib/theme-colors'
 import type { ApiBud } from '@/lib/api-types'
 
 export type BudSettingsTab = 'general' | 'sessions' | 'device'
@@ -188,7 +188,7 @@ function GeneralTab({ bud, onBudUpdated }: { bud: ApiBud; onBudUpdated?: (bud: A
     setAccent(currentAccent)
   }, [currentDisplayName, currentAccent])
 
-  const isPreset = DEFAULT_AVATAR_COLORS.includes(accent)
+  const isPreset = BUD_ACCENT_PRESETS.includes(accent)
   const hue = getOklchHue(accent) ?? 0
 
   const trimmedName = displayName.trim()
@@ -262,7 +262,7 @@ function GeneralTab({ bud, onBudUpdated }: { bud: ApiBud; onBudUpdated?: (bud: A
       <div>
         <p className="font-mono text-[11px] font-bold uppercase tracking-wide">Accent</p>
         <div className="mt-2 flex flex-wrap items-center gap-3" role="radiogroup" aria-label="Accent color">
-          {DEFAULT_AVATAR_COLORS.map((color) => {
+          {BUD_ACCENT_PRESETS.map((color) => {
             const selected = color === accent
             return (
               <button
