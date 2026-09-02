@@ -1162,6 +1162,8 @@ Bud connects in one of three modes:
 
 ### 5.1 `hello` (Bud → Service)
 
+`version` is the daemon's release identity — the tag baked at build time (`v0.1.18`), or a `git describe` string for dev builds — never the Cargo crate version (which stays `0.1.0`). The service stores it on `bud.version` on every `hello` and shows it as the daemon version in the Bud settings modal.
+
 Dev-only token bypass example:
 
 ```json
@@ -1173,7 +1175,7 @@ Dev-only token bypass example:
   "name": "raspi-4",
   "os": "linux",
   "arch": "arm64",
-  "version": "0.1.0",
+  "version": "v0.1.18",
   "installation_id": "inst_123",
   "token": "<DEV_BUD_TOKEN_BYPASS>",
   "capabilities": {
@@ -1268,7 +1270,7 @@ Reconnect example:
   "name": "workstation",
   "os": "linux",
   "arch": "x86_64",
-  "version": "0.1.0",
+  "version": "v0.1.18",
   "installation_id": "inst_123",
   "bud_id": "b_01H...",
   "capabilities": {

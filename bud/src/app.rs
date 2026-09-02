@@ -1448,9 +1448,12 @@ impl BudApp {
         frame.insert("name".into(), Value::String(self.device_name.clone()));
         frame.insert("os".into(), Value::String(std::env::consts::OS.into()));
         frame.insert("arch".into(), Value::String(std::env::consts::ARCH.into()));
+        // The release identity (`v0.1.18`, or a git describe for dev builds),
+        // not the crate version: Cargo.toml is not bumped per release, so
+        // CARGO_PKG_VERSION would report 0.1.0 forever.
         frame.insert(
             "version".into(),
-            Value::String(env!("CARGO_PKG_VERSION").into()),
+            Value::String(crate::version::release_version().into()),
         );
         frame.insert(
             "installation_id".into(),
