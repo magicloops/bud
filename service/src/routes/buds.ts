@@ -1,8 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { desc, eq, isNull, and } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db/client.js";
 import { budTable, terminalSessionTable, threadTable } from "../db/schema.js";
-import { pickBudAccentColor } from "../bud-accent.js";
+import { isValidBudAccentColor, withFallbackAccentColors } from "../bud-accent.js";
+import { BUD_NAME_MAX_LENGTH } from "../bud-name.js";
 import { isBudOnline } from "../ws/gateway.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import { getAuthorizedBud, requireViewer } from "../auth/session.js";
@@ -19,6 +21,22 @@ function normalizeCapabilities(raw: unknown): Record<string, unknown> {
   return {};
 }
 
+// User-editable presentation fields. `name` is daemon-driven (re-resolved on
+// every hello), so a rename lands on `display_name`; null/empty resets it.
+// Accent must be an in-range `oklch(L C H)` string (palette entries or the
+// web's hue picker): the web derives muted/soft variants by scaling chroma,
+// so arbitrary CSS colors would flatten the theme, and the lightness range
+// keeps black text legible on the tinted chips.
+const UpdateBudBodySchema = z
+  .object({
+    display_name: z.string().trim().max(BUD_NAME_MAX_LENGTH).nullable().optional(),
+    accent_color: z
+      .string()
+      .refine(isValidBudAccentColor, "accent_color must be an in-range oklch(L C H) color")
+      .optional(),
+  })
+  .strict();
+
 function serializeBud(bud: BudRow) {
   return {
     bud_id: bud.budId,
@@ -27,10 +45,7 @@ function serializeBud(bud: BudRow) {
     os: bud.os,
     arch: bud.arch,
     version: bud.version,
-    // Rows claimed before colors were persisted are NULL; derive the same
-    // stable fallback the web client would, so the wire value never depends
-    // on list position.
-    accent_color: bud.accentColor ?? pickBudAccentColor(bud.budId),
+    accent_color: bud.accentColor,
     tags: bud.tags ?? [],
     capabilities: normalizeCapabilities(bud.capabilities),
     status: bud.status,
@@ -55,7 +70,50 @@ export async function registerBudRoutes(
       .where(eq(budTable.createdByUserId, viewer.userId))
       .orderBy(desc(budTable.lastSeenAt));
 
-    return buds.map(serializeBud);
+    // Rows claimed before colors were persisted are NULL; resolve them
+    // positionally by creation order (never by this list's last_seen_at
+    // order) so the wire value is never NULL and never flips.
+    return withFallbackAccentColors(buds).map(serializeBud);
+  });
+
+  // PATCH /api/buds/:budId - Update user-facing presentation (display name, accent)
+  server.patch("/api/buds/:budId", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
+    const { budId } = request.params as { budId: string };
+    const parsed = UpdateBudBodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_bud_update" });
+    }
+
+    const patch: { displayName?: string | null; accentColor?: string } = {};
+    if (parsed.data.display_name !== undefined) {
+      patch.displayName = parsed.data.display_name ? parsed.data.display_name : null;
+    }
+    if (parsed.data.accent_color !== undefined) {
+      patch.accentColor = parsed.data.accent_color;
+    }
+    if (Object.keys(patch).length === 0) {
+      return reply.status(400).send({ error: "invalid_bud_update" });
+    }
+
+    if (!(await getAuthorizedBud(viewer, budId))) {
+      return reply.status(404).send({ error: "bud_not_found" });
+    }
+
+    const [updated] = await db
+      .update(budTable)
+      .set(patch)
+      .where(eq(budTable.budId, budId))
+      .returning();
+    if (!updated) {
+      return reply.status(404).send({ error: "bud_not_found" });
+    }
+
+    return serializeBud(updated);
   });
 
   // GET /api/buds/:budId/sessions - List active terminal sessions on Bud with thread info

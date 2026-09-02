@@ -80,15 +80,21 @@ WebSocket and gRPC gateways. Node-tested in `bud-name.test.ts`.
 
 ### `bud-accent.ts`
 
-Bud accent-color assignment. `BUD_ACCENT_PALETTE` (5 oklch colors) plus
-`fnv1a32`; `pickBudAccentColor(budId)` is the order-independent fallback
-(pure function of the id) used for legacy rows whose `accent_color` is NULL,
-and `assignBudAccentColor(budId, takenColors)` is the claim-time choice
-(least-used palette color among the owner's other Buds, ties broken from the
-id's hash slot). The palette and hash are mirrored verbatim in
-`web/src/lib/theme-colors.ts` and MUST stay in sync. Background:
+Bud accent-color assignment. `BUD_ACCENT_PALETTE` (5 oklch colors, order
+matters) plus `pickNextAccentColor(taken)` (first palette color with the
+fewest uses), `withFallbackAccentColors(rows)` (resolves NULL `accent_color`
+rows positionally by creation order — `created_at`, `bud_id` tiebreak —
+skipping persisted colors; used by `GET /api/buds`), and
+`assignBudAccentColor(otherBuds)` (claim-time: the next free color after
+resolving the owner's other Buds). First Bud pink, second orange, … — the
+original positional scheme, keyed on creation order instead of the
+`last_seen_at` list order. Also `isValidBudAccentColor` (strict `oklch(L C H)` with L 0.55–0.85,
+C 0–0.35, H 0–<360 — the shape user-chosen accents must have so the web can
+derive muted/soft variants and black text stays legible). Mirrored in
+`web/src/lib/theme-colors.ts`; palette order and the first-free rule MUST
+stay in sync. Background:
 `debug/bud-accent-color-flips-between-chats.md`. Node-tested in
-`bud-accent.test.ts` (includes FNV-1a reference vectors).
+`bud-accent.test.ts`.
 
 ### `config.ts`
 

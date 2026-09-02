@@ -312,18 +312,23 @@ Parses `oklch(0.70 0.25 330)` format.
 | `getMutedColor(color, factor)` | Reduce chroma (saturation); non-oklch input passes through unchanged |
 | `resolveCssVar(variable)` | Resolve CSS variable to computed value |
 | `deriveBudPalette(color)` | Generate vibrant/muted/soft variants |
-| `fnv1a32(input)` | 32-bit FNV-1a hash (mirrors `service/src/bud-accent.ts`) |
-| `budAccentColorFor(budId)` | Order-independent fallback accent: `DEFAULT_AVATAR_COLORS[fnv1a32(budId) % 5]` |
+| `pickNextAccentColor(taken)` | First palette color (palette order) with the fewest uses |
+| `withFallbackAccentColors(buds)` | Assign missing `accent_color`s positionally by creation order (`created_at`, `bud_id` tiebreak), skipping persisted colors; input order preserved |
+| `accentColorForHue(hue)` | Custom accent at the palette's fixed L/C (`BUD_ACCENT_LIGHTNESS` 0.70, `BUD_ACCENT_CHROMA` 0.23): `oklch(0.70 0.23 <hue>)`, hue wrapped to 0–359 |
+| `getOklchHue(color)` | Hue of an oklch string, or `null` |
 
 **Default Avatar Colors** (`DEFAULT_AVATAR_COLORS`): 5 oklch swatches — pink,
-orange, cyan, purple, green. MUST stay identical (colors, order, hash) to
-`BUD_ACCENT_PALETTE` in `service/src/bud-accent.ts`: the service persists a
-palette color at claim time and derives the same fallback for legacy rows, so
-client and server always agree on a Bud's color.
+orange, cyan, purple, green. MUST stay identical (colors and order) to
+`BUD_ACCENT_PALETTE` in `service/src/bud-accent.ts`, which applies the same
+first-free-in-creation-order rule: the service persists a palette color at
+claim time and resolves legacy NULL rows the same way, so client and server
+always agree on a Bud's color. The web copy only matters against an older
+service that still returns NULL accents.
 
-Accent fallbacks are keyed on the Bud id, never on its index in the bud list —
-`/api/buds` is ordered by `last_seen_at`, which moves with every heartbeat, so
-index-based colors reshuffled between navigations
+Accent fallbacks are positional by **creation** order (first Bud pink, second
+orange, …), never by index in the bud list — `/api/buds` is ordered by
+`last_seen_at`, which moves with every heartbeat, so list-index colors
+reshuffled between navigations
 (`debug/bud-accent-color-flips-between-chats.md`).
 
 **Palette Generation**:
@@ -337,8 +342,9 @@ deriveBudPalette(color) → {
 
 ### `theme-colors.test.ts`
 
-Node tests: FNV-1a reference vectors (which pin the hash to the service copy)
-and `budAccentColorFor` determinism / palette membership.
+Node tests: `pickNextAccentColor` palette walk, `withFallbackAccentColors`
+creation-order assignment (list-order independent, persisted colors kept), and
+`accentColorForHue`/`getOklchHue` formatting + round trip.
 
 ### `build-info.ts`
 

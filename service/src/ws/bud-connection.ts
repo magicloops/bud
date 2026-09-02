@@ -1,5 +1,4 @@
 import { Buffer } from "node:buffer";
-import { pickBudAccentColor } from "../bud-accent.js";
 import { resolveConnectedBudName } from "../bud-name.js";
 import { registerBudLocalModelsFromCapabilities } from "../llm/local-llm-capabilities.js";
 import { createHmac, randomBytes } from "node:crypto";
@@ -440,8 +439,7 @@ export class BudConnection {
           status: "online",
           lastSeenAt: now,
           deviceSecret,
-          capabilities: frame.capabilities,
-          accentColor: pickBudAccentColor(budId)
+          capabilities: frame.capabilities
         })
         .onConflictDoUpdate({
           target: budTable.budId,

@@ -49,11 +49,13 @@ expose this as a **Reset** affordance next to the input.
 - Validation (zod):
   - `display_name`: trim, 1..120 chars, or `null` to reset. Reject
     whitespace-only.
-  - `accent_color`: must be one of `BUD_ACCENT_PALETTE` (`src/bud-accent.ts`).
-    v1 is palette-only on purpose: `getMutedColor` only derives muted/soft
-    variants from `oklch(...)` strings, so a free-form hex would flatten the
-    palette to one shade. If a bigger choice is wanted, **extend the palette**
-    (10–12 oklch swatches) on both sides rather than accepting arbitrary CSS.
+  - `accent_color`: an in-range `oklch(L C H)` string
+    (`isValidBudAccentColor`, `src/bud-accent.ts`: L 0.55–0.85, C 0–0.35).
+    Not arbitrary CSS: `getMutedColor` derives muted/soft variants by scaling
+    oklch chroma (a hex value would flatten the theme), and the lightness
+    range keeps black text legible on the tinted chips. The web offers the 5
+    presets plus a hue slider at the palette's fixed L/C
+    (`accentColorForHue`), so everything it can send passes.
 - Response: `serializeBud(updated)` (same shape as the list item), so the web
   can upsert it straight into its bud list.
 - No daemon interaction, no WS/SSE change; `display_name`/`accent_color` are
@@ -132,11 +134,11 @@ expose this as a **Reset** affordance next to the input.
   Sessions tab directly.
 
 ## Spec Files to Update
-- [ ] `web/src/components/components.spec.md` — `bud-sessions-modal.tsx` → `bud-settings-modal.tsx` (tabs, props)
-- [ ] `web/src/components/workbench/workbench.spec.md` — thread panel header buttons/name button
-- [ ] `web/src/routes/routes.spec.md` — `$budId` modal state (`budSettings: { open, tab }`), `budOverrides`, invalidate flow
-- [ ] `service/src/routes/routes.spec.md` — `PATCH /api/buds/:budId` + `buds.test.ts` coverage
-- [ ] `plan/init-auth/validation-checklist.md` — new write path: owner-only PATCH (AGENTS.md §4.6)
+- [x] `web/src/components/components.spec.md` — `bud-sessions-modal.tsx` → `bud-settings-modal.tsx` (tabs, props)
+- [x] `web/src/components/workbench/workbench.spec.md` — thread panel header buttons/name button
+- [x] `web/src/routes/routes.spec.md` — `$budId` modal state (`budSettings: { open, tab }`), `budOverrides`, invalidate flow
+- [x] `service/src/routes/routes.spec.md` — `PATCH /api/buds/:budId` + `buds.test.ts` coverage
+- [x] `plan/init-auth/validation-checklist.md` — new write path: owner-only PATCH (AGENTS.md §4.6)
 
 ## Impacted Contracts
 - [ ] WSS protocol — none
@@ -151,7 +153,7 @@ expose this as a **Reset** affordance next to the input.
   `device-auth.test.ts`): owner PATCH updates and returns the serialized bud;
   non-owner → 404; invalid color / empty name → 400; `display_name: null`
   resets; `name` is never written.
-- Service: gateway re-resolve keeps `display_name` (bud-name path) — one test.
+- Service: gateway re-resolve keeps `display_name` — verified by inspection: no gateway/daemon-state code path references `displayName` (grep), so nothing can clobber it.
 - Web: `theme-colors` already tested; modal is manual QA (no component test
   harness in `web/`): rename → label updates everywhere; color → avatar +
   theme update instantly and after refresh; Layers → Sessions tab; Escape

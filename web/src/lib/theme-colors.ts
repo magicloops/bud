@@ -30,10 +30,11 @@ export function resolveCssVar(variable: string): string {
   return value || variable
 }
 
-// Bud accent palette. MUST stay identical to BUD_ACCENT_PALETTE in
-// service/src/bud-accent.ts (same colors, same order, same hash below): the
-// service persists a palette color at claim time and derives the same
-// fallback for legacy rows, so client and server always agree.
+// Bud accent palette. MUST stay identical (colors AND order) to
+// BUD_ACCENT_PALETTE in service/src/bud-accent.ts, which also implements the
+// same first-free-in-creation-order rule below: the service persists a palette
+// color at claim time and resolves legacy NULL rows the same way, so client
+// and server always agree.
 export const DEFAULT_AVATAR_COLORS = [
   'oklch(0.70 0.25 330)',
   'oklch(0.65 0.24 50)',
@@ -42,24 +43,64 @@ export const DEFAULT_AVATAR_COLORS = [
   'oklch(0.66 0.21 140)'
 ]
 
-/** 32-bit FNV-1a over UTF-16 code units (mirrors the service's fnv1a32). */
-export function fnv1a32(input: string): number {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193) >>> 0
+/**
+ * The next color to hand out given the colors already in use: the first
+ * palette color (in palette order) with the fewest uses. Unknown / null
+ * entries are ignored. Mirrors the service's pickNextAccentColor.
+ */
+export function pickNextAccentColor(takenColors: Iterable<string | null | undefined>): string {
+  const counts = new Map<string, number>(DEFAULT_AVATAR_COLORS.map((color) => [color, 0]))
+  for (const color of takenColors) {
+    if (color && counts.has(color)) {
+      counts.set(color, (counts.get(color) ?? 0) + 1)
+    }
   }
-  return hash >>> 0
+  let best = DEFAULT_AVATAR_COLORS[0] ?? 'var(--accent)'
+  let bestCount = Number.POSITIVE_INFINITY
+  for (const color of DEFAULT_AVATAR_COLORS) {
+    const count = counts.get(color) ?? 0
+    if (count < bestCount) {
+      best = color
+      bestCount = count
+    }
+  }
+  return best
+}
+
+type AccentBud = {
+  bud_id: string
+  accent_color?: string | null
+  created_at?: string | null
+}
+
+function creationOrder(a: AccentBud, b: AccentBud): number {
+  const at = a.created_at ? new Date(a.created_at).getTime() : 0
+  const bt = b.created_at ? new Date(b.created_at).getTime() : 0
+  if (at !== bt) return at - bt
+  return a.bud_id < b.bud_id ? -1 : a.bud_id > b.bud_id ? 1 : 0
 }
 
 /**
- * Order-independent fallback accent for a Bud with no persisted
- * `accent_color`: a pure function of the id, never of its position in the
- * bud list (that list is ordered by last_seen_at, which moves with every
- * heartbeat — see debug/bud-accent-color-flips-between-chats.md).
+ * Fallback accents for buds the API returned without one (older services):
+ * assigned positionally by creation order (oldest first: pink, orange, …),
+ * skipping colors already taken by persisted accents. Never keyed on the
+ * list's own order, which follows last_seen_at and moves with every
+ * heartbeat (debug/bud-accent-color-flips-between-chats.md). Input order is
+ * preserved.
  */
-export function budAccentColorFor(budId: string): string {
-  return DEFAULT_AVATAR_COLORS[fnv1a32(budId) % DEFAULT_AVATAR_COLORS.length] ?? 'var(--accent)'
+export function withFallbackAccentColors<T extends AccentBud>(buds: readonly T[]): T[] {
+  const taken: string[] = buds.map((bud) => bud.accent_color).filter((color): color is string => Boolean(color))
+  const assigned = new Map<string, string>()
+  for (const bud of [...buds].sort(creationOrder)) {
+    if (bud.accent_color) continue
+    const color = pickNextAccentColor(taken)
+    taken.push(color)
+    assigned.set(bud.bud_id, color)
+  }
+  return buds.map((bud) => {
+    const color = assigned.get(bud.bud_id)
+    return color ? { ...bud, accent_color: color } : bud
+  })
 }
 
 export function deriveBudPalette(color: string) {
@@ -69,4 +110,21 @@ export function deriveBudPalette(color: string) {
     muted: getMutedColor(resolved, 0.85),
     soft: getMutedColor(resolved, 0.7)
   }
+}
+
+// Custom accents keep the palette's lightness/chroma and vary only the hue:
+// every result is an oklch color with the same contrast as the presets
+// (black text stays legible on the tinted chips) and the service's
+// oklch(L C H) range check accepts it.
+export const BUD_ACCENT_LIGHTNESS = 0.7
+export const BUD_ACCENT_CHROMA = 0.23
+
+export function accentColorForHue(hue: number): string {
+  const normalized = ((Math.round(hue) % 360) + 360) % 360
+  return `oklch(${BUD_ACCENT_LIGHTNESS.toFixed(2)} ${BUD_ACCENT_CHROMA.toFixed(2)} ${normalized})`
+}
+
+/** Hue of an oklch color string, or null for anything else. */
+export function getOklchHue(color: string): number | null {
+  return parseOklch(color)?.h ?? null
 }

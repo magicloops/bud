@@ -57,7 +57,7 @@ function makeClaimTx(options: {
   inserts: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
   /** Rows returned by the owner-scoped bud name query (dedupe input). */
-  ownedBuds?: Array<{ budId: string; name: string; accentColor?: string | null }>;
+  ownedBuds?: Array<{ budId: string; name: string; accentColor?: string | null; createdAt?: Date | null }>;
 }) {
   return {
     query: {
@@ -150,7 +150,8 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
   assert.equal(inserts[1]?.createdByUserId, "user-claim-owner");
   assert.equal(inserts[1]?.name, "Test Bud");
   assert.match(String(inserts[1]?.budId), /^b_/);
-  assert.ok(BUD_ACCENT_PALETTE.includes(String(inserts[1]?.accentColor)));
+  // First Bud for this owner → first palette color.
+  assert.equal(inserts[1]?.accentColor, BUD_ACCENT_PALETTE[0]);
   assert.ok(updates.some((update) => update.approvedByUserId === "user-claim-owner"));
   assert.ok(
     updates.some(
@@ -204,7 +205,7 @@ test("device auth claim suffixes the requested name when the owner already has i
   assert.equal(inserts[1]?.name, "mbp-3");
 });
 
-test("device auth claim persists the least-used accent color among the owner's Buds", async (t) => {
+test("device auth claim persists the next free accent color in creation order", async (t) => {
   t.after(() => {
     mock.restoreAll();
   });
@@ -212,18 +213,18 @@ test("device auth claim persists the least-used accent color among the owner's B
   const claimToken = "bic_test_accent";
   const inserts: Array<Record<string, unknown>> = [];
   const updates: Array<Record<string, unknown>> = [];
-  // Four of the five palette colors are taken; the new Bud must get the fifth
-  // regardless of where its id hashes.
+  // Owner already has a pink Bud (persisted) and an older legacy Bud with no
+  // persisted color, which resolves positionally to orange → the new Bud is
+  // cyan.
   const free = BUD_ACCENT_PALETTE[2]!;
   const tx = makeClaimTx({
     claimToken,
     inserts,
     updates,
-    ownedBuds: BUD_ACCENT_PALETTE.filter((color) => color !== free).map((color, index) => ({
-      budId: `b_existing_${index}`,
-      name: `bud-${index}`,
-      accentColor: color,
-    })),
+    ownedBuds: [
+      { budId: "b_legacy", name: "legacy", accentColor: null, createdAt: new Date("2026-01-01") },
+      { budId: "b_pink", name: "pink", accentColor: BUD_ACCENT_PALETTE[0], createdAt: new Date("2026-02-01") },
+    ],
   });
   mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
     callback(tx),

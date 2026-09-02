@@ -47,8 +47,10 @@ Thread list sidebar for conversation navigation.
   + Plus icon; solid accent border when the new-thread route is active) —
   no separate header button
 - Header: hamburger (closes the panel via `onToggleOpen`; the workspace top
-  bar hides its own hamburger while the panel is open), centered bud name,
-  terminal-sessions action (Layers icon)
+  bar hides its own hamburger while the panel is open), centered bud name
+  (button → Bud settings, General tab), terminal-sessions action (Layers icon
+  → Sessions tab) and a gear (→ General tab), all via
+  `onOpenBudSettings(tab)`
 - Account settings are intentionally not shown here because this header is Bud-scoped
 - Delete button with confirmation dialog
 - Delete success/failure now bubble up through `onStatusChange(...)` so the parent Bud layout can show a visible shared mutation-status banner instead of silently logging or only updating local button state

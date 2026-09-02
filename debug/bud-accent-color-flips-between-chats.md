@@ -113,18 +113,24 @@ Recommended: 1 now (kills the bug), 3 as the durable follow-up; 2/4 optional.
   assignment (3) changes the service
 
 ## Resolution (2026-09-01)
-Options 1 and 3 implemented:
-- **Web**: `budAccentColorFor(budId)` (`web/src/lib/theme-colors.ts`, FNV-1a
-  over the id into `DEFAULT_AVATAR_COLORS`) replaces both index-based
-  fallbacks in `web/src/routes/$budId.tsx`. Colors no longer depend on list
-  position. Test: `theme-colors.test.ts`.
-- **Service**: new `src/bud-accent.ts` (same palette + hash, kept in sync by
-  comment). Device claim persists `accent_color` — least-used palette color
-  among the owner's other Buds on first claim, existing color preserved on
-  re-claim (`routes/device-auth.ts`). Dev-bypass enrollment inserts (WS + gRPC)
-  and the seed script set the hashed color. `GET /api/buds` serializes
-  `pickBudAccentColor(bud_id)` for legacy NULL rows, so the wire value is never
-  NULL and never position-dependent. Tests: `bud-accent.test.ts`,
+Options 1 and 3 implemented (PR #107), then revised the same day: the first
+cut hashed `bud_id` into the palette, which is order-independent but with 5
+colors collides ~20% of the time — an account with two Buds got the same
+color. The positional scheme was the right idea; only its key was wrong.
+
+Final rule, identical on both sides: colors are assigned positionally by
+**creation order** (`created_at`, `bud_id` tiebreak — both creation-ordered),
+first Bud pink, second orange, …, skipping colors already persisted for other
+Buds. Creation order never changes, so the assignment never flips.
+- **Web**: `withFallbackAccentColors(buds)` (`web/src/lib/theme-colors.ts`)
+  resolves missing accents in `routes/$budId.tsx` before anything reads them;
+  only matters against an older service.
+- **Service**: `src/bud-accent.ts` — `GET /api/buds` resolves legacy NULL rows
+  with the same function (wire value never NULL, never `last_seen_at`
+  dependent); device claim persists the next free color after resolving the
+  owner's other Buds (`routes/device-auth.ts`); re-claims keep the existing
+  color. Dev-bypass enrollment and seed rows stay NULL and resolve at read
+  time. Tests: `bud-accent.test.ts`, `routes/buds.test.ts` (GET ordering),
   `routes/device-auth.test.ts`.
 - Not changed: `/api/buds` ordering (still `last_seen_at` desc — the rail can
   still reorder between navigations, now without changing colors) and the
