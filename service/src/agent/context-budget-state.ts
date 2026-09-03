@@ -1,7 +1,10 @@
 import type { CanonicalMessage } from "../llm/index.js";
 import {
+  CONTEXT_BREAKDOWN_KINDS,
+  estimateCanonicalMessagesBreakdown,
   estimateCanonicalMessagesTokens,
   shouldCompactContext,
+  type ContextBreakdownKind,
   type ContextBudget,
   type ContextBudgetInvalidReason,
 } from "./context-budget.js";
@@ -38,6 +41,13 @@ export type ContextBudgetProviderUsageEstimate = {
   confidence: Extract<ContextBudgetConfidence, "medium" | "high">;
 };
 
+export type ContextBudgetBreakdownEntry = {
+  kind: ContextBreakdownKind;
+  tokens: number;
+  /** Share of `estimated_input_tokens` (0..1), so entries read as "what is in context". */
+  percent_of_estimated_input: number;
+};
+
 export type ContextBudgetUnknownReason =
   | ContextBudgetInvalidReason
   | "conversation_unavailable"
@@ -59,6 +69,10 @@ export type ContextBudgetSnapshot =
       message_estimated_tokens: number;
       tool_schema_tokens: number;
       estimated_input_tokens: number;
+      /** Every category (zeros included), summing to `estimated_input_tokens`. */
+      breakdown: ContextBudgetBreakdownEntry[];
+      /** Completed compactions for the thread; null when the snapshot source did not count them. */
+      compaction_count: number | null;
       remaining_context_tokens: number;
       percent_of_context_budget: number;
       percent_of_model_window: number;
@@ -101,6 +115,7 @@ export function buildContextBudgetStateFromConversation(args: {
   turnId?: string | null;
   providerUsageEstimate?: ContextBudgetProviderUsageEstimate | null;
   toolSchemaTokens?: number;
+  compactionCount?: number | null;
   stale?: boolean;
   now?: Date;
   checkedAt?: Date | null;
@@ -115,9 +130,17 @@ export function buildContextBudgetStateFromConversation(args: {
     stale: args.stale === true,
     updated_at: now.toISOString(),
   };
-  const messageEstimatedTokens = Math.max(0, estimateCanonicalMessagesTokens(args.conversation));
+  const messageBreakdown = estimateCanonicalMessagesBreakdown(args.conversation);
+  const messageEstimatedTokens = Math.max(
+    0,
+    CONTEXT_BREAKDOWN_KINDS.reduce((total, kind) => total + messageBreakdown[kind], 0),
+  );
   const toolSchemaTokens = Math.max(0, Math.floor(args.toolSchemaTokens ?? 0));
   const estimatedInputTokens = messageEstimatedTokens + toolSchemaTokens;
+  const breakdown: ContextBudgetBreakdownEntry[] = CONTEXT_BREAKDOWN_KINDS.map((kind) => {
+    const tokens = kind === "tool_schemas" ? toolSchemaTokens : messageBreakdown[kind];
+    return { kind, tokens, percent_of_estimated_input: safeRatio(tokens, estimatedInputTokens) };
+  });
 
   if (args.budget.contextWindowTokens === null) {
     return {
@@ -163,6 +186,8 @@ export function buildContextBudgetStateFromConversation(args: {
     message_estimated_tokens: messageEstimatedTokens,
     tool_schema_tokens: toolSchemaTokens,
     estimated_input_tokens: estimatedInputTokens,
+    breakdown,
+    compaction_count: args.compactionCount ?? null,
     remaining_context_tokens: remainingContextTokens,
     percent_of_context_budget: safeRatio(estimatedInputTokens, effectiveBudgetTokens),
     percent_of_model_window: safeRatio(estimatedInputTokens, args.budget.contextWindowTokens),

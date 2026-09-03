@@ -233,6 +233,25 @@ export type ApiContextBudgetSource =
 
 export type ApiContextBudgetPhase = 'idle' | ApiAgentCompactionPhase | null
 
+export type ApiContextBreakdownKind =
+  | 'system_prompt'
+  | 'runtime_instructions'
+  | 'compaction_summary'
+  | 'user_messages'
+  | 'assistant_text'
+  | 'reasoning'
+  | 'tool_calls'
+  | 'tool_output'
+  | 'images'
+  | 'tool_schemas'
+
+export type ApiContextBudgetBreakdownEntry = {
+  kind: ApiContextBreakdownKind
+  tokens: number
+  /** Share of estimated_input_tokens (0..1). */
+  percent_of_estimated_input: number
+}
+
 export type ApiContextBudgetProviderUsageEstimate = {
   estimated_input_tokens: number
   input_tokens: number
@@ -258,6 +277,10 @@ export type ApiContextBudgetAvailable = {
   message_estimated_tokens: number
   tool_schema_tokens: number
   estimated_input_tokens: number
+  /** Per-category split summing to estimated_input_tokens (absent on older services). */
+  breakdown?: ApiContextBudgetBreakdownEntry[]
+  /** Completed compactions; null when the snapshot source did not count them. */
+  compaction_count?: number | null
   remaining_context_tokens: number
   percent_of_context_budget: number
   percent_of_model_window: number

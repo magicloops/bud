@@ -53,6 +53,17 @@ Configurable button component with variants.
 </Button>
 ```
 
+### `popover.tsx`
+
+Radix-based popover following shadcn/ui patterns (`@radix-ui/react-popover`).
+
+**Exports**:
+- `Popover` - Root (supports controlled `open` / `onOpenChange`)
+- `PopoverTrigger` - Toggle element
+- `PopoverAnchor` - Positioning anchor without toggle behavior (used by the
+  context send button, whose button is the form submit)
+- `PopoverContent` - Portal-rendered content with the tooltip's fade/zoom animations
+
 ### `tooltip.tsx`
 
 Radix-based tooltip component following shadcn/ui patterns.

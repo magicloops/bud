@@ -52,10 +52,19 @@ test("buildContextBudgetSnapshot exposes the same threshold as automatic compact
         },
       ],
       checkpoint: null,
+      compactionCount: 2,
       now: new Date("2026-05-24T10:00:00.000Z"),
     });
 
     assertAvailable(snapshot);
+    assert.equal(snapshot.compaction_count, 2);
+    assert.equal(
+      snapshot.breakdown.reduce((sum, entry) => sum + entry.tokens, 0),
+      snapshot.estimated_input_tokens,
+      "breakdown sums to the trigger estimate",
+    );
+    assert.equal(snapshot.breakdown.find((entry) => entry.kind === "tool_schemas")?.tokens, AGENT_TOOL_SCHEMA_TOKENS);
+    assert.ok(snapshot.breakdown.every((entry) => entry.percent_of_estimated_input >= 0 && entry.percent_of_estimated_input <= 1));
     assert.equal(snapshot.context_window_tokens, 1_050_000);
     assert.equal(snapshot.usable_context_window_tokens, 272_000);
     assert.equal(snapshot.reserved_output_tokens, 128_000);

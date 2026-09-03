@@ -3,6 +3,10 @@ import test from "node:test";
 import { config } from "../config.js";
 import { getCatalogEntry, listCatalogEntries, resolveEffectiveModelSelection } from "../llm/index.js";
 import {
+  CHECKPOINT_SUMMARY_PREFIX,
+  COMPACTION_TERMINAL_CONTEXT_PREFIX,
+  estimateCanonicalMessagesBreakdown,
+  estimateCanonicalMessagesTokens,
   estimateCanonicalToolsTokens,
   resolveContextBudget,
   resolveModelContextPolicy,
@@ -238,4 +242,58 @@ test("every catalog entry satisfies usable_input + reserve <= hard and usable_in
     assert.ok(policy.usableInputWindowTokens! + policy.reservedOutputTokens! <= policy.contextWindowTokens!, entry.id);
     assert.ok(policy.usableInputWindowTokens! <= policy.usableContextWindowTokens!, entry.id);
   }
+});
+
+test("estimateCanonicalMessagesBreakdown classifies every block and sums to the message estimate", () => {
+  const conversation = [
+    { role: "system" as const, content: "You are Bud." },
+    { role: "system" as const, content: "The selected Bud is currently offline." },
+    { role: "user" as const, content: [{ type: "text" as const, text: `${CHECKPOINT_SUMMARY_PREFIX}\n\nEarlier work summary.` }] },
+    { role: "user" as const, content: [{ type: "text" as const, text: `${COMPACTION_TERMINAL_CONTEXT_PREFIX}\n{"cwd":"/tmp"}` }] },
+    { role: "user" as const, content: [{ type: "text" as const, text: "Please fix the build." }] },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "reasoning" as const, text: "Thinking about it." },
+        { type: "text" as const, text: "On it." },
+        { type: "tool_use" as const, id: "call-1", name: "terminal_run", input: { command: "make" } },
+      ],
+    },
+    {
+      role: "user" as const,
+      content: [
+        { type: "tool_result" as const, toolUseId: "call-1", content: "make: nothing to be done" },
+        { type: "image" as const, source: { type: "base64" as const, mediaType: "image/png", data: "iVBORw0KGgo=" } },
+      ],
+    },
+  ] as never;
+
+  const breakdown = estimateCanonicalMessagesBreakdown(conversation);
+  for (const kind of [
+    "system_prompt",
+    "runtime_instructions",
+    "compaction_summary",
+    "user_messages",
+    "assistant_text",
+    "reasoning",
+    "tool_calls",
+    "tool_output",
+    "images",
+  ] as const) {
+    assert.ok(breakdown[kind] > 0, `${kind} should be non-zero`);
+  }
+  assert.equal(breakdown.tool_schemas, 0, "tool schemas are not part of the conversation");
+  const total = Object.values(breakdown).reduce((sum, tokens) => sum + tokens, 0);
+  assert.equal(total, estimateCanonicalMessagesTokens(conversation));
+  // Both checkpoint replacement rows land in compaction_summary, not user_messages.
+  assert.ok(breakdown.compaction_summary > breakdown.user_messages);
+  // The tool result message's overhead goes to user_messages (its role), the
+  // blocks themselves to tool_output / images.
+  assert.ok(breakdown.tool_output > 0 && breakdown.images > 0);
+});
+
+test("estimateCanonicalMessagesBreakdown is all zeros for an empty conversation", () => {
+  const breakdown = estimateCanonicalMessagesBreakdown([]);
+  assert.ok(Object.values(breakdown).every((tokens) => tokens === 0));
+  assert.equal(estimateCanonicalMessagesTokens([]), 0);
 });

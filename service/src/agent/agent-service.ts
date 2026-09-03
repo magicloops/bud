@@ -84,6 +84,7 @@ import {
   type AgentContextCheckpointPhase,
   type AgentContextCheckpointReason,
   type AgentContextCheckpointTrigger,
+  countCompletedContextCheckpoints,
 } from "./context-checkpoint-repository.js";
 import { formatAgentRuntimeFailure } from "./failure-message.js";
 
@@ -1198,6 +1199,8 @@ export class AgentService {
       targetReasoning: args.modelReasoning.reasoning,
     });
     const postCompactionCheckedAt = new Date();
+    // Diagnostic only; never let a count failure break the turn.
+    const compactionCount = await countCompletedContextCheckpoints(args.threadId).catch(() => null);
     const postCompactionBudget = buildContextBudgetStateFromConversation({
       model: args.model,
       provider: args.providerName,
@@ -1209,6 +1212,7 @@ export class AgentService {
       reason: args.reason,
       turnId: args.turnId,
       toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
+      compactionCount,
       checkedAt: postCompactionCheckedAt,
       now: postCompactionCheckedAt,
     });

@@ -366,6 +366,7 @@ export function CommandComposer({
         <div className="shrink-0">
           <ContextSendButton
             contextBudget={contextBudget}
+            modelLabel={models.find((model) => model.id === contextBudget?.model)?.display_name ?? null}
             disabled={stopMode ? false : inputDisabled}
             dispatching={status === 'dispatching'}
             stopMode={stopMode}

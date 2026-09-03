@@ -623,6 +623,8 @@ Service-only repository for durable agent context checkpoints.
 
 **Responsibilities**:
 - load the latest completed checkpoint for a thread
+- count completed checkpoints for a thread (`countCompletedContextCheckpoints`,
+  surfaced as `compaction_count` on context budget snapshots)
 - record completed and failed checkpoint attempts
 - store canonical replacement history outside the visible `message` transcript
 - resolve thread owner/tenant stamps for automatic checkpoint writes
@@ -639,6 +641,13 @@ Token-estimation helper for automatic compaction and browser-visible context bud
 
 **Responsibilities**:
 - estimate canonical message tokens using a conservative character-based fallback
+- estimate the per-category breakdown of those tokens
+  (`estimateCanonicalMessagesBreakdown`: system prompt, runtime instructions,
+  compaction summary, user messages, assistant text, reasoning, tool calls,
+  tool output, images; the total estimator is the sum of the breakdown, so
+  they can never disagree). Owns the checkpoint replacement-history markers
+  (`CHECKPOINT_SUMMARY_PREFIX`, `COMPACTION_TERMINAL_CONTEXT_PREFIX`) so it
+  can recognise compaction rows without importing the compactor
 - estimate canonical tool-schema tokens from serialized `CanonicalTool[]` definitions
 - resolve the selected model's catalog hard context window, Bud usable context
   window, output reserve, and usable input window as
@@ -662,6 +671,7 @@ Direct tests for usable context policy and automatic-compaction threshold math.
 - GPT-5.5 and GPT-5.6 Sol usable input window (272,000) and threshold (244,800) at the `0.9` clamp
 - the reserve still binding when the usable window is the hard window (gpt-5.4-mini → 272,000)
 - an invariant over every catalog entry: `usable_input + reserve <= hard` and `usable_input <= usable`
+- breakdown classification of every block type, checkpoint rows landing in `compaction_summary`, and the breakdown summing to the total estimate
 - lower `AGENT_AUTO_COMPACTION_RATIO` overrides, including the 40% test path
 - compaction-summary requests using the larger usable input window
 - invalid context policy detection when the output reserve exceeds the hard window (a usable cap below the reserve is a valid small input window)
@@ -676,6 +686,7 @@ Browser-facing context budget snapshot builder used by the owned `/agent/state` 
 - load context through `AgentConversationLoader` using the same latest completed checkpoint boundary as the agent loop
 - delegate primary budget math to `context-budget-state.ts` so durable snapshots and active compaction decisions agree
 - include the normal agent tool-schema estimate by default so durable snapshots match provider requests for ordinary agent turns
+- count completed checkpoints for `compaction_count` (diagnostic: a count failure yields null, never an unknown snapshot)
 - expose hard model window, Bud usable context window, output reserve, usable
   input window, compaction threshold, and effective budget fields
 - expose the effective budget as the auto-compaction threshold when compaction
@@ -695,6 +706,9 @@ Shared context budget state builder for active agent decisions and durable agent
 - keep the primary estimate on the model-agnostic canonical-message estimator plus normal agent tool-schema overhead used by the automatic compaction trigger
 - expose provenance fields (`source`, `phase`, `reason`, `turn_id`, `checked_at`) so clients can distinguish durable reconstruction, active decisions, and post-compaction snapshots
 - expose `message_estimated_tokens` and `tool_schema_tokens` alongside total `estimated_input_tokens`
+- expose `breakdown` (every category incl. `tool_schemas`, with
+  `percent_of_estimated_input`, summing to `estimated_input_tokens`) and
+  `compaction_count` (null when the caller did not count — active-turn decisions)
 - attach optional provider usage diagnostics without letting those diagnostics drive compaction threshold percentages
 - return `{ snapshot, shouldCompact, estimatedTokens }` for agent compaction decisions without exposing raw conversation content
 
@@ -710,6 +724,7 @@ Direct tests for snapshot math and fallback behavior.
 - provider-usage diagnostics above threshold do not make the primary percent exceed the backend trigger estimate
 - normal agent tool-schema overhead contributes to `estimated_input_tokens`
 - checkpoint ids and stale state are carried into the snapshot
+- `breakdown` sums to `estimated_input_tokens` (tool schemas included) and `compaction_count` passes through
 
 ### `context-compactor.ts`
 
