@@ -528,6 +528,10 @@ details for the tooltip or debug mode.
 
 ### 9.3 Copy Rules
 
+> Superseded on 2026-09-03 by [plan/context-popover-breakdown.md](../plan/context-popover-breakdown.md):
+> the popover now leads with the limit, shows a per-category breakdown, and keeps
+> policy/provenance details behind a debug disclosure.
+
 Preferred:
 
 - `312k left before auto-compact`

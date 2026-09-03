@@ -23,6 +23,7 @@ import {
   type ContextBudgetSnapshot,
 } from "./context-budget-state.js";
 import {
+  countCompletedContextCheckpoints,
   getLatestCompletedContextCheckpoint,
   type AgentContextCheckpoint,
 } from "./context-checkpoint-repository.js";
@@ -63,6 +64,7 @@ type LoadedContextBudgetInput = {
   usageAnchor?: ContextBudgetUsageAnchor | null;
   deltaMessages?: ContextBudgetDeltaMessage[];
   toolSchemaTokens?: number;
+  compactionCount?: number | null;
   stale?: boolean;
   now?: Date;
 };
@@ -94,6 +96,10 @@ export async function getThreadContextBudgetSnapshot(args: {
     });
 
     const checkpoint = await getLatestCompletedContextCheckpoint(args.thread.threadId);
+    // Diagnostic only: a count failure must not turn the whole snapshot unknown.
+    const compactionCount = checkpoint
+      ? await countCompletedContextCheckpoints(args.thread.threadId).catch(() => null)
+      : 0;
     const conversationLoader = new AgentConversationLoader({
       async getLatestCompletedCheckpoint() {
         return checkpoint;
@@ -131,6 +137,7 @@ export async function getThreadContextBudgetSnapshot(args: {
       checkpoint,
       usageAnchor,
       deltaMessages,
+      compactionCount,
       stale: args.runtimeSnapshot?.active === true,
       now,
     });
@@ -168,6 +175,7 @@ export function buildContextBudgetSnapshot(args: LoadedContextBudgetInput): Cont
     turnId: null,
     providerUsageEstimate,
     toolSchemaTokens: args.toolSchemaTokens ?? AGENT_TOOL_SCHEMA_TOKENS,
+    compactionCount: args.compactionCount ?? null,
     stale: args.stale === true,
     now,
     checkedAt: now,

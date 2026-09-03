@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   agentContextCheckpointTable,
@@ -83,6 +83,18 @@ export async function getLatestCompletedContextCheckpoint(
     .limit(1);
 
   return row ? normalizeCheckpointRow(row) : null;
+}
+
+/** Completed compactions for a thread — surfaced as `compaction_count` on context budget snapshots. */
+export async function countCompletedContextCheckpoints(threadId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(agentContextCheckpointTable)
+    .where(and(
+      eq(agentContextCheckpointTable.threadId, threadId),
+      eq(agentContextCheckpointTable.status, "completed"),
+    ));
+  return Number(row?.count ?? 0);
 }
 
 export async function getCurrentContextCheckpointBoundary(

@@ -12,11 +12,12 @@ import {
   type CanonicalStopReason,
   type CanonicalTool,
   type ModelConfig,
-  type ReasoningLevel,
   type ResolvedModelReasoning,
   type TokenUsage,
 } from "../llm/index.js";
 import {
+  CHECKPOINT_SUMMARY_PREFIX,
+  COMPACTION_TERMINAL_CONTEXT_PREFIX,
   estimateCanonicalMessagesTokens,
   estimateTextTokens,
   resolveContextBudget,
@@ -42,10 +43,6 @@ Include:
 - Any critical data, examples, or references needed to continue
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
-`.trim();
-
-const CHECKPOINT_SUMMARY_PREFIX = `
-Another Bud Agent model compacted earlier context for this thread. Use this checkpoint to continue the task without repeating completed work. The visible transcript still exists in the product, but your model-visible context has been shortened. Summary:
 `.trim();
 
 const RECENT_USER_MESSAGE_TOKEN_BUDGET = 20_000;
@@ -280,7 +277,7 @@ function buildReplacementHistory(args: {
       role: "user",
       content: [{
         type: "text",
-        text: `Current terminal context at compaction time:\n${args.currentTerminalContext.trim()}`,
+        text: `${COMPACTION_TERMINAL_CONTEXT_PREFIX}\n${args.currentTerminalContext.trim()}`,
       }],
     });
   }

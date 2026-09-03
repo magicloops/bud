@@ -225,50 +225,70 @@ Message input form with options.
 
 ### `context-send-button.tsx`
 
-Circular composer submit control for the browser-visible context budget snapshot.
+Circular composer submit control with the context-budget ring and popover.
 
 **Props**:
 - optional `contextBudget` - `ApiContextBudget` from `/agent/state`
+- optional `modelLabel` - catalog display name for the budget's model (falls back to the id)
 - `disabled` - caller-owned form disable state
 - `dispatching` - whether to show the loading spinner instead of the send icon
 - optional `stopMode` / `onStop` - switch the control to a non-submit stop button for active agent turns
 
 **Features**:
-- submits the composer form through a native circular `button type="submit"`
-- switches to `button type="button"` with a square stop icon and "Stop response" accessible label in stop mode
-- keeps a compact 40px circular footprint with centered send/loading icons
-- shows visual percentage against the effective compaction budget, not raw
-  model-window usage, as a top-origin clockwise radial border around the button
-- uses the context ring as the only button border, with the black progress
-  segment growing over a Bud accent-muted track
-- clamps the radial border to 100% while preserving raw percentage details in
-  the tooltip
-- exposes rounded token counts, authoritative basis, provenance, confidence,
-  hard model window, Bud usable context window, output reserve, usable input
-  window, and stale state in a tooltip
-- shows the backend message estimate and normal agent tool-schema overhead in
-  the tooltip when tool schemas contribute to the current budget
-- does not render provider usage diagnostics in the product tooltip
-- handles unknown budget snapshots without crashing the composer
-- keeps the tooltip trigger on a wrapper so context details can still be shown
-  when the native submit button is disabled
+- submits the composer form through a native circular `button type="submit"`;
+  stop mode switches to `type="button"` with a square icon and "Stop response"
+  accessible label
+- shows the visual percentage against the effective compaction budget as a
+  top-origin clockwise radial border (black progress over a Bud accent-muted
+  track), clamped to 100%
+- **Popover** (`@/components/ui/popover`, controlled): opens on hover on
+  pointer devices (150ms in / 120ms out, content hover keeps it open), on
+  focus for keyboard users, and on tap when the button is disabled (empty
+  composer) — a tap on an enabled button is the send action and is never
+  intercepted. Escape / outside click close it.
+- Popover content, from `getContextBudgetMeterPresentation`: headline
+  (`Model · 44% of auto-compact limit`), subline (`108k of 245k · compacts at
+  90% of the 272k window`), a segmented bar plus legend of the token
+  breakdown (tool output, messages, system prompt, tool calls, reasoning,
+  compaction summary, tool schemas, other), and a two-line footer (estimate
+  basis + last measured request; compaction count + output reserve). Segment
+  / swatch colors are fixed per category from the bud accent palette
+  (`DEFAULT_AVATAR_COLORS`: messages pink, tool calls orange, tool output
+  cyan, system prompt purple, reasoning green; minor categories gray) so the
+  legend reads the same on every bud
+- policy/provenance diagnostics (Bud cap, hard window, basis/confidence,
+  source/phase) render only behind a "Diagnostics" disclosure when
+  `config.showSystemMessages` is on
+- handles unknown budget snapshots (reason in the footer, no breakdown)
+  without crashing the composer
 
 ### `context-budget-meter-state.ts`
 
-Pure presentation helpers for the context budget send-button tooltip and ring.
+Pure presentation helpers for the context budget send-button popover and ring.
 
 **Responsibilities**:
 - map usage percentage to normal/elevated/near/over/unknown tones
 - format visual percentages and rounded token counts such as `312k`
-- build tooltip copy from available and unknown context budget snapshots,
-  including `Context unknown` for invalid or missing context policy
-- include the message/tool-schema token split in available-budget details
-- keep provider usage diagnostics out of product-facing copy
+- build the structured presentation: `headline`, `subline`, `rows` (display
+  groups over the API `breakdown` — user+assistant text → Messages, system
+  prompt+runtime instructions → System prompt; sorted largest first;
+  categories under 0.5% fold into "Other"; older services without a
+  `breakdown` fall back to the messages / tool-schemas split), `footer`, and
+  `diagnostics`
+- footer copy: `Estimated (~4 chars/token)` / `Measured by provider` plus
+  `last request Xk in / Yk out` from `provider_usage_estimate`; `Compacted N×`
+  (or `Compacted earlier` when only a checkpoint id is known) and
+  `Xk reserved for the reply`
+- keep policy numbers and provenance out of product copy (diagnostics only)
 - clamp radial ring progress from 0-100%
 
 ### `context-budget-meter-state.test.ts`
 
-Node-runner coverage for rounded token formatting, radial ring clamping, tone thresholds, compaction-budget labels, and unknown snapshot presentation.
+Node-runner coverage for rounded token formatting, ring clamping, headline /
+subline copy, breakdown grouping + sorting + "Other" folding, footer variants
+(measured request, compaction count fallbacks, disabled compaction, stale),
+the no-breakdown fallback, the diagnostics/product-copy split, and unknown
+snapshots.
 
 ### `question-request-card.tsx`
 

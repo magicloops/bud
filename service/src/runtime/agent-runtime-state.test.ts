@@ -462,6 +462,8 @@ function buildContextBudgetSnapshotFixture(source: "active_agent_decision" | "du
     message_estimated_tokens: 10_000,
     tool_schema_tokens: 2_000,
     estimated_input_tokens: 12_000,
+    breakdown: [],
+    compaction_count: null,
     remaining_context_tokens: 51_000,
     percent_of_context_budget: 12_000 / 63_000,
     percent_of_model_window: 12_000 / 100_000,
