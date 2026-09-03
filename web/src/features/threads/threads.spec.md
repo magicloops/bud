@@ -208,6 +208,21 @@ Node-runner coverage for timeline activity-gate transitions.
 - final vs intermediate persisted assistant-row detection
 - final-event reset and compaction visibility override
 
+### `model-context-view-state.ts`
+
+Pure presentation for the Model view: `buildModelViewPresentation(doc, { modelLabel })`
+turns an `ApiModelContext` into headline/subline, the tools summary, a
+compaction banner, and one `ModelViewBlock` per message (label by provenance
++ role — "System prompt", "Runtime instruction", "Compaction summary",
+"User", "Bud", "Tool call", "Tool result"; badge — prompt scope/version,
+"not stored", "from checkpoint", "provider replay", "synthesized"; per-part
+colors from `CONTEXT_CATEGORY_COLORS`; nested tool results flattened).
+
+### `model-context-view-state.test.ts`
+
+Node tests for labels/badges by provenance, part kinds and colors, nested
+tool-result flattening, and the active-turn / budget headline variants.
+
 ### `use-file-viewer.ts`
 
 Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.

@@ -526,3 +526,46 @@ export function normalizeCapabilities(caps: unknown): {
     terminal: record.terminal === true,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Model view: GET /api/threads/:thread_id/model-context
+// ---------------------------------------------------------------------------
+
+export type ApiModelContextSource =
+  | { kind: 'system_prompt'; scope: 'default' | string; version: string }
+  | { kind: 'runtime_instruction' }
+  | { kind: 'checkpoint_summary'; checkpoint_id: string }
+  | { kind: 'checkpoint_history'; checkpoint_id: string }
+  | { kind: 'message'; message_id: string; client_id: string; role: string }
+  | { kind: 'ledger'; llm_call_id: string }
+  | { kind: 'repair' }
+
+export type ApiModelContextBlock =
+  | { type: 'text'; text: string; assistant_phase?: string }
+  | { type: 'image'; media_type: string; data: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string | ApiModelContextBlock[]; is_error?: boolean }
+  | { type: 'reasoning'; text: string }
+  | { type: 'reasoning_redacted' }
+
+export type ApiModelContextMessage = {
+  index: number
+  role: 'system' | 'user' | 'assistant'
+  source: ApiModelContextSource
+  content: ApiModelContextBlock[]
+  estimated_tokens: number
+}
+
+export type ApiModelContext = {
+  model: string
+  provider: string
+  generated_at: string
+  turn_active: boolean
+  compaction: { checkpoint_id: string; compacted_through_message_id: string | null } | null
+  system_prompt: { scope: string; version: string } | null
+  tools: Array<{ name: string; description: string; parameters: unknown }>
+  tool_schema_tokens: number
+  messages: ApiModelContextMessage[]
+  estimated_input_tokens: number
+  context_budget: ApiContextBudget | null
+}

@@ -105,7 +105,8 @@ Direct coverage for local model stream-limit, local model idle-timeout, and gene
 Conversation-building ownership extracted from `AgentService`.
 
 **Responsibilities**:
-- seed the canonical system prompt imported from `system-prompt.ts`
+- seed the system prompt from `resolveSystemPrompt` (`system-prompt.ts`), the single seam for future Bud/thread prompt overrides
+- return a `sources` array parallel to `messages` (`MessageSource`: `system_prompt` with scope/version, `checkpoint_summary` / `checkpoint_history`, `message` with row ids, `ledger` with the call id, `repair` for synthesized tool results) for the model-view endpoint; `messages` are unchanged by the side-channel
 - load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
 - filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
@@ -133,6 +134,8 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - the system prompt describes the unified terminal surface (send/wait/observe, two send result shapes, mode model, still-running semantics), never mentions `terminal.run`, and contains none of the retired readiness/wait vocabulary
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
+- `sources` is parallel to `messages` (system prompt, checkpoint summary vs kept history, one provenance per replayed row even when a tool row becomes two messages) and `repairOrphanedToolCalls` tags injected results as `repair`
+- `resolveSystemPrompt` returns the default file with a stable `sha256:` content-hash version
 
 ### `default-system-prompt.md`
 
@@ -145,7 +148,8 @@ Single prompt ownership module for the canonical Bud Agent system prompt.
 **Responsibilities**:
 - read `default-system-prompt.md` directly
 - normalize CRLF line endings and trim the markdown source to match the historical prompt constant behavior
-- export `AGENT_SYSTEM_PROMPT` for conversation loading and prompt-specific tests
+- export `AGENT_SYSTEM_PROMPT` for prompt-specific tests and `AGENT_SYSTEM_PROMPT_VERSION` (a `sha256:` content hash) so clients can tell when the prompt changed
+- `resolveSystemPrompt({ threadId, budId })` → `{ text, scope: "default", version }`: the only place that decides which prompt a thread gets; Bud/thread overrides plug in here without touching callers
 
 ### `user-question-contracts.ts`
 
@@ -407,6 +411,7 @@ Client-safe agent environment helpers.
 - define `normal` vs `bud_offline` agent environment snapshots
 - expose tool availability for terminal, web-view, and `ask_user_questions` in `/agent/state`
 - build request-time offline instructions that are injected into provider calls without becoming transcript rows
+- `buildRuntimeInstructionMessages` / `applyRuntimeInstructionsWithSources`: the same placement `AgentService.applyRuntimeInstructions` uses (after the base system prompt), keeping the loader's provenance side-channel aligned for the model-view endpoint
 
 ### `model-runner.ts`
 

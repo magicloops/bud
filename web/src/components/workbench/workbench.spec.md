@@ -233,6 +233,7 @@ Circular composer submit control with the context-budget ring and popover.
 - `disabled` - caller-owned form disable state
 - `dispatching` - whether to show the loading spinner instead of the send icon
 - optional `stopMode` / `onStop` - switch the control to a non-submit stop button for active agent turns
+- optional `onViewModelContext` - renders a "View what the model sees" link in the popover footer that closes it and switches the transcript to the Model view
 
 **Features**:
 - submits the composer form through a native circular `button type="submit"`;
@@ -326,6 +327,27 @@ Node-runner coverage for structured prompt response helpers.
 - answer payload construction for boolean, single-choice, multi-choice, text, and number questions
 - per-question skip and skip-all payload construction
 
+### `model-context-view.tsx`
+
+Read-only "what the model sees" rendering for the chat pane
+(plan/model-view-transcript-mode.md). Fetches
+`GET /api/threads/:id/model-context` on mount and whenever `refreshKey`
+changes (the thread route keys it on turn end + compaction count); shows a
+refresh button, a stale headline while a turn is active, and a friendly
+message when the service predates the endpoint (`404`).
+
+**Props**: `threadId`, `refreshKey`, optional `modelLabel`.
+
+**Rendering** (from `buildModelViewPresentation`): headline + subline, then
+one block per model message in exact order, with a collapsed "Tools · N · Xk
+tokens" block placed right after the system-prompt block (providers render
+tool schemas into the prompt root after the system text; it renders first
+only when there is no system prompt) — sticky mini-header (label, provenance badge, token count), a
+left rail in the popover's category palette, preformatted text (no markdown,
+so the prompt reads as sent), tool calls with pretty-printed args, tool
+results clamped at 40 lines with "Show all", reasoning summaries, images. A
+banner marks the compaction summary row.
+
 ### `workspace-shell.tsx`
 
 Responsive shell (design/responsive-web-layout.md): below `md` it is a
@@ -342,6 +364,7 @@ Shared frame for the two workbench routes.
 **Props**:
 - `title`
 - `view` / `onViewChange`
+- optional `transcriptMode` / `onTranscriptModeChange` - forwarded to the top bar's Chat | Model toggle
 - optional `fileViewLabel`
 - `onToggleThreads`
 - `status`
@@ -502,6 +525,9 @@ Header bar with workspace title and view toggle.
   title's natural left edge is *measured* from the DOM (it depends on the
   responsive padding/gap and whether the hamburger is rendered), never
   hardcoded, and the title only shifts right, never left of its natural spot
+- Chat | Model transcript-mode toggle (rendered when `transcriptMode` /
+  `onTranscriptModeChange` are provided): a two-segment control left of the
+  view tabs; `model` shows `model-context-view.tsx` in the chat pane
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available

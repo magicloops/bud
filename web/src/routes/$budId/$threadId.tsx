@@ -13,6 +13,7 @@ import { useIsMobile } from '@/lib/use-viewport'
 import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
 import { useState, useCallback, useMemo, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import { ModelContextView } from '@/components/workbench/model-context-view'
 import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
@@ -65,7 +66,7 @@ import type {
 } from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
 import { getToolName } from '@/lib/agent-message-metadata'
-import type { ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
+import type { TranscriptMode, ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -142,6 +143,11 @@ function ThreadView() {
   const isMobile = useIsMobile()
   const { width: chatPaneWidth, setFraction: setChatPaneFraction } = useChatPaneWidth()
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
+  // Chat transcript vs the exact model context; session-only, reset per thread.
+  const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>('chat')
+  useEffect(() => {
+    setTranscriptMode('chat')
+  }, [threadId])
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     resolveInitialViewMode(
       typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
@@ -970,6 +976,8 @@ function ThreadView() {
       threadsOpen={threadPanelOpen}
       alignToPaneRef={chatPaneRef}
       fileViewLabel={activeFileEntry ? 'File' : null}
+      transcriptMode={transcriptMode}
+      onTranscriptModeChange={setTranscriptMode}
       leftPane={(
         <div
           ref={chatPaneRef}
@@ -985,6 +993,14 @@ function ThreadView() {
             } as CSSProperties
           }
         >
+          {transcriptMode === 'model' ? (
+            <ModelContextView
+              threadId={threadId}
+              // Refetch when a turn ends or a compaction lands.
+              refreshKey={`${liveTurnId === null ? 'idle' : 'active'}:${contextCompactionNotices.length}`}
+              modelLabel={models.find((model) => model.id === contextBudget?.model)?.display_name ?? null}
+            />
+          ) : (
           <ChatTimeline
             messages={messages}
             notices={contextCompactionNotices}
@@ -1001,6 +1017,7 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
+          )}
           {viewMode !== 'none' && (
             <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
           )}
@@ -1093,6 +1110,7 @@ function ThreadView() {
           onReasoningChange={handleReasoningChange}
           environment={agentEnvironment}
           contextBudget={contextBudget}
+          onViewModelContext={() => setTranscriptMode('model')}
           alignToPaneRef={chatPaneRef}
           autoFocusKey={`${threadId}:${viewMode}`}
         />

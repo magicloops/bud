@@ -96,6 +96,8 @@ type CommandComposerProps = {
   disabledReason?: string | null
   environment?: ApiAgentEnvironment | null
   contextBudget?: ApiContextBudget | null
+  /** Switches the transcript to the Model view (popover link). */
+  onViewModelContext?: () => void
   /** Chat pane to align with: composer content indents to the transcript
    *  column's left edge and the pinned controls right-anchor to the
    *  column's text right edge (the composer spans the full workspace
@@ -122,6 +124,7 @@ export function CommandComposer({
   disabledReason = null,
   environment = null,
   contextBudget,
+  onViewModelContext,
   alignToPaneRef,
   autoFocusKey = null,
 }: CommandComposerProps) {
@@ -367,6 +370,7 @@ export function CommandComposer({
           <ContextSendButton
             contextBudget={contextBudget}
             modelLabel={models.find((model) => model.id === contextBudget?.model)?.display_name ?? null}
+            onViewModelContext={onViewModelContext}
             disabled={stopMode ? false : inputDisabled}
             dispatching={status === 'dispatching'}
             stopMode={stopMode}

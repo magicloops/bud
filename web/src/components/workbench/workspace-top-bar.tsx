@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils'
 
 /** `none` = viewer collapsed (desktop only): chat fills the workspace and no tab is active. */
 export type ViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'none'
+/** What the chat pane renders: the transcript, or the exact model context. */
+export type TranscriptMode = 'chat' | 'model'
 export type WorkbenchStatus =
   | 'idle'
   | 'dispatching'
@@ -31,6 +33,9 @@ type WorkspaceTopBarProps = {
    *  uses); when the column starts left of the title's natural position
    *  the title simply stays put. */
   alignToPaneRef?: RefObject<HTMLDivElement | null>
+  /** When provided, renders the Chat | Model transcript-mode toggle. */
+  transcriptMode?: TranscriptMode
+  onTranscriptModeChange?: (mode: TranscriptMode) => void
 }
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
@@ -44,6 +49,8 @@ export function WorkspaceTopBar({
   fileViewLabel = null,
   showChatTab = false,
   alignToPaneRef,
+  transcriptMode,
+  onTranscriptModeChange,
 }: WorkspaceTopBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null)
   const titleBlockRef = useRef<HTMLDivElement | null>(null)
@@ -97,6 +104,32 @@ export function WorkspaceTopBar({
           </div>
         </div>
       <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
+        {transcriptMode && onTranscriptModeChange && (
+          <div
+            role="group"
+            aria-label="Transcript mode"
+            className="mr-1 flex overflow-hidden rounded-lg border-2 border-black bg-card font-mono text-[11px] font-semibold uppercase tracking-wide"
+            style={{ boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
+          >
+            {(['chat', 'model'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={transcriptMode === mode}
+                onClick={() => onTranscriptModeChange(mode)}
+                title={mode === 'chat' ? 'Chat transcript' : 'What the model sees'}
+                className={cn(
+                  'px-2.5 py-1 transition-colors',
+                  transcriptMode === mode
+                    ? 'bg-[var(--bud-accent-muted)] text-black dark:text-white'
+                    : 'text-muted-foreground hover:bg-[var(--bud-accent-soft)] hover:text-foreground',
+                )}
+              >
+                {mode === 'chat' ? 'Chat' : 'Model'}
+              </button>
+            ))}
+          </div>
+        )}
         {showChatTab && (
           <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4" />}>
             Chat

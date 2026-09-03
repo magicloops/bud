@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
+import { CHECKPOINT_SUMMARY_PREFIX } from "./context-budget.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import type { AgentContextCheckpoint } from "./context-checkpoint-repository.js";
-import { AGENT_SYSTEM_PROMPT } from "./system-prompt.js";
+import { AGENT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT_VERSION, resolveSystemPrompt } from "./system-prompt.js";
 
 function createLoader(checkpoint: AgentContextCheckpoint | null = null): AgentConversationLoader {
   return new AgentConversationLoader({
@@ -1031,4 +1032,86 @@ test("repairOrphanedToolCalls injects interrupted results for calls without outp
   assert.match(String(injected.content[0].content), /interrupted/);
   // The matched pair is untouched and message count grew by exactly one.
   assert.equal(repaired.messages.length, messages.length + 1);
+});
+
+test("resolveSystemPrompt returns the default file with a stable content-hash version", async () => {
+  const resolved = await resolveSystemPrompt({ threadId: "thread-1" });
+  assert.equal(resolved.text, AGENT_SYSTEM_PROMPT);
+  assert.equal(resolved.scope, "default");
+  assert.equal(resolved.version, AGENT_SYSTEM_PROMPT_VERSION);
+  assert.match(resolved.version, /^sha256:[0-9a-f]{16}$/);
+});
+
+test("loadWithDiagnostics returns provenance parallel to the model-visible messages", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            async orderBy() {
+              return [
+                { messageId: "m-1", clientId: "c-1", role: "user", content: "List the files", metadata: null },
+                {
+                  messageId: "m-2",
+                  clientId: "c-2",
+                  role: "tool",
+                  content: JSON.stringify({ tool: "terminal.send", call_id: "call_1", text: "ls" }),
+                  metadata: null,
+                },
+                { messageId: "m-3", clientId: "c-3", role: "assistant", content: "Done.", metadata: null },
+              ];
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const checkpoint = {
+    checkpointId: "chk-1",
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    compactedThroughMessageId: "m-0",
+    compactedThroughMessageCreatedAt: new Date("2026-08-31T00:00:00.000Z"),
+    compactedThroughLlmCallId: null,
+    replacementHistory: [
+      {
+        role: "user",
+        content: [{ type: "text", text: `${CHECKPOINT_SUMMARY_PREFIX}\n\nEarlier work.` }],
+      },
+      { role: "user", content: [{ type: "text", text: "Please continue." }] },
+    ],
+  } as unknown as AgentContextCheckpoint;
+
+  const loaded = await createLoader(checkpoint).loadWithDiagnostics("thread-1");
+
+  assert.equal(loaded.sources.length, loaded.messages.length);
+  assert.deepEqual(loaded.sources, [
+    { kind: "system_prompt", scope: "default", version: AGENT_SYSTEM_PROMPT_VERSION },
+    { kind: "checkpoint_summary", checkpoint_id: "chk-1" },
+    { kind: "checkpoint_history", checkpoint_id: "chk-1" },
+    { kind: "message", message_id: "m-1", client_id: "c-1", role: "user" },
+    // One tool row replays as a tool_use assistant message plus a tool_result
+    // user message; both carry the row's provenance.
+    { kind: "message", message_id: "m-2", client_id: "c-2", role: "tool" },
+    { kind: "message", message_id: "m-2", client_id: "c-2", role: "tool" },
+    { kind: "message", message_id: "m-3", client_id: "c-3", role: "assistant" },
+  ]);
+  assert.equal(loaded.messages[0]?.role, "system");
+  assert.equal(loaded.messages[4]?.role, "assistant");
+  assert.equal(loaded.messages[5]?.role, "user");
+});
+
+test("repairOrphanedToolCalls tags injected results in the provenance side-channel", async () => {
+  const { repairOrphanedToolCalls } = await import("./conversation-loader.js");
+  const messages = [
+    { role: "assistant", content: [{ type: "tool_use", id: "call_x", name: "terminal_send", input: {} }] },
+  ];
+  const repaired = repairOrphanedToolCalls(messages as never, [{ kind: "ledger", llm_call_id: "llm-9" }]);
+  assert.equal(repaired.injectedResults, 1);
+  assert.deepEqual(repaired.sources, [{ kind: "ledger", llm_call_id: "llm-9" }, { kind: "repair" }]);
+  assert.equal(repaired.messages.length, 2);
 });

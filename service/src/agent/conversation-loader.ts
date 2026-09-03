@@ -33,10 +33,12 @@ import {
   getLatestCompletedContextCheckpoint,
   type AgentContextCheckpoint,
 } from "./context-checkpoint-repository.js";
-import { AGENT_SYSTEM_PROMPT } from "./system-prompt.js";
+import { CHECKPOINT_SUMMARY_PREFIX } from "./context-budget.js";
+import { resolveSystemPrompt, type SystemPromptScope } from "./system-prompt.js";
 
 type StoredMessageRow = {
   messageId: string;
+  clientId: string;
   role: string;
   content: string;
   metadata: unknown;
@@ -53,8 +55,23 @@ type ConversationCheckpointRepository = {
   getLatestCompletedCheckpoint(threadId: string): Promise<AgentContextCheckpoint | null>;
 };
 
+/**
+ * Where each model-visible message came from. Parallel to
+ * `LoadedConversation.messages`; the messages themselves are unchanged by
+ * this side-channel (design/full-transcript-mode.md, "model view").
+ */
+export type MessageSource =
+  | { kind: "system_prompt"; scope: SystemPromptScope; version: string }
+  | { kind: "runtime_instruction" }
+  | { kind: "checkpoint_summary"; checkpoint_id: string }
+  | { kind: "checkpoint_history"; checkpoint_id: string }
+  | { kind: "message"; message_id: string; client_id: string; role: string }
+  | { kind: "ledger"; llm_call_id: string }
+  | { kind: "repair" };
+
 export type LoadedConversation = {
   messages: CanonicalMessage[];
+  sources: MessageSource[];
   reconstruction: LlmReconstructionDiagnostics;
 };
 
@@ -101,24 +118,40 @@ export class AgentConversationLoader {
     options: ConversationLoadOptions | undefined,
     includeDiagnostics: boolean,
   ): Promise<LoadedConversation> {
-    const messages: CanonicalMessage[] = [
-      createCanonicalTextMessage("system", AGENT_SYSTEM_PROMPT),
-    ];
+    const messages: CanonicalMessage[] = [];
+    const sources: MessageSource[] = [];
+    const emit = (message: CanonicalMessage, source: MessageSource) => {
+      messages.push(message);
+      sources.push(source);
+    };
+
+    const systemPrompt = await resolveSystemPrompt({ threadId });
+    emit(createCanonicalTextMessage("system", systemPrompt.text), {
+      kind: "system_prompt",
+      scope: systemPrompt.scope,
+      version: systemPrompt.version,
+    });
 
     const checkpoint = await this.checkpointRepository.getLatestCompletedCheckpoint(threadId);
     const replacementHistory = checkpoint
       ? checkpoint.replacementHistory.filter((message) => message.role !== "system")
       : [];
-    messages.push(...replacementHistory);
+    for (const message of replacementHistory) {
+      emit(message, {
+        kind: isCheckpointSummaryMessage(message) ? "checkpoint_summary" : "checkpoint_history",
+        checkpoint_id: checkpoint!.checkpointId,
+      });
+    }
 
     const rows = await this.loadStoredRows(threadId, checkpoint);
 
     if (!options?.provider) {
       for (const row of rows) {
-        this.appendStoredMessage(messages, row, { toolUseFromProviderLedger: false });
+        this.appendStoredMessage(emit, row, { toolUseFromProviderLedger: false });
       }
       return {
         messages,
+        sources,
         reconstruction: buildReconstructionDiagnostics({
           targetProvider: null,
           rows,
@@ -158,7 +191,10 @@ export class AgentConversationLoader {
     let canonicalFallbackMessageCount = 0;
     for (const item of timeline) {
       if (item.type === "ledger") {
-        messages.push(createCanonicalAssistantMessageFromLedger(item.ledger.content));
+        emit(createCanonicalAssistantMessageFromLedger(item.ledger.content), {
+          kind: "ledger",
+          llm_call_id: item.ledger.llmCallId,
+        });
         continue;
       }
 
@@ -173,12 +209,12 @@ export class AgentConversationLoader {
         canonicalFallbackMessageCount += 1;
       }
 
-      this.appendStoredMessage(messages, item.row, {
+      this.appendStoredMessage(emit, item.row, {
         toolUseFromProviderLedger,
       });
     }
 
-    const repaired = repairOrphanedToolCalls(messages);
+    const repaired = repairOrphanedToolCalls(messages, sources);
     if (repaired.injectedResults > 0) {
       console.warn(
         "[conversation_loader] repaired orphaned tool calls in replay (crashed turn left function calls without outputs)",
@@ -188,6 +224,7 @@ export class AgentConversationLoader {
 
     return {
       messages: repaired.messages,
+      sources: repaired.sources ?? sources,
       reconstruction: buildReconstructionDiagnostics({
         targetProvider: options.provider,
         targetModel: options.targetModel,
@@ -220,6 +257,7 @@ export class AgentConversationLoader {
     return db
       .select({
         messageId: messageTable.messageId,
+        clientId: messageTable.clientId,
         role: messageTable.role,
         content: messageTable.content,
         metadata: messageTable.metadata,
@@ -231,14 +269,27 @@ export class AgentConversationLoader {
   }
 
   private appendStoredMessage(
-    messages: CanonicalMessage[],
+    emit: (message: CanonicalMessage, source: MessageSource) => void,
     row: {
+      messageId: string;
+      clientId: string;
       role: string;
       content: string;
       metadata: unknown;
     },
     options: { toolUseFromProviderLedger: boolean },
   ): void {
+    const source: MessageSource = {
+      kind: "message",
+      message_id: row.messageId,
+      client_id: row.clientId,
+      role: row.role,
+    };
+    const messages = {
+      push(message: CanonicalMessage) {
+        emit(message, source);
+      },
+    };
     if (row.role === "reasoning") {
       return;
     }
@@ -732,8 +783,12 @@ function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | und
  * replay stays valid and the model sees what actually happened.
  * Pure and provider-agnostic (canonical layer).
  */
-export function repairOrphanedToolCalls(messages: CanonicalMessage[]): {
+export function repairOrphanedToolCalls(
+  messages: CanonicalMessage[],
+  sources?: MessageSource[],
+): {
   messages: CanonicalMessage[];
+  sources?: MessageSource[];
   injectedResults: number;
 } {
   const blocksOf = (message: CanonicalMessage) =>
@@ -750,15 +805,18 @@ export function repairOrphanedToolCalls(messages: CanonicalMessage[]): {
   }
 
   const out: CanonicalMessage[] = [];
+  const outSources: MessageSource[] | undefined = sources ? [] : undefined;
   let injectedResults = 0;
-  for (const message of messages) {
+  messages.forEach((message, index) => {
     out.push(message);
-    if (message.role !== "assistant") continue;
+    outSources?.push(sources![index]!);
+    if (message.role !== "assistant") return;
     const orphaned = blocksOf(message).filter(
       (block) => block.type === "tool_use" && !resultIds.has(block.id)
     );
-    if (orphaned.length === 0) continue;
+    if (orphaned.length === 0) return;
     injectedResults += orphaned.length;
+    outSources?.push({ kind: "repair" });
     out.push({
       role: "user",
       content: orphaned.map((block) => ({
@@ -771,7 +829,14 @@ export function repairOrphanedToolCalls(messages: CanonicalMessage[]): {
         }),
       })),
     });
-  }
+  });
 
-  return { messages: out, injectedResults };
+  return { messages: out, ...(outSources ? { sources: outSources } : {}), injectedResults };
+}
+
+function isCheckpointSummaryMessage(message: CanonicalMessage): boolean {
+  const text = typeof message.content === "string"
+    ? message.content
+    : message.content.find((block) => block.type === "text")?.text ?? "";
+  return text.trimStart().startsWith(CHECKPOINT_SUMMARY_PREFIX);
 }

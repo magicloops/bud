@@ -90,6 +90,24 @@ Focused route-level integration coverage for structured question-response submis
 - malformed stored question requests fail closed with a service-side contract error
 - validation-failure logs include safe diagnostic shape without raw text answer values
 
+### `model-context.ts`
+
+Read-only "model view" route: `GET /api/threads/:threadId/model-context`
+(design/full-transcript-mode.md approach B; plan/model-view-transcript-mode.md).
+
+**Behavior**:
+- authorizes the owning thread first (`401` unauthenticated, `404` non-owner) before any load
+- resolves the thread's effective model/reasoning exactly like the agent loop, runs `AgentConversationLoader.loadWithDiagnostics` for that provider, then inserts the Bud environment's runtime instructions with `applyRuntimeInstructionsWithSources`
+- serializes canonical messages to snake_case blocks with per-message provenance (`source`) and per-message token estimates; adds the environment's tool list, tool-schema tokens, compaction boundary, the system prompt `scope`/`version`, `turn_active`, and the same `context_budget` snapshot `/agent/state` returns
+- `buildModelContextDocument` / `serializeCanonicalBlock` are pure and unit-tested; the handler is thin
+
+### `model-context.test.ts`
+
+**Current Coverage**:
+- route registration, `401` unauthenticated, `404` for signed-in non-owners with no conversation load
+- document serialization: provenance kinds in order, string content normalized to a text block, `assistantPhase` → `assistant_phase`, nested tool results, redacted reasoning payloads dropped, per-message tokens summing (with tool schemas) to `estimated_input_tokens`
+- misaligned provenance is rejected
+
 ### `files.ts`
 
 Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
