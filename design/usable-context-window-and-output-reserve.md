@@ -1,6 +1,8 @@
 # Design: Usable Context Window And Output Reserve
 
-Status: Implemented for phases 6-8
+Status: Implemented for phases 6-8 — **formula corrected by
+[context-window-output-reserve-correction.md](./context-window-output-reserve-correction.md)**
+(the output reserve must apply against the hard window, not the usable cap)
 
 Audience: Backend, web/mobile clients, LLM-provider owners
 

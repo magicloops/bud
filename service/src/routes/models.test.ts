@@ -227,7 +227,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   assert.ok(luna);
   assert.equal(luna.is_default, true);
   assert.equal(luna.capabilities.usable_context_window_tokens, 272_000);
-  assert.equal(luna.capabilities.usable_input_window_tokens, 144_000);
+  assert.equal(luna.capabilities.usable_input_window_tokens, 272_000);
   assert.deepEqual(luna.reasoning.levels.map((level) => level.value), [
     "none",
     "low",
@@ -242,7 +242,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   assert.ok(gpt55);
   assert.equal(gpt55.is_default, false);
   assert.equal(gpt55.capabilities.context_window_tokens, 1_050_000);
-  assert.equal(gpt55.capabilities.usable_context_window_tokens, 400_000);
+  assert.equal(gpt55.capabilities.usable_context_window_tokens, 272_000);
   assert.equal(gpt55.capabilities.reserved_output_tokens, 128_000);
   assert.equal(gpt55.capabilities.usable_input_window_tokens, 272_000);
   assert.equal(gpt55.capabilities.max_output_tokens, 128_000);

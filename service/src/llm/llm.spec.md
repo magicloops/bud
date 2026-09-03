@@ -181,14 +181,16 @@ Central product model catalog and reasoning-control metadata.
   use before output reservation
 - `reservedOutputTokens` optionally overrides the default output reserve, which
   otherwise equals `maxOutputTokens`
-- GPT-5.5 currently declares `contextWindowTokens: 1_050_000`,
-  `usableContextWindowTokens: 400_000`, and `reservedOutputTokens: 128_000`,
-  producing a 272,000 token usable input window before the auto-compaction ratio
-- The GPT-5.6 family (Sol/Terra/Luna) declares `contextWindowTokens: 1_050_000`
-  with `usableContextWindowTokens: 272_000` — capped at OpenAI's pricing knee
-  (prompts above 272K input bill 2x input / 1.5x output for the whole request)
-  — and `reservedOutputTokens: 128_000`, producing a 144,000 token usable
-  input window before the auto-compaction ratio
+- The usable input window is `min(usableContextWindowTokens,
+  contextWindowTokens - reservedOutputTokens)`: the output reserve protects the
+  hard window only, and the usable cap applies to input directly
+  (design/context-window-output-reserve-correction.md)
+- GPT-5.5 and the GPT-5.6 family (Sol/Terra/Luna) declare
+  `contextWindowTokens: 1_050_000` with `usableContextWindowTokens: 272_000` —
+  OpenAI's pricing knee (prompts above 272K input bill 2x input / 1.5x output
+  for the whole request) and Codex's active window — and
+  `reservedOutputTokens: 128_000`, producing a 272,000 token usable input
+  window before the auto-compaction ratio (threshold 244,800 at 0.9)
 - ds4 DeepSeek V4 declares `contextWindowTokens: 100_000`,
   `maxOutputTokens: 384_000`, and `reservedOutputTokens: 20_000`, producing an
   80,000 token usable input window before the auto-compaction ratio

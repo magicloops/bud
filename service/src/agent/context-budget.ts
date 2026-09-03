@@ -8,7 +8,10 @@ import {
   type ResolvedModelReasoning,
 } from "../llm/index.js";
 
-const DEFAULT_AUTO_COMPACTION_RATIO = 0.95;
+// Codex parity (90% of the active window). Also the clamp: our trigger is a
+// chars/4 estimate of the next request, and code tokenizes closer to 3
+// chars/token, so the 10% margin absorbs estimate error.
+const DEFAULT_AUTO_COMPACTION_RATIO = 0.9;
 const MESSAGE_TOKEN_OVERHEAD = 8;
 const CONTENT_BLOCK_TOKEN_OVERHEAD = 4;
 const TOOL_SCHEMA_TOKEN_OVERHEAD = 8;
@@ -77,8 +80,15 @@ export function resolveModelContextPolicy(
     };
   }
 
-  const usableInputWindowTokens = usableContextWindowTokens - reservedOutputTokens;
-  if (usableInputWindowTokens <= 0) {
+  // The output reserve protects the HARD window only (input + output must fit
+  // the provider's advertised context). The usable cap (e.g. the 272K
+  // pricing knee on GPT-5.6) is a limit on input usage in its own right, so
+  // it is applied directly, never reduced by the reserve — subtracting the
+  // reserve from it halved the GPT-5.6 budget to 144K
+  // (design/context-window-output-reserve-correction.md).
+  const hardInputWindowTokens = contextWindowTokens - reservedOutputTokens;
+  const usableInputWindowTokens = Math.min(usableContextWindowTokens, hardInputWindowTokens);
+  if (hardInputWindowTokens <= 0 || usableInputWindowTokens <= 0) {
     return {
       contextWindowTokens,
       usableContextWindowTokens,

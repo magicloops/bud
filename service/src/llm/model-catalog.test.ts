@@ -81,7 +81,7 @@ test("model catalog captures GPT-5.5 usable context policy", () => {
   assert.ok(gpt55);
 
   assert.equal(gpt55.capabilities.contextWindowTokens, 1_050_000);
-  assert.equal(gpt55.capabilities.usableContextWindowTokens, 400_000);
+  assert.equal(gpt55.capabilities.usableContextWindowTokens, 272_000);
   assert.equal(gpt55.capabilities.maxOutputTokens, 128_000);
   assert.equal(gpt55.capabilities.reservedOutputTokens, 128_000);
 });

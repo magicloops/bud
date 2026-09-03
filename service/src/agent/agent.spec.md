@@ -641,11 +641,14 @@ Token-estimation helper for automatic compaction and browser-visible context bud
 - estimate canonical message tokens using a conservative character-based fallback
 - estimate canonical tool-schema tokens from serialized `CanonicalTool[]` definitions
 - resolve the selected model's catalog hard context window, Bud usable context
-  window, output reserve, and usable input window
+  window, output reserve, and usable input window as
+  `min(usable, hard - reserve)` — the reserve binds against the hard window
+  only; a usable cap (the 272K pricing knee) is an input cap in its own right
+  (design/context-window-output-reserve-correction.md)
 - default `reservedOutputTokens` to `maxOutputTokens` unless a catalog entry
   overrides it
 - apply automatic-compaction enablement and ratio configuration, clamped to
-  `0.95`
+  `0.9` (Codex parity; the margin also absorbs chars/4 estimate error)
 - expose request-kind budget semantics so normal agent turns use the proactive
   threshold while compaction-summary calls can use the larger usable input window
 - decide whether a candidate provider request should compact before invocation
@@ -656,10 +659,12 @@ Direct tests for usable context policy and automatic-compaction threshold math.
 
 **Current Coverage**:
 - default usable-context/output-reserve derivation from model catalog entries
-- GPT-5.5 usable input threshold at the `0.95` clamp
+- GPT-5.5 and GPT-5.6 Sol usable input window (272,000) and threshold (244,800) at the `0.9` clamp
+- the reserve still binding when the usable window is the hard window (gpt-5.4-mini → 272,000)
+- an invariant over every catalog entry: `usable_input + reserve <= hard` and `usable_input <= usable`
 - lower `AGENT_AUTO_COMPACTION_RATIO` overrides, including the 40% test path
 - compaction-summary requests using the larger usable input window
-- invalid context policy detection when output reserve exceeds usable window
+- invalid context policy detection when the output reserve exceeds the hard window (a usable cap below the reserve is a valid small input window)
 - serialized canonical tool-schema estimates used by normal agent-turn budgets
 
 ### `context-budget-snapshot.ts`
@@ -858,7 +863,7 @@ From `../config.js`:
 - `config.agentMaxOutputTokens` - Global upper bound for response tokens before selected-model capability caps are applied (default: 128000)
 - `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
 - `config.agentAutoCompactionEnabled` - Enables automatic context compaction (default: enabled)
-- `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.95`
+- `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.9`
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
 - `config.agentContextDriftDebug` - Enable local-only model context drift artifact capture under `.bud-debug/`
