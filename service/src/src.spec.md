@@ -176,7 +176,7 @@ Environment-based configuration with defaults.
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Global upper bound for response tokens before selected-model capability caps are applied |
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
-| `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.95 |
+| `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.9 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.9 (Codex parity) |
 | `agentContextDriftDebug` | `AGENT_CONTEXT_DRIFT_DEBUG` | false | Enable local-only model context drift snapshots and diffs under `.bud-debug/` |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |

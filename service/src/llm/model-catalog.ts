@@ -210,7 +210,9 @@ export const MODEL_CATALOG = [
       contextWindowTokens: 1_050_000,
       maxOutputTokens: 128_000,
       // Usable window capped at the 272K pricing knee (prompts above it
-      // bill 2x input / 1.5x output for the whole request).
+      // bill 2x input / 1.5x output for the whole request). This caps INPUT
+      // directly; the output reserve is applied against the hard window, so
+      // the usable input window is the full 272K (Codex's active window).
       usableContextWindowTokens: 272_000,
       reservedOutputTokens: 128_000,
     },
@@ -357,7 +359,10 @@ export const MODEL_CATALOG = [
       structuredOutputs: true,
       contextWindowTokens: 1_050_000,
       maxOutputTokens: 128_000,
-      usableContextWindowTokens: 400_000,
+      // Same 272K input cap as the GPT-5.6 family. The earlier 400K value
+      // was chosen so that 400K - 128K landed on 272K under the old
+      // (incorrect) subtract-the-reserve formula.
+      usableContextWindowTokens: 272_000,
       reservedOutputTokens: 128_000,
     },
     reasoning: {

@@ -57,12 +57,12 @@ test("buildContextBudgetSnapshot exposes the same threshold as automatic compact
 
     assertAvailable(snapshot);
     assert.equal(snapshot.context_window_tokens, 1_050_000);
-    assert.equal(snapshot.usable_context_window_tokens, 400_000);
+    assert.equal(snapshot.usable_context_window_tokens, 272_000);
     assert.equal(snapshot.reserved_output_tokens, 128_000);
     assert.equal(snapshot.usable_input_window_tokens, 272_000);
     assert.equal(snapshot.compaction_threshold_tokens, budget.thresholdTokens);
     assert.equal(snapshot.effective_budget_tokens, budget.effectiveInputBudgetTokens);
-    assert.equal(snapshot.compaction_threshold_tokens, 258_400);
+    assert.equal(snapshot.compaction_threshold_tokens, 244_800);
     assert.equal(snapshot.tool_schema_tokens, AGENT_TOOL_SCHEMA_TOKENS);
     assert.equal(snapshot.estimated_input_tokens, snapshot.message_estimated_tokens + AGENT_TOOL_SCHEMA_TOKENS);
   } finally {
