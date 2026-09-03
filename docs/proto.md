@@ -663,6 +663,40 @@ Rejected file opens and resolves use the same frame-family shape with
   `ask_user_questions_request_v1` payload, including `request_id`, optional
   title/body labels, and skippable question definitions
 
+### 3.2.1 Model Context Document
+
+- URL: `GET /api/threads/:thread_id/model-context`
+- Read-only, owner-scoped (`404` for other users' threads). Returns the exact canonical conversation the next provider request for this thread would carry, built by the same conversation loader the agent uses (system prompt, checkpoint replacement history after a compaction, transcript rows, same-provider ledger replay, orphan-call repair) plus the request-time runtime instructions for the Bud's current environment.
+- Shape:
+
+```json
+{
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "generated_at": "2026-09-03T10:00:00.000Z",
+  "turn_active": false,
+  "compaction": { "checkpoint_id": "01CHK...", "compacted_through_message_id": "..." },
+  "system_prompt": { "scope": "default", "version": "sha256:1a2b3c4d5e6f7a8b" },
+  "tools": [{ "name": "terminal_send", "description": "...", "parameters": {} }],
+  "tool_schema_tokens": 1600,
+  "messages": [
+    {
+      "index": 0,
+      "role": "system",
+      "source": { "kind": "system_prompt", "scope": "default", "version": "sha256:..." },
+      "content": [{ "type": "text", "text": "..." }],
+      "estimated_tokens": 7900
+    }
+  ],
+  "estimated_input_tokens": 108000,
+  "context_budget": { "status": "available" }
+}
+```
+
+- `source.kind` is one of `system_prompt` (`scope`, `version`), `runtime_instruction`, `checkpoint_summary` / `checkpoint_history` (`checkpoint_id`), `message` (`message_id`, `client_id`, `role`), `ledger` (`llm_call_id`), or `repair` (a synthesized tool result for an orphaned call). `system_prompt.scope` is `default` today; Bud/thread prompt overrides will add scopes without changing the shape.
+- Content blocks are the canonical shapes in snake_case: `text` (optional `assistant_phase`), `image` (`media_type`, `data`), `tool_use` (`id`, `name`, `input`), `tool_result` (`tool_use_id`, `content`, optional `is_error`), `reasoning` (`text`), `reasoning_redacted`.
+- `estimated_tokens` uses the same estimator as `context_budget`; the per-message sum plus `tool_schema_tokens` equals `estimated_input_tokens`. Content is returned in full (no clamping); clients fetch on demand and refetch when a turn ends or a compaction lands. The document never includes provider secrets or raw provider request bodies.
+
 ### 3.3 Agent SSE Stream
 
 - URL: `GET /api/threads/:thread_id/agent/stream`

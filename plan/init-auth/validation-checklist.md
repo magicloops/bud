@@ -60,6 +60,7 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 
 - [ ] `GET /api/buds` returns only the signed-in user’s Buds.
 - [ ] `PATCH /api/buds/:budId` (display name / accent color) returns `404` for another user’s Bud and `401` when logged out.
+- [ ] `GET /api/threads/:threadId/model-context` returns `404` for another user’s thread and `401` when logged out, and never loads the conversation first.
 - [ ] `GET /api/threads` returns only the signed-in user’s threads.
 - [ ] Direct navigation to another user’s `/$budId/$threadId` fails cleanly.
 - [ ] Resource-scoped unauthorized access returns `404` rather than leaking existence.

@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from 'react'
-import { WorkspaceTopBar, type ViewMode } from '@/components/workbench/workspace-top-bar'
+import { WorkspaceTopBar, type ViewMode, type TranscriptMode } from '@/components/workbench/workspace-top-bar'
 
 type WorkspaceShellProps = {
   title: string
@@ -16,6 +16,9 @@ type WorkspaceShellProps = {
   isMobile?: boolean
   /** Forwarded to the top bar so the title aligns with the chat column. */
   alignToPaneRef?: RefObject<HTMLDivElement | null>
+  /** Forwarded to the top bar: Chat | Model transcript toggle. */
+  transcriptMode?: TranscriptMode
+  onTranscriptModeChange?: (mode: TranscriptMode) => void
   leftPane: ReactNode
   rightPane: ReactNode
   composer: ReactNode
@@ -31,6 +34,8 @@ export function WorkspaceShell({
   fileViewLabel = null,
   isMobile = false,
   alignToPaneRef,
+  transcriptMode,
+  onTranscriptModeChange,
   leftPane,
   rightPane,
   composer,
@@ -47,6 +52,8 @@ export function WorkspaceShell({
         fileViewLabel={fileViewLabel}
         showChatTab={isMobile}
         alignToPaneRef={alignToPaneRef}
+        transcriptMode={transcriptMode}
+        onTranscriptModeChange={onTranscriptModeChange}
       />
       <div className="flex flex-1 overflow-hidden">
         {leftPane}

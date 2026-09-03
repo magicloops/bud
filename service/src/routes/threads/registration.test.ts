@@ -44,6 +44,7 @@ test("split thread route modules register the expected unique endpoint set", asy
     "GET /api/threads",
     "GET /api/threads/:threadId",
     "GET /api/threads/:threadId/agent/state",
+    "GET /api/threads/:threadId/model-context",
     "GET /api/threads/:threadId/agent/stream",
     "GET /api/threads/:threadId/messages",
     "GET /api/threads/:threadId/terminal",

@@ -6,6 +6,7 @@ import { registerThreadAgentRoutes } from "./threads/agent.js";
 import { registerThreadCoreRoutes } from "./threads/core.js";
 import { registerThreadFileRoutes } from "./threads/files.js";
 import { registerThreadMessageRoutes } from "./threads/messages.js";
+import { registerThreadModelContextRoutes } from "./threads/model-context.js";
 export { registerThreadTerminalRoutes } from "./threads/terminal.js";
 
 export async function registerThreadRoutes(
@@ -18,5 +19,6 @@ export async function registerThreadRoutes(
   await registerThreadCoreRoutes(server, terminalSessionManager);
   await registerThreadMessageRoutes(server, agentService, threadTitleService);
   await registerThreadAgentRoutes(server, agentService, agentRuntime);
+  await registerThreadModelContextRoutes(server, agentService, agentRuntime);
   await registerThreadFileRoutes(server);
 }

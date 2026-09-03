@@ -8,6 +8,19 @@ export type ContextBudgetMeterTone = 'normal' | 'elevated' | 'near' | 'over' | '
 // accent). Minor categories share gray.
 const [PINK, ORANGE, CYAN, PURPLE, GREEN] = DEFAULT_AVATAR_COLORS as [string, string, string, string, string]
 
+/** Category → color, shared by the context popover and the model view. */
+export const CONTEXT_CATEGORY_COLORS = {
+  tool_output: CYAN,
+  messages: PINK,
+  system_prompt: PURPLE,
+  tool_calls: ORANGE,
+  reasoning: GREEN,
+  compaction_summary: BUD_ACCENT_GRAY,
+  tool_schemas: BUD_ACCENT_GRAY,
+  images: BUD_ACCENT_GRAY,
+  other: BUD_ACCENT_GRAY,
+} as const
+
 export type ContextBudgetMeterRow = {
   id: string
   label: string
@@ -51,14 +64,14 @@ type RowGroup = {
 
 // Display groups over the API categories. Order only matters for ties.
 const ROW_GROUPS: RowGroup[] = [
-  { id: 'tool_output', label: 'Tool output', kinds: ['tool_output'], color: CYAN },
-  { id: 'messages', label: 'Messages', kinds: ['user_messages', 'assistant_text'], color: PINK },
-  { id: 'system_prompt', label: 'System prompt', kinds: ['system_prompt', 'runtime_instructions'], color: PURPLE },
-  { id: 'tool_calls', label: 'Tool calls', kinds: ['tool_calls'], color: ORANGE },
-  { id: 'reasoning', label: 'Reasoning', kinds: ['reasoning'], color: GREEN },
-  { id: 'compaction_summary', label: 'Compaction summary', kinds: ['compaction_summary'], color: BUD_ACCENT_GRAY },
-  { id: 'tool_schemas', label: 'Tool schemas', kinds: ['tool_schemas'], color: BUD_ACCENT_GRAY },
-  { id: 'images', label: 'Images', kinds: ['images'], color: BUD_ACCENT_GRAY },
+  { id: 'tool_output', label: 'Tool output', kinds: ['tool_output'], color: CONTEXT_CATEGORY_COLORS.tool_output },
+  { id: 'messages', label: 'Messages', kinds: ['user_messages', 'assistant_text'], color: CONTEXT_CATEGORY_COLORS.messages },
+  { id: 'system_prompt', label: 'System prompt', kinds: ['system_prompt', 'runtime_instructions'], color: CONTEXT_CATEGORY_COLORS.system_prompt },
+  { id: 'tool_calls', label: 'Tool calls', kinds: ['tool_calls'], color: CONTEXT_CATEGORY_COLORS.tool_calls },
+  { id: 'reasoning', label: 'Reasoning', kinds: ['reasoning'], color: CONTEXT_CATEGORY_COLORS.reasoning },
+  { id: 'compaction_summary', label: 'Compaction summary', kinds: ['compaction_summary'], color: CONTEXT_CATEGORY_COLORS.compaction_summary },
+  { id: 'tool_schemas', label: 'Tool schemas', kinds: ['tool_schemas'], color: CONTEXT_CATEGORY_COLORS.tool_schemas },
+  { id: 'images', label: 'Images', kinds: ['images'], color: CONTEXT_CATEGORY_COLORS.images },
 ]
 
 /** Rows below this share collapse into "Other" so the legend stays short. */
@@ -146,7 +159,7 @@ function buildRows(budget: Extract<ApiContextBudget, { status: 'available' }>): 
     rows.push(makeRow(group.id, group.label, tokens, share, group.color))
   }
   if (otherTokens > 0) {
-    rows.push(makeRow('other', 'Other', otherTokens, total > 0 ? otherTokens / total : 0, BUD_ACCENT_GRAY))
+    rows.push(makeRow('other', 'Other', otherTokens, total > 0 ? otherTokens / total : 0, CONTEXT_CATEGORY_COLORS.other))
   }
   rows.sort((a, b) => b.tokens - a.tokens)
   return rows

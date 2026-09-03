@@ -226,6 +226,7 @@ status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
+transcriptMode: 'chat' | 'model'  // session-only, reset on thread switch; 'model' swaps ChatTimeline for ModelContextView (what the model sees)
 terminalMenuOpen: boolean
 
 // Feature-hook state exposed to the route

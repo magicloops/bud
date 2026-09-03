@@ -233,6 +233,7 @@ Circular composer submit control with the context-budget ring and popover.
 - `disabled` - caller-owned form disable state
 - `dispatching` - whether to show the loading spinner instead of the send icon
 - optional `stopMode` / `onStop` - switch the control to a non-submit stop button for active agent turns
+- optional `onViewModelContext` - renders a "View what the model sees" link in the popover footer that closes it and switches the transcript to the Model view
 
 **Features**:
 - submits the composer form through a native circular `button type="submit"`;
@@ -326,6 +327,29 @@ Node-runner coverage for structured prompt response helpers.
 - answer payload construction for boolean, single-choice, multi-choice, text, and number questions
 - per-question skip and skip-all payload construction
 
+### `model-context-view.tsx`
+
+Read-only "what the model sees" rendering for the chat pane
+(plan/model-view-transcript-mode.md). Fetches
+`GET /api/threads/:id/model-context` on mount and whenever `refreshKey`
+changes (the thread route keys it on turn end + compaction count); shows a
+refresh button, a stale headline while a turn is active, and a friendly
+message when the service predates the endpoint (`404`).
+
+**Props**: `threadId`, `refreshKey`, optional `modelLabel`.
+
+**Rendering** (from `buildModelViewPresentation`): headline + subline, then
+one block per model message in exact order, with a collapsed "Tools · N · Xk
+tokens" block placed right after the system-prompt block (providers render
+tool schemas into the prompt root after the system text; it renders first
+only when there is no system prompt) — sticky mini-header (label, provenance badge, token count), a
+left rail in the popover's category palette; text and reasoning render
+through the transcript's `MarkdownContent` (local links inert), tool args
+as a JSON `CodeBlock`, tool results as a `CodeBlock` — pretty-printed JSON
+when the result parses as an object/array (`prettyJson`), plain code
+otherwise — clamped at 40 lines with "Show all"; images inline. A banner
+marks the compaction summary row.
+
 ### `workspace-shell.tsx`
 
 Responsive shell (design/responsive-web-layout.md): below `md` it is a
@@ -342,6 +366,7 @@ Shared frame for the two workbench routes.
 **Props**:
 - `title`
 - `view` / `onViewChange`
+- optional `transcriptMode` / `onTranscriptModeChange` - forwarded to the top bar's Model-view (unfold/fold) toggle
 - optional `fileViewLabel`
 - `onToggleThreads`
 - `status`
@@ -502,6 +527,17 @@ Header bar with workspace title and view toggle.
   title's natural left edge is *measured* from the DOM (it depends on the
   responsive padding/gap and whether the hamburger is rendered), never
   hardcoded, and the title only shifts right, never left of its natural spot
+- Model-view toggle (rendered when `transcriptMode` /
+  `onTranscriptModeChange` are provided): a square icon button styled like
+  the view tabs, left of them, with `aria-pressed` — `UnfoldVertical`
+  ("Show what the model sees") when in chat mode, `FoldVertical` ("Back to
+  chat") when pressed; pressed = `transcriptMode: 'model'`, which shows
+  `model-context-view.tsx` in the chat pane. It belongs to the chat column:
+  while a viewer is open (the pane's right edge sits well left of the tab
+  group, measured with a ResizeObserver on bar/pane/tabs) it is absolutely
+  anchored 12px inside the pane's right edge — the same inset as the pinned
+  send button — and when chat fills the workspace it renders inline with
+  the tabs
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available

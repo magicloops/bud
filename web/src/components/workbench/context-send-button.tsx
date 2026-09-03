@@ -17,6 +17,8 @@ type ContextSendButtonProps = {
   dispatching: boolean
   stopMode?: boolean
   onStop?: () => void | Promise<void>
+  /** Renders a "View what the model sees" link in the popover footer. */
+  onViewModelContext?: () => void
 }
 
 const contextRingColors = {
@@ -34,6 +36,7 @@ export function ContextSendButton({
   dispatching,
   stopMode = false,
   onStop,
+  onViewModelContext,
 }: ContextSendButtonProps) {
   const presentation = getContextBudgetMeterPresentation(contextBudget, { modelLabel })
   const ringProgress = getContextBudgetRingProgress(presentation)
@@ -185,6 +188,19 @@ export function ContextSendButton({
               <div key={`${index}-${line}`}>{line}</div>
             ))}
           </div>
+
+          {onViewModelContext && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onViewModelContext()
+              }}
+              className="text-[11px] font-semibold uppercase tracking-wide text-foreground underline-offset-2 hover:underline"
+            >
+              View what the model sees →
+            </button>
+          )}
 
           {config.showSystemMessages && presentation.diagnostics.length > 0 && (
             <details className={cn('text-muted-foreground')}>

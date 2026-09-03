@@ -1,14 +1,16 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   TRANSCRIPT_ROW_TEXT_PADDING_PX,
   useComposerColumnAlignment,
 } from '@/components/workbench/chat-pane-resize'
-import { FileText, Menu, MessageSquare, Monitor, TerminalIcon } from 'lucide-react'
+import { FileText, FoldVertical, Menu, MessageSquare, Monitor, TerminalIcon, UnfoldVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 /** `none` = viewer collapsed (desktop only): chat fills the workspace and no tab is active. */
 export type ViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'none'
+/** What the chat pane renders: the transcript, or the exact model context. */
+export type TranscriptMode = 'chat' | 'model'
 export type WorkbenchStatus =
   | 'idle'
   | 'dispatching'
@@ -31,9 +33,15 @@ type WorkspaceTopBarProps = {
    *  uses); when the column starts left of the title's natural position
    *  the title simply stays put. */
   alignToPaneRef?: RefObject<HTMLDivElement | null>
+  /** When provided, renders the Model-view toggle: unfold icon to expand into what the model sees, fold to return. */
+  transcriptMode?: TranscriptMode
+  onTranscriptModeChange?: (mode: TranscriptMode) => void
 }
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
+/** Inset of the model-view toggle from the chat pane's right edge while a
+ *  viewer is open — the same 12px the pinned send button keeps below it. */
+const CHAT_PANE_CONTROL_INSET_PX = 12
 
 export function WorkspaceTopBar({
   title,
@@ -44,6 +52,8 @@ export function WorkspaceTopBar({
   fileViewLabel = null,
   showChatTab = false,
   alignToPaneRef,
+  transcriptMode,
+  onTranscriptModeChange,
 }: WorkspaceTopBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null)
   const titleBlockRef = useRef<HTMLDivElement | null>(null)
@@ -68,10 +78,57 @@ export function WorkspaceTopBar({
   const titleOffset = alignment && titleNaturalLeft !== null
     ? Math.max(0, alignment.paddingLeft + TRANSCRIPT_ROW_TEXT_PADDING_PX - titleNaturalLeft)
     : 0
+
+  // The model-view toggle belongs to the chat column: while a viewer is open
+  // (the pane ends well before the view tabs) it is anchored to the pane's
+  // right edge; when chat fills the workspace it sits inline with the tabs.
+  const controlsRef = useRef<HTMLDivElement | null>(null)
+  const [toggleRight, setToggleRight] = useState<number | null>(null)
+  useEffect(() => {
+    const bar = barRef.current
+    const pane = alignToPaneRef?.current
+    const controls = controlsRef.current
+    if (!bar || !pane || !controls || typeof ResizeObserver === 'undefined') {
+      setToggleRight(null)
+      return
+    }
+    const measure = () => {
+      const barRect = bar.getBoundingClientRect()
+      const paneRect = pane.getBoundingClientRect()
+      if (paneRect.width <= 0) {
+        setToggleRight(null) // hidden pane (mobile non-chat view)
+        return
+      }
+      const paneInset = barRect.right - paneRect.right
+      const controlsWidth = controls.getBoundingClientRect().width
+      setToggleRight(paneInset > controlsWidth + 24 ? Math.round(paneInset + CHAT_PANE_CONTROL_INSET_PX) : null)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(bar)
+    observer.observe(pane)
+    observer.observe(controls)
+    measure()
+    return () => observer.disconnect()
+  }, [alignToPaneRef])
+
+  const modelViewToggle =
+    transcriptMode && onTranscriptModeChange ? (
+      <ViewToggleButton
+        active={transcriptMode === 'model'}
+        pressed
+        onClick={() => onTranscriptModeChange(transcriptMode === 'model' ? 'chat' : 'model')}
+        icon={
+          transcriptMode === 'model' ? <FoldVertical className="h-4 w-4" /> : <UnfoldVertical className="h-4 w-4" />
+        }
+      >
+        {transcriptMode === 'model' ? 'Back to chat' : 'Show what the model sees'}
+      </ViewToggleButton>
+    ) : null
+
   return (
     <div
       ref={barRef}
-      className="flex h-12 items-center justify-between gap-2 border-b-2 border-black bg-secondary/40 px-3 md:px-4"
+      className="relative flex h-12 items-center justify-between gap-2 border-b-2 border-black bg-secondary/40 px-3 md:px-4"
     >
         <div className="flex min-w-0 items-center gap-2 md:gap-4">
           {!threadsOpen && (
@@ -96,7 +153,13 @@ export function WorkspaceTopBar({
             </p>
           </div>
         </div>
-      <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
+      {modelViewToggle && toggleRight !== null && (
+        <div className="absolute top-1/2 -translate-y-1/2" style={{ right: toggleRight }}>
+          {modelViewToggle}
+        </div>
+      )}
+      <div ref={controlsRef} className="flex shrink-0 items-center gap-1.5 md:gap-2">
+        {modelViewToggle && toggleRight === null && modelViewToggle}
         {showChatTab && (
           <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4" />}>
             Chat
@@ -123,9 +186,11 @@ type ViewToggleButtonProps = {
   children: ReactNode
   onClick: () => void
   icon: ReactNode
+  /** On/off toggles announce state via aria-pressed; view tabs do not. */
+  pressed?: boolean
 }
 
-function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonProps) {
+function ViewToggleButton({ active, children, onClick, icon, pressed = false }: ViewToggleButtonProps) {
   return (
     <Button
       type="button"
@@ -134,6 +199,7 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
       onClick={onClick}
       // Icon-only buttons: the label survives as accessible name + tooltip.
       aria-label={typeof children === 'string' ? children : undefined}
+      aria-pressed={pressed ? active : undefined}
       title={typeof children === 'string' ? children : undefined}
       className={cn(
         'rounded-lg border-2 border-black font-mono transition-all',

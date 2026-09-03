@@ -344,7 +344,7 @@ function llmCallAfterCheckpointBoundary(
   );
 }
 
-function parseCanonicalProviderId(value: string): CanonicalProviderId | null {
+export function parseCanonicalProviderId(value: string): CanonicalProviderId | null {
   return isCanonicalProviderId(value) ? value : null;
 }
 
