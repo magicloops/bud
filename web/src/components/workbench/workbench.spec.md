@@ -343,10 +343,12 @@ one block per model message in exact order, with a collapsed "Tools · N · Xk
 tokens" block placed right after the system-prompt block (providers render
 tool schemas into the prompt root after the system text; it renders first
 only when there is no system prompt) — sticky mini-header (label, provenance badge, token count), a
-left rail in the popover's category palette, preformatted text (no markdown,
-so the prompt reads as sent), tool calls with pretty-printed args, tool
-results clamped at 40 lines with "Show all", reasoning summaries, images. A
-banner marks the compaction summary row.
+left rail in the popover's category palette; text and reasoning render
+through the transcript's `MarkdownContent` (local links inert), tool args
+as a JSON `CodeBlock`, tool results as a `CodeBlock` — pretty-printed JSON
+when the result parses as an object/array (`prettyJson`), plain code
+otherwise — clamped at 40 lines with "Show all"; images inline. A banner
+marks the compaction summary row.
 
 ### `workspace-shell.tsx`
 
@@ -364,7 +366,7 @@ Shared frame for the two workbench routes.
 **Props**:
 - `title`
 - `view` / `onViewChange`
-- optional `transcriptMode` / `onTranscriptModeChange` - forwarded to the top bar's Chat | Model toggle
+- optional `transcriptMode` / `onTranscriptModeChange` - forwarded to the top bar's Model-view (unfold/fold) toggle
 - optional `fileViewLabel`
 - `onToggleThreads`
 - `status`
@@ -525,9 +527,17 @@ Header bar with workspace title and view toggle.
   title's natural left edge is *measured* from the DOM (it depends on the
   responsive padding/gap and whether the hamburger is rendered), never
   hardcoded, and the title only shifts right, never left of its natural spot
-- Chat | Model transcript-mode toggle (rendered when `transcriptMode` /
-  `onTranscriptModeChange` are provided): a two-segment control left of the
-  view tabs; `model` shows `model-context-view.tsx` in the chat pane
+- Model-view toggle (rendered when `transcriptMode` /
+  `onTranscriptModeChange` are provided): a square icon button styled like
+  the view tabs, left of them, with `aria-pressed` — `UnfoldVertical`
+  ("Show what the model sees") when in chat mode, `FoldVertical` ("Back to
+  chat") when pressed; pressed = `transcriptMode: 'model'`, which shows
+  `model-context-view.tsx` in the chat pane. It belongs to the chat column:
+  while a viewer is open (the pane's right edge sits well left of the tab
+  group, measured with a ResizeObserver on bar/pane/tabs) it is absolutely
+  anchored 12px inside the pane's right edge — the same inset as the pinned
+  send button — and when chat fills the workspace it renders inline with
+  the tabs
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available

@@ -1,10 +1,12 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiFetchJson, isApiError } from '@/lib/transport'
 import type { ApiModelContext } from '@/lib/api-types'
 import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 import { MutationStatus } from '@/components/ui/mutation-status'
+import { CodeBlock } from '@/components/ui/code-block'
+import { MarkdownContent } from '@/components/message-renderers/roles/markdown-content'
 import { CONTEXT_CATEGORY_COLORS } from '@/components/workbench/context-budget-meter-state'
 import {
   buildModelViewPresentation,
@@ -33,6 +35,11 @@ export function ModelContextView({ threadId, refreshKey, modelLabel = null }: Mo
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [toolsOpen, setToolsOpen] = useState(false)
+  // Start at the bottom (the latest exchange) when a document loads, and
+  // stay pinned there while lazy renderers (markdown, code highlighting)
+  // grow the content — until the user scrolls up.
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -57,10 +64,37 @@ export function ModelContextView({ threadId, refreshKey, modelLabel = null }: Mo
     void load()
   }, [load, refreshKey])
 
+  useEffect(() => {
+    if (!doc) return
+    stickToBottomRef.current = true
+    const node = scrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (stickToBottomRef.current) {
+              node.scrollTop = node.scrollHeight
+            }
+          })
+    if (observer && node.firstElementChild) {
+      observer.observe(node.firstElementChild)
+    }
+    return () => observer?.disconnect()
+  }, [doc])
+
+  const handleScroll = useCallback(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const atBottom = node.scrollHeight - (node.scrollTop + node.clientHeight) < 48
+    stickToBottomRef.current = atBottom
+  }, [])
+
   const presentation = doc ? buildModelViewPresentation(doc, { modelLabel }) : null
 
   return (
-    <div className="@container min-h-0 flex-1 overflow-y-auto bg-background">
+    <div ref={scrollRef} onScroll={handleScroll} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
       <div className={cn(TRANSCRIPT_COLUMN_CLASSES, 'py-3 font-mono text-xs')}>
         <div className="flex items-start justify-between gap-3 px-4">
           <div className="min-w-0">
@@ -182,18 +216,20 @@ function ModelViewPartBody({ part }: { part: ModelViewPart }) {
   switch (part.kind) {
     case 'text':
       return (
-        <div>
+        <div className="text-sm leading-relaxed">
           {part.label && <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{part.label}</p>}
-          <pre className="whitespace-pre-wrap break-words text-foreground">{part.text}</pre>
+          {/* Same renderer as the transcript; local links are inert here
+              since the prompt is full of illustrative paths. */}
+          <MarkdownContent content={part.text} inertLocalLinks />
         </div>
       )
     case 'reasoning':
       return (
-        <div>
+        <div className="text-sm leading-relaxed text-muted-foreground">
           <p className="text-[10px] uppercase tracking-wide" style={{ color: part.color }}>
             Reasoning
           </p>
-          <pre className="whitespace-pre-wrap break-words text-muted-foreground">{part.text}</pre>
+          <MarkdownContent content={part.text} inertLocalLinks />
         </div>
       )
     case 'reasoning_redacted':
@@ -206,7 +242,7 @@ function ModelViewPartBody({ part }: { part: ModelViewPart }) {
           <p className="text-[10px] uppercase tracking-wide" style={{ color: part.color }}>
             Tool call · {part.name} · {part.id}
           </p>
-          <pre className="whitespace-pre-wrap break-words text-foreground">{part.args}</pre>
+          <CodeBlock code={part.args} language="json" />
         </div>
       )
     case 'tool_result':
@@ -224,16 +260,18 @@ function ModelViewPartBody({ part }: { part: ModelViewPart }) {
 
 function ClampedToolResult({ part }: { part: Extract<ModelViewPart, { kind: 'tool_result' }> }) {
   const [expanded, setExpanded] = useState(false)
-  const lines = part.text.split('\n')
+  // JSON results render pretty-printed; anything else as plain code.
+  const body = part.json ?? part.text
+  const lines = body.split('\n')
   const clamped = !expanded && lines.length > TOOL_RESULT_CLAMP_LINES
-  const shown = clamped ? lines.slice(0, TOOL_RESULT_CLAMP_LINES).join('\n') : part.text
+  const shown = clamped ? lines.slice(0, TOOL_RESULT_CLAMP_LINES).join('\n') : body
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wide" style={{ color: part.color }}>
         Tool result · {part.toolUseId}
         {part.isError && <span className="ml-2 text-destructive">error</span>}
       </p>
-      <pre className="whitespace-pre-wrap break-words text-foreground">{shown}</pre>
+      <CodeBlock code={shown} language={part.json ? 'json' : 'text'} />
       {lines.length > TOOL_RESULT_CLAMP_LINES && (
         <button
           type="button"

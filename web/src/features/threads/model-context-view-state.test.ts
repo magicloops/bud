@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ApiModelContext } from '../../lib/api-types.ts'
-import { buildModelViewPresentation } from './model-context-view-state.ts'
+import { buildModelViewPresentation, prettyJson } from './model-context-view-state.ts'
 import { CONTEXT_CATEGORY_COLORS } from '../../components/workbench/context-budget-meter-state.ts'
 
 const DOC: ApiModelContext = {
@@ -72,6 +72,7 @@ test('buildModelViewPresentation colors parts by category and flattens nested to
   const result = blocks[5]!.parts[0]
   assert.ok(result && result.kind === 'tool_result')
   assert.equal(result.text, 'a\nb')
+  assert.equal(result.json, null)
   assert.equal(result.isError, true)
   assert.equal(result.color, CONTEXT_CATEGORY_COLORS.tool_output)
 })
@@ -121,4 +122,13 @@ test('buildModelViewPresentation reports an active turn and a budget when availa
   )
   assert.equal(presentation.subline, '6 messages · 12k of 245k tokens')
   assert.equal(presentation.compactionBanner, null)
+})
+
+test('prettyJson formats JSON objects and arrays and leaves everything else alone', () => {
+  assert.equal(prettyJson('{"ok":true,"lines":[1,2]}'), '{\n  "ok": true,\n  "lines": [\n    1,\n    2\n  ]\n}')
+  assert.equal(prettyJson('  [1, 2]  '), '[\n  1,\n  2\n]')
+  assert.equal(prettyJson('42'), null)
+  assert.equal(prettyJson('"just a string"'), null)
+  assert.equal(prettyJson('{not json'), null)
+  assert.equal(prettyJson('make: nothing to be done'), null)
 })

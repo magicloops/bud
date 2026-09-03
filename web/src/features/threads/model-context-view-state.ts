@@ -8,7 +8,16 @@ import {
 export type ModelViewPart =
   | { kind: 'text'; text: string; color: string; label: string | null }
   | { kind: 'tool_use'; id: string; name: string; args: string; color: string }
-  | { kind: 'tool_result'; toolUseId: string; text: string; isError: boolean; color: string }
+  | {
+      kind: 'tool_result'
+      toolUseId: string
+      /** Raw text as sent to the model. */
+      text: string
+      /** Pretty-printed form when `text` parses as a JSON object/array; null otherwise. */
+      json: string | null
+      isError: boolean
+      color: string
+    }
   | { kind: 'reasoning'; text: string; color: string }
   | { kind: 'reasoning_redacted'; color: string }
   | { kind: 'image'; mediaType: string; dataUrl: string; color: string }
@@ -147,14 +156,17 @@ function buildPart(block: ApiModelContextBlock, message: ApiModelContextMessage)
         args: JSON.stringify(block.input, null, 2),
         color: CONTEXT_CATEGORY_COLORS.tool_calls,
       }
-    case 'tool_result':
+    case 'tool_result': {
+      const text = flattenToolResult(block.content)
       return {
         kind: 'tool_result',
         toolUseId: block.tool_use_id,
-        text: flattenToolResult(block.content),
+        text,
+        json: prettyJson(text),
         isError: block.is_error === true,
         color: CONTEXT_CATEGORY_COLORS.tool_output,
       }
+    }
     case 'reasoning':
       return { kind: 'reasoning', text: block.text, color: CONTEXT_CATEGORY_COLORS.reasoning }
     case 'reasoning_redacted':
@@ -178,6 +190,19 @@ function textColor(message: ApiModelContextMessage): string {
       return CONTEXT_CATEGORY_COLORS.compaction_summary
     default:
       return CONTEXT_CATEGORY_COLORS.messages
+  }
+}
+
+/** Pretty-print a string that is a JSON object or array; null for anything else. */
+export function prettyJson(text: string): string | null {
+  const trimmed = text.trim()
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (parsed === null || typeof parsed !== 'object') return null
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return null
   }
 }
 
