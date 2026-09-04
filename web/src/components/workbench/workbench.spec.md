@@ -75,14 +75,14 @@ Message list with auto-scroll and full-height message rendering.
 
 **Props**:
 - `messages` - Array of ChatMessage
-- optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
+- optional `notices` - Non-transcript timeline markers: failed compactions, and completed compactions only when the service is too old to send the durable row
 - optional `liveTurnId` / `turnOutcomes` - Agent-work projection inputs (active run's turn id; session-local `final`-event outcomes) owned by the thread route
 - optional `activityIndicatorVisible` / `activityIndicatorLabel` - Route-owned active-agent footer state rendered after the latest timeline item
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
-- Projects messages through `createTimelineProjector()` (features/threads/agent-work-projection): reasoning, non-question tool calls, and intermediate assistant commentary render as one `AgentWorkGroup` row per turn; user/system/final-assistant/question/compaction rows stay top-level
+- Projects messages through `createTimelineProjector()` (features/threads/agent-work-projection): reasoning, non-question tool calls, and intermediate assistant commentary render as one `AgentWorkGroup` row per turn; user/system/final-assistant/question rows and `role: "compaction"` marker rows stay top-level (a mid-turn compaction splits that turn's work into two groups around the cut)
 - Work-group and per-item expansion state is ephemeral component state keyed by stable projection ids (turn ULIDs — globally unique, never persisted)
 - The bottom-follow `scrollSyncKey` derives from VISIBLE structure only: a collapsed group's hidden detail growth does not trigger auto-scroll; a live group's current step does
 - The generic thinking indicator is suppressed while a live work group is on screen (its header already says "Working…"); labeled states (compaction) and the pre-first-work gap keep it
@@ -99,7 +99,7 @@ Message list with auto-scroll and full-height message rendering.
 - Tool content renderers for specialized display
 - Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
-- Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
+- `role: "compaction"` rows render as `CompactionRow` (`features/threads/compaction-row-state.ts`): collapsed, the same centered pill as the live notice ("Context compacted · Mid-turn · 245k → 12k"); expanded (click, when a summary exists), the summary the model now carries, rendered with the assistant markdown renderer under a "What the model now remembers of the conversation above" caption. Session-only compaction notices remain for failures and for older services without the row
 - Active-agent thinking/compaction feedback renders as a non-transcript footer inside the scrollable timeline so the newest message remains fully visible above it
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render

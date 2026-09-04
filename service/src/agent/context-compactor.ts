@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
+import { insertCompactionMessage, type SerializedCompactionMessage } from "./compaction-message.js";
 import type { ProviderInvocationContext } from "../llm/provider.js";
 import {
   isProviderContextWindowError,
@@ -77,6 +78,8 @@ export type CompactContextResult = {
   checkpoint: AgentContextCheckpoint;
   replacementHistory: CanonicalMessage[];
   estimatedTokensAfter: number;
+  /** The transcript row written for this checkpoint (attached to agent.compaction_done). */
+  message: SerializedCompactionMessage;
 };
 
 export class AgentContextCompactor {
@@ -124,6 +127,9 @@ export class AgentContextCompactor {
           ownerUserId: owner.ownerUserId,
           tenantId: owner.tenantId,
         });
+        // The durable transcript marker for this cut. Written right after the
+        // checkpoint; the idempotent backfill script repairs any crash gap.
+        const message = await insertCompactionMessage(checkpoint, { turnId: input.turnId });
 
         this.debug("Context compaction completed", {
           threadId: input.threadId,
@@ -138,6 +144,7 @@ export class AgentContextCompactor {
           checkpoint,
           replacementHistory,
           estimatedTokensAfter,
+          message,
         };
       } catch (err) {
         if (!isProviderContextWindowError(err)) {

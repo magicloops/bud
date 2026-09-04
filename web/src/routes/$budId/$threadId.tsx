@@ -592,19 +592,26 @@ function ThreadView() {
     if (event.context_budget) {
       setContextBudget(event.context_budget)
     }
-    appendContextCompactionNotice({
-      notice_id: `context-compaction:${event.checkpoint_id}`,
-      kind: 'context_compaction',
-      status: 'completed',
-      created_at: event.finished_at,
-      phase: event.phase,
-      tokens_before: event.tokens_before,
-      tokens_after: event.tokens_after,
-    })
+    if (event.message) {
+      // The durable `role: "compaction"` row: upsert it like any other
+      // transcript row so the marker matches what a reload would show.
+      applyToolResultMessage(event.message)
+    } else {
+      // Older service without the row: keep the session-only notice.
+      appendContextCompactionNotice({
+        notice_id: `context-compaction:${event.checkpoint_id}`,
+        kind: 'context_compaction',
+        status: 'completed',
+        created_at: event.finished_at,
+        phase: event.phase,
+        tokens_before: event.tokens_before,
+        tokens_after: event.tokens_after,
+      })
+    }
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after compaction event', error)
     })
-  }, [appendContextCompactionNotice, refreshAgentState, threadId])
+  }, [appendContextCompactionNotice, applyToolResultMessage, refreshAgentState, threadId])
 
   const handleCompactionFailed = useCallback((event: ApiAgentCompactionFailedEvent) => {
     setActiveCompaction(null)

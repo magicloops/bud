@@ -18,7 +18,10 @@ import { sql } from "drizzle-orm";
 
 const authSchema = pgSchema("auth");
 
-const messageRoleValues = ["user", "assistant", "tool", "system", "reasoning"] as const;
+// "compaction": a browser-visible transcript row written when a context
+// checkpoint completes (the summary the model now carries). Never replayed
+// to the model, never previewed/counted — like "reasoning" rows.
+const messageRoleValues = ["user", "assistant", "tool", "system", "reasoning", "compaction"] as const;
 export const operationStateValues = [
   "offered",
   "accepted",

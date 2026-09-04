@@ -344,6 +344,8 @@ export type ApiAgentCompactionDoneEvent = ApiAgentCompactionStartEvent & {
   tokens_after: number
   finished_at: string
   context_budget?: ApiContextBudget | null
+  /** The durable `role: "compaction"` transcript row (absent on older services). */
+  message?: ApiMessage
 }
 
 export type ApiAgentCompactionFailedEvent = ApiAgentCompactionStartEvent & {

@@ -110,7 +110,7 @@ Conversation-building ownership extracted from `AgentService`.
 - load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
 - filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
-- skip browser-visible `message.role = "reasoning"` rows so provider reasoning display artifacts are not replayed as normal model-visible messages
+- skip browser-visible `message.role = "reasoning"` and `"compaction"` rows so display artifacts (reasoning, compaction markers) are never replayed as model-visible messages
 - load same-provider provider-ledger assistant output blocks when a target provider is known
 - derive assistant text phase from provider-ledger payloads or product transcript metadata for OpenAI manual replay
 - gate Anthropic reasoning-bearing provider-ledger replay on the current target model and reasoning config
@@ -136,6 +136,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
 - `sources` is parallel to `messages` (system prompt, checkpoint summary vs kept history, one provenance per replayed row even when a tool row becomes two messages) and `repairOrphanedToolCalls` tags injected results as `repair`
 - `resolveSystemPrompt` returns the default file with a stable `sha256:` content-hash version
+- `role: "compaction"` rows are skipped: the model context is identical with and without them
 
 ### `default-system-prompt.md`
 
@@ -731,6 +732,20 @@ Direct tests for snapshot math and fallback behavior.
 - checkpoint ids and stale state are carried into the snapshot
 - `breakdown` sums to `estimated_input_tokens` (tool schemas included) and `compaction_count` passes through
 
+### `compaction-message.ts`
+
+Compactions as durable transcript rows (plan/durable-compaction-transcript-rows.md).
+
+**Responsibilities**:
+- `buildCompactionMessageValues(checkpoint, { turnId? })` — one `role: "compaction"` message per completed checkpoint: `display_role` "Context compacted", `content` = the checkpoint summary, owner/tenant stamps from the checkpoint, `created_at` = checkpoint completion (the position of the cut), and metadata (`artifact_kind: "context_compaction"`, `model_visible: false`, `checkpoint_id`, `turn_id` when known, trigger/reason/phase, token counts, compacted-through ids, source model fields, replacement-history count)
+- `insertCompactionMessage` writes it and returns the serialized wire row (attached to `agent.compaction_done`); `serializeCompactionMessage` is the shared serializer
+- the checkpoint table stays the model's source of truth; this row is a display artifact the loader never replays and previews / `message_count` / attention / notifications never see (the writer touches none of those paths)
+- shared with `scripts/backfill-compaction-messages.ts`
+
+### `compaction-message.test.ts`
+
+Row mapping from a completed checkpoint (metadata keys, cut timestamp, owner stamp), null tolerance for backfilled rows (no `turn_id`), and the wire serializer.
+
 ### `context-compactor.ts`
 
 Local summary compaction collaborator used by `AgentService`.
@@ -738,6 +753,7 @@ Local summary compaction collaborator used by `AgentService`.
 **Responsibilities**:
 - call the selected LLM provider with the main loop's tool schemas (under `tool_choice: "none"`), the runtime-instruction-applied conversation, and a fixed checkpoint-summary prompt appended as the final user message, so the summary request shares the main loop's prompt-cache prefix
 - forward the Bud `ProviderInvocationContext` (`threadId`/`budId`/`ownerUserId`) on the summary invoke so Bud-local providers (`bud_local`, Bud-local ds4) can route over the owning Bud's data plane; see `debug/compaction-fails-on-bud-local-providers.md`
+- after `recordCompletedContextCheckpoint`, write the checkpoint's `role: "compaction"` transcript row (`compaction-message.ts`) and return it as `message` so `AgentService` can attach it to `agent.compaction_done`
 - build replacement history from a checkpoint summary note, recent real user messages, and optional current terminal context
 - persist completed and failed checkpoint rows
 - trim the temporary compaction request against the model's usable input window

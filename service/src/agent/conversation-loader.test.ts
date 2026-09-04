@@ -1115,3 +1115,40 @@ test("repairOrphanedToolCalls tags injected results in the provenance side-chann
   assert.deepEqual(repaired.sources, [{ kind: "ledger", llm_call_id: "llm-9" }, { kind: "repair" }]);
   assert.equal(repaired.messages.length, 2);
 });
+
+test("load skips compaction transcript rows so the model never sees the marker", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            async orderBy() {
+              return [
+                { messageId: "m-1", clientId: "c-1", role: "user", content: "Hello", metadata: null },
+                {
+                  messageId: "m-2",
+                  clientId: "c-2",
+                  role: "compaction",
+                  content: "Summary of earlier work.",
+                  metadata: { artifact_kind: "context_compaction", model_visible: false, checkpoint_id: "chk-9" },
+                },
+                { messageId: "m-3", clientId: "c-3", role: "assistant", content: "Hi.", metadata: null },
+              ];
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const loaded = await createLoader().loadWithDiagnostics("thread-1");
+  assert.deepEqual(
+    loaded.messages.map((message) => message.role),
+    ["system", "user", "assistant"],
+  );
+  assert.equal(JSON.stringify(loaded.messages).includes("Summary of earlier work."), false);
+});

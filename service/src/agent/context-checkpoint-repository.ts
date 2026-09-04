@@ -219,7 +219,7 @@ export async function recordFailedContextCheckpoint(
   return row;
 }
 
-function normalizeCheckpointRow(row: AgentContextCheckpointRow): AgentContextCheckpoint {
+export function normalizeCheckpointRow(row: AgentContextCheckpointRow): AgentContextCheckpoint {
   return {
     ...row,
     replacementHistory: parseReplacementHistory(row.replacementHistory),

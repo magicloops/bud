@@ -162,6 +162,12 @@ mobile unread math, and push attention logic.
 If the product wants user-visible disclosure, emit a stream event or render a
 non-transcript UI marker.
 
+> **Update 2026-09-03** (plan/durable-compaction-transcript-rows.md): the
+> checkpoint itself still never becomes a normal message, but each completed
+> compaction now writes one browser-only `role: "compaction"` marker row
+> carrying the summary, treated exactly like `reasoning` rows (never replayed,
+> never previewed/counted/notified). The stream event carries the same row.
+
 ### 4.3 Build future model input from checkpoint plus delta
 
 Extend `AgentConversationLoader` so it loads:

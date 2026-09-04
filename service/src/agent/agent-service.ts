@@ -5,6 +5,7 @@ import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
+import type { SerializedCompactionMessage } from "./compaction-message.js";
 import { budTable, messageTable, threadTable } from "../db/schema.js";
 import type {
   TerminalPathContext,
@@ -1224,6 +1225,9 @@ export class AgentService {
       tokens_after: compaction.estimatedTokensAfter,
       finished_at: new Date().toISOString(),
       context_budget: postCompactionBudget,
+      // The durable transcript row for this cut; clients upsert it like any
+      // other message and fall back to a session notice when absent.
+      message: compaction.message,
     });
     args.compactedBoundaryKeys?.add(boundaryKey);
 
@@ -1508,6 +1512,8 @@ type AgentCompactionDoneEvent = AgentCompactionEventBase & {
   tokens_after: number;
   finished_at: string;
   context_budget?: ContextBudgetSnapshot | null;
+  /** The durable `role: "compaction"` transcript row for this checkpoint (additive). */
+  message?: SerializedCompactionMessage;
 };
 
 type AgentCompactionFailedEvent = AgentCompactionEventBase & {
