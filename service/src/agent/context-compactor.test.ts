@@ -141,6 +141,16 @@ test("compaction forwards the Bud invocation context to the provider", async (t)
   assert.equal(capturedTools.length, 1);
   assert.deepEqual(capturedTools[0]?.map((tool) => tool.name), ["terminal_run"]);
   assert.equal(result.checkpoint.summary, "Checkpoint summary.");
+  // The durable transcript marker: a compaction row carrying the summary and
+  // the checkpoint id, attached to the result for agent.compaction_done.
+  assert.equal(result.message.role, "compaction");
+  assert.equal(result.message.display_role, "Context compacted");
+  assert.equal(result.message.content, "Checkpoint summary.");
+  assert.equal(result.message.metadata.checkpoint_id, result.checkpoint.checkpointId);
+  assert.equal(result.message.metadata.turn_id, "01KQG8FX9YZAR32E4RGWVVA67G");
+  assert.equal(result.message.metadata.model_visible, false);
+  assert.equal(result.message.metadata.artifact_kind, "context_compaction");
+  assert.equal(result.message.metadata.phase, "pre_turn");
   assert.ok(
     result.replacementHistory.some((message) =>
       JSON.stringify(message.content).includes("Checkpoint summary."),

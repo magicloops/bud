@@ -223,6 +223,19 @@ colors from `CONTEXT_CATEGORY_COLORS`; nested tool results flattened).
 Node tests for labels/badges by provenance, part kinds and colors, nested
 tool-result flattening, and the active-turn / budget headline variants.
 
+### `compaction-row-state.ts`
+
+Presentation for `role: "compaction"` transcript rows: `isCompactionMessage`,
+`getCompactionRowPresentation(message)` → pill label/detail
+("Mid-turn · 245k → 12k"), trimmed summary, checkpoint and compacted-through
+ids; plus the shared `formatCompactionPhase` / `formatCompactTokens`
+formatters (moved out of `chat-timeline.tsx`).
+
+### `compaction-row-state.test.ts`
+
+Presentation from a full row, tolerance for sparse/backfilled metadata, and
+the formatters.
+
 ### `use-file-viewer.ts`
 
 Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.

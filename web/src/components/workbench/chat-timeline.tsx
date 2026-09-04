@@ -1,5 +1,5 @@
 import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
@@ -24,6 +24,12 @@ import { useAuthSession } from '@/contexts/auth-session-context'
 import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
 import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
+import { getRoleContentRenderer as getRoleRenderer } from '@/components/message-renderers'
+import {
+  formatCompactTokens,
+  formatCompactionPhase,
+  getCompactionRowPresentation,
+} from '@/features/threads/compaction-row-state'
 import {
   createTimelineProjector,
   type TimelineRow,
@@ -472,6 +478,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
+  const isCompaction = message.role === 'compaction'
   const isSystem = message.role === 'system'
   const isAssistant = message.role === 'assistant' && !isTool
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
@@ -532,6 +539,10 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       return next
     })
   }, [ensureJsonViewLoaded])
+
+  if (isCompaction) {
+    return <CompactionRow message={message} />
+  }
 
   if (isSystem) {
     return (
@@ -663,6 +674,57 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
 ChatTimelineMessage.displayName = 'ChatTimelineMessage'
 
+/**
+ * A durable compaction marker (`role: "compaction"`): collapsed it is the
+ * same pill the live notice shows; expanded it reveals the summary the
+ * model now carries in place of the history above it.
+ */
+function CompactionRow({ message }: { message: ChatMessage }) {
+  const [expanded, setExpanded] = useState(false)
+  const presentation = getCompactionRowPresentation(message as ApiMessage)
+  const SummaryRenderer = getRoleRenderer('assistant')
+  const canExpand = presentation.summary.length > 0
+  return (
+    <div className="px-4 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-black/15" />
+        <button
+          type="button"
+          onClick={() => canExpand && setExpanded((value) => !value)}
+          aria-expanded={canExpand ? expanded : undefined}
+          disabled={!canExpand}
+          title={canExpand ? (expanded ? 'Hide the summary' : 'Show what the model now remembers') : undefined}
+          className={cn(
+            'flex items-center gap-1.5 rounded-full border border-black/20 bg-background/70 px-3 py-1 shadow-sm transition-colors',
+            canExpand && 'cursor-pointer hover:border-black/40 hover:text-foreground',
+          )}
+        >
+          {canExpand && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
+          <span className="font-semibold text-foreground">{presentation.label}</span>
+          {presentation.detail && <span className="text-muted-foreground">{presentation.detail}</span>}
+        </button>
+        <div className="h-px flex-1 bg-black/15" />
+      </div>
+      {expanded && canExpand && (
+        <div className={TRANSCRIPT_COLUMN_CLASSES}>
+          <div className="mt-2 rounded-lg border-2 border-black/20 bg-card px-4 py-3 normal-case tracking-normal">
+            <p className="mb-2 text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
+              What the model now remembers of the conversation above
+            </p>
+            <div className="text-sm leading-relaxed text-foreground">
+              {SummaryRenderer ? (
+                <SummaryRenderer content={presentation.summary} />
+              ) : (
+                <pre className="whitespace-pre-wrap break-words">{presentation.summary}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChatTimelineNoticeRow({ notice }: { notice: ChatTimelineNotice }) {
   const isFailed = notice.status === 'failed'
   const phaseLabel = formatCompactionPhase(notice.phase)
@@ -684,17 +746,6 @@ function ChatTimelineNoticeRow({ notice }: { notice: ChatTimelineNotice }) {
   )
 }
 
-function formatCompactionPhase(phase: ApiAgentCompactionPhase): string {
-  switch (phase) {
-    case 'pre_turn':
-      return 'Pre-turn'
-    case 'mid_turn':
-      return 'Mid-turn'
-    case 'standalone_turn':
-      return 'Standalone'
-  }
-}
-
 function formatCompactionNoticeTokens(notice: ChatTimelineNotice): string | null {
   if (
     notice.status !== 'completed' ||
@@ -705,17 +756,6 @@ function formatCompactionNoticeTokens(notice: ChatTimelineNotice): string | null
     return null
   }
   return `${formatCompactTokens(notice.tokens_before)} -> ${formatCompactTokens(notice.tokens_after)}`
-}
-
-function formatCompactTokens(value: number): string {
-  const absolute = Math.abs(value)
-  if (absolute >= 1_000_000) {
-    return `${Math.round(value / 100_000) / 10}m`
-  }
-  if (absolute >= 1_000) {
-    return `${Math.round(value / 1_000)}k`
-  }
-  return String(Math.round(value))
 }
 
 function resolveToolPayload(message: ChatMessage): Record<string, unknown> | null {

@@ -17,6 +17,7 @@
     "db:migrate:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit migrate",
     "db:push": "tsx src/scripts/db-push.ts",
     "db:backfill:message-client-ids": "tsx src/scripts/backfill-message-client-ids.ts",
+    "db:backfill:compaction-messages": "tsx src/scripts/backfill-compaction-messages.ts",
     "db:inspect:message-client-ids": "tsx src/scripts/inspect-message-client-ids.ts",
     "db:studio": "drizzle-kit studio",
     "db:studio:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit studio",

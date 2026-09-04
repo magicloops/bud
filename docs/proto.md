@@ -2197,9 +2197,10 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - emitted when automatic model-visible context compaction begins; no transcript row is created
   - `{ "turn_id": "01TURN...", "trigger": "auto", "reason": "context_limit|context_error_retry|model_downshift", "phase": "pre_turn|mid_turn", "tokens_before": 123000, "threshold_tokens": 258000, "context_window_tokens": 400000, "usable_context_window_tokens": 400000, "reserved_output_tokens": 128000, "usable_input_window_tokens": 272000, "effective_budget_tokens": 258000, "started_at": "..." }`
 - `agent.compaction_done`
-  - emitted after the completed checkpoint is persisted; no summary or replacement history is included
-  - start payload plus `{ "checkpoint_id": "01CHK...", "tokens_after": 12000, "finished_at": "...", "context_budget"?: { ... } }`
+  - emitted after the completed checkpoint and its transcript marker row are persisted; the replacement history is never included
+  - start payload plus `{ "checkpoint_id": "01CHK...", "tokens_after": 12000, "finished_at": "...", "context_budget"?: { ... }, "message"?: { ... } }`
   - when present, `context_budget` is the post-compaction authoritative budget snapshot and never includes raw checkpoint summaries or replacement history
+  - when present (additive), `message` is the persisted `role: "compaction"` transcript row for this checkpoint — the same row `GET /messages` returns — so clients upsert it by `client_id` like any other row; clients that do not know the role should ignore it. Older services omit it.
 - `agent.compaction_failed`
   - emitted after the failed checkpoint attempt is recorded when possible; raw provider errors and checkpoint internals are omitted
   - start payload plus `{ "error_code": "context_compaction_failed", "retryable": false, "finished_at": "..." }`
@@ -2279,8 +2280,9 @@ Rules:
 - newly created canonical tool, reasoning, and assistant work rows use the same durable metadata shape under `message.metadata`: `turn_id`, `started_at`, `finished_at`, `duration_ms`, and `duration_source`
 - legacy rows may omit some or all of those metadata fields; clients should ignore missing durations rather than inventing estimates
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
-- compaction events are activity markers only; clients must not render them as persisted assistant, user, tool, or system transcript rows
+- compaction `start`/`failed` events are activity markers only; the durable record of a completed compaction is the `role: "compaction"` transcript row (also attached to `agent.compaction_done.message`)
 - reasoning messages are browser-visible transcript rows only; clients must not treat `role: "reasoning"` rows as assistant text for thread previews, push notifications, or model-visible replay
+- compaction messages (`role: "compaction"`, `display_role: "Context compacted"`) are browser-visible transcript rows only: `content` is the summary the model now carries in place of the earlier history, and `metadata` carries `artifact_kind: "context_compaction"`, `model_visible: false`, `checkpoint_id`, `turn_id` (live rows only), `trigger`, `reason`, `phase`, `tokens_before`, `tokens_after`, `compacted_through_message_id`, `compacted_through_llm_call_id`, `source_provider`, `source_model`, `source_reasoning_effort`, `replacement_history_message_count`. `created_at` is the checkpoint completion time, i.e. the position of the cut. Clients must not treat them as assistant text for previews, notifications, or replay, and unknown-role handling must render nothing rather than fail
 
 ---
 

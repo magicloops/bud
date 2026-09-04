@@ -36,6 +36,17 @@ In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`publ
 **Environment**:
 - `DOTENV_CONFIG_PATH` - Optional dotenv path override for the wrapper and the spawned `drizzle-kit push` process when targeting a non-default env file such as `.env.staging`
 
+### `backfill-compaction-messages.ts`
+
+One-off/idempotent helper for compactions-as-transcript-rows
+(`pnpm db:backfill:compaction-messages`).
+
+**Responsibilities**:
+- Find completed `agent_context_checkpoint` rows with no `message` row whose `metadata->>'checkpoint_id'` matches (`NOT EXISTS`), in creation order, in batches (`COMPACTION_MESSAGE_BACKFILL_BATCH_SIZE`, default 200)
+- Insert the rows exactly as the live writer does (`buildCompactionMessageValues` over `normalizeCheckpointRow`), with `created_at` = checkpoint completion, so ordering in the transcript is exact; no `turn_id` (unknown for historical rows)
+- `DRY_RUN=1` prints the first page's count without writing
+- Safe to re-run; also repairs a crash gap between recording a checkpoint and its row
+
 ### `backfill-message-client-ids.ts`
 
 Stage-A rollout helper for `message.client_id`.

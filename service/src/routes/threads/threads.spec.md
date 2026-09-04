@@ -37,7 +37,7 @@ Focused route-handler coverage for thread-list serialization.
 
 Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
-Message history returns normal user/assistant/tool/system transcript rows plus persisted `role: "reasoning"` display artifacts. Reasoning rows are browser-visible, owner-scoped through the same route, and intentionally excluded from model-visible reconstruction, thread previews, attention, and push notification side effects.
+Message history returns normal user/assistant/tool/system transcript rows plus persisted `role: "reasoning"` display artifacts and `role: "compaction"` marker rows (one per completed context checkpoint; `content` is the summary the model now carries — see `agent/compaction-message.ts`). Both artifact kinds are browser-visible, owner-scoped through the same route, and intentionally excluded from model-visible reconstruction, thread previews, attention, and push notification side effects.
 
 Create-message now resolves the current Bud environment before agent startup, but it does not run preflight context sync or `terminal_observe` before persisting the user message. When the Bud is offline, the route skips cached terminal path-context stamping, still persists the user message, and starts an offline-aware agent turn. Successful create responses include an `agent` object with `started`, `mode`, `bud_status`, and `stream_cursor` so clients can treat Bud-offline startup as a successful send rather than a failed request.
 
@@ -68,7 +68,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - passes through `draft_assistant.started_at` so refreshes can recover active assistant draft timing from service timestamps
 - passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
-- `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; these events are not transcript rows and omit checkpoint summaries/replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot.
+- `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; they omit replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot and (additive) `message`, the persisted `role: "compaction"` transcript row for the checkpoint.
 - `/agent/stream` emits `agent.reasoning_start`, `agent.reasoning_delta`, and `agent.reasoning_done` for visible provider reasoning, with `agent.reasoning_done.message` carrying the persisted `role: "reasoning"` row
 - `/agent/stream` failed `final` events carry sanitized `error`, `error_code`, and `retryable` fields rather than raw provider or daemon transport messages
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`

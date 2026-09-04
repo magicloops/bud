@@ -290,7 +290,9 @@ export class AgentConversationLoader {
         emit(message, source);
       },
     };
-    if (row.role === "reasoning") {
+    // Browser-visible artifacts only: reasoning display rows and the
+    // compaction marker rows are never replayed to the model.
+    if (row.role === "reasoning" || row.role === "compaction") {
       return;
     }
 

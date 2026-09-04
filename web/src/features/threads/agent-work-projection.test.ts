@@ -156,3 +156,22 @@ test('a boundary mid-turn flushes; the summary transition is a single row swap',
   assert.equal(doneRows[0].kind === 'work' ? doneRows[0].status : null, 'ok')
   assert.equal(doneRows[1].kind === 'message' ? doneRows[1].message.client_id : null, 'a1')
 })
+
+test('a compaction row stays top-level and splits the turn\'s work around the cut', () => {
+  const project = createTimelineProjector()
+  const before = buildMessage({ client_id: 't1', created_at: '2026-08-30T10:00:01.000Z' })
+  const compaction = buildMessage({
+    client_id: 'cmp1',
+    role: 'compaction',
+    display_role: 'Context compacted',
+    content: 'Summary of earlier work.',
+    created_at: '2026-08-30T10:00:02.000Z',
+    metadata: { artifact_kind: 'context_compaction', model_visible: false, turn_id: 'T1', phase: 'mid_turn' },
+  })
+  const after = buildMessage({ client_id: 't2', created_at: '2026-08-30T10:00:03.000Z' })
+  const rows = project({ messages: [before, compaction, after], liveTurnId: null })
+  assert.deepEqual(
+    rows.map((row) => (row.kind === 'message' ? `message:${row.message.client_id}` : `work:${row.sourceClientIds.join(',')}`)),
+    ['work:t1', 'message:cmp1', 'work:t2'],
+  )
+})

@@ -137,7 +137,7 @@ loader: async ({ params }) => {
    - Passes the route-owned cancel action into the shared composer so the send button becomes a context-budget-aware stop button during dispatching/streaming agent turns
    - Preserves the local dispatching state if the immediate post-send `/agent/state` refresh races ahead of backend active-turn visibility, so the stop affordance remains available before the first stream token/tool event
    - Defers Stop clicks made during the dispatching startup gap until `/agent/state` or SSE reports an active turn, avoiding a no-op early cancel request while still honoring the user's cancellation intent
-   - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
+   - Shows `Compacting context...` while automatic compaction is active; on completion upserts `agent.compaction_done.message` (the durable `role: "compaction"` row) into the thread store, falling back to a session-only notice only when an older service omits it; failures stay session-only notices; applies `agent.compaction_done.context_budget` immediately when present and refreshes `/agent/state.context_budget` after successful compaction
    - Suppresses the generic timeline activity footer during live assistant text streaming from `agent.message_start` / `agent.message_delta`, then allows it to return after a short delay following `agent.message_done` only when the turn continues
    - Preserves visible reasoning rows as normal transcript content while leaving thread previews, notifications, and model replay to the backend contracts
 
@@ -244,7 +244,7 @@ agentEnvironment: ApiAgentEnvironment | null
 error: string | null
 assistantActivityGate: AssistantActivityGateState
 activeCompaction: ApiAgentCompactionStartEvent | null
-contextCompactionNotices: ChatTimelineNotice[]
+contextCompactionNotices: ChatTimelineNotice[]  // failures + legacy-service completions only; completed compactions are transcript rows
 // draft reasoning rows are represented inside messages as synthetic role: "reasoning" rows until persisted
 ```
 

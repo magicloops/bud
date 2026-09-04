@@ -44,7 +44,7 @@ Drizzle schema definitions. Defines all tables:
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
 | `deviceInstallClaimTable` | Authenticated one-command daemon install claim state | `installClaimId`, `claimTokenHash`, `createdByUserId`, `expiresAt`, `redeemedAt`, `redeemedBudId` |
 | `threadTable` | Conversations | `threadId`, `budId`, `title`, `modelId`, `reasoningEffort`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
-| `messageTable` | Chat messages and browser-visible reasoning artifacts | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
+| `messageTable` | Chat messages plus browser-visible artifacts (reasoning rows, compaction marker rows) | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 | `llmCallTable` | Provider invocation ledger for same-provider replay, cache diagnostics, and reconstruction-mode metadata | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
 | `llmCallItemTable` | Ordered provider input/output items attached to an LLM call | `llmCallItemId`, `llmCallId`, `threadId`, `direction`, `role`, `kind`, `sequence`, `toolCallId`, `canonicalPayload`, `providerPayload`, `visibility`, `messageId` |
 | `agentContextCheckpointTable` | Durable service-owned model-context compaction checkpoints | `checkpointId`, `threadId`, `trigger`, `reason`, `phase`, `status`, `summary`, `replacementHistory`, compacted-through message/LLM boundaries, token counts, owner stamps |
@@ -108,7 +108,7 @@ Drizzle schema definitions. Defines all tables:
 
 | Enum | Values |
 |------|--------|
-| `messageRoleValues` | `user`, `assistant`, `tool`, `system`, `reasoning` |
+| `messageRoleValues` | `user`, `assistant`, `tool`, `system`, `reasoning`, `compaction` (TypeScript-side enum on a `text` column — adding `compaction` was verified as a `db:generate` no-op) |
 | `operationStateValues` | `offered`, `accepted`, `rejected`, `running`, `succeeded`, `failed`, `canceled`, `unknown`, `expired` |
 | `streamStateValues` | `opening`, `open`, `half_closed_local`, `half_closed_remote`, `closed`, `reset`, `unknown`, `expired` |
 | `proxySessionStateValues` | `ready`, `unavailable`, `revoked`, `expired` |
