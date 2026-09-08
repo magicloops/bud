@@ -6,9 +6,11 @@ Node.js backend service providing REST API, SSE streams, WebSocket/gRPC daemon c
 
 Shared public `web_search`/`web_read` uses Firecrawl with service-owned durable
 references, independently of the model provider. Configure the optional
-`FIRECRAWL_API_KEY` and `WEB_RETRIEVAL_ENABLED=1` after migration 0037.
+`FIRECRAWL_API_KEY` after migration 0037. `WEB_RETRIEVAL_ENABLED` defaults on;
+set `0` or `false` to disable it explicitly.
 See [web retrieval](src/web-retrieval/web-retrieval.spec.md). The environment
-template leaves the key empty and feature disabled; no daemon change is needed.
+template leaves the key empty, so tools remain unavailable until configured;
+no daemon change is needed.
 
 The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, and terminal sessions
