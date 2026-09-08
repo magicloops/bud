@@ -197,6 +197,7 @@ export const buildPendingToolMessageFromToolCall = ({
 }
 
 export const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (agentState.pending_data_requests !== undefined && agentState.pending_tool?.name === 'data_request_api_key') return null
   if (agentState.pending_questions !== undefined && agentState.pending_tool?.name === 'ask_user_questions') return null
   if (agentState.pending_bootstrap_requests !== undefined && agentState.pending_tool?.name === 'automations_request_existing_contacts') return null
   if (agentState.pending_automation_requests !== undefined && agentState.pending_tool?.name === 'automations_request_activation') return null
@@ -286,6 +287,15 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
       name: 'ask_user_questions',
       args: { ...question.request, request_id: question.request_id },
       startedAt: question.created_at,
+    }))
+  }
+
+  for (const request of agentState.pending_data_requests ?? []) {
+    if (!request.client_id || request.request.status !== 'pending') continue
+    if (nextMessages.some(message => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: request.turn_id, clientId: request.client_id, callId: request.call_id,
+      name: 'data_request_api_key', args: request.request, startedAt: request.created_at,
     }))
   }
 

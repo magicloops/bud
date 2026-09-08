@@ -27,6 +27,7 @@ Left sidebar navigation showing connected buds.
 - "Add bud" placeholder button
 
 **Styling**:
+- Background uses the same secondary tint as account settings and the thread list panel.
 - Neobrutalist design: thick borders, hard shadows
 - Hover lift effect (`-translate-y-0.5`)
 - Active state removes shadow
@@ -379,6 +380,7 @@ Shared frame for the two workbench routes.
 - `title`
 - `view` / `onViewChange`
 - optional `transcriptMode` / `onTranscriptModeChange` - forwarded to the top bar's Model-view (unfold/fold) toggle
+- optional `chatSettings` - forwards the conversation settings modal trigger beside the transcript toggle
 - optional `fileViewLabel`
 - `onToggleThreads`
 - `status`
@@ -550,6 +552,8 @@ Header bar with workspace title and view toggle.
   anchored 12px inside the pane's right edge — the same inset as the pinned
   send button — and when chat fills the workspace it renders inline with
   the tabs
+- Optional chat-settings icon sits immediately beside the transcript toggle; both remain mounted as one group when switching between inline and split-pane positioning.
+- Inactive chat toolbar buttons use the same transparent background and accent hover as thread-list header buttons; selected views retain their accent fill.
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available

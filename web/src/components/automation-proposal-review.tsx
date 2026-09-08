@@ -1,3 +1,5 @@
+import { ReviewDetails } from './review-details'
+import './settings-layout.css'
 import { AutomationProposalSummary } from './automation-proposal-summary'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
@@ -50,7 +52,7 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
   }, [base, id, isBootstrap, reload])
 
   const decide = async (decision: Decision['decision']) => {
-    if (flight.current || !proposal || proposal.status !== 'pending') return
+    if (flight.current || !proposal || proposal.status !== 'pending' || (!pending.current && !!error)) return
     if (!pending.current && decision === 'approve' && !enabled) return
     pending.current ??= { decision, expected_version: proposal.version, idempotency_key: crypto.randomUUID() }
     flight.current = true; setBusy(true); setError('')
@@ -72,22 +74,26 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
       }
     } finally { flight.current = false; if (alive.current) setBusy(false) }
   }
-  return <section className="space-y-3 rounded border p-4" aria-label="Automation review">
+  return <section className="settings-surface space-y-2 rounded-lg border-2 border-border p-3" aria-label="Automation review">
     {error && <p role="alert">{error}</p>}
     {!proposal ? <p>Loading automation review…</p> : <>
-      <AutomationProposalSummary proposal={proposal} />
+      <h3 className="font-semibold">{proposal.definition.name}</h3>
+      <p className="line-clamp-2 text-sm whitespace-pre-wrap">{proposal.definition.instruction}</p>
+      <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : 'New contacts only'} · {proposal.definition.target.mode === 'new_thread' ? 'New chat per run' : proposal.definition.target.thread_id === proposal.thread_id ? 'This conversation' : 'Selected conversation'} · Up to {proposal.definition.max_invocations_per_day}/day</p>
+      <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.includes('location.read') ? 'Contacts and collected location' : 'Contacts'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
+      <ReviewDetails title="Automation details">
+        <AutomationProposalSummary proposal={proposal} />
+        <Link className="underline" to="/automations" search={{ rule: proposal.automation_id }}>Adjust settings</Link>
+        <p>Edits require a new review before enabling. Closing details makes no decision.</p>
+      </ReviewDetails>
       {proposal.status === 'pending' ? <>
-        <p>{isBootstrap ? 'Approval runs these instructions for the reviewed existing contacts with normal Bud terminal access.' : 'Enabling allows these instructions to run automatically with normal Bud terminal access.'}</p>
         {!enabled && <p>Starting automated work is currently unavailable. You can still decline.</p>}
         {uncertain ? <button className={button} disabled={busy} onClick={() => void decide(pending.current!.decision)}>Retry original decision</button>
-          : <div className="flex gap-2"><button className={button} disabled={busy || !enabled} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process reviewed contacts' : 'Enable automation'}</button>
-            <button className={button} disabled={busy} onClick={() => void decide('decline')}>Decline</button></div>}
+          : <div className="flex gap-2"><button className={button} disabled={busy || !enabled || !!error} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process contacts' : 'Enable'}</button>
+            <button className={button} disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button></div>}
       </> : <p role="status">{proposal.status === 'approved' ? ('kind' in proposal ? `Captured ${proposal.member_count} contacts. Request: ${proposal.bootstrap_id}.` : `Enabled as revision ${proposal.activated_revision}.`) : `Review ${proposal.status}. No work was approved by this review.`}</p>}
-      <div className="flex flex-wrap gap-4 text-sm">
-        <Link className="underline" to="/$budId/$threadId" params={{ budId: proposal.bud_id, threadId: proposal.thread_id }}>Requesting conversation</Link>
-        <Link className="underline" to="/automations" search={{ rule: proposal.automation_id }}>Automation details</Link>
-      </div>
+
     </>}
-    <button className={button} disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh review</button>
+    {error && <button className={button} disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh review</button>}
   </section>
 }

@@ -19,6 +19,7 @@ type WorkspaceShellProps = {
   /** Forwarded to the top bar: Chat | Model transcript toggle. */
   transcriptMode?: TranscriptMode
   onTranscriptModeChange?: (mode: TranscriptMode) => void
+  chatSettings?: ReactNode
   leftPane: ReactNode
   rightPane: ReactNode
   composer: ReactNode
@@ -36,6 +37,7 @@ export function WorkspaceShell({
   alignToPaneRef,
   transcriptMode,
   onTranscriptModeChange,
+  chatSettings,
   leftPane,
   rightPane,
   composer,
@@ -54,6 +56,7 @@ export function WorkspaceShell({
         alignToPaneRef={alignToPaneRef}
         transcriptMode={transcriptMode}
         onTranscriptModeChange={onTranscriptModeChange}
+        chatSettings={chatSettings}
       />
       <div className="flex flex-1 overflow-hidden">
         {leftPane}

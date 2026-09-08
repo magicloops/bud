@@ -101,7 +101,7 @@ test("automation reads authenticate before dispatch and bind the viewer independ
       pause: async () => { throw new Error("unused"); },
       delete: async () => { throw new Error("unused"); },
       activate: async () => { throw new Error("unused"); },
-      list: async owner => { seen.push(["list", owner]); return { items: [] }; },
+      list: async (owner, filter) => { seen.push(["list", owner, filter]); return { context_filter: true, items: [] }; },
       get: async (owner, id) => { seen.push(["get", owner, id]); throw new Error("fixture failure"); },
       history: async (owner, id, query) => { seen.push(["history", owner, id, query]); return { items: [], next_cursor: null }; },
     },
@@ -111,8 +111,10 @@ test("automation reads authenticate before dispatch and bind the viewer independ
   }
   assert.equal(seen.length, 0);
   const headers = { authorization: "Bearer a" };
-  assert.equal((await app.inject({ url: "/api/automations?owner=foreign", headers })).statusCode, 200);
-  assert.deepEqual(seen[0], ["list", "owner-a"]);
+  assert.equal((await app.inject({ url: "/api/automations?owner=foreign", headers })).statusCode, 400);
+  assert.equal(seen.length, 0);
+  assert.equal((await app.inject({ url: "/api/automations?bud_id=bud-a&thread_id=thread-a&state=enabled", headers })).statusCode, 200);
+  assert.deepEqual(seen[0], ["list", "owner-a", { bud_id: "bud-a", thread_id: "thread-a", state: "enabled" }]);
   assert.equal((await app.inject({ url: "/api/automations/rule/deliveries?limit=2&cursor=abc", headers })).statusCode, 200);
   assert.deepEqual(seen[1], ["history", "owner-a", "rule", { limit: 2, cursor: "abc" }]);
   const failed = await app.inject({ url: "/api/automations/rule", headers });

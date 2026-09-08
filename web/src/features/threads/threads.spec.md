@@ -624,3 +624,11 @@ explicit empty arrays suppress stale runtime prompts, and canonical results win.
 Both review kinds remain outside collapsed work. Pure recovery/projection tests
 cover the new kind; its visible review controls and live SSE integration remain
 pending.
+
+
+App permission requests now use the same canonical pending overlay seam:
+`pending_data_requests` restores original client/call/turn/time metadata,
+an explicit empty array suppresses stale runtime tools, and canonical results
+win over older snapshots. Both pending and settled `data_request_api_key` rows
+stay outside collapsed work. `thread-message-state.test.ts` covers recovery,
+deduplication, settlement precedence and empty-array cleanup.

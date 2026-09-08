@@ -39,7 +39,10 @@ export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudR
   }
 
   return (
-    <aside className="flex w-15 flex-col border-r-2 border-black bg-card">
+    <aside
+      className="flex w-15 flex-col border-r-2 border-black"
+      style={{ backgroundColor: 'color-mix(in oklab, var(--secondary) 40%, var(--background))' }}
+    >
       <div className="flex flex-1 flex-col gap-2 p-2">
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId

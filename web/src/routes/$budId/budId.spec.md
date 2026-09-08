@@ -313,9 +313,9 @@ remain guarded. Explicit Stop during execution completes cancellation without a
 second review once the worker finishes or fenced lease recovery releases it.
 History and uncertain command evidence remain intact. New-thread layout is unchanged.
 
-Pending app-data requests render a conversation banner from the canonical
-`pending_data_requests` snapshot, including after cold bootstrap. Review links
-open `/data?request=<id>` for the exact owned proposal. The live permission tool
+Pending app-data requests render once at their original tool position from the
+canonical `pending_data_requests` snapshot, including after cold bootstrap.
+Allow/Deny acts inline; View details opens the shared read-only dialog. The live permission tool
 event requests a state refresh instead of adding a generic running tool row;
 the existing durable poll detects decision/removal and refreshes the transcript.
 New-thread layout is unaffected because permission requests require a persisted
@@ -340,3 +340,12 @@ identify a committed pending existing-contact review; no-work/error tool calls
 continue as ordinary activity. Cold state recognizes `pending_bootstrap_requests`
 and renders the shared review in place. Polling removes resolved reviews and
 refreshes the original result. New-thread layout remains unaffected.
+
+
+ChatDataContext now opens from the top-bar settings icon beside the transcript
+toggle, with Automations and Data access inside a native modal rather than above
+the conversation (see `plan/chat-settings-modal.md`).
+Active rules are selected by the saved execution target, not their originating
+chat or edited draft. Data access explicitly describes the owner-wide grant.
+Owner/thread changes remount the modal and cancel reads; closing aborts reads. New-thread layout
+remains unchanged because these controls require a persisted conversation.

@@ -36,6 +36,8 @@ Implementation planning package for the agreed development slice across Bud serv
 | [phase-13-originating-conversation-default.md](phase-13-originating-conversation-default.md) | Phase 13: Agent-created drafts default to their originating conversation, preserving explicit choices |
 | [phase-12-expanded-contact-fields.md](phase-12-expanded-contact-fields.md) | Phase 12: Addresses/websites and permission-compatible enrichment |
 | [phase-14-automation-deletion-and-chat-status.md](phase-14-automation-deletion-and-chat-status.md) | Phase 14: Terminal automation deletion, cancellation/history and routine chat status removal |
+| [phase-15-data-navigation-and-workspace-style.md](phase-15-data-navigation-and-workspace-style.md) | Planned: restrained workspace styling, separate data browsing, compact app inventory and chat context |
+| [phase-16-inline-permission-and-automation-decisions.md](phase-16-inline-permission-and-automation-decisions.md) | Planned: direct web/mobile chat decisions with optional details and preserved durable approval semantics |
 | [progress-checklist.md](progress-checklist.md) | Current implementation, user validation, PR checks and remaining acceptance gates |
 | [validation-checklist.md](validation-checklist.md) | Service/mobile/device/concurrency/auth/key/rollout test matrix and evidence template |
 

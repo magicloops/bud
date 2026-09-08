@@ -576,3 +576,22 @@ test('upsertMessage still re-sorts when sort keys change', () => {
     ['b', 'a'],
   )
 })
+
+test('durable app permissions recover once and canonical results win over older snapshots', () => {
+  const request = {
+    request_id: 'dar_01K00000000000000000000000', client_id: 'permission-client',
+    call_id: 'permission-call', turn_id: 'permission-turn', created_at: '2026-09-06T00:00:00Z',
+    request: { request_id: 'dar_01K00000000000000000000000', status: 'pending', app_label: 'Contacts', purpose: 'Read contacts', version: 0 },
+  } as NonNullable<ApiAgentState['pending_data_requests']>[number]
+  const state = buildAgentState({ pending_data_requests: [request] })
+  const recovered = applyAgentStateOverlay([], state)
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0].client_id, request.client_id)
+  assert.equal(recovered[0].metadata?.tool, 'data_request_api_key')
+  assert.equal(JSON.parse(recovered[0].content).request_id, request.request_id)
+  assert.equal(applyAgentStateOverlay(recovered, state).length, 1)
+  const canonical = buildMessage({ client_id: request.client_id!, message_id: 'canonical', role: 'tool', content: '{"status":"approved"}' })
+  assert.deepEqual(applyAgentStateOverlay([canonical], state), [canonical])
+  assert.deepEqual(applyAgentStateOverlay(recovered, buildAgentState({ pending_data_requests: [],
+    pending_tool: { client_id: request.client_id!, name: 'data_request_api_key', args: {} } })), [])
+})

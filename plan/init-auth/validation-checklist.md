@@ -229,3 +229,15 @@ remain off until the explicit composition setting is enabled.
 
 - [x] Injected Fastify auth and isolated PostgreSQL tests verify anonymous/app-key 401, foreign owner 404, strict expected version, stale 409, no-store, owner-stamped cancellation, retained owner-only history and atomic retries.
 - [ ] Real cookie/mobile bearer cross-account deletion and sign-out/navigation during pending deletion; confirmation cancel leaves the rule unchanged.
+
+
+## Context filters and inline decisions (phases 15–16)
+
+- [x] Injected route tests resolve the viewer before list dispatch and reject injected owner query parameters; pass only validated context filters.
+- [x] PostgreSQL tests reject another user's Bud/thread and filter by the immutable active target despite draft changes.
+- [x] Web/native recovery fixtures preserve canonical request identity, suppress stale pending state and keep approval rows outside collapsed work.
+- [ ] Real two-account browser/mobile checks: inline Allow/Enable/Deny, opposite-client resolution, interrupted submission, details dismissal and account switching.
+- [ ] Browser navigation to `/data/contacts`, exact request links and filtered Automations retains only the authenticated owner's state.
+
+Context reads stamp no rows. Inline decisions reuse existing owner-authorized,
+versioned human endpoints and their existing decision/cancellation actors.

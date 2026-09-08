@@ -26,10 +26,31 @@ export function serializeAutomation(row: Rule) {
 export class Automations {
   constructor(private readonly database: Database = db) {}
 
-  async list(owner: string) {
-    const rows = await this.database.select().from(rules).where(and(eq(rules.createdByUserId, owner), ne(rules.state, "deleted")))
+  async list(owner: string, filter: { bud_id?: string; thread_id?: string; state?: string } = {}) {
+    if (filter.thread_id && !filter.bud_id) throw new DataRequestError(400, "invalid_automation_query", "Bud is required with conversation");
+    if (filter.state && !["enabled", "paused", "draft"].includes(filter.state)) throw new DataRequestError(400, "invalid_automation_query", "Invalid state");
+    if (filter.bud_id) {
+      const [bud] = await this.database.select({ id: buds.budId }).from(buds)
+        .where(and(eq(buds.createdByUserId, owner), eq(buds.budId, filter.bud_id))).limit(1);
+      if (!bud) throw new DataRequestError(404, "automation_target_not_found", "Bud not found");
+    }
+    if (filter.thread_id) {
+      const [thread] = await this.database.select({ id: threads.threadId }).from(threads).where(and(
+        eq(threads.createdByUserId, owner), eq(threads.threadId, filter.thread_id),
+        eq(threads.budId, filter.bud_id!), isNull(threads.deletedAt))).limit(1);
+      if (!thread) throw new DataRequestError(404, "automation_target_not_found", "Conversation not found");
+    }
+    // Enabled/paused rules use their saved execution revision, never a changed draft.
+    const definition = sql`case when ${rules.activeRevision} is not null then ${revisions.definition} else ${rules.draft} end`;
+    const rows = await this.database.select({ rule: rules, revision: revisions }).from(rules)
+      .leftJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, rules.activeRevision), eq(revisions.createdByUserId, owner)))
+      .where(and(eq(rules.createdByUserId, owner), ne(rules.state, "deleted"),
+        filter.state ? eq(rules.state, filter.state) : undefined,
+        filter.bud_id ? sql`${definition}->>'bud_id' = ${filter.bud_id}` : undefined,
+        filter.thread_id ? sql`${definition}->'target'->>'mode' = 'existing_thread' and ${definition}->'target'->>'thread_id' = ${filter.thread_id}` : undefined))
       .orderBy(desc(rules.id)).limit(AUTOMATION_LIMITS.rules_per_owner);
-    return { items: rows.map(serializeAutomation) };
+    return { context_filter: true, items: rows.map(({ rule, revision }) => ({ ...serializeAutomation(rule),
+      active: revision ? { revision: revision.revision, definition: revision.definition } : null })) };
   }
 
   async get(owner: string, id: string) {

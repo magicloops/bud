@@ -245,3 +245,18 @@ and covers injected HTTP auth, ownership/version/body bounds, concurrent retries
 transaction rollback, live/bootstrap cancellation, retained history/review
 reservations, stale proposals, dispatch denial, delayed matching and freed quota.
 See [phase 14](../../../plan/personal-data-ingestion-and-agent-triggers/phase-14-automation-deletion-and-chat-status.md).
+
+
+## Automation context filters (phase 15)
+
+`GET /api/automations` accepts optional `bud_id`, `thread_id` (requires Bud),
+and `state=enabled|paused|draft`; unknown query keys are rejected. The human
+viewer is resolved first. Bud/thread ownership and matching Bud are checked
+before the owner-filtered list. SQL predicates use the active revision when one
+exists and the draft otherwise, before the existing 100-rule bound; deleted rules
+remain excluded. Response adds `context_filter: true` and per-item
+`active: { revision, definition } | null`, retaining all old fields. No rows are
+stamped by these reads. Existing clients/daemons require no changes.
+`routes.test.ts` covers auth and strict filter forwarding;
+`automations.test.ts` verifies foreign context rejection and active-target
+selection despite draft edits. Full contract and rollout: [phase 15](../../../plan/personal-data-ingestion-and-agent-triggers/phase-15-data-navigation-and-workspace-style.md).

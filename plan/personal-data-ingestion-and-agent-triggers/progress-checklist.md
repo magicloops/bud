@@ -84,3 +84,18 @@ queues during rollback. No deployment or merge is included in PR preparation.
 [Phase 8](phase-8-validation-and-rollout.md) owns the acceptance gate;
 [historical implementation notes](implementation-history.md) and
 [the remaining-work audit](remaining-work-audit.md) retain earlier observations.
+
+## New feedback scope — phases 15–16
+
+Implemented September 8: [phase 15](phase-15-data-navigation-and-workspace-style.md)
+unifies workspace styling, separates browsing from source management, compacts
+app access and adds chat context; [phase 16](phase-16-inline-permission-and-automation-decisions.md)
+puts direct decisions in both chat clients with optional detail views. These
+changes are subsequent to the draft-PR verification counts above.
+
+
+Phase 15–16 automated validation: web build, 195 unit tests, 3 render tests and
+focused lint; service build and owner/context/decision tests; Local HTTPS iOS
+build and 21 focused simulator tests. New browser visual and live device approval
+checks remain open. Browser discovery returned no connected browsers; no phone
+installation, feature-flag change, migration, commit or PR update is included.

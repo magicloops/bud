@@ -1,3 +1,4 @@
+import { ChatDataContext } from '@/components/chat-data-context'
 /**
  * Thread View - workspace for an existing thread
  *
@@ -8,7 +9,7 @@
  * DO NOT REMOVE THIS COMMENT - it prevents accidental divergence.
  */
 
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useIsMobile } from '@/lib/use-viewport'
 import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
 import { useState, useCallback, useMemo, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
@@ -1072,6 +1073,7 @@ function ThreadView() {
       fileViewLabel={activeFileEntry ? 'File' : null}
       transcriptMode={transcriptMode}
       onTranscriptModeChange={setTranscriptMode}
+      chatSettings={<ChatDataContext key={threadId} budId={budId} threadId={threadId} />}
       leftPane={(
         <div
           ref={chatPaneRef}
@@ -1103,13 +1105,6 @@ function ThreadView() {
               {reviewError && <p role="alert">{reviewError}</p>}
             </form>
           )}
-          {(durableState.pending_data_requests ?? []).map(pending => (
-            <section key={pending.request_id} className="space-y-2 border-b px-4 py-3 text-sm" aria-label="App data permission request">
-              <p className="font-semibold">{pending.request.app_label} requests data access</p>
-              <p className="whitespace-pre-wrap break-words">{pending.request.purpose}</p>
-              <Link to="/data" search={{ request: pending.request_id }} className="underline">Review app permissions</Link>
-            </section>
-          ))}
           {transcriptMode === 'model' ? (
             <ModelContextView
               threadId={threadId}

@@ -96,7 +96,7 @@ Hosted mobile consent route used as Better Auth `consentPage`.
 
 ### `data.tsx`
 
-Authenticated `/data` Data sources screen with contact search, detail/history and import status, linked from Settings. Uses the shared credential-aware transport and root viewer gate. State remounts per owner and requests abort on view/query changes. Uses canonical first-party data APIs, bounded pages, and observed-time/source-visibility labels. Owner-wide agent read permission controls save optimistic versions with explicit reload/conflict handling. Contact detail fetches nearest location evidence within ±24 hours of first detection and labels uncertainty/accuracy; OpenStreetMap loads only after the user selects Show pin.
+Authenticated `/data` Data sources route delegates management/import status to DataScreen, linked from Settings. Contact records live separately at `/data/contacts`. Uses the shared credential-aware transport and root viewer gate. State remounts per owner and requests abort on view/query changes. Uses canonical first-party data APIs, bounded pages, and observed-time/source-visibility labels. Owner-wide agent read permission controls save optimistic versions with explicit reload/conflict handling. Contact detail fetches nearest location evidence within ±24 hours of first detection and labels uncertainty/accuracy; OpenStreetMap loads only after the user selects Show pin.
 
 Agent permission toggles save immediately; history saves on blur/Enter. Requests
 are serialized, owner-remounted, and guarded after unmount. Failed/uncertain
@@ -119,17 +119,15 @@ pictures/notes; search is described in terms of collected fields.
 The Data sources page presents bounded app permission/key inventory,
 refreshing serially every five seconds. Cards show the immutable purpose,
 scopes/fields/history/precision, private destination and installation fingerprint,
-with requesting-conversation links. Approval requires explicit acknowledgement
-and the server app-key capability; decline/revoke remain independently available.
+with requesting-conversation links. Allow is the explicit decision and requires the server app-key capability; decline/revoke remain independently available.
 Mutations use expected versions and retain the identical retry body after an
-uncertain response. Cards remount on version changes, and owner-page remount plus
-unmount guards prevent late responses from updating another view. Browser
-interaction validation and thread-level prompt controls remain open.
+uncertain response. Cards retain request identity across version changes, and owner-page remount plus
+unmount guards prevent late responses from updating another view. Inline transcript controls are implemented; browser interaction validation remains open.
 
 The `/data` route accepts a validated `request` search parameter to review one
 exact permission through the owner-scoped detail endpoint, independent of list
 pagination. Changing the request remounts its review state; View all returns to
-inventory. Conversation banners link here for explicit approval/decline.
+inventory. Legacy exact-request links remain supported; canonical chat requests use inline Allow/Deny and optional details.
 
 Import status displays owner-wide failed-record/reconciliation counts and up to
 ten recent unfinished scan reasons, with guidance to retry retained original
@@ -147,6 +145,13 @@ Refresh received data only refetches existing APIs; mobile owns collection and O
 permissions. Scan IDs/reasons and repair guidance are collapsed under Troubleshooting.
 Agent and app permission panels are independently expandable; an exact request link
 opens app permissions for review. No authorization, owner scoping or wire changes.
+
+### `data_.contacts.tsx`
+
+Independent `/data/contacts` route using DataScreen in browse mode. The trailing
+underscore makes it a sibling rather than requiring an Outlet in management.
+Contacts search/detail/history/location remain owner-scoped; type navigation
+reserves clearly unavailable Location, Health and Photos browsers.
 
 ### `automations.tsx`
 
@@ -170,6 +175,8 @@ Authenticated account settings route.
 - Edits the Bud-owned `profile.username` via `PATCH /api/me/profile`
 - Shows provider-backed avatar with initials fallback
 - Shows linked-account state for GitHub and Google
+- Settings cards use one compact section heading, without a repeated title below it.
+- The page background matches the thread panel's secondary tint; account identity has no pill, and the borderless username input retains a screen-reader label and keyboard focus ring.
 - Starts explicit provider linking through Better Auth client actions
 - Uses the shared mutation-status component for username save feedback, provider-link redirect/error state, and sign-out failure display
 - Provides separate Data sources and Automations navigation entries; destination APIs retain their existing viewer authorization and owner-scoped reads, with no new writes or row stamping.
@@ -330,3 +337,14 @@ owner-bound POST includes the observed version, shares mutation/unmount guards,
 and returns to refreshed inventory only after success. Conflicts require reload;
 uncertain deletion can be retried. Deleted detail links render historical delivery
 and bootstrap activity with no editing/activation controls.
+
+
+## Phases 15–16
+
+Settings, Data sources, Contacts and Automations share SettingsNavigation and
+restrained theme-aware controls. Automation inventory accepts `bud_id`,
+`thread_id` and `state` search filters, applies them on the server before the
+100-rule owner cap, and preserves them while selecting a rule. Context links
+provide a return conversation. Older servers lacking `context_filter` show an
+unavailable state instead of an incorrectly unfiltered list. See phase 15 for the
+additive REST contract. No daemon, SSE or database schema change.

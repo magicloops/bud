@@ -1,3 +1,4 @@
+import { AppPermissionContent } from './app-permission'
 import type { ToolContentRenderer } from '../types'
 import {
   TerminalObserveContent,
@@ -20,6 +21,7 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
   'terminal.wait': TerminalWaitContent,
+  data_request_api_key: AppPermissionContent,
   ask_user_questions: AskUserQuestionsContent,
   automations_request_activation: AutomationProposalContent,
   automations_request_existing_contacts: AutomationProposalContent,

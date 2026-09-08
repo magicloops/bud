@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getOptionalBearerViewer, getOptionalViewer } from "../auth/session.js";
 import { DataRequestError, INGEST_LIMITS, validIdentifier, type IngestContext } from "./contracts.js";
@@ -117,7 +118,12 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       request.log.warn({ request_id: request.id, status_code: status }, "Personal-data request failed");
       return reply.code(status).send({ error: status === 413 ? "payload_too_large" : "ingestion_failed", retryable: status >= 500 });
     });
-    app.get("/api/automations", async request => automations.list(viewers.get(request)!.userId));
+    app.get("/api/automations", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      const filter = parseAutomationInput(z.object({ bud_id: z.string().min(1).max(128).optional(),
+        thread_id: z.string().min(1).max(128).optional(), state: z.enum(["enabled", "paused", "draft"]).optional() }).strict(), request.query);
+      return automations.list(viewers.get(request)!.userId, filter);
+    });
     app.post("/api/automations", async request => {
       const input = parseAutomationInput(automationCreateSchema, request.body);
       return automations.create(viewers.get(request)!.userId, input.definition, input.idempotency_key);

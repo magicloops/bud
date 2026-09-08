@@ -1,3 +1,4 @@
+import { SettingsNavigation } from '@/components/settings-layout'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useAuthSession } from '@/contexts/auth-session-context'
@@ -8,7 +9,10 @@ import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-type
 import { AutomationProposalReview } from '@/components/automation-proposal-review'
 
 export const Route = createFileRoute('/automations')({
-  validateSearch: (search: Record<string, unknown>): { rule?: string; proposal?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { rule?: string; proposal?: string; bud_id?: string; thread_id?: string; state?: string } => ({
+    bud_id: typeof search.bud_id === 'string' && search.bud_id.length <= 128 ? search.bud_id : undefined,
+    thread_id: typeof search.thread_id === 'string' && search.thread_id.length <= 128 ? search.thread_id : undefined,
+    state: typeof search.state === 'string' && ['enabled', 'paused', 'draft'].includes(search.state) ? search.state : undefined,
     rule: typeof search.rule === 'string' && (search.rule === 'new' || /^auto_[A-Za-z0-9]{1,128}$/.test(search.rule)) ? search.rule : undefined,
     proposal: typeof search.proposal === 'string' && /^(ap|bp)_[0-9A-HJKMNP-TV-Z]{26}$/.test(search.proposal) ? search.proposal : undefined,
   }),
@@ -40,31 +44,55 @@ function AutomationsPage() {
 
 function AutomationList() {
   const [rules, setRules] = useState<Rule[]>([])
-  const { rule: selected, proposal } = Route.useSearch()
+  const search = Route.useSearch()
+  const { rule: selected, proposal, bud_id, thread_id, state } = search
+  const [buds, setBuds] = useState<Bud[]>([])
+  const [threads, setThreads] = useState<Thread[]>([])
+  useEffect(() => {
+    const controller = new AbortController()
+    setThreads([])
+    Promise.all([
+      apiFetchJson<Bud[]>('/api/buds', { signal: controller.signal }),
+      bud_id ? apiFetchJson<Thread[]>(`/api/threads?bud_id=${encodeURIComponent(bud_id)}`, { signal: controller.signal }) : Promise.resolve([]),
+    ]).then(([availableBuds, availableThreads]) => {
+      if (!controller.signal.aborted) { setBuds(availableBuds); setThreads(availableThreads) }
+    }).catch(() => { if (!controller.signal.aborted) setError('Could not load context filters.') })
+    return () => controller.abort()
+  }, [bud_id])
   const navigate = useNavigate()
-  const setSelected = (rule: string) => { void navigate({ to: '/automations', search: { rule } }) }
+  const setSelected = (rule: string) => { void navigate({ to: '/automations', search: { ...search, rule } }) }
   const [refresh, setRefresh] = useState(0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true); setError('')
-    apiFetchJson<{ items: Rule[] }>('/api/automations', { signal: controller.signal })
-      .then(result => { if (!controller.signal.aborted) setRules(result.items) })
+    const params = new URLSearchParams()
+    if (bud_id) params.set('bud_id', bud_id)
+    if (thread_id) params.set('thread_id', thread_id)
+    if (state) params.set('state', state)
+    apiFetchJson<{ items: Rule[]; context_filter?: boolean }>(`/api/automations?${params}`, { signal: controller.signal })
+      .then(result => { if (params.size && !result.context_filter) throw new Error('Context unavailable'); if (!controller.signal.aborted) setRules(result.items) })
       .catch(() => { if (!controller.signal.aborted) setError('Could not load automations.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [refresh])
-  return <main className="min-h-screen bg-background p-6 text-foreground"><div className="mx-auto max-w-5xl space-y-6">
-    <Link to="/settings" className="underline">Back to settings</Link>
-    <header><h1 className="text-3xl font-bold">Automations</h1><p className="mt-2 text-muted-foreground">Prepare instructions for your Bud when your phone observes a new contact. Your drafts are shared across devices.</p></header>
+  }, [refresh, bud_id, thread_id, state])
+  return <main className="settings-surface min-h-screen bg-background p-4 sm:p-6 text-foreground"><div className="mx-auto max-w-5xl space-y-6">
+    <SettingsNavigation />
+    <header><h1 className="text-2xl font-bold">Automations</h1><p className="mt-2 text-muted-foreground">Prepare instructions for your Bud when your phone observes a new contact. Your drafts are shared across devices.</p></header>
     <div className="flex gap-2"><button className={button} onClick={() => setSelected('new')}>New automation</button><button className={button} onClick={() => setRefresh(value => value + 1)}>Refresh list</button></div>
+    <div className="flex flex-wrap gap-3">
+      <label>Bud<select className={field} value={bud_id ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, bud_id: e.target.value || undefined, thread_id: undefined } })}><option value="">All Buds</option>{buds.map(bud => <option key={bud.bud_id} value={bud.bud_id}>{bud.name}</option>)}</select></label>
+      <label>Execution target<select className={field} disabled={!bud_id} value={thread_id ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, thread_id: e.target.value || undefined } })}><option value="">All conversations</option>{threads.map(thread => <option key={thread.thread_id} value={thread.thread_id}>{thread.title ?? 'Untitled conversation'}</option>)}</select></label>
+      <label>State<select className={field} value={state ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, state: e.target.value || undefined } })}><option value="">All states</option><option value="enabled">Enabled</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label>
+    </div>
+    {thread_id && bud_id && <Link className="underline" to="/$budId/$threadId" params={{ budId: bud_id, threadId: thread_id }}>Back to conversation</Link>}
     {error && <p role="alert">{error}</p>}
     {proposal ? <><Link className="underline" to="/automations" search={{}}>All automations</Link>
       <AutomationProposalReview key={proposal} id={proposal} onResolved={() => setRefresh(value => value + 1)} /></>
       : <AutomationReviews refresh={refresh} />}
     <div className="grid gap-6 md:grid-cols-[240px_1fr]"><nav aria-label="Automations">
-      {loading ? <p>Loading…</p> : rules.length === 0 ? <p>No automations yet.</p> : rules.map(rule => <button className="block w-full border-b py-3 text-left" key={rule.automation_id} onClick={() => setSelected(rule.automation_id)}>
+      {loading ? <p>Loading…</p> : error ? <p>Inventory unavailable.</p> : rules.length === 0 ? <p>No automations yet.</p> : rules.map(rule => <button className="block w-full border-b py-3 text-left" key={rule.automation_id} onClick={() => setSelected(rule.automation_id)}>
         <span className="block font-semibold">{rule.draft.name}</span><span className="text-sm text-muted-foreground">{rule.state} · Version {rule.version}</span>
       </button>)}
     </nav>{selected && <AutomationEditor key={selected} id={selected} onSaved={rule => { if (rule.state === 'deleted') { void navigate({ to: '/automations', search: {} }) } else { setSelected(rule.automation_id) }; setRefresh(value => value + 1) }} />}</div>

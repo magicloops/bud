@@ -1,5 +1,6 @@
-import { ArrowLeft, Chrome, Github, Loader2, LogOut, Save } from 'lucide-react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { SettingsNavigation } from '@/components/settings-layout'
+import { Chrome, Github, Loader2, LogOut, Save } from 'lucide-react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAuthSession } from '@/contexts/auth-session-context'
@@ -143,48 +144,33 @@ function SettingsView() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6 text-foreground">
+    <div
+      className="settings-surface min-h-screen p-4 sm:p-6 text-foreground"
+      style={{ backgroundColor: 'color-mix(in oklab, var(--secondary) 40%, var(--background))' }}
+    >
       <div className="mx-auto flex max-w-5xl flex-col gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 rounded-xl border-4 border-black bg-card px-4 py-3 font-mono text-sm font-semibold uppercase tracking-wide shadow-[4px_4px_0px_rgba(0,0,0,1)] transition hover:-translate-y-0.5"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to workspace
-          </Link>
-          <p className="font-mono text-xs uppercase tracking-[0.25em] text-muted-foreground">
-            Settings
-          </p>
-        </div>
-
-        <nav aria-label="Personal settings" className="grid gap-3 sm:grid-cols-2">
-          <Link to="/data" className="rounded border-2 border-border p-4 font-semibold">Data sources</Link>
-          <Link to="/automations" className="rounded border-2 border-border p-4 font-semibold">Automations</Link>
-        </nav>
+        <SettingsNavigation />
+        <h1 className="text-2xl font-bold">Account settings</h1>
 
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-[2rem] border-4 border-black bg-[var(--background)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
+          <section className="rounded-xl border-2 border-border bg-[var(--background)] p-5 shadow-[2px_2px_0px_var(--border)]">
             <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center gap-5">
                 {currentUser.user.image ? (
                   <img
                     src={currentUser.user.image}
                     alt={`Avatar for @${currentUser.profile.username}`}
-                    className="h-24 w-24 rounded-[1.5rem] border-4 border-black object-cover shadow-[6px_6px_0px_rgba(0,0,0,1)]"
+                    className="h-24 w-24 rounded-lg border-2 border-border object-cover shadow-[2px_2px_0px_var(--border)]"
                   />
                 ) : (
-                  <div className="flex h-24 w-24 items-center justify-center rounded-[1.5rem] border-4 border-black bg-[var(--bud-accent-soft)] text-3xl font-black uppercase text-black shadow-[6px_6px_0px_rgba(0,0,0,1)]">
+                  <div className="flex h-24 w-24 items-center justify-center rounded-lg border-2 border-border bg-[var(--bud-accent-soft)] text-3xl font-bold uppercase text-black shadow-[2px_2px_0px_var(--border)]">
                     {avatarLabel}
                   </div>
                 )}
 
                 <div className="space-y-2">
-                  <p className="inline-flex rounded-full border-2 border-black bg-[var(--bud-accent-soft)] px-3 py-1 font-mono text-xs uppercase tracking-[0.25em] text-black">
-                    Account
-                  </p>
                   <div>
-                    <h1 className="text-4xl font-black tracking-tight">@{currentUser.profile.username}</h1>
+                    <h1 className="text-lg font-semibold tracking-tight">@{currentUser.profile.username}</h1>
                     <p className="text-sm text-muted-foreground">
                       {currentUser.user.email}
                     </p>
@@ -192,12 +178,11 @@ function SettingsView() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border-4 border-black bg-card p-5 shadow-[6px_6px_0px_rgba(0,0,0,1)]">
+              <div className="rounded-2xl border-2 border-border bg-card p-5 shadow-[2px_2px_0px_var(--border)]">
                 <div className="space-y-2">
-                  <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
                     Username
-                  </p>
-                  <h2 className="text-2xl font-black tracking-tight">Choose the handle Bud shows in the UI.</h2>
+                  </h2>
                   <p className="text-sm text-muted-foreground">
                     Lowercase letters, numbers, <code>_</code>, and <code>-</code> are preserved.
                     Spaces and unsupported characters normalize to dashes.
@@ -206,10 +191,10 @@ function SettingsView() {
 
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end">
                   <label className="flex-1">
-                    <span className="mb-2 block font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    <span className="sr-only">
                       Username
                     </span>
-                    <div className="flex items-center rounded-xl border-4 border-black bg-background px-4 shadow-[4px_4px_0px_rgba(0,0,0,1)]">
+                    <div className="flex items-center rounded-xl bg-background px-4 focus-within:ring-2 focus-within:ring-ring">
                       <span className="font-mono text-sm text-muted-foreground">@</span>
                       <input
                         value={usernameDraft}
@@ -218,6 +203,7 @@ function SettingsView() {
                           setProfileStatus(null)
                         }}
                         className="h-12 w-full bg-transparent px-2 text-base outline-none"
+                        style={{ border: 0 }}
                         autoCapitalize="none"
                         autoCorrect="off"
                         spellCheck={false}
@@ -229,7 +215,7 @@ function SettingsView() {
                     type="button"
                     onClick={handleSaveProfile}
                     disabled={!usernameChanged || savingProfile}
-                    className="h-12 rounded-xl border-4 border-black bg-[var(--bud-accent-soft)] px-5 text-black shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] disabled:cursor-not-allowed disabled:opacity-70"
+                    className="h-12 rounded-xl border-2 border-border bg-[var(--bud-accent-soft)] px-5 text-black shadow-[2px_2px_0px_var(--border)] hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {savingProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     Save username
@@ -249,12 +235,11 @@ function SettingsView() {
           </section>
 
           <div className="flex flex-col gap-6">
-            <section className="rounded-[2rem] border-4 border-black bg-card p-6 shadow-[10px_10px_0px_rgba(0,0,0,1)]">
+            <section className="rounded-xl border-2 border-border bg-card p-6 shadow-[2px_2px_0px_var(--border)]">
               <div className="space-y-2">
-                <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   Linked accounts
-                </p>
-                <h2 className="text-2xl font-black tracking-tight">Connect the providers you want to use.</h2>
+                </h2>
               </div>
 
               <div className="mt-5 space-y-3">
@@ -290,14 +275,13 @@ function SettingsView() {
               ) : null}
             </section>
 
-            <section className="rounded-[2rem] border-4 border-black bg-[var(--bud-accent-soft)] p-6 shadow-[10px_10px_0px_rgba(0,0,0,1)]">
+            <section className="rounded-xl border-2 border-border bg-[var(--bud-accent-soft)] p-6 shadow-[2px_2px_0px_var(--border)]">
               <div className="space-y-2">
-                <p className="font-mono text-xs uppercase tracking-[0.2em] text-black/70">
+                <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-black/70">
                   Session
-                </p>
-                <h2 className="text-2xl font-black tracking-tight text-black">End the current browser session.</h2>
+                </h2>
                 <p className="text-sm text-black/70">
-                  The current Better Auth session ends immediately. Returning to the app will require sign-in again.
+                  You can sign back in at any time.
                 </p>
               </div>
 
@@ -305,7 +289,7 @@ function SettingsView() {
                 type="button"
                 onClick={handleSignOut}
                 disabled={signingOut}
-                className="mt-5 h-12 w-full rounded-xl border-4 border-black bg-black px-5 text-sm font-semibold uppercase tracking-wide text-white shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:bg-black disabled:cursor-not-allowed disabled:opacity-70"
+                className="mt-5 h-12 w-full rounded-xl border-2 border-border bg-black px-5 text-sm font-semibold uppercase tracking-wide text-white shadow-[2px_2px_0px_var(--border)] hover:-translate-y-0.5 hover:bg-black disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {signingOut ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogOut className="mr-2 h-4 w-4" />}
                 Sign out
@@ -343,9 +327,9 @@ function ProviderCard({
   onConnect: (provider: 'github' | 'google') => Promise<void>
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border-4 border-black bg-background px-4 py-4 shadow-[4px_4px_0px_rgba(0,0,0,1)]">
+    <div className="flex items-center justify-between gap-4 rounded-2xl border-2 border-border bg-background px-4 py-4 shadow-[2px_2px_0px_var(--border)]">
       <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl border-3 border-black bg-card">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl border-2 border-border bg-card">
           {icon}
         </div>
         <div>
@@ -360,7 +344,7 @@ function ProviderCard({
         type="button"
         onClick={() => onConnect(provider)}
         disabled={linked || pending}
-        className="rounded-xl border-4 border-black bg-[var(--bud-accent-soft)] px-4 py-2 text-black shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] disabled:cursor-not-allowed disabled:opacity-70"
+        className="rounded-xl border-2 border-border bg-[var(--bud-accent-soft)] px-4 py-2 text-black shadow-[2px_2px_0px_var(--border)] hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] disabled:cursor-not-allowed disabled:opacity-70"
       >
         {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         {linked ? 'Connected' : 'Connect'}

@@ -95,6 +95,13 @@ Validated `bp_` IDs open the separate existing-contact review; terminal decision
 link to that exact review in Automations. No-work/error results without a proposal
 display their summary without fetching or offering approval.
 
+### `app-permission.tsx`
+
+Registered for `data_request_api_key`. Validates the public request identity,
+uses the owner-keyed shared inline Allow/Deny card for pending reviews and renders
+a compact canonical receipt with an exact-request link after resolution.
+Missing/invalid identities never trigger a fetch. No credential fields are read.
+
 ## Types
 
 From `../types.ts`:

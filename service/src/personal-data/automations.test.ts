@@ -18,16 +18,18 @@ test("automation drafts and activation preserve consent, ownership and immutable
   const pool = new Pool({ connectionString: config.databaseUrl });
   const db = drizzle(pool, { schema });
   const users = ["automation-" + randomUUID(), "automation-" + randomUUID()];
+  const threadIds = users.map(() => randomUUID());
   const budIds = users.map(() => "bud-" + randomUUID());
   t.after(async () => {
     try {
       for (const table of [schema.automationRevisionTable, schema.automationTable, schema.agentDataGrantTable,
-        schema.dataOwnerStateTable, schema.budTable]) await db.delete(table).where(inArray(table.createdByUserId, users));
+        schema.dataOwnerStateTable, schema.threadTable, schema.budTable]) await db.delete(table).where(inArray(table.createdByUserId, users));
       await db.delete(schema.authUserTable).where(inArray(schema.authUserTable.id, users));
     } finally { await pool.end(); }
   });
   await db.insert(schema.authUserTable).values(users.map(id => ({ id, name: "Fixture", email: id + "@example.invalid", emailVerified: false })));
   await db.insert(schema.budTable).values(users.map((id, i) => ({ budId: budIds[i], name: "Fixture", os: "test", arch: "test", createdByUserId: id })));
+  await db.insert(schema.threadTable).values(users.map((id, i) => ({ threadId: threadIds[i], budId: budIds[i], createdByUserId: id })));
   const repo = new Automations(db);
   const grants = new DataGrants(db);
   const definition = { event_type: "contact.added", name: "New contacts", instruction: "Read available evidence.",
@@ -68,6 +70,19 @@ test("automation drafts and activation preserve consent, ownership and immutable
   const [unchanged] = await db.select().from(schema.automationRevisionTable).where(eq(schema.automationRevisionTable.automationId, rule.automation_id));
   assert.equal(unchanged.definition.instruction, definition.instruction);
   await assert.rejects(repo.update(users[0], rule.automation_id, { expected_version: 1, definition }), code("automation_conflict"));
+  // Context uses the immutable active target even when a saved draft changes it.
+  const targeted = await repo.create(users[0], { ...definition, target: { mode: "existing_thread", thread_id: threadIds[0] } });
+  await repo.activate(users[0], targeted.automation_id, { ...approval, expected_grant_version: 1 });
+  await repo.update(users[0], targeted.automation_id, { expected_version: 1, definition });
+  const context = await repo.list(users[0], { bud_id: budIds[0], thread_id: threadIds[0], state: "enabled" });
+  assert.equal(context.context_filter, true);
+  assert.deepEqual(context.items.map(item => item.automation_id), [targeted.automation_id]);
+  assert.equal((context.items[0].active?.definition as { target: { mode: string } }).target.mode, "existing_thread");
+  assert.equal((context.items[0].draft as { target: { mode: string } }).target.mode, "new_thread");
+  assert.deepEqual((await repo.list(users[0], { bud_id: budIds[0], state: "draft" })).items, []);
+  await assert.rejects(repo.list(users[1], { bud_id: budIds[0] }), code("automation_target_not_found"));
+  await assert.rejects(repo.list(users[0], { bud_id: budIds[0], thread_id: threadIds[1] }), code("automation_target_not_found"));
+  await assert.rejects(repo.list(users[0], { thread_id: threadIds[0] }));
   await grants.update(users[0], { version: 1, scopes: [], history_days: 90 });
   await assert.rejects(repo.activate(users[0], rule.automation_id, { ...approval, expected_version: 2, expected_grant_version: 2 }), code("data_permission_required"));
 
