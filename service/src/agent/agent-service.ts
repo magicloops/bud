@@ -1,3 +1,5 @@
+import { WebRetrievalToolExecutor } from "./web-retrieval-tool-executor.js";
+import { isWebRetrievalToolDirective } from "./contracts.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycle.js";
 import type { InvocationRepository } from "./invocation-repository.js";
@@ -105,6 +107,8 @@ export class AgentService {
   private readonly modelRunner: AgentModelRunner;
   private readonly toolExecutor: TerminalToolExecutor;
   private readonly webViewToolExecutor: WebViewToolExecutor;
+  private readonly webRetrievalToolExecutor = new WebRetrievalToolExecutor(undefined,
+    metrics => this.logger.info({ component: "web_retrieval", ...metrics }, "Web retrieval completed"));
   private readonly personalDataToolExecutor = new PersonalDataToolExecutor();
   private readonly transcriptWriter: AgentTranscriptWriter;
   private readonly contextCompactor: AgentContextCompactor;
@@ -838,13 +842,13 @@ export class AgentService {
 	              sessionId: currentSessionId,
 	              threadId,
 	              tool: effectiveToolCall.tool,
-              ...((isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
+              ...((isWebRetrievalToolDirective(effectiveToolCall) || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
               callId: effectiveToolCall.callId,
 	            });
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              (!isUserQuestionToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
+	              (!isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -874,6 +878,8 @@ export class AgentService {
             if (isTerminalToolDirective(effectiveToolCall)) {
               execution = await this.toolExecutor.execute(threadId, effectiveToolCall);
               shouldRefreshContext = effectiveToolCall.tool !== "terminal.observe";
+            } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
+              execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {
               execution = await this.personalDataToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isAutomationToolDirective(effectiveToolCall)) {
@@ -936,6 +942,7 @@ export class AgentService {
 	              );
 	            }
             await args.executionHooks?.checkpoint();
+            controller.signal.throwIfAborted();
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,

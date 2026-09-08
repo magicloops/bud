@@ -8,6 +8,13 @@ Provides components for rendering tool-specific UI within chat messages. When th
 
 ## Files
 
+### `web-retrieval.tsx`
+
+Concise `web_search`/`web_read` result summaries and source links inside the
+existing agent work group. Does not fetch pages or render retrieved HTML;
+HTTP(S) links open only on user action. Full tool evidence remains in the normal
+expandable payload. Results inherit the authenticated thread transcript boundary.
+
 ### `index.ts`
 
 Registry mapping tool names to their renderers:

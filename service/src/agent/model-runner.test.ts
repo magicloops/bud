@@ -352,7 +352,7 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
     "gpt-5.4",
     runner.resolveModelReasoning("gpt-5.4"),
     undefined,
-    resolveAgentToolsForEnvironment(environment),
+    resolveAgentToolsForEnvironment(environment, { webRetrieval: false }),
   );
 
   assert.deepEqual(capturedTools.map((tool) => tool.name), [

@@ -434,6 +434,8 @@ export class AgentConversationLoader {
           : `tool_${ulid()}`;
 
       switch (payload.tool) {
+        case "web_search":
+        case "web_read":
         case "contacts_search":
         case "contacts_history":
         case "location_context":

@@ -1809,3 +1809,34 @@ export const dataAppKeyTable = pgTable("data_app_key", {
   revokedCheck: check("data_app_key_revoked_check", sql`(${t.status} in ('revoked','setup_failed')) = (${t.revokedAt} is not null)`),
   actorCheck: check("data_app_key_actor_check", sql`${t.revokedByUserId} is null or ${t.revokedByUserId} = ${t.createdByUserId}`),
 }));
+
+// Request receipts outlive expiring content so TTL cannot reset a turn's budget.
+export const webRetrievalRequestTable = pgTable("web_retrieval_request", {
+  id: text("id").primaryKey(), threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  turnId: text("turn_id").notNull(), callId: text("call_id").notNull(),
+  fingerprint: text("fingerprint").notNull(), backend: text("backend").notNull(),
+  status: text("status").notNull().default("started"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  callKey: unique("web_retrieval_request_call_key").on(t.threadId, t.turnId, t.callId),
+  budgetIdx: index("web_retrieval_request_budget_idx").on(t.createdByUserId, t.threadId, t.turnId),
+  threadFk: foreignKey({ name: "web_retrieval_request_thread_fk", columns: [t.threadId, t.budId, t.createdByUserId], foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }).onDelete("cascade"),
+  stateCheck: check("web_retrieval_request_state_check", sql`${t.status} in ('started','completed','failed')`),
+}));
+
+export const webRetrievalArtifactTable = pgTable("web_retrieval_artifact", {
+  id: text("id").primaryKey(), threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  requestId: text("request_id").notNull().references(() => webRetrievalRequestTable.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(), backend: text("backend").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(), byteLength: integer("byte_length").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, t => ({
+  requestKey: unique("web_retrieval_artifact_request_key").on(t.requestId),
+  ownerIdx: index("web_retrieval_artifact_owner_idx").on(t.createdByUserId, t.threadId),
+  expiryIdx: index("web_retrieval_artifact_expiry_idx").on(t.expiresAt),
+  threadFk: foreignKey({ name: "web_retrieval_artifact_thread_fk", columns: [t.threadId, t.budId, t.createdByUserId], foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }).onDelete("cascade"),
+  sizeCheck: check("web_retrieval_artifact_size_check", sql`${t.byteLength} between 0 and 524288`),
+}));

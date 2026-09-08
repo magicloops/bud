@@ -1,4 +1,5 @@
 import { AppPermissionContent } from './app-permission'
+import { WebRetrievalContent } from './web-retrieval'
 import type { ToolContentRenderer } from '../types'
 import {
   TerminalObserveContent,
@@ -17,6 +18,8 @@ import { AutomationProposalContent } from './automation-proposal'
  * 2. Import and add it to this registry
  */
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
+  web_search: WebRetrievalContent,
+  web_read: WebRetrievalContent,
   'terminal.run': TerminalRunContent,
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,

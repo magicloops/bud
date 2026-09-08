@@ -1,3 +1,5 @@
+import { retrievalAvailable } from "./web-retrieval/config.js";
+import { RetrievalRepository } from "./web-retrieval/repository.js";
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
@@ -158,6 +160,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   ) : undefined;
   const automationWorker = invocationSettings.automationsEnabled ? new AutomationWorker(undefined,
     code => server.log.error({ code, component: "automation_worker" }, "Automation worker error")) : undefined;
+  let retrievalCleanupTimer: NodeJS.Timeout | undefined;
+  let retrievalCleanup: Promise<void> | undefined;
+  const cleanRetrieval = () => {
+    if (retrievalCleanup) return;
+    retrievalCleanup = new RetrievalRepository().cleanup()
+      .catch(() => server.log.warn({ component: "web_retrieval", code: "cleanup_failed" }, "Web retrieval cleanup failed"))
+      .finally(() => { retrievalCleanup = undefined; });
+  };
   let releaseInvocationMode: (() => Promise<void>) | undefined;
   server.addHook("onReady", async () => {
     releaseInvocationMode = await acquireInvocationMode(pool, invocationSettings.mode, () => {
@@ -177,6 +187,13 @@ export async function buildServer(): Promise<FastifyInstance> {
       // Fail readiness before publishing capability if required schema is absent.
       await pool.query("select bootstrap_id, group_index from automation_bootstrap_group limit 0");
       automationWorker.start();
+    }
+    if (retrievalAvailable()) {
+      await pool.query("select id, status from web_retrieval_request limit 0");
+      await pool.query("select id, payload, expires_at from web_retrieval_artifact limit 0");
+      cleanRetrieval();
+      retrievalCleanupTimer = setInterval(cleanRetrieval, 60000);
+      retrievalCleanupTimer.unref();
     }
     invocationWorker?.start();
     server.log.info({ admission_mode: invocationSettings.mode,
@@ -207,6 +224,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.addHook("onClose", async () => {
     await automationWorker?.stop();
     await invocationWorker?.stop();
+    clearInterval(retrievalCleanupTimer);
+    await retrievalCleanup;
     await stopPersonalData();
     await grpcDataGateway?.close();
     await grpcControlGateway?.close();

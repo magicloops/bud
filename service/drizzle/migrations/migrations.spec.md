@@ -8,6 +8,14 @@ Contains the checked-in SQL migration chain used to align staging with the schem
 
 ## Files
 
+### `0037_huge_wendigo.sql`
+
+Adds owner/thread-bound web retrieval request receipts and expiring artifacts,
+unique call/request identities, status/size checks and budget/owner/expiry
+indexes. Additive migration generated from schema; executed in an isolated test
+schema and applied locally transactionally after reviewing and aborting
+db:push's unrelated constraint recreation. Deploy before enabling retrieval.
+
 ### `.gitkeep`
 
 Placeholder to ensure the directory exists in git.
@@ -229,7 +237,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0036` currently)
+- Snapshot files for each migration (`0000` through `0037` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 

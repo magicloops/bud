@@ -4,6 +4,15 @@ Database layer using Drizzle ORM with PostgreSQL.
 
 ## Purpose
 
+Web retrieval adds `webRetrievalRequestTable` and `webRetrievalArtifactTable`
+(migration `0037_huge_wendigo.sql`): owner/thread/Bud composite foreign keys,
+required owner stamps and nullable tenant ids, unique turn/call receipts,
+request status checks, artifact size/expiry and owner/budget indexes. Durable
+receipts preserve the ten-request budget after artifact expiry; artifacts expire
+after seven days. Reviewed SQL was applied locally in a transaction after
+aborting unrelated db:push constraint changes; see
+[debug note](../../../debug/web-retrieval-db-push.md). No deployment performed.
+
 Provides type-safe database access for all persistent data: buds, threads, messages, terminal sessions/output, browser-auth user/profile records, device-claim bootstrap state, push notification state, and daemon transport/operation durability.
 
 ## Files

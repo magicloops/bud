@@ -1,3 +1,5 @@
+import { WEB_CANONICAL_TOOLS } from "./web-retrieval-tools.js";
+import { retrievalAvailable } from "../web-retrieval/config.js";
 import { AUTOMATION_CANONICAL_TOOLS, EXISTING_CONTACTS_REVIEW_TOOL } from "./automation-tools.js";
 import type { CanonicalTool } from "../llm/index.js";
 import type { AgentEnvironmentSnapshot } from "./environment.js";
@@ -235,9 +237,9 @@ const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 export function resolveAgentToolsForEnvironment(
   environment: AgentEnvironmentSnapshot,
-  options: { appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
+  options: { webRetrieval?: boolean; appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
-  const tools = [...AGENT_CANONICAL_TOOLS, ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
+  const tools = [...AGENT_CANONICAL_TOOLS, ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []), ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
     ...(options.automations ? AUTOMATION_CANONICAL_TOOLS : []),
     ...(options.automations && options.existingContactReviews ? [EXISTING_CONTACTS_REVIEW_TOOL] : [])];
   if (environment.mode === "normal") {

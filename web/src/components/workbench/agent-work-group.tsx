@@ -1,3 +1,4 @@
+import { resolveToolPayload } from './tool-payload'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { Brain, ChevronRight, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -326,18 +327,4 @@ const SectionCounts = ({ sections }: { sections: TimelineWorkSection[] }) => {
       )}
     </span>
   )
-}
-
-// Same resolution the timeline row uses: canonical tool rows keep the payload
-// in metadata; drafts and legacy rows fall back to the JSON content.
-const resolveToolPayload = (message: ApiMessage): Record<string, unknown> | null => {
-  if (message.metadata && typeof message.metadata === 'object') {
-    return message.metadata
-  }
-  try {
-    const parsed = JSON.parse(message.content)
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
 }

@@ -1,3 +1,4 @@
+import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react'
@@ -779,21 +780,6 @@ function formatCompactionNoticeTokens(notice: ChatTimelineNotice): string | null
     return null
   }
   return `${formatCompactTokens(notice.tokens_before)} -> ${formatCompactTokens(notice.tokens_after)}`
-}
-
-function resolveToolPayload(message: ChatMessage): Record<string, unknown> | null {
-  if (message.metadata && typeof message.metadata === 'object') {
-    return message.metadata
-  }
-  try {
-    const parsed = JSON.parse(message.content)
-    if (parsed && typeof parsed === 'object') {
-      return parsed as Record<string, unknown>
-    }
-  } catch {
-    // ignore parse failures, fall back to null
-  }
-  return null
 }
 
 function resolveQuestionRequest(payload: Record<string, unknown> | null): ApiAskUserQuestionsRequest | null {
