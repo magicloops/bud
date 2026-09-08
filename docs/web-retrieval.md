@@ -31,8 +31,9 @@ arguments. Existing authorized transcript/SSE routes serve tool rows; no artifac
 lookup API is exposed. Normal Markdown source links need a user gesture to open.
 Pages are untrusted text, never HTML rendered into the app or tool instructions.
 
-Rollout: apply migration 0037, configure the service key and enable the flag,
-then restart service processes. Old daemons work unchanged; old services simply
+Rollout: apply migration 0037 and configure the service key. The retained
+`WEB_RETRIEVAL_ENABLED` flag defaults on; `0` or `false` disables retrieval.
+Restart service processes after configuration changes. Old daemons work unchanged; old services simply
 lack the tools and can coexist with the additive tables. Roll back by disabling
 retrieval/restarting; preserve evidence and tables. Bud-hosted retrieval will
 require separate capability negotiation and a new network permission design.

@@ -8,8 +8,10 @@ the service owns authorization, references, quotas and evidence persistence.
 - `contracts.ts`: canonical input validation, backend interfaces, public-URL
   policy, typed sanitized errors and UTF-8 truncation. Search and read are
   independently injectable capabilities for future Bud-hosted implementations.
-- `config.ts`: optional `FIRECRAWL_API_KEY` and default-off
-  `WEB_RETRIEVAL_ENABLED=1|true`; neither is sent to models or clients.
+- `config.ts`: optional `FIRECRAWL_API_KEY` and default-on
+  `WEB_RETRIEVAL_ENABLED`; `0|false` disables retrieval, `1|true` enables it.
+  A nonempty key is still required; neither setting is sent to models or clients.
+- `config.test.ts`: default enablement, explicit overrides and key requirements.
 - `firecrawl.ts`: fixed Firecrawl v2 endpoint, snippet-only search and Markdown
   scrape, response streaming byte ceiling, deadlines and cancellation. No retries,
   browser cookies, custom headers, actions, PDF parsing or local network fetches.

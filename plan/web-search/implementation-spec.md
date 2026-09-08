@@ -157,7 +157,8 @@ unchanged.
 
 ## Rollout and impacted contracts
 
-Implement behind `WEB_RETRIEVAL_ENABLED`, default off, and require the configured
+Implement behind `WEB_RETRIEVAL_ENABLED`, default on with an explicit `0|false`
+disable override, and require the configured
 key for Firecrawl capability exposure. Missing configuration must not prevent
 service startup. Turn the feature on locally after fixture tests and migrations.
 
