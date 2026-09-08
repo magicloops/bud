@@ -75,7 +75,11 @@ const isWorkMessage = (message: ApiMessage): boolean => {
   }
   if (message.role === 'tool') {
     const tool = getToolName(message)
-    return tool !== 'data_request_api_key' && tool !== QUESTION_TOOL && tool !== 'automations_request_activation' && tool !== 'automations_request_existing_contacts'
+    if (tool === QUESTION_TOOL) return false
+    const approval = tool === 'data_request_api_key' || tool === 'automations_request_activation' || tool === 'automations_request_existing_contacts'
+    // Human decisions must remain visible while pending. Once reconciled with
+    // their canonical result, approvals are ordinary work in the same turn.
+    return !approval || !isPendingToolMessage(message)
   }
   // Draft assistant rows never carry segment_kind, so a streaming answer
   // stays top-level; if it reconciles as intermediate it folds in then.

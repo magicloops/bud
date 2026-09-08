@@ -8,16 +8,19 @@
 
 ## Personal data and automations — remaining acceptance
 
-The development happy paths work; see [current progress](plan/personal-data-ingestion-and-agent-triggers/progress-checklist.md). The following complete the [phase-8 gate](plan/personal-data-ingestion-and-agent-triggers/phase-8-validation-and-rollout.md):
+Updated September 8, 2026: the main functionality and phases 15–16 UI changes are implemented. The latest approval-button layout was installed on the iPhone and accepted for development. See [current progress](plan/personal-data-ingestion-and-agent-triggers/progress-checklist.md). Remaining work is validation against the [detailed scenario matrix](plan/personal-data-ingestion-and-agent-triggers/validation-checklist.md) and [phase-8 rollout gate](plan/personal-data-ingestion-and-agent-triggers/phase-8-validation-and-rollout.md); a successful happy path does not complete the failure/recovery cases.
 
+- [ ] **Next: cross-device approvals.** Create an automation or app-access request on mobile and approve/deny on web, then reverse direction. Verify both chats resolve the same review; cover concurrent decisions, edit conflicts, stale/expired reviews, lost responses and interrupted app-key setup. View details and dismissal must make no decision.
+- [ ] Retest agent draft creation without specifying a model or reasoning level: inherit the chat's selected pair on the first attempt. Verify explicit overrides and originating-chat/new-chat/other-chat destinations. The model default already existed; the latest fix strengthens guidance against unsupported reasoning overrides and provides clearer recovery errors. See [investigation and regression evidence](debug/automation-model-defaults.md).
 - [ ] Validate exact Bud/model offline waiting, reconnect and visible expiry; inject service/daemon interruption around dispatch and prove safe recovery without duplicate completed actions or implicit cloud fallback.
+- [ ] Validate busy-thread behavior: automation work queues safely alongside human messages and other invocations, preserving the selected destination and order.
 - [ ] Complete physical mobile recovery: first unlock, background/cold callbacks, process kill, storage exhaustion, queue backlog/retry, account/environment switching and denied/limited/regranted Contacts access. Include source repair and foreground no-change/offline status.
-- [ ] Finish opposite-client approval/edit-conflict, denial/stale-review and interrupted app-key setup cases; validate originating-chat default, explicit new/existing target overrides and busy-thread behavior.
 - [ ] Verify frozen existing-contact membership while new contacts arrive, repeated decision/retry, cancellation and explicit reprocessing without accidental duplicates.
 - [ ] Finish signed-in second-user read/write/stream/app-key/private-preview isolation and the full frontend/chat/terminal/SSE/log credential audit. Owner queries, unauthenticated denial and revoke blocking queries were already validated.
 - [ ] Validate staging migrations `0024`–`0036`, mixed client/service versions and safe drain/rollback. Inventory standalone ingest deployments/data and remaining device queues before retirement; preserve or quarantine unmapped legacy data.
 - [ ] Record queue age, capture-to-receipt, projection lag, receipt-to-action, retries/quarantine and daily-limit consumption without personal payload logging.
 - [ ] Finish mobile preview device checks: VoiceOver/large text, light/dark, rotation, keyboard, both viewport modes, external navigation and the stable initial opening label. Investigate Back's snapshot-then-reload only if it remains disruptive; current behavior was accepted for development.
+- [ ] Finish accessibility/responsive checks for the new [chat modal](plan/chat-settings-modal.md) and [approval actions](plan/approval-action-layout.md): narrow layouts, large text, keyboard/VoiceOver focus and dismissal, disabled decisions and retry placement. User acceptance of the latest phone layout is recorded; the complete matrix remains open.
 
 ## Personal data — deferred deliverables
 

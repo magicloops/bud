@@ -19,7 +19,7 @@ test("automation tools expose bounded management without any agent approval prim
 });
 
 test("draft defaults remain omitted for server resolution and provider nulls cannot supply authority", () => {
-  assert.deepEqual(parseAutomationToolInput("automations_create_draft", { name: "Contacts", instruction: "Read evidence", model: null, target: null }),
+  assert.deepEqual(parseAutomationToolInput("automations_create_draft", { name: "Contacts", instruction: "Read evidence", model: null, reasoning_effort: null, target: null }),
     { name: "Contacts", instruction: "Read evidence" });
   for (const injected of ["owner", "created_by_user_id", "invocation_id", "acknowledge_standing_work", "decision", "grant_version"])
     assert.throws(() => parseAutomationToolInput("automations_create_draft", { name: "Contacts", instruction: "Read evidence", [injected]: null }));

@@ -249,6 +249,13 @@ See [phase 14](../../../plan/personal-data-ingestion-and-agent-triggers/phase-14
 
 ## Automation context filters (phase 15)
 
+Agent draft creation retains the current invocation's resolved model/reasoning
+for omitted or provider-null arguments. Unsupported explicit create selections
+return the attempted pair and inherited pair with omit/null recovery guidance;
+they are never silently substituted. The isolated invocation proposal fixture
+covers both default forms and failed-override rollback. See
+[debug note](../../../debug/automation-model-defaults.md).
+
 `GET /api/automations` accepts optional `bud_id`, `thread_id` (requires Bud),
 and `state=enabled|paused|draft`; unknown query keys are rejected. The human
 viewer is resolved first. Bud/thread ownership and matching Bud are checked

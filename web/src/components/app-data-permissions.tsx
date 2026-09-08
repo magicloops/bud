@@ -94,10 +94,7 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
   }
   const pending = request.status === 'pending' && new Date(request.expires_at).getTime() > Date.now()
   const blocked = busy || done || !canMutate
-  return <article className={`rounded border p-3 space-y-2 ${!inline && !pending ? 'app-access-row' : ''}`}>
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{request.app_label}</h3><span className="text-sm text-muted-foreground">{appPermissionStatus(request)}</span>{request.key?.last_used_at && <span className="text-xs text-muted-foreground">Used {time(request.key.last_used_at)}</span>}</div>
-    {pending && <p className="text-sm">Read {request.data_access.contact_fields.join(', ').replaceAll('_', ' ') || request.data_access.scopes.join(', ')} · {request.data_access.history_days} days{request.data_access.scopes.includes('location.read') ? ` · Location: ${request.data_access.location_precision.replaceAll('_', ' ')}` : ''}</p>}
-    <PermissionDetails title={request.app_label} inline={inline}>
+  const details = <PermissionDetails title={request.app_label} inline={inline}>
     <p className="whitespace-pre-wrap break-words">{request.purpose}</p>
     <p>Data: {request.data_access.scopes.join(', ')} · History: {request.data_access.history_days} days</p>
     <p>Contact fields: {request.data_access.contact_fields.join(', ') || 'None'} · Location: {request.data_access.location_precision.replaceAll('_', ' ')}</p>
@@ -108,10 +105,15 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
     <p>Request expires {time(request.expires_at)}</p>
     <p>Changes to the requested policy need a new request from the agent. Closing these details makes no decision.</p>
     </PermissionDetails>
-    {pending && <>
-      <button className="rounded border p-2" disabled={blocked || !canApprove || (!!retry && retry.action !== 'approve')} onClick={() => void act('approve')}>{retry?.action === 'approve' ? 'Retry approval' : 'Allow'}</button>
-      <button className="ml-2 rounded border p-2" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>
-    </>}
+  return <article className={`rounded border p-3 space-y-2 ${!inline && !pending ? 'app-access-row' : ''}`}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{request.app_label}</h3><span className="text-sm text-muted-foreground">{appPermissionStatus(request)}</span>{request.key?.last_used_at && <span className="text-xs text-muted-foreground">Used {time(request.key.last_used_at)}</span>}</div>
+    {pending && <p className="text-sm">Read {request.data_access.contact_fields.join(', ').replaceAll('_', ' ') || request.data_access.scopes.join(', ')} · {request.data_access.history_days} days{request.data_access.scopes.includes('location.read') ? ` · Location: ${request.data_access.location_precision.replaceAll('_', ' ')}` : ''}</p>}
+    {(!inline || !pending) && details}
+    {pending && <div className="review-actions">
+      <button className="review-deny" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>
+      {inline && details}
+      <button className="review-approve" disabled={blocked || !canApprove || (!!retry && retry.action !== 'approve')} onClick={() => void act('approve')}>{retry?.action === 'approve' ? 'Retry approval' : 'Allow'}</button>
+    </div>}
     {request.key && ['installed', 'handoff_pending'].includes(request.key.status) && <button className="rounded border p-2" disabled={blocked || (!!retry && retry.action !== 'revoke')} onClick={() => void act('revoke')}>{retry?.action === 'revoke' ? 'Retry revocation' : 'Revoke app access'}</button>}
     {done && onRefresh && <button onClick={onRefresh}>Refresh review</button>}
     {message && <p role="status">{message}</p>}

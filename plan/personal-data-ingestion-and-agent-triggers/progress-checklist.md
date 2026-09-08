@@ -1,11 +1,18 @@
 # Implementation progress
 
-## Current handoff — September 7, 2026
+## Current handoff — September 8, 2026
 
-The development feature is implemented through phases 1–7 and 9–14, including
+The development feature is implemented through phases 1–7 and 9–16, including
 agent-managed reviews, originating-conversation defaults, deletion, single-action
 Stop, and the mobile viewer follow-up. Phase 8 remains the integration and rollout
 gate. This is development evidence, not production acceptance.
+
+Latest user feedback is implemented: consistent settings/sidebar backgrounds,
+simplified account cards, a Workflow-triggered Automations/Data access modal,
+and inline red Deny / blue text-only View details / green Enable or Allow actions.
+The updated iPhone build was installed and launched; the user accepted the
+approval layout for development. Cross-device decisions, recovery, accessibility
+and responsive coverage remain open. Cross-device approvals are the next test.
 
 User testing confirmed contact queries, improved Sync now feedback, agent-created
 automations, automation deletion/UI cleanup, private contact-app queries, denial
@@ -44,6 +51,7 @@ are recorded separately from automated tests.
 | 8 | Additive migrations, feature gates, local inventory and regression fixtures | Deployment/drain/rollback, remote legacy inventory and operational measurements |
 | 9–12 | Honest sync feedback, independent Automations, agent proposals, addresses/websites and field permissions | Remaining UX/AM/CF matrix conditions, including enrichment without duplicate actions |
 | 13–14 | Originating-chat default with explicit target override, automation deletion/history and compact chat status | Explicit default/override/concurrency and cancellation recovery acceptance |
+| 15–16 | Shared settings navigation/style, separate data browser, compact app access, chat modal and inline mobile/web approvals | Cross-device decisions, stale/conflicting reviews, retry and accessibility/responsive matrix |
 | Mobile viewer | Full-screen preview, Back, Liquid Glass controls, top-edge drag, edge-to-edge background and stable named loading | Accessibility, rotation/keyboard, viewport modes and latest loading-label retest |
 
 ## Verification for PR preparation
@@ -96,6 +104,22 @@ changes are subsequent to the draft-PR verification counts above.
 
 Phase 15–16 automated validation: web build, 195 unit tests, 3 render tests and
 focused lint; service build and owner/context/decision tests; Local HTTPS iOS
-build and 21 focused simulator tests. New browser visual and live device approval
-checks remain open. Browser discovery returned no connected browsers; no phone
-installation, feature-flag change, migration, commit or PR update is included.
+build and 21 focused simulator tests. Subsequent web and iOS device builds passed
+for the approval-action layout; the phone installation and user acceptance are
+recorded above. Browser discovery returned no connected browsers, so automated
+visual verification remains open.
+
+Automation draft investigation confirmed omitted model/reasoning already inherit
+the admitted chat invocation. The observed failure came from an explicit,
+unsupported reasoning override. Tool guidance and error feedback were improved;
+service build and nine focused tests, including isolated PostgreSQL validation,
+passed. First-attempt live retesting remains open. See
+[debug note](../../debug/automation-model-defaults.md).
+
+PR refresh includes the earlier phase 15–16 work and web refinements (main-repo
+`292f8f1`, mobile `4abf864`), model-default guidance, approval-action layout and
+updated validation follow-ups. Completed web approvals now join Worked for;
+pending decisions stay visible. The 16 focused projection tests and web build
+passed. See [grouping regression](../../debug/completed-approval-work-group.md).
+Both PRs are being prepared for review; phase-8 deployment and production
+enablement evidence remains open as listed above.

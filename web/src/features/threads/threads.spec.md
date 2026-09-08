@@ -612,16 +612,18 @@ tool results win over pending reviews. Missing client IDs are not invented.
 `invocation-state.test.ts` covers cold recovery, deduplication, terminal-result
 precedence, cleared reviews and older-service fallback.
 
-`agent-work-projection.ts` keeps automation activation review rows outside
-collapsed work, for both pending requests and resolved decisions.
-`automation-review-projection.test.ts` verifies their position between work
-groups so a human decision cannot be hidden in collapsed tool activity.
+`agent-work-projection.ts` keeps pending approval reviews outside collapsed
+work so human decisions remain visible. Settled and failed approval results
+join their turn's Worked for group, including continuation results whose tool
+identity exists only in content. `automation-review-projection.test.ts` covers
+all three approval tools, pending-to-canonical replacement, stable group identity
+and preservation of the final assistant response.
 
 Existing-contact reviews follow the same recovery rules through the separate
 `pending_bootstrap_requests` field and `automations_request_existing_contacts`
 tool identity. Their identity/version/status changes refresh the transcript,
 explicit empty arrays suppress stale runtime prompts, and canonical results win.
-Both review kinds remain outside collapsed work. Pure recovery/projection tests
+Both review kinds remain outside collapsed work while pending. Pure recovery/projection tests
 cover the new kind; its visible review controls and live SSE integration remain
 pending.
 
@@ -629,6 +631,6 @@ pending.
 App permission requests now use the same canonical pending overlay seam:
 `pending_data_requests` restores original client/call/turn/time metadata,
 an explicit empty array suppresses stale runtime tools, and canonical results
-win over older snapshots. Both pending and settled `data_request_api_key` rows
-stay outside collapsed work. `thread-message-state.test.ts` covers recovery,
+win over older snapshots. Pending `data_request_api_key` rows stay visible;
+settled results collapse into work. `thread-message-state.test.ts` covers recovery,
 deduplication, settlement precedence and empty-array cleanup.

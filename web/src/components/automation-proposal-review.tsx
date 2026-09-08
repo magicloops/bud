@@ -81,16 +81,18 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
       <p className="line-clamp-2 text-sm whitespace-pre-wrap">{proposal.definition.instruction}</p>
       <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : 'New contacts only'} · {proposal.definition.target.mode === 'new_thread' ? 'New chat per run' : proposal.definition.target.thread_id === proposal.thread_id ? 'This conversation' : 'Selected conversation'} · Up to {proposal.definition.max_invocations_per_day}/day</p>
       <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.includes('location.read') ? 'Contacts and collected location' : 'Contacts'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
+      <div className="review-actions">
+      {proposal.status === 'pending' && !uncertain && <button className="review-deny" disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button>}
       <ReviewDetails title="Automation details">
         <AutomationProposalSummary proposal={proposal} />
         <Link className="underline" to="/automations" search={{ rule: proposal.automation_id }}>Adjust settings</Link>
         <p>Edits require a new review before enabling. Closing details makes no decision.</p>
       </ReviewDetails>
+      {proposal.status === 'pending' && !uncertain && <button className="review-approve" disabled={busy || !enabled || !!error} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process contacts' : 'Enable'}</button>}
+      </div>
       {proposal.status === 'pending' ? <>
         {!enabled && <p>Starting automated work is currently unavailable. You can still decline.</p>}
-        {uncertain ? <button className={button} disabled={busy} onClick={() => void decide(pending.current!.decision)}>Retry original decision</button>
-          : <div className="flex gap-2"><button className={button} disabled={busy || !enabled || !!error} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process contacts' : 'Enable'}</button>
-            <button className={button} disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button></div>}
+        {uncertain && <button className={button} disabled={busy} onClick={() => void decide(pending.current!.decision)}>Retry original decision</button>}
       </> : <p role="status">{proposal.status === 'approved' ? ('kind' in proposal ? `Captured ${proposal.member_count} contacts. Request: ${proposal.bootstrap_id}.` : `Enabled as revision ${proposal.activated_revision}.`) : `Review ${proposal.status}. No work was approved by this review.`}</p>}
 
     </>}

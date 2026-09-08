@@ -1034,6 +1034,11 @@ Bootstrap invocations now resolve their admitted group and immutable revision at
 
 ### Durable automation proposal continuation
 
+Draft-creation tool and field descriptions explicitly tell agents to omit model
+and reasoning_effort (or use null) unless the user requests an override. Both
+inherit the admitted chat invocation's exact selection, including on mobile;
+invalid explicit pairs remain errors with targeted recovery guidance.
+
 `automation-tools.ts` defines the seven opt-in automation management tool schemas:
 list/get/history, create/update draft, request activation and pause. Descriptions
 preserve exact server defaults and separate data consent, human activation and

@@ -67,6 +67,7 @@ test("automation review parks atomically and resumes the same invocation with on
     const draft = drafts[0].draft as Record<string, unknown>;
     assert.equal(draft.bud_id, bud);
     assert.equal(draft.model, "gpt-5.4");
+    assert.equal(draft.reasoning_effort, "low");
     assert.deepEqual(draft.target, { mode: "existing_thread", thread_id: first.thread });
     assert.deepEqual(draft.data_access, { scopes: ["contacts.read"], history_days: 30 });
     assert.equal(drafts[0].active_revision, null);
@@ -85,14 +86,23 @@ test("automation review parks atomically and resumes the same invocation with on
     ] as const) {
       await repo.recordAction(first.lease, callId, "automations_create_draft");
       const context = { ...managementContext, callId };
-      const input = { ...draftInput, target };
+      const input = { ...draftInput, target, model: null, reasoning_effort: null };
       const created = await management.mutate(context, "automations_create_draft", input);
       assert.deepEqual((created.draft as Record<string, unknown>).target, expected);
+      assert.equal((created.draft as Record<string, unknown>).model, "gpt-5.4");
+      assert.equal((created.draft as Record<string, unknown>).reasoning_effort, "low");
       assert.equal(created.active_revision, null);
       assert.deepEqual(await management.mutate(context, "automations_create_draft", input), created);
       await repo.completeAction(first.lease, callId, { message_id: "fixture" });
     }
     assert.deepEqual((await rules.get(owner, first.input.automation_id)).draft.target, { mode: "new_thread" });
+    await repo.recordAction(first.lease, "invalid-reasoning", "automations_create_draft");
+    const beforeInvalid = (await rules.list(owner)).items.length;
+    await assert.rejects(management.mutate({ ...managementContext, callId: "invalid-reasoning" },
+      "automations_create_draft", { ...draftInput, reasoning_effort: "minimal" }),
+      /model=gpt-5.4, reasoning_effort=minimal.*Omit model and reasoning_effort.*model=gpt-5.4, reasoning_effort=low/);
+    assert.equal((await rules.list(owner)).items.length, beforeInvalid);
+    await repo.completeAction(first.lease, "invalid-reasoning", { validation_failed: true });
     await repo.recordAction(first.lease, "edit-draft", "automations_update_draft");
     const edit = { automation_id: drafts[0].automation_id, expected_version: 0, definition: { ...draft, name: "Edited by agent" } };
     const edited = await management.mutate({ ...managementContext, callId: "edit-draft" }, "automations_update_draft", edit);

@@ -80,7 +80,17 @@ export class AutomationManagement {
           data_access: { scopes: ["contacts.read"], history_days: Math.min(grant?.historyDays ?? 30, 30) },
           latest_start_seconds: 86400, max_invocations_per_day: 10 };
         const definition = resolveAgentAutomationDraft(args, defaults);
-        result = await automations.createInTransaction(tx, context.owner, definition);
+        try {
+          result = await automations.createInTransaction(tx, context.owner, definition);
+        } catch (error) {
+          if (error instanceof DataRequestError && error.code === "invalid_automation_model") {
+            throw new DataRequestError(400, error.code,
+              `Unsupported automation selection: model=${definition.model}, reasoning_effort=${definition.reasoning_effort}. ` +
+              `Omit model and reasoning_effort (or use null) to inherit this chat's model=${defaults.model}, reasoning_effort=${defaults.reasoning_effort}. ` +
+              "Preserve explicit user choices; if an override was requested, select a supported model/reasoning combination instead of silently substituting.");
+          }
+          throw error;
+        }
       } else if (name === "automations_update_draft") {
         const value = parseAutomationToolInput(name, args);
         result = await automations.updateInTransaction(tx, context.owner, value.automation_id,

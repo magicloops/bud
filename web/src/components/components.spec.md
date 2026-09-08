@@ -102,6 +102,8 @@ One Enable automation action approves the saved proposal; decline remains
 available independently. Unknown mutation outcomes retain the exact version and
 idempotency key for retry. Terminal server state replaces pending decisions.
 Compact inline actions expose the consequential scope; the shared native dialog exposes full instructions, target, sources, scopes/history and limits without a second decision controller.
+Decision rows put red Deny left, blue borderless View details center, and green
+Enable/Process contacts right; uncertain outcomes retain the original retry.
 
 The same component also handles validated `bp_` existing-contact review IDs through
 the separate existing-contact endpoint and capability. It rejects a mismatched
@@ -145,6 +147,8 @@ ahead of history within each server page without changing pagination cursors.
 Expected versions and identical uncertain retry bodies remain bound to the
 original action; confirmed failures expose refresh. Card identity stays request
 stable across polling and settlement.
+Inline pending rows use the same Deny/details/Allow action order and colors as
+automation reviews, preserving decision and retry guards.
 
 ### `review-details.tsx`
 
