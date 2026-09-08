@@ -15,7 +15,7 @@ Cloudflare Worker module for the staging/prototype front door.
 
 Responsibilities:
 
-- forward service-owned app paths (`/api/*`, `/.well-known/*`, `/ws*`,
+- forward service-owned app paths (`/api/*`, `/v1/events/*`, `/.well-known/*`, `/ws*`,
   `/readyz*`, and `/healthz*`) to `bud-service`
 - forward all `*.bud.show/*` web-view proxy traffic to `bud-service`
 - leave unmatched app routes on the default request path so Cloudflare can send

@@ -1471,3 +1471,28 @@ async function waitFor<T>(read: () => T | null, timeoutMs = 1_000): Promise<T> {
   }
   throw new Error("timed out waiting for condition");
 }
+
+
+test("private HTTP and WebSocket gateways reject another owner's viewer session before allocation", async t => {
+  t.after(() => mock.restoreAll());
+  const foreignSession = { ...VIEWER_SESSION_ROW, userId: "other-user", createdByUserId: "other-user" };
+  mockGatewayLookups([[PROXIED_SITE_ROW], [foreignSession], [PROXIED_SITE_ROW], [foreignSession]]);
+  let allocations = 0;
+  mock.method(DaemonStateStore.prototype, "createOperation", async () => {
+    allocations++;
+    throw new Error("foreign viewer reached daemon allocation");
+  });
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const http = server.handlers.get("GET /*");
+  const ws = server.routes.find(route => route.method === "GET" && route.path === "/*")?.wsHandler;
+  assert.ok(http); assert.ok(ws);
+  const request = { headers: { host: PROXIED_SITE_ROW.endpointHost,
+    cookie: `${config.proxyViewerCookieName}=foreign-session-token` }, url: "/api/contacts" };
+  assert.deepEqual(await invokeRoute(http, request),
+    { statusCode: 401, payload: { error: "proxy_viewer_unauthorized" } });
+  const socket = new TestWebSocket();
+  await ws(socket, request);
+  assert.deepEqual(socket.closed, [{ code: 1008, reason: "proxy viewer unauthorized" }]);
+  assert.equal(allocations, 0);
+});

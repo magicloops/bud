@@ -52,7 +52,7 @@ test('submitQuestionResponseFlow keeps live continuations on the stream path', a
 })
 
 test('submitQuestionResponseFlow refreshes bootstrap for fallback and already-answered continuations', async () => {
-  for (const continuation of ['fallback_user_message', 'already_answered'] as const) {
+  for (const continuation of ['fallback_user_message', 'already_answered', 'durable_invocation'] as const) {
     const calls: string[] = []
 
     const result = await submitQuestionResponseFlow({

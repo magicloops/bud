@@ -87,6 +87,7 @@ type CommandComposerProps = {
   status: WorkbenchStatus
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   onCancelAgentTurn?: () => void | Promise<void>
+  canCancelInvocation?: boolean
   error: string | null
   models: ModelInfo[]
   selectedModel: string
@@ -115,6 +116,7 @@ export function CommandComposer({
   status,
   onSubmit,
   onCancelAgentTurn,
+  canCancelInvocation = false,
   error,
   models,
   selectedModel,
@@ -144,7 +146,7 @@ export function CommandComposer({
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
   const stopMode =
     Boolean(onCancelAgentTurn) &&
-    (status === 'dispatching' || status === 'streaming' || status === 'waiting_for_terminal')
+    (canCancelInvocation || status === 'dispatching' || status === 'streaming' || status === 'waiting_for_terminal')
   const inputDisabled = status === 'dispatching' || Boolean(disabledReason)
   const showBudOfflineNotice = environment?.mode === 'bud_offline'
 

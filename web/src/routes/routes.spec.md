@@ -94,6 +94,70 @@ Hosted mobile consent route used as Better Auth `consentPage`.
 - Handles Better Auth redirect responses and returns control to the native client/app callback
 - Exists even when trusted first-party clients usually skip consent, so `prompt=consent` remains testable
 
+### `data.tsx`
+
+Authenticated `/data` Data sources screen with contact search, detail/history and import status, linked from Settings. Uses the shared credential-aware transport and root viewer gate. State remounts per owner and requests abort on view/query changes. Uses canonical first-party data APIs, bounded pages, and observed-time/source-visibility labels. Owner-wide agent read permission controls save optimistic versions with explicit reload/conflict handling. Contact detail fetches nearest location evidence within ±24 hours of first detection and labels uncertainty/accuracy; OpenStreetMap loads only after the user selects Show pin.
+
+Agent permission toggles save immediately; history saves on blur/Enter. Requests
+are serialized, owner-remounted, and guarded after unmount. Failed/uncertain
+saves restore the last confirmed values and require reload before further edits.
+
+Contact field toggles use `supported_contact_fields` from the owner's grant
+response and save explicit `fields` immediately. Older services show their
+legacy coverage without offering unsupported controls. Requests carry only
+version, scopes, history and supported field choices. The existing authenticated
+viewer, owner-keyed remount, server owner lookup and updater stamp govern these
+changes; no client-supplied owner or new endpoint is introduced.
+
+Contact detail and expandable historical revisions share structured address and
+labeled website display. Absent fields report uncollected; empty arrays report
+observed empty. URLs render as selectable plain text without navigation/fetching,
+and postal addresses are explicitly separate from sensor location evidence.
+Source guidance points to the mobile expanded-collection toggle and excludes
+pictures/notes; search is described in terms of collected fields.
+
+The Data sources page presents bounded app permission/key inventory,
+refreshing serially every five seconds. Cards show the immutable purpose,
+scopes/fields/history/precision, private destination and installation fingerprint,
+with requesting-conversation links. Approval requires explicit acknowledgement
+and the server app-key capability; decline/revoke remain independently available.
+Mutations use expected versions and retain the identical retry body after an
+uncertain response. Cards remount on version changes, and owner-page remount plus
+unmount guards prevent late responses from updating another view. Browser
+interaction validation and thread-level prompt controls remain open.
+
+The `/data` route accepts a validated `request` search parameter to review one
+exact permission through the owner-scoped detail endpoint, independent of list
+pagination. Changing the request remounts its review state; View all returns to
+inventory. Conversation banners link here for explicit approval/decline.
+
+Import status displays owner-wide failed-record/reconciliation counts and up to
+ten recent unfinished scan reasons, with guidance to retry retained original
+uploads on the source phone. New optional fields tolerate older services. Refresh
+withholds stale import status until the current request succeeds. A reconciliation
+scan is not represented as repairing missing predecessors.
+
+Unfinished diagnostics include only pending, repair-pending and invalid scans;
+closed superseded scans stay in API history without appearing as failures. When
+original uploads are unavailable, guidance points to the explicit phone Repair
+control, distinct from ordinary reconciliation.
+
+Source presentation separates received-data status from current phone connectivity.
+Refresh received data only refetches existing APIs; mobile owns collection and OS
+permissions. Scan IDs/reasons and repair guidance are collapsed under Troubleshooting.
+Agent and app permission panels are independently expandable; an exact request link
+opens app permissions for review. No authorization, owner scoping or wire changes.
+
+### `automations.tsx`
+
+Authenticated `/automations`, linked directly from Settings. Validated `rule` search selects an exact rule (or new draft) and preserves selection across reload/back navigation. Trigger attribution links open its editor and activity. Detail reads still resolve through the existing owner-authorized API; no new management authority is introduced. The screen is titled Automations, with source/access/execution limits grouped under Advanced settings while activation review retains all effective values. Lists owner-scoped rules and edits shared drafts with owned Bud/model/thread/source selectors, requested scopes/history and work limits. Preserves unavailable stored model choices; never substitutes on save. New drafts retain one creation key and freeze uncertain request bodies for explicit retry. Editor remounts on owner/rule changes and guards responses after unmount. Optimistic conflicts require reloading saved state. Shows active definition separately, pause with separate queued/active cancellation choices, and bounded delivery history with canonical invocation state and conversation links. Activation review displays the saved instruction, target, scope/history and limits, requires acknowledgement and matching saved draft, and follows the server activation capability. Existing-contact controls preview the saved draft or active revision, require explicit processing/rerun/standing-work consent, and preserve uncertain capture bodies for retry. Bounded request history and progress recover cross-device receipts, show canonical group states and conversation links, and support cancellation without implying remote commands stopped. Browser interaction and mobile parity remain in progress. Builds verified; browser interaction validation remains open.
+
+Automation reviews also appear in the shared inventory under Needs your review.
+Validated `proposal` search selects the exact owner-authorized immutable review,
+independent of rule pagination. Pending inventory refreshes serially; the shared
+review component handles single-action enable/decline and uncertain retries.
+The owner-keyed page prevents requests and decision state surviving account switches.
+
 ### `settings.tsx`
 
 **Route**: `/settings`
@@ -108,6 +172,7 @@ Authenticated account settings route.
 - Shows linked-account state for GitHub and Google
 - Starts explicit provider linking through Better Auth client actions
 - Uses the shared mutation-status component for username save feedback, provider-link redirect/error state, and sign-out failure display
+- Provides separate Data sources and Automations navigation entries; destination APIs retain their existing viewer authorization and owner-scoped reads, with no new writes or row stamping.
 - Signs the browser session out through Better Auth and returns to `/login`
 
 ### `devices.claim.$flowId.tsx`
@@ -248,3 +313,20 @@ Auto-generated by TanStack Router plugin. Contains:
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+# Existing-contact review integration
+
+`automations.tsx` accepts validated `bp_` proposal links alongside activation IDs.
+Its owner-keyed pending-review inventory includes both independent endpoints;
+older servers returning 404 for existing-contact inventory preserve activation
+review support. The shared review component selects the dedicated endpoint and
+capability and displays Process reviewed contacts rather than activation.
+
+## Automation deletion
+
+The saved automation editor places Delete automation at the bottom, after delivery
+history, with a named confirmation
+explaining queued/active cancellation and retained history. The authenticated
+owner-bound POST includes the observed version, shares mutation/unmount guards,
+and returns to refreshed inventory only after success. Conflicts require reload;
+uncertain deletion can be retried. Deleted detail links render historical delivery
+and bootstrap activity with no editing/activation controls.

@@ -11,6 +11,10 @@ import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/thr
 import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService, ThreadTitleService } from "./agent/index.js";
 import { repairDanglingToolCalls } from "./agent/restart-repair.js";
+import { InvocationRepository } from "./agent/invocation-repository.js";
+import { InvocationWorker } from "./agent/invocation-worker.js";
+import { ServiceInvocationExecutor } from "./agent/invocation-executor.js";
+import { acquireInvocationMode, readInvocationSettings, verifyAutomationProposalSchema, verifyBootstrapProposalSchema } from "./invocation-startup.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
@@ -24,6 +28,9 @@ import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
 import { startGrpcControlGateway } from "./grpc/control-gateway.js";
 import { startGrpcDataGateway } from "./grpc/data-gateway.js";
+
+import { AutomationWorker } from "./personal-data/automation-worker.js";
+import { registerPersonalDataRoutes } from "./personal-data/routes.js";
 
 const SERVICE_VERSION = "0.0.1";
 const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
@@ -68,6 +75,7 @@ function selectProxyWebSocketSubprotocol(
 }
 
 export async function buildServer(): Promise<FastifyInstance> {
+  const invocationSettings = readInvocationSettings();
   const server = Fastify({
     bodyLimit: config.proxySessionMaxRequestBodyBytes,
     logger: {
@@ -129,13 +137,55 @@ export async function buildServer(): Promise<FastifyInstance> {
   initializeProviders();
 
   const agentLogger = server.log.child({ component: "agent" });
+  const invocations = invocationSettings.mode === "durable"
+    ? new InvocationRepository(undefined, invocationSettings.automationConcurrencyPerBud)
+    : undefined;
   const agentService = new AgentService(
     terminalSessionManager,
     agentRuntime,
     agentLogger,
     config.agentDebug,
-    config.agentOpenaiDebug
+    config.agentOpenaiDebug,
+    invocations,
+    invocationSettings.appKeysEnabled,
+    invocationSettings.automationProposalsEnabled,
+    invocationSettings.bootstrapProposalsEnabled,
   );
+  const invocationWorker = invocations ? new InvocationWorker(
+    new ServiceInvocationExecutor(agentService, undefined, undefined, undefined,
+      threadId => terminalSessionManager.rejectPendingRequestsForThread(threadId, "invocation_interrupted")), invocations,
+    code => server.log.error({ code, component: "invocation_worker" }, "Invocation worker error"),
+  ) : undefined;
+  const automationWorker = invocationSettings.automationsEnabled ? new AutomationWorker(undefined,
+    code => server.log.error({ code, component: "automation_worker" }, "Automation worker error")) : undefined;
+  let releaseInvocationMode: (() => Promise<void>) | undefined;
+  server.addHook("onReady", async () => {
+    releaseInvocationMode = await acquireInvocationMode(pool, invocationSettings.mode, () => {
+      server.log.error("Invocation mode database session lost; stopping service");
+      void server.close().catch(err => server.log.error({ err }, "Service shutdown failed"));
+    });
+    if (invocationSettings.appKeysEnabled) {
+      await pool.query("select id, invocation_id, status, version from data_access_request limit 0");
+      await pool.query("select id, verification_hash, encrypted_envelope from data_app_key limit 0");
+    }
+    if (invocations) {
+      // Recovery reads these tables regardless of new-proposal issuance flags.
+      await verifyAutomationProposalSchema(pool);
+      await verifyBootstrapProposalSchema(pool);
+    }
+    if (automationWorker) {
+      // Fail readiness before publishing capability if required schema is absent.
+      await pool.query("select bootstrap_id, group_index from automation_bootstrap_group limit 0");
+      automationWorker.start();
+    }
+    invocationWorker?.start();
+    server.log.info({ admission_mode: invocationSettings.mode,
+      automation_concurrency_per_bud: invocationSettings.automationConcurrencyPerBud,
+      automations_enabled: invocationSettings.automationsEnabled,
+      automation_proposals_enabled: invocationSettings.automationProposalsEnabled,
+      existing_contact_reviews_enabled: invocationSettings.bootstrapProposalsEnabled,
+      app_data_keys_enabled: invocationSettings.appKeysEnabled }, "Agent admission ready");
+  });
   const threadTitleService = new ThreadTitleService(
     agentRuntime,
     server.log.child({ component: "thread_title" }),
@@ -144,6 +194,28 @@ export async function buildServer(): Promise<FastifyInstance> {
     server.log.child({ component: "push_worker" }),
   );
   pushNotificationWorker.start();
+
+  // Register finalizers before plugin boot. Late onClose registration can run
+  // before Fastify's internal preClose runner after an awaited register().
+  let grpcControlGateway: Awaited<ReturnType<typeof startGrpcControlGateway>>;
+  let grpcDataGateway: Awaited<ReturnType<typeof startGrpcDataGateway>>;
+  let stopPersonalData = async () => {};
+  server.addHook("preClose", async () => {
+    await automationWorker?.stop();
+    await invocationWorker?.stop();
+  });
+  server.addHook("onClose", async () => {
+    await automationWorker?.stop();
+    await invocationWorker?.stop();
+    await stopPersonalData();
+    await grpcDataGateway?.close();
+    await grpcControlGateway?.close();
+    pushNotificationWorker.stop();
+    terminalSessionManager.stopIdleChecks();
+    await releaseInvocationMode?.();
+    await authPool.end();
+    await pool.end();
+  });
 
   await server.register(websocketPlugin, {
     options: {
@@ -160,6 +232,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerDeviceInstallClaimRoutes(server);
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
+  ({ stop: stopPersonalData } = await registerPersonalDataRoutes(server, {
+    automationActivationEnabled: invocationSettings.automationsEnabled,
+    appKeysEnabled: invocationSettings.appKeysEnabled,
+    automationProposalsEnabled: invocationSettings.automationProposalsEnabled,
+    bootstrapProposalsEnabled: invocationSettings.bootstrapProposalsEnabled,
+  }));
   await registerBudRoutes(server, terminalSessionManager);
   await registerProxyRoutes(server);
   await registerFileRoutes(server);
@@ -174,23 +252,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerModelsRoutes(server);
   await registerWsGateway(server, terminalSessionManager);
-  const grpcControlGateway = await startGrpcControlGateway(
+  grpcControlGateway = await startGrpcControlGateway(
     terminalSessionManager,
     server.log.child({ component: "grpc_control_gateway" }),
   );
-  const grpcDataGateway = await startGrpcDataGateway(
+  grpcDataGateway = await startGrpcDataGateway(
     terminalSessionManager,
     server.log.child({ component: "grpc_data_gateway" }),
   );
 
-  server.addHook("onClose", async () => {
-    await grpcDataGateway?.close();
-    await grpcControlGateway?.close();
-    pushNotificationWorker.stop();
-    terminalSessionManager.stopIdleChecks();
-    await authPool.end();
-    await pool.end();
-  });
 
   server.get("/healthz", async () => ({
     ok: true,
@@ -273,6 +343,7 @@ async function start() {
     server.log.info({ port: config.port }, "service listening");
   } catch (err) {
     server.log.error({ err }, "Failed to start service");
+    await server.close();
     process.exitCode = 1;
   }
 }

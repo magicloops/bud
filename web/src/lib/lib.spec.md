@@ -404,3 +404,22 @@ cn('text-red-500', isActive && 'font-bold', className)
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Durable invocation additions
+
+`ApiAgentInvocation` and `ApiPendingQuestion` describe optional owner-scoped `/agent/state` database snapshots. `ApiCreateMessageResponse` accepts queued admission and an optional stream cursor; absence of durable fields preserves older-service behavior.
+
+`ApiAgentState.pending_data_requests` describes durable app-permission prompts,
+including stable request/turn/call/client identity and public proposal summary.
+An explicit empty array means no pending app permission remains.
+
+`ApiAutomationDefinition`, `ApiAutomationProposal` and
+`ApiPendingAutomationRequest` describe immutable activation reviews and their
+durable invocation identity. `ApiAgentState.pending_automation_requests` is
+optional for older services; an explicit empty array clears pending reviews.
+
+`ApiBootstrapSelection`, `ApiBootstrapProposal` and `ApiPendingBootstrapRequest`
+describe the separate existing-contact review, including frozen member/group
+counts, selection and resulting bootstrap receipt. They omit activation-only
+fields. Optional `ApiAgentState.pending_bootstrap_requests` supports cold recovery;
+an explicit empty array clears that review kind independently of activation.

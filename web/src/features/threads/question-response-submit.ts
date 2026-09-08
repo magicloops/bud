@@ -7,6 +7,7 @@ export type QuestionResponseContinuation =
   | 'live_tool_result'
   | 'fallback_user_message'
   | 'already_answered'
+  | 'durable_invocation'
 
 export type SubmitQuestionResponseResult =
   | { status: 'submitted'; continuation: QuestionResponseContinuation }
@@ -46,6 +47,7 @@ export async function submitQuestionResponseFlow(args: {
 
     if (
       result.continuation === 'fallback_user_message' ||
+      result.continuation === 'durable_invocation' ||
       result.continuation === 'already_answered'
     ) {
       await args.transport.refreshBootstrap(args.threadId)

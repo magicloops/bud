@@ -7,6 +7,7 @@ React frontend for the Bud application.
 Provides a web-based chat interface for interacting with Buds. Features include:
 - Better Auth-based browser sign-in
 - Settings page for username management, linked providers, and sign-out
+- Personal data page (`/data`) for owner-scoped contact search/history and import status
 - Multi-bud navigation with sidebar
 - Thread-based conversations
 - Real-time terminal streaming (xterm.js)
@@ -53,6 +54,7 @@ web/
 | `build` | `tsc -b && vite build` | Type check & production build |
 | `lint` | `eslint .` | Run ESLint |
 | `test` | `node --experimental-strip-types --test 'src/**/*.test.ts'` | Run the current pure-helper web test suite without extra browser test dependencies |
+| `test:render` | `tsx --tsconfig tsconfig.app.json --test 'src/**/*.test.tsx'` | Server-rendered React content checks using the app JSX configuration |
 | `test:watch` | `node --watch --experimental-strip-types --test 'src/**/*.test.ts'` | Re-run the current pure-helper suite while editing |
 | `preview` | `vite preview` | Preview production build |
 
@@ -92,6 +94,7 @@ Vite build configuration with:
 - TanStack Router plugin (`@tanstack/router-plugin`)
 - Tailwind CSS plugin (`@tailwindcss/vite`)
 - Path aliases (`@/` → `src/`)
+- Development proxy for `/v1/events/*` mobile ingestion alongside existing API/discovery proxies
 
 ### `tsconfig.json`
 
@@ -99,6 +102,9 @@ TypeScript configuration with:
 - Strict mode enabled
 - Path aliases for `@/` imports
 - Composite project references
+
+`tsconfig.app.json` excludes both `.test.ts` and `.test.tsx` Node tests from
+the browser-only build. JSX render tests use the separate `test:render` script.
 
 ### `components.json`
 

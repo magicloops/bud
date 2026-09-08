@@ -1,3 +1,6 @@
+import { DataRequestError } from "../personal-data/contracts.js";
+import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycle.js";
+import type { InvocationRepository } from "./invocation-repository.js";
 import { ulid } from "ulid";
 import type { FastifyBaseLogger } from "fastify";
 import { eq } from "drizzle-orm";
@@ -47,6 +50,8 @@ import {
 	  isBudDisconnectedTransportError,
 	  isTerminalToolDirective,
 	  isUserQuestionToolDirective,
+      isPersonalDataToolDirective,
+      isAutomationToolDirective,
 	} from "./contracts.js";
 import {
   buildAgentEnvironmentInstruction,
@@ -56,6 +61,7 @@ import {
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
 import { WebViewToolExecutor } from "./web-view-tool-executor.js";
+import { PersonalDataToolExecutor } from "./personal-data-tool-executor.js";
 import {
   AgentUserQuestionRegistry,
   type ResolvedUserQuestionResponse,
@@ -69,11 +75,12 @@ import {
   type AcceptedQuestionResponse,
 } from "./user-question-repository.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
-import { AGENT_TOOL_SCHEMA_TOKENS, resolveAgentToolsForEnvironment } from "./tool-definitions.js";
+import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 import { AgentContextCompactor, type CompactContextResult } from "./context-compactor.js";
 import {
   type ContextBudget,
   resolveContextBudget,
+  estimateCanonicalToolsTokens,
 } from "./context-budget.js";
 import {
   buildContextBudgetDecision,
@@ -98,6 +105,7 @@ export class AgentService {
   private readonly modelRunner: AgentModelRunner;
   private readonly toolExecutor: TerminalToolExecutor;
   private readonly webViewToolExecutor: WebViewToolExecutor;
+  private readonly personalDataToolExecutor = new PersonalDataToolExecutor();
   private readonly transcriptWriter: AgentTranscriptWriter;
   private readonly contextCompactor: AgentContextCompactor;
   private readonly cancellations = new AgentCancellationRegistry();
@@ -119,6 +127,10 @@ export class AgentService {
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
+    readonly durableInvocations?: InvocationRepository,
+    private readonly appPermissionsEnabled = false,
+    private readonly automationToolsEnabled = false,
+    private readonly existingContactReviewsEnabled = false,
   ) {
     this.terminalSessionManager = terminalSessionManager;
     this.runtime = runtime;
@@ -145,13 +157,18 @@ export class AgentService {
 	      modelSelectionSource?: ModelSelectionSource;
 	      ownerUserId?: string | null;
 	      environment?: AgentEnvironmentSnapshot | null;
+      reservedTurnId?: string;
+      signal?: AbortSignal;
+      executionHooks?: AgentExecutionHooks;
 	    },
 	  ): Promise<{
 	    sessionId: string | null;
 	    environment: AgentEnvironmentSnapshot;
 	    streamCursor: string;
+      completion: Promise<AgentTurnOutcome>;
 	  }> {
 	    const model = options?.model ?? config.defaultModel;
+    if (this.durableInvocations && !options?.reservedTurnId) throw new Error("durable_admission_required");
 	    const modelReasoning = this.modelRunner.resolveModelReasoning(model, options?.reasoningEffort);
     const modelSelection = {
       model: modelReasoning.entry?.id ?? model,
@@ -164,16 +181,25 @@ export class AgentService {
 	    };
 	    const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
 	    let environment = options?.environment ?? await this.getEnvironmentForThread(threadId);
-	    const turnId = ulid();
+	    const turnId = options?.reservedTurnId ?? ulid();
 	    const controller = new AbortController();
+    const abort = () => controller.abort(options?.signal?.reason);
+    options?.signal?.addEventListener("abort", abort, { once: true });
+    if (options?.signal?.aborted) abort();
 
 	    await this.withThreadTransition(threadId, async () => {
-	      this.runtime.startTurn(threadId, turnId, environment);
+	      if (options?.reservedTurnId && this.cancellations.has(threadId)) {
+        options.signal?.removeEventListener("abort", abort);
+        throw new Error("thread_already_active");
+      }
+      this.runtime.startTurn(threadId, turnId, environment);
 	      this.cancellations.set(threadId, controller);
 	    });
 
 	    try {
-	      let session: TerminalSession | null = null;
+	      await options?.executionHooks?.checkpoint();
+      if (controller.signal.aborted) throw new Error("agent_canceled");
+      let session: TerminalSession | null = null;
 	      if (environment.mode === "normal") {
 	        try {
 	          session = await this.getOrCreateSession(threadId, ownerUserId);
@@ -186,7 +212,7 @@ export class AgentService {
 	        }
 	      }
 
-	      void this.runAgentFlow({
+	      const completion = this.runAgentFlow({
 	        threadId,
 	        turnId,
 	        sessionId: session?.sessionId ?? null,
@@ -196,7 +222,9 @@ export class AgentService {
 	        environment,
 	        ownerUserId,
 	        controller,
-	      }).catch((err) => {
+          executionHooks: options?.executionHooks,
+      }).finally(() => options?.signal?.removeEventListener("abort", abort));
+      void completion.catch((err) => {
 	        this.logger.error(
 	          { err, sessionId: session?.sessionId ?? null, threadId, component: "agent" },
 	          "Agent flow failed",
@@ -208,8 +236,10 @@ export class AgentService {
 	        sessionId: session?.sessionId ?? null,
 	        environment,
 	        streamCursor: snapshot.stream_cursor,
+          completion,
 	      };
 	    } catch (err) {
+      options?.signal?.removeEventListener("abort", abort);
       await this.withThreadTransition(threadId, async () => {
         if (this.cancellations.get(threadId) === controller) {
           this.cancellations.clear(threadId);
@@ -282,7 +312,8 @@ export class AgentService {
   }): Promise<{
     questionRequestId: string;
     status: "answered";
-    continuation: "live_tool_result" | "fallback_user_message" | "already_answered";
+    continuation: "live_tool_result" | "fallback_user_message" | "already_answered" | "durable_invocation";
+    invocationId?: string;
     messageId?: string;
     clientId?: string;
   }> {
@@ -293,6 +324,9 @@ export class AgentService {
         response: args.response,
         answeredByUserId: args.answeredByUserId,
       });
+
+      const invocation = await this.durableInvocations?.findByTurn(args.answeredByUserId, args.threadId, accepted.questionRequest.turnId);
+      if (invocation) return { kind: "durable_invocation" as const, invocationId: invocation.id };
 
       if (accepted.alreadyAnswered) {
         return {
@@ -318,6 +352,9 @@ export class AgentService {
       };
     });
 
+    if (transition.kind === "durable_invocation") {
+      return { questionRequestId: args.questionRequestId, status: "answered", continuation: "durable_invocation", invocationId: transition.invocationId };
+    }
     if (transition.kind === "already_answered") {
       return {
         questionRequestId: args.questionRequestId,
@@ -468,11 +505,14 @@ export class AgentService {
 	    environment: AgentEnvironmentSnapshot;
 	    ownerUserId?: string | null;
 	    controller: AbortController;
-	  }): Promise<void> {
+      executionHooks?: AgentExecutionHooks;
+	  }): Promise<AgentTurnOutcome> {
 	    const { threadId, turnId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
 	    let currentSessionId = args.sessionId;
 	    let environment = args.environment;
 	    let supersededQuestionResponse: ResolvedUserQuestionResponse | null = null;
+    try {
+    await args.executionHooks?.checkpoint();
     const providerName = this.modelRunner.resolveProviderName(model);
     let loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
       provider: providerName,
@@ -505,8 +545,8 @@ export class AgentService {
       );
     }
 
-    try {
-	      const preTurnCompaction = await this.compactConversationIfNeeded({
+      await args.executionHooks?.checkpoint();
+      const preTurnCompaction = await this.compactConversationIfNeeded({
 	        threadId,
 	        budId: environment.bud_id,
 	        turnId,
@@ -519,7 +559,9 @@ export class AgentService {
         // Mirror the main-loop request shape (runtime instructions +
         // tool schemas) so the summary request shares its prompt-cache prefix.
         conversation: applyRuntimeInstructions(conversation, environment),
-        tools: resolveAgentToolsForEnvironment(environment),
+        tools: resolveAgentToolsForEnvironment(environment, { appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
+          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
+          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) }),
         ownerUserId,
         controller,
         compactedBoundaryKeys,
@@ -545,7 +587,9 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
-	        const modelTools = resolveAgentToolsForEnvironment(environment);
+	        const modelTools = resolveAgentToolsForEnvironment(environment, { appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
+          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
+          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) });
 	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
@@ -558,7 +602,8 @@ export class AgentService {
           assistantTiming: AgentMessageTiming | null;
 	        };
 	        try {
-	          modelResult = await this.modelRunner.invokeModel(
+	          await args.executionHooks?.checkpoint();
+          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
 	            conversationForModel,
@@ -580,6 +625,7 @@ export class AgentService {
           if (!isProviderContextWindowError(err)) {
             throw err;
           }
+          await args.executionHooks?.checkpoint();
           const retryCompaction = await this.compactConversationIfNeeded({
 	            threadId,
 	            budId: environment.bud_id,
@@ -604,7 +650,8 @@ export class AgentService {
           conversation = loadedConversation.messages;
           reconstruction = loadedConversation.reconstruction;
           llmCallId = createLlmCallId();
-	          modelResult = await this.modelRunner.invokeModel(
+	          await args.executionHooks?.checkpoint();
+          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
 	            applyRuntimeInstructions(conversation, environment),
@@ -623,6 +670,7 @@ export class AgentService {
         if (controller.signal.aborted) {
           throw new Error("agent_canceled");
         }
+        await args.executionHooks?.checkpoint();
         const {
           response,
           assistantClientId: streamedAssistantClientId,
@@ -706,9 +754,54 @@ export class AgentService {
           const toolResultBlocks: CanonicalContentBlock[] = [];
 
           for (const toolCall of toolCalls) {
+            await args.executionHooks?.checkpoint();
             const toolClientId = generateMessageClientId();
             const startedAt = new Date();
+            let reviewRequestFailure: DataRequestError | null = null;
+            let bootstrapNoWork: Record<string, unknown> | null = null;
+            if (toolCall.tool === "automations_request_activation") {
+              if (!this.automationToolsEnabled || !args.executionHooks?.parkAutomationProposal) throw new Error("automation_tools_unavailable");
+              await args.executionHooks.beforeTool(toolCall);
+              if (controller.signal.aborted) throw new Error("agent_canceled");
+              try {
+                const proposal = await args.executionHooks.parkAutomationProposal(toolCall.callId, toolClientId, toolCall.args);
+                this.transcriptWriter.emitAutomationProposal(threadId, turnId, toolCall.callId, toolClientId, startedAt, proposal);
+                this.cancellations.clear(threadId);
+                return { status: "waiting_for_user" };
+              } catch (failure) {
+                if (!(failure instanceof DataRequestError)) throw failure;
+                reviewRequestFailure = failure;
+              }
+            }
+            if (toolCall.tool === "automations_request_existing_contacts") {
+              if (!this.automationToolsEnabled || !this.existingContactReviewsEnabled || !args.executionHooks?.parkBootstrapProposal)
+                throw new Error("existing_contact_reviews_unavailable");
+              await args.executionHooks.beforeTool(toolCall);
+              if (controller.signal.aborted) throw new Error("agent_canceled");
+              try {
+                const result = await args.executionHooks.parkBootstrapProposal(toolCall.callId, toolClientId, toolCall.args);
+                if (result.kind === "proposal") {
+                  this.transcriptWriter.emitBootstrapProposal(threadId, turnId, toolCall.callId, toolClientId, startedAt, result.proposal);
+                  this.cancellations.clear(threadId);
+                  return { status: "waiting_for_user" };
+                }
+                bootstrapNoWork = { outcome: "no_work", member_count: 0, automation_id: result.automation_id };
+              } catch (failure) {
+                if (!(failure instanceof DataRequestError)) throw failure;
+                reviewRequestFailure = failure;
+              }
+            }
+            if (toolCall.tool === "data_request_api_key") {
+              if (!this.appPermissionsEnabled || !args.executionHooks?.parkAppDataRequest) throw new Error("app_permissions_unavailable");
+              await args.executionHooks.beforeTool(toolCall);
+              if (controller.signal.aborted) throw new Error("agent_canceled");
+              const request = await args.executionHooks.parkAppDataRequest(toolCall.callId, toolClientId, toolCall.args);
+              this.transcriptWriter.emitAppPermissionRequest(threadId, turnId, toolCall.callId, toolClientId, startedAt, request);
+              this.cancellations.clear(threadId);
+              return { status: "waiting_for_user" };
+            }
             let effectiveToolCall = toolCall;
+            let durableQuestionRequestId: string | null = null;
             let pendingQuestionResponse:
               | ReturnType<AgentUserQuestionRegistry["register"]>
               | null = null;
@@ -726,10 +819,11 @@ export class AgentService {
                 ...toolCall,
                 request: created.request,
               };
-              pendingQuestionResponse = this.userQuestions.register(
-                threadId,
-                created.row.questionRequestId,
-              );
+              if (args.executionHooks?.parkQuestion) {
+                durableQuestionRequestId = created.row.questionRequestId;
+              } else {
+                pendingQuestionResponse = this.userQuestions.register(threadId, created.row.questionRequestId);
+              }
             }
 
             const { clientArgs } = this.transcriptWriter.emitToolCall(
@@ -744,13 +838,13 @@ export class AgentService {
 	              sessionId: currentSessionId,
 	              threadId,
 	              tool: effectiveToolCall.tool,
-              args: clientArgs,
+              ...((isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
               callId: effectiveToolCall.callId,
 	            });
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              !isUserQuestionToolDirective(effectiveToolCall)
+	              (!isUserQuestionToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -770,9 +864,43 @@ export class AgentService {
 	                : null
 	              : null;
 
+            if (!reviewRequestFailure && !bootstrapNoWork) await args.executionHooks?.beforeTool(effectiveToolCall);
+            if (controller.signal.aborted) throw new Error("agent_canceled");
+            if (durableQuestionRequestId && args.executionHooks?.parkQuestion) {
+              await args.executionHooks.parkQuestion(effectiveToolCall, durableQuestionRequestId);
+              this.cancellations.clear(threadId);
+              return { status: "waiting_for_user" };
+            }
             if (isTerminalToolDirective(effectiveToolCall)) {
               execution = await this.toolExecutor.execute(threadId, effectiveToolCall);
               shouldRefreshContext = effectiveToolCall.tool !== "terminal.observe";
+            } else if (isPersonalDataToolDirective(effectiveToolCall)) {
+              execution = await this.personalDataToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
+            } else if (isAutomationToolDirective(effectiveToolCall)) {
+              if (!this.automationToolsEnabled || !args.executionHooks?.executeAutomationTool)
+                throw new Error("automation_tools_unavailable");
+              let data: Record<string, unknown>;
+              let error: string | undefined;
+              try {
+                if (reviewRequestFailure) throw reviewRequestFailure;
+                if (effectiveToolCall.tool === "automations_request_existing_contacts") {
+                  if (!bootstrapNoWork) throw new Error("bootstrap_request_not_parked");
+                  data = bootstrapNoWork;
+                } else {
+                  if (effectiveToolCall.tool === "automations_request_activation") throw new Error("automation_request_not_parked");
+                  data = await args.executionHooks.executeAutomationTool(effectiveToolCall.tool, effectiveToolCall.callId, effectiveToolCall.args);
+                }
+              }
+              catch (failure) {
+                if (!(failure instanceof DataRequestError)) throw failure;
+                error = failure.code;
+                data = { error: failure.code, message: failure.message };
+              }
+              const summary = error ? "Automation operation was not applied: " + error : bootstrapNoWork ? "No eligible existing contacts matched; no review or work was created." : "Automation operation completed.";
+              execution = { directive: effectiveToolCall, args: effectiveToolCall.args, summary, outputTruncationReason: null,
+                result: { kind: "automation", ok: !error, error },
+                payload: { tool: effectiveToolCall.tool, call_id: effectiveToolCall.callId, args: effectiveToolCall.args,
+                  kind: "automation", ok: !error, ...data, summary } };
             } else if (isUserQuestionToolDirective(effectiveToolCall)) {
               if (!pendingQuestionResponse) {
                 throw new Error("missing_pending_question_response");
@@ -807,6 +935,7 @@ export class AgentService {
 	                  : "terminal_send",
 	              );
 	            }
+            await args.executionHooks?.checkpoint();
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,
@@ -832,6 +961,8 @@ export class AgentService {
               ownerUserId,
             });
 
+            await args.executionHooks?.afterTool(effectiveToolCall, execution, message.message_id);
+
             if (
               isTerminalToolDirective(execution.directive) &&
               (execution as ExecutedTerminalTool).result.superseded === true
@@ -855,7 +986,7 @@ export class AgentService {
 	              });
               this.cancellations.clear(threadId);
               this.settleTerminalWaitFinalizer(threadId);
-              return;
+              return { status: "succeeded", reason: "superseded_by_user_message" };
             }
 
             if (supersededQuestionResponse?.continuation === "supersede") {
@@ -875,7 +1006,7 @@ export class AgentService {
               this.cancellations.clear(threadId);
               supersededQuestionResponse.onFinalized?.();
               supersededQuestionResponse = null;
-              return;
+              return { status: "succeeded", reason: "superseded_by_user_message" };
             }
 
             toolResultBlocks.push({
@@ -893,7 +1024,8 @@ export class AgentService {
           }
 
           steps += toolCalls.length;
-	          const midTurnCompaction = await this.compactConversationIfNeeded({
+	          await args.executionHooks?.checkpoint();
+          const midTurnCompaction = await this.compactConversationIfNeeded({
 	            threadId,
 	            budId: environment.bud_id,
 	            turnId,
@@ -922,6 +1054,7 @@ export class AgentService {
 	        const pathContext = currentSessionId
 	          ? await this.getPathContextForSession(currentSessionId)
 	          : null;
+        await args.executionHooks?.checkpoint();
         await this.transcriptWriter.recordFinalAssistant({
           threadId,
           turnId,
@@ -942,7 +1075,7 @@ export class AgentService {
           textLength: directive.message.length,
         });
         this.cancellations.clear(threadId);
-        return;
+        return { status: directive.status };
       }
 
       throw new Error("agent reached max steps");
@@ -973,7 +1106,7 @@ export class AgentService {
         });
         this.runtime.finishTurn(threadId);
 	        this.debug("Agent turn canceled", { threadId, sessionId: currentSessionId });
-        return;
+        return { status: "canceled" };
       }
 
       const failure = formatAgentRuntimeFailure(err);
@@ -1077,7 +1210,7 @@ export class AgentService {
       phase: args.phase,
       reason: args.reason,
       turnId: args.turnId,
-      toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
+      toolSchemaTokens: estimateCanonicalToolsTokens(args.tools),
       checkedAt,
       now: checkedAt,
     });
@@ -1212,7 +1345,7 @@ export class AgentService {
       phase: args.phase,
       reason: args.reason,
       turnId: args.turnId,
-      toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
+      toolSchemaTokens: estimateCanonicalToolsTokens(args.tools),
       compactionCount,
       checkedAt: postCompactionCheckedAt,
       now: postCompactionCheckedAt,
@@ -1336,6 +1469,14 @@ export class AgentService {
     });
     const clientId = generateMessageClientId();
     const content = accepted.toolResult.summary_markdown;
+    if (this.durableInvocations) {
+      const admitted = await this.durableInvocations.admit({ owner: ownerUserId, threadId: thread.threadId,
+        origin: "human", idempotencyKey: `legacy-question:${accepted.questionRequest.questionRequestId}`,
+        text: content, model: selection.model, reasoningEffort: selection.reasoningEffort,
+        metadata: { source: "ask_user_questions", question_request_id: accepted.questionRequest.questionRequestId,
+          schema: accepted.toolResult.schema, model: selection.model, reasoning_effort: selection.reasoningEffort } });
+      return { messageId: admitted.message.messageId, clientId: admitted.message.clientId };
+    }
     const [message] = await db
       .insert(messageTable)
       .values({

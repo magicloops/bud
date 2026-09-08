@@ -44,6 +44,7 @@ Do not treat the direct Render hostnames as the public mobile/browser contract. 
 The public hostname must route:
 
 - `/api/*` -> `bud-service`
+- `/v1/events/*` -> `bud-service` (mobile personal-data batches)
 - `/.well-known/*` -> `bud-service`
 - `/ws` -> `bud-service`
 - `/readyz` -> `bud-service`
@@ -166,6 +167,7 @@ Notes:
 Add the Worker to these Cloudflare route patterns:
 
 - `staging.bud.dev/api/*`
+- `staging.bud.dev/v1/events/*`
 - `staging.bud.dev/.well-known/*`
 - `staging.bud.dev/ws*`
 - `staging.bud.dev/readyz*`

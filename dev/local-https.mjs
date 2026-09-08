@@ -19,11 +19,13 @@ const WEB_HOST = "localhost";
 const WEB_PORT = 5173;
 const CADDY_HOST = "localhost";
 const CADDY_PORT = 3443;
-const HTTPS_ORIGIN = "https://localhost:3443";
+const HTTPS_ORIGIN = process.env.BUD_DEV_HTTPS_ORIGIN ?? "https://localhost:3443";
 const API_AUDIENCE = `${HTTPS_ORIGIN}/api`;
 const AUTH_ISSUER = `${HTTPS_ORIGIN}/api/auth`;
 const JWKS_URL = `${AUTH_ISSUER}/jwks`;
 const PROXY_BASE_DOMAIN = "bud-show.test";
+const PUBLIC_PROXY_BASE_DOMAIN = process.env.BUD_DEV_PROXY_BASE_DOMAIN ?? PROXY_BASE_DOMAIN;
+const PUBLIC_PROXY_PORT = process.env.BUD_DEV_PROXY_PUBLIC_PORT ?? "3443";
 const LEGACY_PROXY_BASE_DOMAIN = "bud-proxy.localhost";
 const PROXY_DNS_TEST_HOST = `smoke.${PROXY_BASE_DOMAIN}`;
 const PROXY_DNS_WILDCARD_TEST_HOST = `wildcard-${process.pid}.${PROXY_BASE_DOMAIN}`;
@@ -64,6 +66,13 @@ Commands:
 
 Options:
   --trace-service-warnings  Add NODE_OPTIONS=--trace-warnings to the service process
+
+Environment overrides (export in the launching shell):
+  BUD_DEV_HTTPS_ORIGIN        Public app origin, e.g. an existing ngrok HTTPS URL
+  BUD_DEV_PROXY_BASE_DOMAIN   Public preview domain, e.g. bud.systems
+  BUD_DEV_PROXY_PUBLIC_PORT   Public preview port; set empty for HTTPS port 443
+
+Local Caddy certificates and .test DNS keep their normal configuration.
 
 Repo scripts:
   pnpm dev:https:setup
@@ -292,8 +301,8 @@ function buildServiceEnv(rootCaPath, options = {}) {
     BETTER_AUTH_TRUSTED_ORIGINS: `${HTTPS_ORIGIN},http://localhost:5173,http://localhost:3000`,
     OAUTH_TRUSTED_CLIENT_IDS: "bud-ios-dev-local",
     PROXY_PUBLIC_SCHEME: "https",
-    PROXY_BASE_DOMAIN,
-    PROXY_PUBLIC_PORT: "3443",
+    PROXY_BASE_DOMAIN: PUBLIC_PROXY_BASE_DOMAIN,
+    PROXY_PUBLIC_PORT: PUBLIC_PROXY_PORT,
     PROXY_VIEWER_COOKIE_NAME: "__Host-bud_proxy_viewer",
     NODE_EXTRA_CA_CERTS: rootCaPath,
   };
@@ -330,8 +339,8 @@ function printDerivedEnv(rootCaPath, options = {}) {
   console.log(`BETTER_AUTH_TRUSTED_ORIGINS=${HTTPS_ORIGIN},http://localhost:5173,http://localhost:3000`);
   console.log("OAUTH_TRUSTED_CLIENT_IDS=bud-ios-dev-local");
   console.log("PROXY_PUBLIC_SCHEME=https");
-  console.log(`PROXY_BASE_DOMAIN=${PROXY_BASE_DOMAIN}`);
-  console.log("PROXY_PUBLIC_PORT=3443");
+  console.log(`PROXY_BASE_DOMAIN=${PUBLIC_PROXY_BASE_DOMAIN}`);
+  console.log(`PROXY_PUBLIC_PORT=${PUBLIC_PROXY_PORT}`);
   console.log("PROXY_VIEWER_COOKIE_NAME=__Host-bud_proxy_viewer");
   console.log("VITE_API_BASE_URL=");
   console.log(`VITE_API_PROXY_TARGET=http://${SERVICE_HOST}:${SERVICE_PORT}`);

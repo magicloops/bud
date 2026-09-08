@@ -1,10 +1,14 @@
+import { AUTOMATION_CANONICAL_TOOLS, EXISTING_CONTACTS_REVIEW_TOOL } from "./automation-tools.js";
 import type { CanonicalTool } from "../llm/index.js";
 import type { AgentEnvironmentSnapshot } from "./environment.js";
 import { estimateCanonicalToolsTokens } from "./context-budget.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
+import { PERSONAL_DATA_CANONICAL_TOOLS } from "./personal-data-tools.js";
+import { APP_PERMISSION_TOOL } from "./app-permission-tool.js";
 
 // Canonical tool definitions using standard JSON Schema.
 export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
+  ...PERSONAL_DATA_CANONICAL_TOOLS,
   {
     name: "terminal_send",
     description:
@@ -231,12 +235,16 @@ const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 export function resolveAgentToolsForEnvironment(
   environment: AgentEnvironmentSnapshot,
+  options: { appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
+  const tools = [...AGENT_CANONICAL_TOOLS, ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
+    ...(options.automations ? AUTOMATION_CANONICAL_TOOLS : []),
+    ...(options.automations && options.existingContactReviews ? [EXISTING_CONTACTS_REVIEW_TOOL] : [])];
   if (environment.mode === "normal") {
-    return AGENT_CANONICAL_TOOLS;
+    return tools;
   }
 
-  return AGENT_CANONICAL_TOOLS.filter((tool) => {
+  return tools.filter((tool) => {
     return !BUD_SPECIFIC_TOOL_NAMES.has(tool.name);
   });
 }

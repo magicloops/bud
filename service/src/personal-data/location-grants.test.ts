@@ -1,0 +1,83 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import { config } from "../config.js";
+import * as s from "../db/schema.js";
+import { ContactProcessor } from "./contact-processor.js";
+import { PostgresIngestRepository } from "./repository.js";
+import { parseBatch } from "./parser.js";
+import { LocationQueries } from "./location.js";
+import { DataGrants } from "./grants.js";
+import { DataRequestError } from "./contracts.js";
+import Fastify from "fastify";
+import { registerPersonalDataRoutes } from "./routes.js";
+import { ContactQueries } from "./contact-queries.js";
+
+test("Postgres location projection and grants preserve ownership, bounded queries and revocation", { skip: process.env.BUD_DATA_DB_TEST !== "1" }, async t => {
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(config.databaseUrl).hostname));
+  const pool = new Pool({ connectionString: config.databaseUrl });
+  const db = drizzle(pool, { schema: s });
+  const owner = "location-test-" + randomUUID();
+  t.after(async () => {
+    try {
+      for (const table of [s.locationObservationTable, s.agentDataGrantTable, s.contactTable, s.contactSourceTable, s.dataProcessingJobTable, s.dataEventTable, s.dataCollectionEpochTable, s.dataInstallationTable, s.dataOwnerStateTable]) await db.delete(table).where(eq(table.createdByUserId, owner));
+      await db.delete(s.authUserTable).where(eq(s.authUserTable.id, owner));
+    } finally { await pool.end(); }
+  });
+  await db.insert(s.authUserTable).values({ id: owner, name: "Location fixture", email: owner + "@example.invalid", emailVerified: false });
+  const repo = new PostgresIngestRepository(db);
+  const processor = new ContactProcessor(db);
+  const context = { userId: owner, installationId: randomUUID(), collectionEpoch: "legacy", batchId: randomUUID() };
+  const values = [0, 1, 2].map(i => ({ schema_version: 1, event_id: randomUUID(), event_type: "location.significant_change.v1", occurred_at: `2026-09-04T10:00:0${i}.000Z`, recorded_at: "2026-09-04T10:00:03.000Z", actor: { user_id: owner, installation_id: context.installationId }, payload: { coordinate: { lat: i === 2 ? 100 : i, lon: 1 }, horizontal_accuracy_m: 30 } }));
+  const batch = await parseBatch(Buffer.from(values.map(v => JSON.stringify(v)).join("\n")), "", context);
+  await repo.persist(context, batch);
+  await db.update(s.dataProcessingJobTable).set({ status: "unsupported", errorCode: "unsupported_processor" }).where(eq(s.dataProcessingJobTable.createdByUserId, owner));
+  assert.equal(await processor.requeueSupportedLocations(owner + "-other"), false);
+  assert.equal(await processor.requeueSupportedLocations(owner), true);
+  assert.equal(await processor.requeueSupportedLocations(owner), false);
+  while (await processor.processNext(owner)) {}
+  const queries = new LocationQueries(db);
+  const query = { from: "2026-09-04T00:00:00Z", to: "2026-09-05T00:00:00Z" };
+  const page = await queries.list(owner, { ...query, limit: 1 });
+  assert.equal(page.items.length, 1); assert.ok(page.next_cursor);
+  const next = await queries.list(owner, { ...query, cursor: page.next_cursor });
+  assert.equal(next.items.length, 1); assert.notEqual(next.items[0].id, page.items[0].id);
+  assert.equal((await queries.list(owner + "-other", query)).items.length, 0);
+  await assert.rejects(queries.list(owner + "-other", { ...query, cursor: page.next_cursor }), (e: unknown) => e instanceof DataRequestError && e.code === "invalid_cursor");
+  const [epoch] = await db.select().from(s.dataCollectionEpochTable).where(eq(s.dataCollectionEpochTable.createdByUserId, owner));
+  await db.insert(s.contactSourceTable).values({ id: owner + "-source", epochId: epoch.id, storeId: randomUUID(), createdByUserId: owner });
+  await db.insert(s.contactTable).values({ id: owner + "-contact", sourceId: owner + "-source", sourceContactId: "a", fields: {}, generation: 1, firstObservedAt: new Date("2026-09-04T10:00:00.800Z"), observedAt: new Date(), createdByUserId: owner });
+  const nearby = await queries.contactContext(owner, owner + "-contact", query);
+  assert.equal(nearby.evidence?.coordinate.lat, 1);
+  assert.equal(nearby.offset_seconds, 0.2);
+  assert.equal((await queries.contactContext(owner, owner + "-contact", { from: "2026-08-01T00:00:00Z", to: "2026-08-02T00:00:00Z" })).evidence, null);
+  await assert.rejects(queries.contactContext(owner + "-other", owner + "-contact", query), (e: unknown) => e instanceof DataRequestError && e.statusCode === 404);
+  const grants = new DataGrants(db);
+  await assert.rejects(grants.require(owner, ["contacts.read"]));
+  const approved = await grants.update(owner, { version: 0, scopes: ["contacts.read"], history_days: 90 });
+  assert.equal(approved.version, 1);
+  assert.equal((await grants.require(owner, ["contacts.read"])).version, 1);
+  await assert.rejects(grants.require(owner, ["location.read"]));
+  await assert.rejects(grants.require(owner + "-other", ["contacts.read"]));
+  await assert.rejects(grants.update(owner, { version: 0, scopes: [], history_days: 90 }), (e: unknown) => e instanceof DataRequestError && e.statusCode === 409);
+  await grants.update(owner, { version: 1, scopes: [], history_days: 90 });
+  await assert.rejects(grants.require(owner, ["contacts.read"]));
+  const app = Fastify();
+  t.after(() => app.close());
+  await registerPersonalDataRoutes(app, { repository: repo, queries: new ContactQueries(db), locationQueries: queries, grants,
+    authenticate: async request => request.headers.authorization ? { userId: request.headers.authorization } : null });
+  assert.equal((await app.inject({ method: "GET", url: "/api/data/agent-grant" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "PUT", url: "/api/data/agent-grant", payload: { version: 2, scopes: ["contacts.read"], history_days: 90 } })).statusCode, 401);
+  const saved = await app.inject({ method: "PUT", url: "/api/data/agent-grant", headers: { authorization: owner }, payload: { version: 2, scopes: ["location.read"], history_days: 30, user_id: owner + "-other" } });
+  assert.equal(saved.statusCode, 200); assert.equal(saved.json().version, 3);
+  assert.deepEqual((await grants.get(owner + "-other")).scopes, []);
+  const params = new URLSearchParams(query).toString();
+  assert.equal((await app.inject({ method: "GET", url: "/api/data/location?" + params })).statusCode, 401);
+  const foreign = await app.inject({ method: "GET", url: "/api/data/location?" + params, headers: { authorization: owner + "-other" } });
+  assert.deepEqual(foreign.json().items, []);
+  assert.equal((await app.inject({ method: "GET", url: `/api/data/contacts/${owner}-contact/location-context?${params}`, headers: { authorization: owner + "-other" } })).statusCode, 404);
+  assert.equal((await app.inject({ method: "GET", url: "/api/data/location", headers: { authorization: owner } })).statusCode, 400);
+});

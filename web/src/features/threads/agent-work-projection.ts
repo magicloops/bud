@@ -74,7 +74,8 @@ const isWorkMessage = (message: ApiMessage): boolean => {
     return true
   }
   if (message.role === 'tool') {
-    return getToolName(message) !== QUESTION_TOOL
+    const tool = getToolName(message)
+    return tool !== QUESTION_TOOL && tool !== 'automations_request_activation' && tool !== 'automations_request_existing_contacts'
   }
   // Draft assistant rows never carry segment_kind, so a streaming answer
   // stays top-level; if it reconciles as intermediate it folds in then.

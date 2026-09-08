@@ -507,3 +507,36 @@ test("POST /api/threads/:threadId/messages rejects unavailable Bud-local ds4 bef
   });
   assert.equal(insertCalled, false);
 });
+
+test("durable message admission stamps the viewer and does not launch a detached turn", async t => {
+  t.after(() => mock.restoreAll());
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "openai" }) as never);
+  mock.method(db, "select", () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) as never);
+  const server = createServer();
+  let admitted = 0;
+  await registerThreadMessageRoutes(server, {
+    durableInvocations: { admit: async (input: Record<string, unknown>) => {
+      admitted++;
+      assert.equal(input.owner, SESSION.user.id);
+      assert.equal(input.threadId, ACCESS.thread.threadId);
+      assert.equal(input.origin, "human");
+      assert.equal(input.model, "gpt-5.4");
+      return { duplicate: false, message: { messageId: "msg", clientId: input.clientId, role: "user", content: input.text, metadata: {}, createdAt: new Date() },
+        invocation: { id: "inv", turnId: "turn", status: "pending", model: input.model, origin: "human" } };
+    } },
+    getEnvironmentForBud: async () => ({ mode: "bud_offline", bud_status: "offline" }),
+    startUserMessage: async () => { throw new Error("must not detach"); },
+    supersedePendingUserQuestionsForFollowUp: async () => { throw new Error("must not steal a question reservation"); },
+  } as never, { maybeGenerateFromFirstUserMessage: async () => {} } as never);
+  const handler = server.routes.get("POST /api/threads/:threadId/messages")!;
+  const response = await invokeRoute(handler, { headers: {}, params: { threadId: ACCESS.thread.threadId },
+    body: { text: "hello", model: "gpt-5.4", reasoning_effort: "low", client_id: "018f4f2a-0000-7000-9000-000000000000" } });
+  assert.equal(response.statusCode, 201);
+  assert.equal(admitted, 1);
+  const payload = response.payload as { invocation: { invocation_id: string }; agent: { started: boolean; queued: boolean } };
+  assert.equal(payload.invocation.invocation_id, "inv");
+  assert.equal(payload.agent.started, false);
+  assert.equal(payload.agent.queued, true);
+});

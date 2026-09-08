@@ -595,3 +595,32 @@ Terminal session/xterm ownership for the existing-thread route.
 ---
 
 *Referenced by: [../features.spec.md](../features.spec.md)*
+
+## Durable invocation recovery
+
+`invocation-state.ts` projects reserved/queued/offline/review/expired status independently of process-local activity and provides a lifecycle revision that ignores heartbeat-only updates. `invocation-state.test.ts` covers reservation priority, selected-model waits, stale-runtime suppression, refresh revisions, cold question recovery and completed-result precedence. Transcript overlays restore `pending_questions` with stable IDs and timestamps even after a service restart; canonical results win over stale pending snapshots. Durable answer responses refresh bootstrap.
+
+The lifecycle revision also includes pending app-request identity/version/status,
+so creation and resolution refresh thread bootstrap even when the invocation is
+still waiting. Focused tests cover additions, removals and decision changes.
+
+Automation proposal identity/version/status also participates in the lifecycle
+revision. Transcript overlays recover pending activation reviews from durable
+`pending_automation_requests` with original client IDs and creation times.
+An explicit empty array suppresses stale runtime proposal snapshots; canonical
+tool results win over pending reviews. Missing client IDs are not invented.
+`invocation-state.test.ts` covers cold recovery, deduplication, terminal-result
+precedence, cleared reviews and older-service fallback.
+
+`agent-work-projection.ts` keeps automation activation review rows outside
+collapsed work, for both pending requests and resolved decisions.
+`automation-review-projection.test.ts` verifies their position between work
+groups so a human decision cannot be hidden in collapsed tool activity.
+
+Existing-contact reviews follow the same recovery rules through the separate
+`pending_bootstrap_requests` field and `automations_request_existing_contacts`
+tool identity. Their identity/version/status changes refresh the transcript,
+explicit empty arrays suppress stale runtime prompts, and canonical results win.
+Both review kinds remain outside collapsed work. Pure recovery/projection tests
+cover the new kind; its visible review controls and live SSE integration remain
+pending.

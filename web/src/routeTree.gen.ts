@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as DataRouteImport } from './routes/data'
+import { Route as AutomationsRouteImport } from './routes/automations'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BudIdIndexRouteImport } from './routes/$budId/index'
@@ -28,6 +30,16 @@ const SettingsRoute = SettingsRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DataRoute = DataRouteImport.update({
+  id: '/data',
+  path: '/data',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomationsRoute = AutomationsRouteImport.update({
+  id: '/automations',
+  path: '/automations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BudIdRoute = BudIdRouteImport.update({
@@ -74,6 +86,8 @@ const AuthMobileConsentRoute = AuthMobileConsentRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
+  '/automations': typeof AutomationsRoute
+  '/data': typeof DataRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
@@ -85,6 +99,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/automations': typeof AutomationsRoute
+  '/data': typeof DataRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
@@ -98,6 +114,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
+  '/automations': typeof AutomationsRoute
+  '/data': typeof DataRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
@@ -112,6 +130,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/$budId'
+    | '/automations'
+    | '/data'
     | '/login'
     | '/settings'
     | '/$budId/$threadId'
@@ -123,6 +143,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/automations'
+    | '/data'
     | '/login'
     | '/settings'
     | '/$budId/$threadId'
@@ -135,6 +157,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/$budId'
+    | '/automations'
+    | '/data'
     | '/login'
     | '/settings'
     | '/$budId/$threadId'
@@ -148,6 +172,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BudIdRoute: typeof BudIdRouteWithChildren
+  AutomationsRoute: typeof AutomationsRoute
+  DataRoute: typeof DataRoute
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   AuthMobileRoute: typeof AuthMobileRouteWithChildren
@@ -168,6 +194,20 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/data': {
+      id: '/data'
+      path: '/data'
+      fullPath: '/data'
+      preLoaderRoute: typeof DataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automations': {
+      id: '/automations'
+      path: '/automations'
+      fullPath: '/automations'
+      preLoaderRoute: typeof AutomationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$budId': {
@@ -258,6 +298,8 @@ const AuthMobileRouteWithChildren = AuthMobileRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BudIdRoute: BudIdRouteWithChildren,
+  AutomationsRoute: AutomationsRoute,
+  DataRoute: DataRoute,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   AuthMobileRoute: AuthMobileRouteWithChildren,

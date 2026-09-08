@@ -355,7 +355,9 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
     resolveAgentToolsForEnvironment(environment),
   );
 
-  assert.deepEqual(capturedTools.map((tool) => tool.name), ["ask_user_questions"]);
+  assert.deepEqual(capturedTools.map((tool) => tool.name), [
+    "contacts_search", "contacts_history", "location_context", "timeline_query", "ask_user_questions",
+  ]);
 });
 
 test("invokeModel carries provider diagnostics from message_done", async (t) => {

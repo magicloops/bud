@@ -150,9 +150,9 @@ Create a note in `debug/` that captures:
 
 Do **not** rely on partial snippets. Open and read **entire files** before analyzing or editing. If tooling limits prevent this, ask for the full content.
 
-### 3.5) Build/run failures → defer to humans
+### 3.5) Investigate and fix build/run failures
 
-Provide the exact command and error output, **then stop**. Do not try multiple alternative commands/flags. The team will advise.
+Capture the exact command and error output, investigate the cause, and continue with appropriate fixes and validation. Ask for human input only when progress requires missing information or authorization.
 
 ### 3.6) Protocol/schema changes require docs
 
@@ -369,7 +369,7 @@ does, and whether a daemon release/`bud upgrade` is required for full effect.
 
 ## 6) Build & Run
 
-> Minimal guidance. If commands fail, capture the **exact error** in `debug/` and defer.
+> Minimal guidance. If commands fail, capture the **exact error** in `debug/`, investigate, and continue with fixes and validation.
 
 - **Bud**: `cargo build` / `cargo run` (Rust stable)
 - **Service**: `pnpm install && pnpm dev` (requires PostgreSQL)
@@ -489,4 +489,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-08-31*
+*Last updated: 2026-09-04*

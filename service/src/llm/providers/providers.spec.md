@@ -64,7 +64,11 @@ The OpenAI provider transforms canonical JSON Schema to OpenAI strict mode forma
 | nested object/array item schemas | recursively strict with all nested properties required |
 | Standard JSON Schema | OpenAI strict mode |
 
+The OpenAI request copy recursively omits unsupported `uniqueItems`; canonical schemas and server validation remain unchanged.
+
 This allows tool definitions to use clean standard JSON Schema while ensuring OpenAI strict mode compliance.
+
+`openai-tool-schema.test.ts` captures streaming and non-streaming requests with the full enabled agent catalog, checking nested strict schemas, omitted `uniqueItems`, retained bounds, optional-null conversion and canonical immutability.
 
 **Streaming Events Mapped**:
 | OpenAI Event | Canonical Event |

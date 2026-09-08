@@ -8,6 +8,7 @@ import {
   threadTable,
 } from "../db/schema.js";
 import type { CanonicalMessage, CanonicalProviderId, ReasoningLevel } from "../llm/index.js";
+import { modelContextMessageCreatedAt, modelContextMessageVisible } from "./model-context-order.js";
 
 export type AgentContextCheckpointTrigger = "auto" | "manual" | "model_downshift";
 export type AgentContextCheckpointReason =
@@ -103,11 +104,11 @@ export async function getCurrentContextCheckpointBoundary(
   const [message] = await db
     .select({
       messageId: messageTable.messageId,
-      createdAt: messageTable.createdAt,
+      createdAt: modelContextMessageCreatedAt,
     })
     .from(messageTable)
-    .where(eq(messageTable.threadId, threadId))
-    .orderBy(desc(messageTable.createdAt), desc(messageTable.messageId))
+    .where(and(eq(messageTable.threadId, threadId), modelContextMessageVisible))
+    .orderBy(desc(modelContextMessageCreatedAt), desc(messageTable.messageId))
     .limit(1);
 
   const [llmCall] = await db

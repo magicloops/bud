@@ -93,6 +93,33 @@ Branded full-page recovery screen for uncaught route errors.
 - Offers a primary "Return Home" action back to `/`
 - Preserves Bud's existing neobrutalist card treatment so permission failures feel intentional rather than accidental
 
+### `automation-proposal-review.tsx`
+
+Shared immutable automation activation review and summary. Owner-keyed parents
+mount by proposal ID; the component fetches the human-authorized detail and
+capability, polls serially, and aborts reads/ignores writes after unmount.
+One Enable automation action approves the saved proposal; decline remains
+available independently. Unknown mutation outcomes retain the exact version and
+idempotency key for retry. Terminal server state replaces pending decisions.
+Summary exposes full instructions, target, sources, scopes/history and limits.
+
+The same component also handles validated `bp_` existing-contact review IDs through
+the separate existing-contact endpoint and capability. It rejects a mismatched
+returned identity/kind before enabling approval. The action is Process reviewed
+contacts, preserves the frozen decision on uncertain retries, and displays the
+captured bootstrap receipt after approval. Existing-contact summaries include
+frozen contact/group counts, active revision, selection/search/limit, batching,
+source filter and explicit repeat consequences. Render tests cover both grouping
+modes and exclusion policies. No activation endpoint is used for these reviews.
+
+### `automation-proposal-summary.tsx` / `automation-proposal-summary.test.tsx`
+
+Pure saved-definition review presentation, shared with the interactive review.
+Server-rendered tests verify full instruction, target, scope/history and limit
+visibility without an approval checkbox or automatic actions.
+Run the JSX render tests from web with `pnpm exec tsx --tsconfig tsconfig.app.json
+--test src/components/automation-proposal-summary.test.tsx`.
+
 ## Subfolders
 
 ### `ui/` → [ui/ui.spec.md](./ui/ui.spec.md)

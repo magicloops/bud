@@ -6,6 +6,7 @@ https://localhost:3443 {
 	tls .certs/bud-local.pem .certs/bud-local-key.pem
 
 	reverse_proxy /api/* 127.0.0.1:3000
+	reverse_proxy /v1/events/* 127.0.0.1:3000
 	reverse_proxy /.well-known/* 127.0.0.1:3000
 	reverse_proxy /ws 127.0.0.1:3000
 	reverse_proxy localhost:5173

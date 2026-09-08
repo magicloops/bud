@@ -1,0 +1,1 @@
+ALTER TABLE "agent_data_grant" ADD COLUMN "contact_fields" jsonb DEFAULT '["names","organization","phones","emails"]'::jsonb NOT NULL;

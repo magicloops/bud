@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
+    "test:render": "tsx --tsconfig tsconfig.app.json --test 'src/**/*.test.tsx'",
     "test:watch": "node --watch --experimental-strip-types --test 'src/**/*.test.ts'",
     "preview": "vite preview"
   },

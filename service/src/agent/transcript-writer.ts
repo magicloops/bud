@@ -102,6 +102,27 @@ export class AgentTranscriptWriter {
     return { modelArgs, clientArgs, cursor };
   }
 
+  emitAppPermissionRequest(threadId: string, turnId: string, callId: string, clientId: string, startedAt: Date, request: Record<string, unknown>): void {
+    const pendingTool = { client_id: clientId, call_id: callId, name: "data_request_api_key",
+      args: request, started_at: startedAt.toISOString() };
+    const cursor = this.runtime.emit(threadId, { event: "agent.tool_call", data: { turn_id: turnId, ...pendingTool } });
+    this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+  }
+
+  emitAutomationProposal(threadId: string, turnId: string, callId: string, clientId: string, startedAt: Date, proposal: Record<string, unknown>): void {
+    const pendingTool = { client_id: clientId, call_id: callId, name: "automations_request_activation",
+      args: proposal, started_at: startedAt.toISOString() };
+    const cursor = this.runtime.emit(threadId, { event: "agent.tool_call", data: { turn_id: turnId, ...pendingTool } });
+    this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+  }
+
+  emitBootstrapProposal(threadId: string, turnId: string, callId: string, clientId: string, startedAt: Date, proposal: Record<string, unknown>): void {
+    const pendingTool = { client_id: clientId, call_id: callId, name: "automations_request_existing_contacts",
+      args: proposal, started_at: startedAt.toISOString() };
+    const cursor = this.runtime.emit(threadId, { event: "agent.tool_call", data: { turn_id: turnId, ...pendingTool } });
+    this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+  }
+
   async recordToolResult(args: {
     threadId: string;
     turnId: string;
@@ -501,6 +522,9 @@ export class AgentTranscriptWriter {
 }
 
 function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<string, unknown> {
+  if (execution.result.kind === "personal_data" || execution.result.kind === "automation") {
+    return { kind: execution.result.kind, ok: execution.result.ok, error: execution.result.error, retryable: execution.result.retryable };
+  }
   if (execution.result.kind === "web_view") {
     return {
       web_view: execution.result,

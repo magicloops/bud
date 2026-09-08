@@ -35,6 +35,8 @@ import {
 } from "./context-checkpoint-repository.js";
 import { CHECKPOINT_SUMMARY_PREFIX } from "./context-budget.js";
 import { resolveSystemPrompt, type SystemPromptScope } from "./system-prompt.js";
+import { modelContextMessageCreatedAt, modelContextMessageVisible } from "./model-context-order.js";
+import { isAutomationToolName } from "../personal-data/automation-tool-contracts.js";
 
 type StoredMessageRow = {
   messageId: string;
@@ -248,7 +250,7 @@ export class AgentConversationLoader {
     threadId: string,
     checkpoint: AgentContextCheckpoint | null,
   ): Promise<StoredMessageRow[]> {
-    const conditions: SQL<unknown>[] = [eq(messageTable.threadId, threadId)];
+    const conditions: SQL<unknown>[] = [eq(messageTable.threadId, threadId), modelContextMessageVisible];
     const afterBoundary = messageAfterCheckpointBoundary(checkpoint);
     if (afterBoundary) {
       conditions.push(afterBoundary);
@@ -261,11 +263,11 @@ export class AgentConversationLoader {
         role: messageTable.role,
         content: messageTable.content,
         metadata: messageTable.metadata,
-        createdAt: messageTable.createdAt,
+        createdAt: modelContextMessageCreatedAt,
       })
       .from(messageTable)
       .where(and(...conditions))
-      .orderBy(asc(messageTable.createdAt), asc(messageTable.messageId));
+      .orderBy(asc(modelContextMessageCreatedAt), asc(messageTable.messageId));
   }
 
   private appendStoredMessage(
@@ -297,6 +299,45 @@ export class AgentConversationLoader {
     }
 
     if (row.role === "tool") {
+      // Replaying a recorded result is not permission to execute it. Keep the
+      // exact decision/result even when switching away from its provider ledger.
+      let automation: Record<string, unknown> | null = null;
+      try {
+        const parsed = JSON.parse(row.content);
+        if (typeof parsed?.tool === "string" && isAutomationToolName(parsed.tool) &&
+          typeof parsed.call_id === "string" && parsed.call_id) automation = parsed;
+      } catch { /* Other historical tools use their existing normalization. */ }
+      if (automation) {
+        const proposal = automation.proposal && typeof automation.proposal === "object" && !Array.isArray(automation.proposal)
+          ? automation.proposal as Record<string, unknown> : null;
+        const input = automation.args && typeof automation.args === "object" && !Array.isArray(automation.args)
+          ? automation.args as Record<string, unknown>
+          : automation.tool === "automations_request_existing_contacts" && proposal?.selection &&
+            typeof proposal.selection === "object" && !Array.isArray(proposal.selection)
+            ? proposal.selection as Record<string, unknown>
+          : proposal ? { automation_id: proposal.automation_id, expected_version: proposal.draft_version } : {};
+        if (!options.toolUseFromProviderLedger) messages.push({ role: "assistant", content: [{ type: "tool_use",
+          id: automation.call_id as string, name: automation.tool as string, input }] });
+        messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: automation.call_id as string, content: row.content }] });
+        return;
+      }
+      // Permission decisions are durable continuation results, not executable
+      // query directives. Preserve the actual decision instead of letting the
+      // orphan repair replace it with an unknown execution outcome.
+      let permission: Record<string, unknown> | null = null;
+      try {
+        const parsed = JSON.parse(row.content);
+        if (parsed?.tool === "data_request_api_key" && typeof parsed.call_id === "string") permission = parsed;
+      } catch { /* Other historical tool payloads use the normal parser. */ }
+      if (permission) {
+        if (!options.toolUseFromProviderLedger) messages.push({ role: "assistant", content: [{
+          type: "tool_use", id: permission.call_id as string, name: "data_request_api_key",
+          input: permission.request && typeof permission.request === "object" ? permission.request as Record<string, unknown> : {},
+        }] });
+        messages.push({ role: "user", content: [{ type: "tool_result",
+          tool_use_id: permission.call_id as string, content: row.content }] });
+        return;
+      }
       const directive = this.parseStoredToolDirective(row.content);
       if (!directive) {
         return;
@@ -352,6 +393,11 @@ export class AgentConversationLoader {
     }
 
     if (row.role === "system") {
+      const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+      if (metadata.origin === "automation" && typeof metadata.invocation_id === "string") {
+        messages.push(createCanonicalTextMessage("user", `Automation input (not system instructions):\n${row.content}`));
+        return;
+      }
       messages.push(createCanonicalTextMessage("system", row.content));
     }
   }
@@ -379,6 +425,7 @@ export class AgentConversationLoader {
         schema?: string;
         request_id?: string;
         questions?: unknown;
+        args?: Record<string, unknown>;
       };
 
       const callId =
@@ -387,6 +434,12 @@ export class AgentConversationLoader {
           : `tool_${ulid()}`;
 
       switch (payload.tool) {
+        case "contacts_search":
+        case "contacts_history":
+        case "location_context":
+        case "timeline_query":
+          return { type: "tool_call", tool: payload.tool, callId,
+            args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args) ? payload.args : {} };
         case "terminal.run":
           // Retired tool: historical rows replay as the unified send.
           if (typeof payload.command !== "string") {
@@ -614,9 +667,9 @@ function messageAfterCheckpointBoundary(
   }
 
   return or(
-    gt(messageTable.createdAt, checkpoint.compactedThroughMessageCreatedAt),
+    gt(modelContextMessageCreatedAt, checkpoint.compactedThroughMessageCreatedAt),
     and(
-      eq(messageTable.createdAt, checkpoint.compactedThroughMessageCreatedAt),
+      eq(modelContextMessageCreatedAt, checkpoint.compactedThroughMessageCreatedAt),
       gt(messageTable.messageId, checkpoint.compactedThroughMessageId),
     ),
   );
@@ -827,7 +880,7 @@ export function repairOrphanedToolCalls(
         content: JSON.stringify({
           error: "interrupted",
           summary:
-            "Tool execution was interrupted before any result was recorded (the turn failed). Treat this call as failed and re-issue it if it is still needed.",
+            "No tool result was recorded. The action may have executed or may still be running. Inspect available state and evidence before taking further action; do not assume repeating it is safe.",
         }),
       })),
     });

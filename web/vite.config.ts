@@ -55,6 +55,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           xfwd: true
         },
+        '/v1/events': {
+          target: proxyTarget,
+          changeOrigin: true,
+          xfwd: true
+        },
         '/api': {
           target: proxyTarget,
           changeOrigin: true,

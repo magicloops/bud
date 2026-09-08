@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { AgentService, ThreadTitleService } from "../../agent/index.js";
+import { InvocationError } from "../../agent/invocation-repository.js";
+import { serializeInvocation } from "../../agent/invocation-view.js";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
@@ -204,10 +206,12 @@ export async function registerThreadMessageRoutes(
     );
     if (existingMessage) {
       const serializedMessage = serializeMessage(existingMessage);
+      const invocation = await agentService.durableInvocations?.findByInput(viewer.userId, thread.threadId, existingMessage.messageId);
       reply.code(200).send({
         message_id: serializedMessage.message_id,
         client_id: serializedMessage.client_id,
         message: serializedMessage,
+        ...(invocation ? { invocation: serializeInvocation(invocation) } : {}),
       });
       return;
     }
@@ -216,6 +220,41 @@ export async function registerThreadMessageRoutes(
       budId: thread.budId,
       model: selection.model,
     })) {
+      return;
+    }
+
+    if (agentService.durableInvocations) {
+      const environment = await agentService.getEnvironmentForBud(thread.budId);
+      const pathContext = environment.mode === "normal" ? await agentService.getPathContextForThread(thread.threadId) : null;
+      try {
+        const admitted = await agentService.durableInvocations.admit({
+          owner: viewer.userId, threadId: thread.threadId, origin: "human",
+          idempotencyKey: `message:${effectiveClientId}`, clientId: effectiveClientId, text: body.text,
+          model: selection.model, reasoningEffort: selection.reasoningEffort,
+          persistModelSelection: selection.source === "explicit_request" || !thread.modelId || !thread.reasoningEffort || !selection.storedModelValid,
+          metadata: { ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
+        });
+        const message = serializeMessage(admitted.message);
+        if (!admitted.duplicate) {
+          void threadTitleService.maybeGenerateFromFirstUserMessage({ threadId: thread.threadId,
+            userMessageId: admitted.message.messageId, userMessageText: body.text }).catch(() => {
+            server.log.warn({ threadId: thread.threadId, component: "thread_title" }, "Thread title generation failed");
+          });
+        }
+        reply.code(admitted.duplicate ? 200 : 201).send({ message_id: message.message_id,
+          client_id: message.client_id, message, invocation: serializeInvocation(admitted.invocation),
+          agent: { started: false, queued: true, mode: environment.mode, bud_status: environment.bud_status } });
+      } catch (error) {
+        if (error instanceof InvocationError) {
+          reply.code(error.code === "thread_not_found" ? 404 : error.code === "admission_conflict" ? 409 : 400).send({ error: error.code });
+          return;
+        }
+        if (isUniqueViolation(error) || (error as { cause?: { code?: string } })?.cause?.code === "23505") {
+          reply.code(409).send({ error: "client_id_conflict" });
+          return;
+        }
+        throw error;
+      }
       return;
     }
 

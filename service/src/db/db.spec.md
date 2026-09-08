@@ -64,6 +64,12 @@ Drizzle schema definitions. Defines all tables:
 | `fileSessionTable` | Phase 4 file session contract | `fileSessionId`, `budId`, optional `threadId`, optional `operationId` / `activeStreamId`, root key, relative path, permissions, max bytes, state, content identity, expiry, revocation, audit correlation |
 | `auditEventTable` | Append-only audit foundation for daemon/network events | `auditEventId`, `budId`, `userId`, `operationId`, `streamId`, `eventType`, `eventData` |
 
+#### Personal Data Ingestion
+
+`data_owner_state` serializes owner quota accounting. `data_installation` and `data_collection_epoch` bind producer partitions to authenticated owners with revocation state. `data_event` stores immutable canonical-hashed raw envelopes, unique by owner/client event ID. `data_processing_job` is inserted atomically with each new event and unique by event/processor version; future workers own projection processing. Composite owner foreign keys prevent cross-account associations. New rows require `created_by_user_id` and carry nullable `tenant_id`. Receipt indexes are not a commit-safe publication cursor.
+
+Migration `0024_true_luminals.sql` was generated and reviewed; equivalent schema was applied locally with `pnpm db:push`. PostgreSQL integration validation passed after correcting the synthetic auth-user fixture (see [debug note](../../../debug/personal-data-ingestion-db-test-failure.md)); staging migration verification remains pending. The ingestion phase is incomplete.
+
 #### Auth Tables (`auth` schema)
 
 | Table | Purpose | Key Columns |
@@ -348,3 +354,112 @@ Migration `0020` normalizes the known affected FK names and keeps `thread_web_vi
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Contact projection schema
+
+`contact_source` scopes store identity to the owner-bound epoch and tracks the last published generation. `contact_scan` enforces one scan identity per source/generation and stores manifest/publication state. `contact_scan_record` stages immutable raw-backed records across batches. `contact` and `contact_revision` preserve current visibility and scan history. `data_domain_event` stores one pending matcher item per qualifying revision. Composite owner foreign keys apply throughout. Migration `0025_careful_trauma.sql` was generated/reviewed and schema applied locally; deployment verification remains pending.
+
+## Location and agent grants
+
+Migration `0035_flippant_killmonger.sql` adds non-null JSONB
+`agent_data_grant.contact_fields` with the four legacy categories as its default.
+It preserves existing consent versions and never grants addresses/URLs by
+migration. Explicit owner updates save field choices with the usual version and
+updater stamp; omitted choices preserve the saved list. Reviewed SQL was applied
+locally after canceling the unrelated constraint recreation in `db:push`.
+Client consent controls and deployment remain pending.
+
+Migration `0026_supreme_human_cannonball.sql` adds `location_observation` (one normalized row per raw event, composite owner event/epoch FKs, occurrence-time index, coordinates/accuracy/source and receipt timestamps) and `agent_data_grant` (one owner-wide agent consent row with scopes, optimistic version, history days and authenticated updater). Both require owner stamps and retain nullable tenant columns. Updates serialize through `data_owner_state`; no row means no agent scopes. SQL generated/reviewed and equivalent schema applied locally through `db:push`; staging verification remains pending.
+
+## Durable invocation foundation
+
+Migration `0027_aspiring_triton.sql` adds `agent_invocation` and `agent_invocation_action`. Invocations carry owner/tenant, immutable message reference, stable turn/model selection, idempotency, attempt/fence/lease, deadline, cancellation actor and outcome. Composite owner FKs reference newly added unique constraints on existing message/thread rows; the thread reference includes Bud identity. A partial unique index reserves a thread in leased/running/waiting-user/needs-review states. Action intents are unique per invocation/call and retain execution evidence. The schema enforces status, origin and leased-state consistency.
+
+The generated migration was reordered so referenced constraints exist before FK creation; see [migration-order debug note](../../../debug/personal-data-invocation-fk-order.md). Existing rows were preserved. Equivalent schema was applied locally via `db:push`; isolated-schema SQL execution and PostgreSQL repository tests pass. This is an inactive foundation: the legacy manual runner and message route do not yet use it. Deployment/cutover remains pending.
+
+Migration `0028_blue_risque.sql` adds `agent_invocation.reserves_thread` and changes the partial unique thread index to use that reservation independently of worker status. It backfills active/review/question reservations before index creation. This permits a continuation to retain ownership during availability waits while unstarted availability waits release ownership. `db:push` applied the column; its diff omitted the changed index predicate, so the reviewed backfill/index replacement was also applied locally in a transaction. PostgreSQL tests directly verify the unique reservation during a model wait, and both invocation migrations execute in an isolated schema. Runtime cutover is still pending.
+
+## Automation storage foundation
+
+Migration `0029_absent_white_queen.sql` adds mutable `automation` drafts/control,
+`automation_revision` snapshots with activation actor/grant version/publication
+boundary, and `automation_delivery` with unique rule/revision/event and invocation
+associations. Owner-composite FKs connect revisions, events and invocations; state
+and admission checks reject invalid storage combinations. Repository code must
+keep revisions immutable and resolve current targets/grants before activation or
+dispatch; those operations are not implemented yet.
+
+`data_owner_state.publication_sequence` advances inside the owner-locked contact
+publication transaction; qualifying domain events carry that sequence. Existing
+unsequenced events are historical and must not enter live matching. Activation
+must capture the counter under the same lock, not use transaction timestamps.
+Generated migration reviewed/reordered and applied locally; no deployment.
+
+## Automation proposal storage
+
+Migration `0033_natural_avengers.sql` adds `automation_proposal`: a frozen draft
+and grant version, originating invocation/thread/Bud/tool-call identity, expiry,
+optimistic version, decision receipt and activated revision. Composite foreign
+keys bind the owner to the rule and invocation context; invocation/call binds
+the existing action intent and uniquely deduplicates proposals. An approved row
+requires both a complete owner-attributed decision and a real same-owner rule
+revision. Automatic expiry/staleness/cancellation needs no fabricated human actor;
+explicit cancellation may carry a complete decision receipt. Owner inventory and
+expiry indexes support bounded queries. Repository code must enforce immutable
+snapshots, terminal-state transitions, live authority and atomic activation.
+
+Generated SQL passes isolated-schema PostgreSQL ownership, intent, dedupe and
+decision/revision tests and metadata checks. Applied locally transactionally after
+canceling `db:push`'s unrelated invocation-constraint recreation prompt. No
+deployment or proposal API/runtime activation yet. `AutomationProposals` now
+implements owner-locked capture and atomic decisions through the activation
+repository. PostgreSQL integration tests cover immutable version checks, decision
+races/retries and rollback; continuation and API/runtime integration remain pending.
+
+## App permission and key storage
+
+Migration `0032_flat_wilson_fisk.sql` adds `data_access_request` and `data_app_key`.
+Requests bind an immutable definition to an owned invocation/thread/Bud, its
+action intent and a same-owner/same-Bud private-site destination. Composite FKs
+use new invocation-context and site-owner unique constraints; retries dedupe by
+invocation/call and owner decision key. Human decisions carry explicit actor,
+payload and timestamp. One key/grant row per request stores a verification hash,
+encrypted delivery envelope, digest, setup deadline and installation/revocation
+state. No plaintext credential column exists. State checks require ciphertext
+only while handoff is pending, an installation timestamp for installed state and
+revocation time for revoked/failed setup. Application authorization still must
+validate approval and current invocation/site state before issuing or serving keys.
+
+Generated SQL was reordered before execution to put referenced uniqueness first;
+see [debug note](../../../debug/app-key-migration-order.md). Applied locally in one
+transaction after reviewing `db:push`, excluding unrelated constraint recreation.
+The app-key repository now implements fenced request creation, atomic decisions,
+signed encrypted handoff, installation, revocation and expiry; PostgreSQL tests
+cover those transitions. API/runtime adoption and deployment remain pending.
+
+## Existing-contact snapshots
+
+Migration `0034_bored_butterfly.sql` adds `automation_bootstrap_proposal` and
+`automation_bootstrap_proposal_member` separately from activation proposals.
+Frozen JSON plus fingerprint/count records reviewed selection; ordered relational
+membership binds every revision to the owner. Composite FKs bind active revision,
+invocation context/action and resulting bootstrap receipt. Bounds, expiry, state,
+decision actor/completeness and approval-receipt checks are enforced in SQL.
+Repositories must additionally enforce fingerprint/content consistency, exact
+member count, immutable decisions and same-rule receipt capture. Generated SQL
+passes isolated PostgreSQL tests and was applied locally after canceling the
+unrelated invocation-constraint prompt in db:push. Runtime integration is pending.
+
+Migration `0030_stormy_prima.sql` adds `automation_bootstrap` and `automation_bootstrap_member`. Requests freeze the rule revision, normalized human request, owner retry key, publication boundary, count, group size and receipt deadline. Membership freezes contact revision IDs and ordinal/group ordering with composite owner foreign keys. Capture shares the publication owner lock; retries return the original receipt and never refresh membership. Generated SQL reviewed and applied locally in one transaction after reviewing `db:push`; unrelated invocation constraint recreation was excluded. Execution and deployment remain pending.
+
+Migration `0031_next_veda.sql` adds `automation_bootstrap_group`: stable request/group identity, pending/admitted/expired/canceled/failed admission state, due timestamp, outcome and unique owner-bound invocation association. Composite request/invocation owner FKs prevent cross-account associations. Generated SQL includes a reviewed backfill from existing frozen membership. Locally applied transactionally after reviewing db:push; unrelated constraint recreation was excluded. Groups are inserted atomically with new snapshots. Bootstrap execution policy and aggregate outcome reconciliation remain pending.
+
+## Deleted automations
+
+Migration `0036_magical_ken_ellis.sql` expands `automation_state_check` with
+terminal `deleted`. Rows/revisions/history remain; `updated_by_user_id`,
+`updated_at` and advanced `version` record deletion. Repository owner locking
+serializes deletion with admission and review decisions. Applied reviewed SQL
+locally after canceling db:push's unrelated invocation constraint prompt.
+Deploy migration and all deletion-aware service workers before using Delete;
+older services are not safe rollback targets for deleted-rule mutations.

@@ -106,6 +106,17 @@ Message list with auto-scroll and full-height message rendering.
 
 **Note**: Renders the scrollable message area plus non-transcript timeline footers. Parent component provides the container wrapper.
 
+### `automation-attribution.ts` and `automation-attribution.test.ts`
+
+Recognizes server-stamped system-origin automation input, retaining its recorded
+name/revision/run/event identity independently of current rule state. Tests reject
+ordinary messages and text-only impersonation, and cover incomplete metadata.
+Chat timeline renders these as compact expandable Triggered by rows even when
+generic system messages are hidden. Expanded rows retain full original input;
+model context and persisted transcripts are unchanged. The expanded row links to the exact rule via `/automations?rule=...`, where
+existing delivery history is available. Original historical revision IDs stay
+visible even when current rule state has changed.
+
 ### `chat-pane-resize.tsx`
 
 Drag-to-resize for the chat-pane ↔ terminal/web/file divider (md+ only).
@@ -193,6 +204,7 @@ Message input form with options.
 - `messageText` / `onMessageChange` - Controlled input
 - `status` - UI state (idle, dispatching, streaming, waiting_for_user, waiting_for_terminal)
 - `onSubmit` - Form submission handler
+- optional `canCancelInvocation` - Canonical durable cancellation availability, including queued/waiting work, enables the existing Stop button without an extra status strip
 - optional `onCancelAgentTurn` - Existing-thread cancel action that switches the send button into stop mode while the agent is dispatching, streaming, or waiting on the terminal
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector

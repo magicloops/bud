@@ -13,6 +13,8 @@ import {
   requireAuthorizedThreadAccess,
 } from "./shared.js";
 import { z } from "zod";
+import { serializeInvocation } from "../../agent/invocation-view.js";
+import { InvocationError } from "../../agent/invocation-repository.js";
 
 const QuestionRequestParamsSchema = ThreadParamsSchema.extend({
   requestId: z.string().min(1).max(128),
@@ -116,6 +118,26 @@ export async function registerThreadAgentRoutes(
   agentService: AgentService,
   agentRuntime: AgentRuntimeStateManager,
 ): Promise<void> {
+  server.post("/api/threads/:threadId/agent/invocations/:invocationId/abandon", async (request, reply) => {
+    const params = ThreadParamsSchema.extend({ invocationId: z.string().min(1).max(128) }).parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) return;
+    const repository = agentService.durableInvocations;
+    if (!repository) return reply.code(404).send({ error: "durable_admission_unavailable" });
+    const body = z.object({ acknowledge_possible_effects: z.literal(true), expected_updated_at: z.string().datetime() })
+      .strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_review_acknowledgement" });
+    try {
+      const invocation = await repository.abandonReviewed(access.viewer.userId, access.thread.threadId,
+        params.invocationId, body.data.expected_updated_at);
+      return reply.send({ invocation: serializeInvocation(invocation) });
+    } catch (error) {
+      if (error instanceof InvocationError) {
+        return reply.code(error.code === "invocation_not_found" ? 404 : 409).send({ error: error.code });
+      }
+      throw error;
+    }
+  });
   server.get("/api/threads/:threadId/agent/state", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
@@ -133,6 +155,11 @@ export async function registerThreadAgentRoutes(
         });
     reply.send({
       ...runtimeSnapshot,
+      ...(agentService.durableInvocations ? { invocations: (await agentService.durableInvocations.listForThread(access.viewer.userId, params.threadId)).map(serializeInvocation) } : {}),
+      ...(agentService.durableInvocations ? { pending_questions: await agentService.durableInvocations.pendingQuestionsForThread(access.viewer.userId, params.threadId) } : {}),
+      ...(agentService.durableInvocations ? { pending_data_requests: await agentService.durableInvocations.pendingDataRequestsForThread(access.viewer.userId, params.threadId) } : {}),
+      ...(agentService.durableInvocations ? { pending_automation_requests: await agentService.durableInvocations.pendingAutomationProposalsForThread(access.viewer.userId, params.threadId) } : {}),
+      ...(agentService.durableInvocations ? { pending_bootstrap_requests: await agentService.durableInvocations.pendingBootstrapProposalsForThread(access.viewer.userId, params.threadId) } : {}),
       environment,
       context_budget: contextBudget,
     });
@@ -189,6 +216,12 @@ export async function registerThreadAgentRoutes(
       return;
     }
     const { thread } = access;
+    if (agentService.durableInvocations) {
+      const invocations = await agentService.durableInvocations.listForThread(access.viewer.userId, thread.threadId);
+      const current = invocations.find(row => row.reservesThread) ?? invocations.find(row =>
+        ["pending", "retry_wait", "waiting_for_bud", "waiting_for_model"].includes(row.status));
+      if (current) await agentService.durableInvocations.requestCancel(access.viewer.userId, current.id);
+    }
     await agentService.cancelThread(thread.threadId);
     reply.send({ ok: true });
   });
@@ -214,6 +247,7 @@ export async function registerThreadAgentRoutes(
           question_request_id: result.questionRequestId,
           status: result.status,
           continuation: result.continuation,
+          ...(result.invocationId ? { invocation_id: result.invocationId } : {}),
           ...(result.messageId ? { message_id: result.messageId } : {}),
           ...(result.clientId ? { client_id: result.clientId } : {}),
         });

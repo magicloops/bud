@@ -21,6 +21,9 @@ Responsibilities:
 - generate repo-local Caddy certs from the explicit setup command
 - check that the local `.test` proxy endpoint DNS name resolves before
   starting or validating the HTTPS profile
+- accept explicit shell overrides `BUD_DEV_HTTPS_ORIGIN`,
+  `BUD_DEV_PROXY_BASE_DOMAIN` and `BUD_DEV_PROXY_PUBLIC_PORT` (empty means 443)
+  for public tunnels while keeping local mkcert/.test DNS setup independent
 - own the service, web, and Caddy child-process lifecycle for the HTTPS profile
 - optionally add `NODE_OPTIONS=--trace-warnings` to only the service child
   process via `--trace-service-warnings`
@@ -33,6 +36,10 @@ Responsibilities:
 ### `caddy/` -> [caddy/caddy.spec.md](./caddy/caddy.spec.md)
 
 Optional Caddy reverse-proxy configuration for local HTTPS parity testing.
+
+### `cloudflared/` -> [cloudflared/cloudflared.spec.md](./cloudflared/cloudflared.spec.md)
+
+Named-tunnel template for public local previews on bud.systems; setup is opt-in.
 
 ## Dependencies
 

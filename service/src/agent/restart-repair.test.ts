@@ -106,7 +106,8 @@ test("buildDanglingToolCallRepair: non-terminal and unknown tools get the generi
   assert.equal(webView.tool, "web_view.open");
   assert.equal(webView.payload.kind, "web_view");
   assert.equal(webView.payload.target_port, 3000);
-  assert.match(String(webView.payload.note), /re-issue it if it is still needed/);
+  assert.match(String(webView.payload.note), /action may have executed/);
+  assert.equal(webView.payload.retryable, false);
 
   const unknown = buildDanglingToolCallRepair({
     llmCallId: "llm_1",

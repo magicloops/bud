@@ -182,3 +182,40 @@ Regression test for the split thread-route registration surface.
 ---
 
 *Parent spec: [../routes.spec.md](../routes.spec.md)*
+
+## Optional durable admission mode
+
+When AgentService is constructed with a durable repository (`AGENT_INVOCATION_MODE=durable`, default legacy), message creation uses atomic message/invocation admission and returns canonical `invocation` plus `agent.started: false, queued: true`. Retries of existing messages recover their invocation identity. New admissions do not supersede pending questions or launch a detached turn. Thread model preferences and message metadata commit with admission.
+
+`/agent/state` adds up to 50 owner-scoped recent/reserved `invocations` and up to 20 persisted `pending_questions`, allowing recovery independent of process-local runtime state. `/cancel` stamps durable cancellation before stopping the local executor. Answer responses may report `continuation: "durable_invocation"` and `invocation_id`; they do not create legacy fallback messages. Ownership is resolved before these reads/writes, and repository queries repeat owner/thread filtering. Route fixtures and PostgreSQL tests cover the integration; real OAuth and both-client adapters remain gates.
+
+`POST /api/threads/:threadId/agent/invocations/:invocationId/abandon` requires the
+owned thread and body `{ acknowledge_possible_effects: true, expected_updated_at:
+"<ISO timestamp from invocation state>" }`. Only `needs_review` work can be
+abandoned; a changed state returns 409, wrong owner/thread/id returns 404, absent
+authentication returns 401, and missing acknowledgement returns 400. An already
+abandoned invocation is idempotent. The transaction preserves uncertain action
+intents, records an owner-stamped review action, fences the old lease and releases
+the reservation with `user_abandoned_after_review`. It neither cancels a newer
+local turn nor sends/replays terminal commands. Response is `{ invocation }` using
+the existing canonical serializer. Legacy mode returns 404 for this operation.
+
+Durable `/agent/state` also returns `pending_data_requests`, bounded to 20 owned
+pending requests joined to their reserved invocation and waiting action. Each
+entry includes request/turn/call/client IDs, creation time and the public request
+serializer. The route authorizes the thread before repository reads; SQL repeats
+owner/thread/action matching. Approval and cancellation remove the pending entry.
+This recovery works independently of the process-local pending tool snapshot.
+
+Durable `/agent/state` also returns `pending_automation_requests`, bounded to 20
+owned pending proposals with matching reserved invocation and waiting action.
+Entries contain `proposal_id`, `turn_id`, `client_id`, `call_id`, `proposal` and
+`created_at`. Thread authorization precedes repository access, which repeats
+owner/thread filtering. Route fixtures verify no proposal reads for anonymous
+or non-owner callers and recovery with an empty process-local pending tool.
+
+Existing-contact reviews use the separate `pending_bootstrap_requests` array with
+the same bounded, owner/thread/action-bound identity envelope and public bootstrap
+proposal serializer. It is present in durable mode even when new proposal issuance
+is disabled, allowing recovery of existing work. Route tests verify authorization
+before reads, an empty runtime snapshot and removal after resolution.

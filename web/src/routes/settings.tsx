@@ -158,6 +158,11 @@ function SettingsView() {
           </p>
         </div>
 
+        <nav aria-label="Personal settings" className="grid gap-3 sm:grid-cols-2">
+          <Link to="/data" className="rounded border-2 border-border p-4 font-semibold">Data sources</Link>
+          <Link to="/automations" className="rounded border-2 border-border p-4 font-semibold">Automations</Link>
+        </nav>
+
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <section className="rounded-[2rem] border-4 border-black bg-[var(--background)] p-8 shadow-[12px_12px_0px_rgba(0,0,0,1)]">
             <div className="flex flex-col gap-6">

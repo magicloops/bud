@@ -651,7 +651,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
-- `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
+- `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions` or `data_request_api_key`. Durable pending requests are recovered from the owner-scoped arrays described in §7.1, even when no in-memory tool waiter survives.
 - `phase` may be `waiting_for_terminal` while the agent is parked on `terminal.wait` (idle until the daemon reports the terminal settled / the command finished); clients should present it as waiting, not loading, keep the composer enabled (a follow-up message supersedes the wait), and keep cancel available
 - For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`, `terminal.wait` `{}`); there is no `wait_for` field
 - For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
@@ -2220,6 +2220,133 @@ Resume rules:
 - clients must quarantine `agent.resync_required.provided_cursor` and suppress reconnect paths that would reuse it while bootstrap recovery is in flight
 - browser clients using native `EventSource` should also treat a `CONNECTING` error with an existing cursor as a stale-cursor recovery signal: close the native source, refresh `/messages` plus `/agent/state`, and attach only after a fresh cursor is available
 
+Personal-data queries use the existing agent tool events above with names
+`contacts_search`, `contacts_history`, `location_context`, and `timeline_query`.
+Their `args` contain query fields only; ownership is derived from the admitted
+thread and checked against its Bud owner. Results add `kind: "personal_data"`,
+`ok`, and optional `error`/`retryable` to the live tool event. The canonical
+message carries the full query result, permission version/history cutoff and
+uncertainty labels. Missing consent returns `approval_required: true` and
+`permission_settings_path: "/data"` in that result; it does not grant access implicitly.
+These service-side tools remain available during manual Bud-offline chat.
+No daemon frame changes or daemon upgrade are required; older clients can
+render the canonical generic tool row. See the
+[implemented data API](../plan/personal-data-ingestion-and-agent-triggers/implemented-contact-api.md)
+for first-party routes and bounded query semantics.
+
+Durable admission mode (`AGENT_INVOCATION_MODE=durable`; default is legacy)
+adds `invocation` to message-create/retry responses. A fresh admission returns
+`agent.started: false` and `agent.queued: true`; persistence is not a claim
+that execution has begun. `/agent/state` adds bounded `invocations` and
+`pending_questions` arrays, scoped to the authenticated thread owner.
+Invocation fields include `invocation_id`, `turn_id`, `input_message_id`,
+`origin`, `status`, model/reasoning, `reserves_thread`, attempt, outcome and
+scheduling/cancellation timestamps. Worker identities and fences are private.
+Question rows carry `request_id`, `turn_id`, `client_id`, `call_id`, `request`
+and `created_at`. Answer responses may return
+`continuation: "durable_invocation"` with `invocation_id`; clients should
+refresh canonical state/messages. Client support and controlled server
+cutover are required before enabling this mode. No daemon wire change.
+
+#### App data permission requests and recovery
+
+`APP_DATA_KEYS_ENABLED=1` requires durable invocation mode and enables both
+the `data_request_api_key` tool and human approval issuance. The default is off;
+`GET /api/data/status` reports the effective `features.app_keys` capability.
+Client integration exists on web and mobile; a running environment must still
+be checked before attempting an approval.
+
+After the request and parked invocation commit together, `agent.tool_call`
+uses `name: "data_request_api_key"` and `args` containing the public serialized
+request, including `request_id`. The invocation waits for human input and keeps
+its thread reservation. The event is a notification, not the durable record.
+
+`GET /api/threads/:thread_id/agent/state` adds `pending_data_requests`, bounded
+to 20 entries ordered by creation time and request ID. Each entry contains:
+
+| Field | Meaning |
+|---|---|
+| `request_id` | Durable access request ID |
+| `turn_id`, `call_id` | Original invocation turn and provider tool call |
+| `client_id` | Original tool-row ID, or null if unavailable |
+| `request` | Public serialized request and immutable permission/destination metadata |
+| `created_at` | Request creation timestamp |
+
+Rows require matching owner, thread, invocation and waiting action, a retained
+thread reservation and no cancellation request. Older services may omit this
+array. Clients refresh canonical state after reconnect and decisions; they must
+not rely on SSE replay or a process-local `pending_tool` alone.
+
+Review and decisions use the normal authenticated first-party API:
+`POST /api/data/access-requests/:id/decision` accepts
+`{decision:"approve"|"decline", expected_version, idempotency_key}`. The
+server checks the viewer against the stored request before mutation. Opening a
+review or sending an ordinary chat message does not approve access.
+
+Approval, decline or expiry resumes the same invocation and turn when its
+selected Bud/model is available. The canonical tool result has
+`kind: "app_data_permission"`, `ok`, public `request`, optional public `key`
+metadata and a summary. Later tool calls from the paused provider response are
+recorded as not executed due to permission; they are not dispatched on resume.
+Clients reconcile the original tool row by `client_id` from `/messages`.
+
+Neither pending requests nor ordinary tool results, SSE or transcripts contain
+query credentials, verification hashes or encrypted credential envelopes.
+The backend helper receives protected delivery through signed setup endpoints.
+See the [app data API](../plan/personal-data-ingestion-and-agent-triggers/implemented-app-data-api.md)
+and [handoff contract](../plan/personal-data-ingestion-and-agent-triggers/app-key-handoff.md)
+for exact request, decision, setup and revocation contracts. This adds no daemon
+frame or required daemon upgrade.
+
+#### Automation activation reviews and recovery
+
+Automation management uses service-side tools `automations_list`,
+`automations_get`, `automations_history`, `automations_create_draft`,
+`automations_update_draft`, `automations_request_activation`, and
+`automations_pause`. These require an admitted human-origin invocation and
+server-bound owner context. Draft creation or editing does not activate a rule.
+The tool catalog and approval path remain disabled in production composition
+until client review support and startup readiness gates are complete.
+`GET /api/data/status` exposes the effective `features.automation_proposals`
+capability; clients must treat an absent or false capability as unavailable.
+
+Once an activation proposal and parked invocation commit, `agent.tool_call`
+uses `name: "automations_request_activation"` and `args` containing the public
+serialized proposal, including its immutable definition, draft/grant versions,
+proposal version, status and expiry. The event only announces the durable review.
+
+`GET /api/threads/:thread_id/agent/state` adds `pending_automation_requests` in
+durable mode. Each of at most 20 entries contains `proposal_id`, `turn_id`,
+`client_id`, `call_id`, `proposal` and `created_at`. Queries require matching
+owner/thread/invocation/waiting action, a retained thread reservation and no
+cancellation request. Older services omit the array. Clients recover from this
+array after reconnect even when `pending_tool` is empty, and reconcile rows by
+their original `client_id`.
+
+Human-authenticated review routes are `GET /api/automations/proposals`,
+`GET /api/automations/proposals/:id`,
+`POST /api/automations/proposals/:id/decision`, and
+`POST /api/automations/proposals/:id/cancel`. Decisions accept
+`{decision:"approve"|"decline", expected_version, idempotency_key}`; cancellation
+accepts `{expected_version, idempotency_key}`. Ownership is checked before
+mutation; approval revalidates the exact draft and grant and atomically stores
+the activated revision and decision receipt. Opening a review or chatting does
+not approve it. Approval being unavailable does not prevent decline/cancel.
+
+Approval, decline, expiry or stale review resumes the same invocation when its
+selected Bud/model is available. The canonical result has
+`kind: "automation_proposal"`, `ok`, public `proposal` and `summary`. Calls after
+the paused call in the same provider response receive
+`not_executed_due_to_automation_review`; they are not dispatched automatically.
+Canceling the invocation closes its pending review without resuming work.
+Ordinary management results use `kind: "automation"`, `ok`, query/mutation args
+and the public result in the canonical message. Persisted results replay as
+tool results, without executing management operations again.
+
+This is additive REST/SSE behavior with no daemon frame changes or required
+daemon upgrade. Older clients may render generic tool results; newer clients
+must tolerate missing capability and pending-review fields on older services.
+
 ### 7.2 Terminal Stream Events
 
 `GET /api/threads/:thread_id/terminal/stream` may emit:
@@ -2563,3 +2690,61 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
     let the agent attach/detach/list product web views without raw proxy-session
     authority
   - legacy standalone run transport and browser `/api/runs/*` streaming are removed from the supported protocol
+
+
+### Existing-contact automation reviews
+
+Existing-contact processing uses separate `bp_` proposals and storage, so older
+activation-only services cannot interpret a processing review as authority to
+enable an automation. Human-only routes are:
+
+- `GET /api/automations/existing-contact-proposals?limit=&cursor=&pending_only=`
+- `GET /api/automations/existing-contact-proposals/:id`
+- `POST /api/automations/existing-contact-proposals/:id/decision`
+- `POST /api/automations/existing-contact-proposals/:id/cancel`
+
+All reads resolve the signed-in owner; supplied bearer authentication takes
+precedence over cookies. App query keys are not human review credentials.
+Responses are `no-store`; decisions are limited to 4 KiB. Decision bodies use
+`{decision: approve | decline, expected_version, idempotency_key}`; cancellation
+uses `{expected_version, idempotency_key}`. Neither accepts replacement selection,
+member IDs, permissions, owner or acknowledgement fields. Approval is gated by
+`/api/data/status`'s additive `features.existing_contact_reviews`; default is false.
+Decline/cancel are independent of approval enablement.
+
+Public proposals carry `kind: existing_contacts`, `proposal_id`, `automation_id`,
+active `revision`, originating invocation/thread/Bud/call IDs, saved `definition`,
+`selection`, `grant_version`, `member_count`, `group_size`, `group_count`, `version`,
+`status`, nullable `bootstrap_id`, and expiry/decision/creation/update timestamps.
+Internal owner fields, fingerprint and frozen member IDs are omitted. Inventory
+returns `{items, next_cursor}` with owner/filter-bound pagination.
+
+Approval atomically captures the reviewed contact revisions and stores the human
+decision/receipt; it never activates another rule revision. Changed eligibility
+requires a fresh review. Identical decisions return their original receipt.
+Client integration and startup enablement are still pending; these HTTP routes
+alone do not make the agent operation available. No daemon wire change is required.
+
+Durable continuation support now reconstructs an existing-contact decision as a
+tool result with `kind: existing_contact_review`, the original `call_id` and
+client tool identity, `ok`, public `proposal` and `summary`. Approved results
+reference the already-captured `bootstrap_id`; they do not authorize a second
+capture. Trailing undispatched calls receive the existing
+`not_executed_due_to_automation_review` result. Pending snapshot lookup is currently
+repository-only; agent-state HTTP exposure remains pending.
+
+The separately gated `automations_request_existing_contacts` tool emits
+`agent.tool_call` with committed public proposal metadata in `args` after atomic
+parking, then enters `waiting_for_user`. It uses the original call/client IDs and
+never emits activation tool identity. Empty selections instead persist a normal
+`kind: automation` result with `ok: true`, `outcome: no_work`, `member_count: 0`,
+`automation_id`, original selection `args` and summary; they do not park or create
+a review. Known validation failures similarly produce a normal error result.
+Server startup does not yet enable this capability.
+
+Durable `/api/threads/:threadId/agent/state` now includes
+`pending_bootstrap_requests`, bounded to 20 owner/thread/action-bound entries.
+Each contains `proposal_id`, `turn_id`, `client_id`, `call_id`, `created_at` and
+public `proposal`. Thread authorization occurs before any repository read.
+An empty array is authoritative; absence supports older-service compatibility.
+This field is independent of process-local `pending_tool` and issuance gating.

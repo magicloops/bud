@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>My contact history</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body><main><header><p>PERSONAL DATA</p><h1>My contact history</h1><p>Contacts and location observations shared with this private app.</p></header>
+<form id="search"><label for="term">Find a contact</label><div><input id="term" maxlength="200" placeholder="Name or permitted contact fields"><button>Search</button></div></form>
+<p id="status" role="status"></p><section id="results" aria-label="Contacts"></section><button id="more" hidden>More contacts</button>
+<section id="detail" hidden><h2 id="name"></h2><p id="observed"></p><h3>History</h3><div id="history"></div><button id="more-history" hidden>More history</button>
+<h3>Location evidence</h3><p>Nearest available observation within 24 hours of first detection. This does not establish where you met or when the contact was created.</p><p id="location"></p><button id="map" hidden>Show on OpenStreetMap</button><div id="map-container"></div></section>
+</main></body></html>

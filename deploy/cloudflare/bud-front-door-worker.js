@@ -1,4 +1,4 @@
-const SERVICE_PREFIXES = ["/api/", "/.well-known/"];
+const SERVICE_PREFIXES = ["/api/", "/.well-known/", "/v1/events/"];
 const SERVICE_PREFIX_LIKE_PATHS = ["/ws", "/readyz", "/healthz"];
 const DEFAULT_PROXY_BASE_DOMAIN = "bud.show";
 
