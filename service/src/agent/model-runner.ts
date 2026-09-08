@@ -587,6 +587,8 @@ export class AgentModelRunner {
         return { type: "tool_call", tool: "data_request_api_key", callId: toolCall.id,
           args: { ...parsed, destination: { ...parsed.destination, public_key: parsed.destination.public_key.public_key } } };
       }
+      case "web_search":
+      case "web_read":
       case "contacts_search":
       case "contacts_history":
       case "location_context":

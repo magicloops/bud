@@ -8,14 +8,14 @@ export function readInvocationSettings(env: NodeJS.ProcessEnv = process.env) {
   const automations = env.AUTOMATIONS_ENABLED ?? "0";
   if (automations !== "0" && automations !== "1") throw new Error("invalid_automations_enabled");
   if (automations === "1" && mode !== "durable") throw new Error("automations_require_durable_invocations");
-  const appKeys = env.APP_DATA_KEYS_ENABLED ?? "0";
+  const appKeys = env.APP_DATA_KEYS_ENABLED ?? (mode === "durable" ? "1" : "0");
   if (appKeys !== "0" && appKeys !== "1") throw new Error("invalid_app_data_keys_enabled");
   if (appKeys === "1" && mode !== "durable") throw new Error("app_data_keys_require_durable_invocations");
-  const proposals = env.AUTOMATION_PROPOSALS_ENABLED ?? "0";
+  const proposals = env.AUTOMATION_PROPOSALS_ENABLED ?? (automations === "1" ? "1" : "0");
   if (proposals !== "0" && proposals !== "1") throw new Error("invalid_automation_proposals_enabled");
   if (proposals === "1" && (mode !== "durable" || automations !== "1"))
     throw new Error("automation_proposals_require_enabled_durable_automations");
-  const bootstrap = env.AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED ?? "0";
+  const bootstrap = env.AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED ?? proposals;
   if (bootstrap !== "0" && bootstrap !== "1") throw new Error("invalid_existing_contact_reviews_enabled");
   if (bootstrap === "1" && proposals !== "1") throw new Error("existing_contact_reviews_require_automation_proposals");
   return { mode, automationConcurrencyPerBud: cap, automationsEnabled: automations === "1",

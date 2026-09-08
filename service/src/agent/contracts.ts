@@ -1,3 +1,4 @@
+import { isWebTool, type WebTool } from "../web-retrieval/contracts.js";
 import { isAutomationToolName, type AutomationToolName } from "../personal-data/automation-tool-contracts.js";
 import type {
   TerminalIntegration,
@@ -13,6 +14,7 @@ import {
 } from "./user-question-contracts.js";
 
 export type AgentToolCallDirective =
+  | { type: "tool_call"; tool: WebTool; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: AutomationToolName; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: "data_request_api_key"; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: PersonalDataTool; args: Record<string, unknown>; callId: string }
@@ -266,7 +268,15 @@ export type ExecutedAutomationTool = {
 export function isAutomationToolDirective(directive: AgentToolCallDirective): directive is AutomationToolCallDirective {
   return isAutomationToolName(directive.tool);
 }
-export type ExecutedAgentTool = ExecutedAutomationTool | ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool | ExecutedPersonalDataTool;
+export type WebRetrievalToolCallDirective = Extract<AgentToolCallDirective, { tool: WebTool }>;
+export type ExecutedWebRetrievalTool = {
+  directive: WebRetrievalToolCallDirective; args: Record<string, unknown>; summary: string; outputTruncationReason: null;
+  result: { kind: "web_retrieval"; ok: boolean; error?: string; retryable?: boolean }; payload: Record<string, unknown>;
+};
+export function isWebRetrievalToolDirective(directive: AgentToolCallDirective): directive is WebRetrievalToolCallDirective {
+  return isWebTool(directive.tool);
+}
+export type ExecutedAgentTool = ExecutedWebRetrievalTool | ExecutedAutomationTool | ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool | ExecutedPersonalDataTool;
 
 export const AGENT_MESSAGE_DURATION_SOURCE = "service_wall_clock" as const;
 
@@ -301,6 +311,7 @@ export function toolNameForConversation(
   | "web_view_close"
   | "web_view_list"
   | PersonalDataTool
+  | WebTool
   | "data_request_api_key"
   | AutomationToolName
   | typeof ASK_USER_QUESTIONS_TOOL {
@@ -314,6 +325,8 @@ export function toolNameForConversation(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "web_search":
+    case "web_read":
     case "contacts_search":
     case "contacts_history":
     case "location_context":
@@ -392,6 +405,8 @@ export function buildToolArgs(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "web_search":
+    case "web_read":
     case "contacts_search":
     case "contacts_history":
     case "location_context":

@@ -30,6 +30,20 @@ therefore safe; nothing here touches persisted daemon or session state.
 
 ## Purpose
 
+Public web research is a shared service capability: `web-retrieval-tools.ts`
+defines canonical `web_search`/`web_read`, and `web-retrieval-tool-executor.ts`
+dispatches through [web-retrieval](../web-retrieval/web-retrieval.spec.md).
+The model parser, contracts, loop, transcript writer and conversation loader
+preserve these calls/results across provider replay and reload. Tools remain
+available to cloud chat with an offline Bud when configured; Bud-local model
+availability rules are unchanged. Execution checks current owner, durable intent
+and cancellation before returning evidence. The default prompt encourages proactive research and describes public-web,
+snapshot/reference and request-budget limitations; tool descriptions define usage.
+It also directs agents to ignore embedded source instructions, cite source URLs,
+and distinguish source evidence from inference and uncertainty.
+`web-retrieval-tools.test.ts` covers catalog gating, parsing/replay and executor
+failure/cancellation behavior. Payloads use the existing generic tool SSE events.
+
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
 2. Resolves the current Bud environment for the provider request

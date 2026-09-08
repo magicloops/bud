@@ -220,6 +220,13 @@ Environment-based configuration with defaults.
 
 ## Subfolders
 
+### `web-retrieval/` → [web-retrieval.spec.md](./web-retrieval/web-retrieval.spec.md)
+
+Provider-neutral public search/read backed by Firecrawl and owner/thread-scoped
+durable evidence. Enabled by `WEB_RETRIEVAL_ENABLED=1` plus `FIRECRAWL_API_KEY`.
+Server readiness checks its schema before advertising enabled tools; bounded
+minute cleanup is drained before database shutdown. No daemon upgrade required.
+
 ### `personal-data/` → [personal-data.spec.md](./personal-data/personal-data.spec.md)
 
 Authenticated, bounded mobile batch ingestion and owner-scoped status, with atomic raw-event/processing-job persistence. Projections and automations remain future phases.
@@ -409,7 +416,7 @@ POST /api/device-auth/flows/:flowId/approve
 
 ## Optional automation polling
 
-`APP_DATA_KEYS_ENABLED=0|1` (default 0) independently enables app permission
+`APP_DATA_KEYS_ENABLED=0|1` (defaults on in durable mode) independently enables app permission
 issuance and requires durable admission. The composition root passes the same
 setting to the agent tool catalog, human approval routes and `features.app_keys`.
 Readiness checks the request/key schema before workers start. Disabling issuance
@@ -419,7 +426,7 @@ the normal mixed-version daemon contract does not change.
 
 `readInvocationSettings` accepts strict `AUTOMATIONS_ENABLED=0|1` (default 0), requiring `AGENT_INVOCATION_MODE=durable` when enabled. Server readiness checks bootstrap group schema, then starts the bounded automation worker and durable invocation executor. The same setting exposes activation capability to both clients. Pre-close and final-close drain automation admission before the invocation worker and database pools. No environment was changed or production rollout performed. Full recovery/client validation remains required before enabling an integrated environment.
 
-`AUTOMATION_PROPOSALS_ENABLED=0|1` (default 0) additionally opts into agent-managed
+`AUTOMATION_PROPOSALS_ENABLED=0|1` (defaults on when automations are enabled) controls agent-managed
 drafts/reviews. It requires durable mode and `AUTOMATIONS_ENABLED=1`. The composition
 root passes this single setting to AgentService and personal-data routes, keeping
 the tool catalog, human approval and `features.automation_proposals` aligned.
@@ -430,7 +437,7 @@ Startup tests cover strict settings and missing/partial/migrated PostgreSQL sche
 This wiring does not change the environment or require a daemon release; live
 cross-client acceptance remains required before rollout.
 
-`AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED=0|1` (default 0) additionally enables
+`AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED=0|1` (defaults to proposal enablement) controls
 the separate agent-requested existing-contact review. It requires
 `AUTOMATION_PROPOSALS_ENABLED=1` and therefore enabled durable automations. Server
 composition passes one setting to the agent catalog and human routes/capability.
@@ -440,3 +447,10 @@ claim and thread-state recovery still reference those tables. The bootstrap chec
 also verifies the ordered membership columns. Isolated PostgreSQL readiness tests
 cover absent, partial and generated migration schemas. No environment or running
 service was changed by this wiring.
+
+The three rolled-out capabilities no longer require explicit `=1` settings.
+Keep `AGENT_INVOCATION_MODE=durable` and `AUTOMATIONS_ENABLED=1` to enable the
+complete flow. Explicit `=0` remains an operational override; disabling proposals
+also disables existing-contact reviews by default. Explicit incompatible `=1`
+settings still fail startup. Legacy mode retains its existing default behavior.
+User consent, review, ownership and schema readiness checks remain enforced.

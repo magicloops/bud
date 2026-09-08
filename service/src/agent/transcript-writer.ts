@@ -522,7 +522,7 @@ export class AgentTranscriptWriter {
 }
 
 function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<string, unknown> {
-  if (execution.result.kind === "personal_data" || execution.result.kind === "automation") {
+  if (execution.result.kind === "web_retrieval" || execution.result.kind === "personal_data" || execution.result.kind === "automation") {
     return { kind: execution.result.kind, ok: execution.result.ok, error: execution.result.error, retryable: execution.result.retryable };
   }
   if (execution.result.kind === "web_view") {
