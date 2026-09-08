@@ -142,6 +142,7 @@ main.tsx
                                 ├── /auth/mobile
                                 ├── /auth/mobile/consent
                                 ├── /login
+                                ├── /data (Contacts and import status)
                                 ├── /settings
                                 ├── /devices/claim/$flowId
                                 ├── / (auth-aware entry)

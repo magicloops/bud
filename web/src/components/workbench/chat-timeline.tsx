@@ -1,7 +1,9 @@
+import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
+import { automationAttribution } from './automation-attribution'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import {
   ThinkingIndicator,
@@ -134,7 +136,7 @@ const ChatTimelineComponent = ({
   )
 
   const visibleMessages = useMemo(
-    () => (config.showSystemMessages ? messages : messages.filter((message) => message.role !== 'system')),
+    () => (config.showSystemMessages ? messages : messages.filter((message) => message.role !== 'system' || automationAttribution(message) !== null)),
     [messages],
   )
 
@@ -542,6 +544,27 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   if (isCompaction) {
     return <CompactionRow message={message} />
+  }
+
+  const attribution = automationAttribution(message)
+  if (attribution) {
+    return (
+      <article className="text-xs text-muted-foreground" aria-label="Automation trigger">
+        <div className={TRANSCRIPT_COLUMN_CLASSES}>
+          <details className="px-4 py-2">
+            <summary className="cursor-pointer">{attribution.label}</summary>
+            <div className="mt-3 space-y-2">
+              <p>Invocation created <time dateTime={message.created_at}>{new Date(message.created_at).toLocaleString()}</time></p>
+              {attribution.automationId && <p className="break-all">Automation: {attribution.automationId}{attribution.revision !== null ? ` · Revision ${attribution.revision}` : ''}</p>}
+              {attribution.automationId && <Link to="/automations" search={{ rule: attribution.automationId }} className="inline-block underline">View automation and activity</Link>}
+              {attribution.invocationId && <p className="break-all">Run: {attribution.invocationId}</p>}
+              {attribution.eventId && <p className="break-all">Event: {attribution.eventId}</p>}
+              <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            </div>
+          </details>
+        </div>
+      </article>
+    )
   }
 
   if (isSystem) {

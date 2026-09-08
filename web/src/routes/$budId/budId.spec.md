@@ -300,3 +300,52 @@ From `@/components/workbench/chat-timeline`:
 ---
 
 *Referenced by: [../routes.spec.md](../routes.spec.md)*
+
+## Durable invocation mode
+
+The existing-thread view displays the canonical invocation status and a cancellation action independently of live streaming. It polls owner-authorized agent state every five seconds while visible only when the service advertises durable fields, ignores heartbeat-only changes, and refreshes transcript/bootstrap on lifecycle changes. Requests do not overlap within the poll loop; obsolete thread visits and unmounts cannot apply late bootstrap responses. Legacy-service behavior remains. First-send navigation already enters this same loader path. Durable follow-up sends queue without superseding a parked question. Browser end-to-end timing validation remains pending before cutover.
+
+For unexpected `needs_review` interruptions, an inline notice explains possible
+ongoing commands and offers a single Stop run button plus terminal access. The
+button submits the existing owner-authorized timestamp-bound abandonment request;
+no additional checkbox is required. Duplicate submissions and obsolete visits
+remain guarded. Explicit Stop during execution completes cancellation without a
+second review once the worker finishes or fenced lease recovery releases it.
+History and uncertain command evidence remain intact. New-thread layout is unchanged.
+
+Pending app-data requests render once at their original tool position from the
+canonical `pending_data_requests` snapshot, including after cold bootstrap.
+Allow/Deny acts inline; View details opens the shared read-only dialog. The live permission tool
+event requests a state refresh instead of adding a generic running tool row;
+the existing durable poll detects decision/removal and refreshes the transcript.
+New-thread layout is unaffected because permission requests require a persisted
+thread. Browser interaction remains unverified.
+
+Routine Queued/Preparing/Running/Completed/Canceled/Waiting-for-answer strips
+are omitted. Only retry, Bud/model unavailable, failed, expired and needs-review
+notices remain. Canonical cancellation availability reaches the existing composer
+Stop control even while queued or waiting for input; there is no second Stop row.
+Review controls and owner-authorized cancel paths remain unchanged. New-thread
+composition retains its default behavior and requires no invocation notices.
+
+Live automation activation requests refresh durable state and set waiting-for-user
+status. Cold recovery uses `pending_automation_requests`; the timeline renders
+the shared review at its original tool position. No separate top-of-chat automation
+panel is added. New-thread layout is unaffected because proposals require an
+existing admitted invocation. Decisions use the existing owner-authorized human
+endpoint; the durable poll refreshes the original transcript after resolution.
+
+Existing-contact tool events enter waiting state only when their public args
+identify a committed pending existing-contact review; no-work/error tool calls
+continue as ordinary activity. Cold state recognizes `pending_bootstrap_requests`
+and renders the shared review in place. Polling removes resolved reviews and
+refreshes the original result. New-thread layout remains unaffected.
+
+
+ChatDataContext now opens from the top-bar settings icon beside the transcript
+toggle, with Automations and Data access inside a native modal rather than above
+the conversation (see `plan/chat-settings-modal.md`).
+Active rules are selected by the saved execution target, not their originating
+chat or edited draft. Data access explicitly describes the owner-wide grant.
+Owner/thread changes remount the modal and cancel reads; closing aborts reads. New-thread layout
+remains unchanged because these controls require a persisted conversation.

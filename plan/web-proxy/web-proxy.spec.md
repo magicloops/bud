@@ -14,6 +14,9 @@ active.
 
 ## Files
 
+- `local-preview-bud-systems.md`: Public local-development preview tunnel plan,
+  TLS decision, credential-free template and remaining service cutover steps.
+
 - `implementation-spec.md`: End-to-end implementation overview, fixed
   product/security decisions, target architecture, product contracts, data
   model, rollout sequence, and risks.

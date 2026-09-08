@@ -1,9 +1,11 @@
+import { isAutomationToolName, type AutomationToolName } from "../personal-data/automation-tool-contracts.js";
 import type {
   TerminalIntegration,
   TerminalMode,
   TerminalObservationView,
 } from "../terminal/types.js";
 import { normalizeTerminalSendKeyName } from "../terminal/types.js";
+import { PERSONAL_DATA_TOOLS, type PersonalDataTool } from "../personal-data/tool-names.js";
 import {
   ASK_USER_QUESTIONS_TOOL,
   type AskUserQuestionsRequest,
@@ -11,6 +13,9 @@ import {
 } from "./user-question-contracts.js";
 
 export type AgentToolCallDirective =
+  | { type: "tool_call"; tool: AutomationToolName; args: Record<string, unknown>; callId: string }
+  | { type: "tool_call"; tool: "data_request_api_key"; args: Record<string, unknown>; callId: string }
+  | { type: "tool_call"; tool: PersonalDataTool; args: Record<string, unknown>; callId: string }
   | {
       type: "tool_call";
       tool: "terminal.send";
@@ -244,7 +249,24 @@ export type ExecutedUserQuestionTool = {
   payload: Record<string, unknown>;
 };
 
-export type ExecutedAgentTool = ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool;
+export type PersonalDataToolCallDirective = Extract<AgentToolCallDirective, { tool: PersonalDataTool }>;
+export type ExecutedPersonalDataTool = {
+  directive: PersonalDataToolCallDirective;
+  args: Record<string, unknown>;
+  summary: string;
+  outputTruncationReason: null;
+  result: { kind: "personal_data"; ok: boolean; error?: string; retryable?: boolean };
+  payload: Record<string, unknown>;
+};
+export type AutomationToolCallDirective = Extract<AgentToolCallDirective, { tool: AutomationToolName }>;
+export type ExecutedAutomationTool = {
+  directive: AutomationToolCallDirective; args: Record<string, unknown>; summary: string; outputTruncationReason: null;
+  result: { kind: "automation"; ok: boolean; error?: string; retryable?: boolean }; payload: Record<string, unknown>;
+};
+export function isAutomationToolDirective(directive: AgentToolCallDirective): directive is AutomationToolCallDirective {
+  return isAutomationToolName(directive.tool);
+}
+export type ExecutedAgentTool = ExecutedAutomationTool | ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool | ExecutedPersonalDataTool;
 
 export const AGENT_MESSAGE_DURATION_SOURCE = "service_wall_clock" as const;
 
@@ -278,8 +300,25 @@ export function toolNameForConversation(
   | "web_view_open"
   | "web_view_close"
   | "web_view_list"
+  | PersonalDataTool
+  | "data_request_api_key"
+  | AutomationToolName
   | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
+    case "automations_list":
+    case "automations_get":
+    case "automations_history":
+    case "automations_create_draft":
+    case "automations_update_draft":
+    case "automations_request_activation":
+    case "automations_request_existing_contacts":
+    case "automations_pause":
+    case "data_request_api_key":
+    case "contacts_search":
+    case "contacts_history":
+    case "location_context":
+    case "timeline_query":
+      return tool;
     case "terminal.send":
       return "terminal_send";
     case "terminal.observe":
@@ -315,6 +354,10 @@ export function isUserQuestionToolDirective(
   return directive.tool === ASK_USER_QUESTIONS_TOOL;
 }
 
+export function isPersonalDataToolDirective(directive: AgentToolCallDirective): directive is PersonalDataToolCallDirective {
+  return (PERSONAL_DATA_TOOLS as readonly string[]).includes(directive.tool);
+}
+
 export function normalizeToolKeyInput(
   keyValue: unknown,
   keysValue: unknown,
@@ -340,6 +383,20 @@ export function buildToolArgs(
   directive: AgentToolCallDirective,
 ): Record<string, unknown> {
   switch (directive.tool) {
+    case "automations_list":
+    case "automations_get":
+    case "automations_history":
+    case "automations_create_draft":
+    case "automations_update_draft":
+    case "automations_request_activation":
+    case "automations_request_existing_contacts":
+    case "automations_pause":
+    case "data_request_api_key":
+    case "contacts_search":
+    case "contacts_history":
+    case "location_context":
+    case "timeline_query":
+      return directive.args;
     case "terminal.send":
       return {
         ...(typeof directive.text === "string" ? { text: directive.text } : {}),

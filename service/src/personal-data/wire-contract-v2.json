@@ -1,0 +1,193 @@
+{
+  "fixture_version": 2,
+  "context": {
+    "userId": "wire-fixture-owner",
+    "installationId": "wire-fixture-phone",
+    "collectionEpoch": "legacy",
+    "batchId": "wire-fixture-batch"
+  },
+  "events": [
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000003",
+      "event_type": "contacts.record.v2",
+      "payload": {
+        "payload_version": 2,
+        "contact_store_id": "00000000-0000-4000-8000-000000000010",
+        "scan_id": "00000000-0000-4000-8000-000000000011",
+        "generation": 1,
+        "previous_generation": 0,
+        "scan_mode": "baseline",
+        "observed_at": "2026-09-04T10:00:00.000Z",
+        "previous_observed_at": null,
+        "time_basis": "observed",
+        "authorization": "3",
+        "source_contact_id": "contact-fixture",
+        "change": "upsert",
+        "newly_observed": false,
+        "contact": {
+          "given_name": "Example 🐦",
+          "family_name": "Contact",
+          "organization": "",
+          "phones": [],
+          "emails": [],
+          "postal_addresses": [
+            {
+              "label": "自宅",
+              "street": "千代田1-1\n建物 🐦",
+              "city": "千代田区",
+              "sub_administrative_area": "",
+              "state": "東京都",
+              "postal_code": "100-0001",
+              "country": "日本",
+              "iso_country_code": "JP"
+            },
+            {
+              "label": "Travail",
+              "street": "12 rue de l’Exemple",
+              "city": "Montréal",
+              "sub_administrative_area": "",
+              "state": "Québec",
+              "postal_code": "H0H 0H0",
+              "country": "Canada",
+              "iso_country_code": "CA"
+            }
+          ],
+          "urls": [
+            {
+              "label": "Website",
+              "value": "https://example.invalid/路径?q=é"
+            },
+            {
+              "label": "Untrusted original",
+              "value": "javascript:alert(1)"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000005",
+      "event_type": "contacts.record.v2",
+      "payload": {
+        "payload_version": 2,
+        "contact_store_id": "00000000-0000-4000-8000-000000000010",
+        "scan_id": "00000000-0000-4000-8000-000000000011",
+        "generation": 1,
+        "previous_generation": 0,
+        "scan_mode": "baseline",
+        "observed_at": "2026-09-04T10:00:00.000Z",
+        "previous_observed_at": null,
+        "time_basis": "observed",
+        "authorization": "3",
+        "source_contact_id": "empty-contact",
+        "change": "upsert",
+        "newly_observed": false,
+        "contact": {
+          "given_name": "Example 🐦",
+          "family_name": "Contact",
+          "organization": "",
+          "phones": [],
+          "emails": [],
+          "postal_addresses": [],
+          "urls": []
+        }
+      }
+    },
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000004",
+      "event_type": "contacts.scan.v2",
+      "payload": {
+        "payload_version": 2,
+        "contact_store_id": "00000000-0000-4000-8000-000000000010",
+        "scan_id": "00000000-0000-4000-8000-000000000011",
+        "generation": 1,
+        "previous_generation": 0,
+        "scan_mode": "baseline",
+        "observed_at": "2026-09-04T10:00:00.000Z",
+        "previous_observed_at": null,
+        "time_basis": "observed",
+        "authorization": "3",
+        "expected_event_count": 2,
+        "event_ids_sha256": "4d2e4fa3e92693a8f6c791e41dccf5d943e556ede76af519949965c1d3f245a0"
+      }
+    }
+  ]
+}

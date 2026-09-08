@@ -1,3 +1,4 @@
+import { isAutomationToolName, parseAutomationToolInput } from "../personal-data/automation-tool-contracts.js";
 import { ulid } from "ulid";
 import type { FastifyBaseLogger } from "fastify";
 import { config, type ReasoningEffortSetting } from "../config.js";
@@ -34,6 +35,7 @@ import {
   normalizeAskUserQuestionsRequest,
 } from "./user-question-contracts.js";
 import { AGENT_CANONICAL_TOOLS } from "./tool-definitions.js";
+import { appKeyRequestSchema, parseAppKeyInput } from "../personal-data/app-key-contracts.js";
 import {
   createModelContextDriftRecorder,
   type ModelContextDriftRecorderLike,
@@ -576,8 +578,22 @@ export class AgentModelRunner {
 
   private extractToolCallDirective(toolCall: CanonicalToolCall): AgentToolCallDirective | null {
     const args = toolCall.input;
+    if (isAutomationToolName(toolCall.name)) return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
+      args: parseAutomationToolInput(toolCall.name, args) };
 
     switch (toolCall.name) {
+      case "data_request_api_key": {
+        const parsed = parseAppKeyInput(appKeyRequestSchema, args);
+        return { type: "tool_call", tool: "data_request_api_key", callId: toolCall.id,
+          args: { ...parsed, destination: { ...parsed.destination, public_key: parsed.destination.public_key.public_key } } };
+      }
+      case "contacts_search":
+      case "contacts_history":
+      case "location_context":
+      case "timeline_query":
+        return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
+          args: Object.fromEntries(Object.entries(args).filter(([key, value]) =>
+            value !== null || !["search", "visibility", "limit", "cursor"].includes(key))) };
       case "terminal_send":
         return {
           type: "tool_call",

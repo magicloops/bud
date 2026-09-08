@@ -1,0 +1,10 @@
+# Copy to ~/.cloudflared/bud-local-preview.yml and replace both placeholders.
+# Credentials stay outside the repository.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /Users/REPLACE_WITH_LOCAL_USER/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+ingress:
+  # Preserve the incoming Host; Bud uses it to select the private proxied site.
+  - hostname: '*.bud.systems'
+    service: http://127.0.0.1:3000
+  - service: http_status:404

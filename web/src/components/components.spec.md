@@ -93,6 +93,81 @@ Branded full-page recovery screen for uncaught route errors.
 - Offers a primary "Return Home" action back to `/`
 - Preserves Bud's existing neobrutalist card treatment so permission failures feel intentional rather than accidental
 
+### `automation-proposal-review.tsx`
+
+Shared immutable automation activation review and summary. Owner-keyed parents
+mount by proposal ID; the component fetches the human-authorized detail and
+capability, polls serially, and aborts reads/ignores writes after unmount.
+One Enable automation action approves the saved proposal; decline remains
+available independently. Unknown mutation outcomes retain the exact version and
+idempotency key for retry. Terminal server state replaces pending decisions.
+Compact inline actions expose the consequential scope; the shared native dialog exposes full instructions, target, sources, scopes/history and limits without a second decision controller.
+Decision rows put red Deny left, blue borderless View details center, and green
+Enable/Process contacts right; uncertain outcomes retain the original retry.
+
+The same component also handles validated `bp_` existing-contact review IDs through
+the separate existing-contact endpoint and capability. It rejects a mismatched
+returned identity/kind before enabling approval. The action is Process reviewed
+contacts, preserves the frozen decision on uncertain retries, and displays the
+captured bootstrap receipt after approval. Existing-contact summaries include
+frozen contact/group counts, active revision, selection/search/limit, batching,
+source filter and explicit repeat consequences. Render tests cover both grouping
+modes and exclusion policies. No activation endpoint is used for these reviews.
+
+### `automation-proposal-summary.tsx` / `automation-proposal-summary.test.tsx`
+
+Pure saved-definition review presentation, shared with the interactive review.
+Server-rendered tests verify full instruction, target, scope/history and limit
+visibility without an approval checkbox or automatic actions.
+Run the JSX render tests from web with `pnpm exec tsx --tsconfig tsconfig.app.json
+--test src/components/automation-proposal-summary.test.tsx`.
+
+### `settings-layout.tsx` / `settings-layout.css`
+
+Shared SettingsNavigation and scoped, theme-token-based management controls.
+Account settings, Data sources, Browse data and Automations share modest borders,
+small shadows, responsive spacing and focus states. Full-page settings surfaces
+share the thread panel's secondary background tint; inline reviews and dialogs
+retain their own surface background.
+
+### `data-screen.tsx`
+
+Owner-remounted source/access management and the separate Contacts browser.
+Management loads status without fetching contact inventory; browsing uses existing
+owner-scoped search/detail/history/location APIs. Agent grants retain immediate
+versioned saves. Future data types are explicitly unavailable.
+
+### `app-data-permissions.tsx`
+
+Owner-keyed callers use one exact-request or paged inventory loader and shared
+AppPermissionCard. Allow/Deny requires no checkbox. Inventory rows expand in
+place; chat details open a dialog. Status derives from both request and key,
+separating pending, allowed/setup, active and revoked. Pending/active rows sort
+ahead of history within each server page without changing pagination cursors.
+Expected versions and identical uncertain retry bodies remain bound to the
+original action; confirmed failures expose refresh. Card identity stays request
+stable across polling and settlement.
+Inline pending rows use the same Deny/details/Allow action order and colors as
+automation reviews, preserving decision and retry guards.
+
+### `review-details.tsx`
+
+Read-only native HTML dialog with accessible title, focus trapping, Escape/Close
+and inert background. Opening/dismissing never submits a decision.
+
+### `chat-data-context.tsx`
+
+Owner/thread-remounted Automations and Data access modal, opened by a Workflow icon beside the
+transcript toggle, labeled “Automations & data access.” Native dialog supplies focus trapping, Escape/Close and inert
+background; Automations and Data access load only while open, with reads aborted
+on close. Authorizes
+thread context before reading active-target automation filters or the owner's
+agent grant/source receipts. Explicitly labels account-wide agent access, unknown
+states and server receipts. Links preserve filters and the return conversation.
+The section switcher forms the header without a duplicate title; an icon closes
+the dialog, automation rows separate names from status, and the footer holds
+management and refresh actions. The dialog retains an accessible name.
+
 ## Subfolders
 
 ### `ui/` → [ui/ui.spec.md](./ui/ui.spec.md)

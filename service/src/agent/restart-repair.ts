@@ -48,7 +48,8 @@ export type DanglingToolCallRepair = {
 
 const GENERIC_NOTE =
   "The service restarted before this tool call finished, so no result was recorded. " +
-  "Treat the call as not executed to completion and re-issue it if it is still needed.";
+  "The action may have executed. Inspect available state and evidence before taking further action; " +
+  "do not assume repeating it is safe.";
 
 const TERMINAL_NOTE =
   "The service restarted before this tool call finished, so no result was recorded. " +
@@ -128,7 +129,7 @@ export function buildDanglingToolCallRepair(call: DanglingToolCall): DanglingToo
       error: "server_restarted",
       ok: false,
       code: "SERVER_RESTARTED",
-      retryable: true,
+      retryable: false,
       note: isTerminal ? TERMINAL_NOTE : GENERIC_NOTE,
       server_restart_repair: true,
     },
@@ -158,6 +159,13 @@ export async function findDanglingToolCalls(): Promise<DanglingToolCall[]> {
         eq(llmCallItemTable.direction, "output"),
         eq(llmCallItemTable.kind, "tool_use"),
         isNotNull(llmCallItemTable.toolCallId),
+        // Durable turns have fenced action/continuation recovery. A synthetic
+        // retryable result here would erase their ambiguous execution state.
+        sql`not exists (
+          select 1 from agent_invocation durable
+          where durable.thread_id = ${llmCallTable.threadId}
+            and durable.turn_id = ${llmCallTable.turnId}
+        )`,
         sql`coalesce(${llmCallItemTable.canonicalPayload} ->> 'name', '') <> ${ASK_USER_QUESTIONS_TOOL}`,
         sql`not exists (
           select 1 from llm_call_item repaired

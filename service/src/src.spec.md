@@ -29,8 +29,12 @@ Application entry point and thin Fastify composition root.
 - Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Advertise the current direct-browser method set (`GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench and mobile registration calls can use profile updates, push-endpoint upserts, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
+- Mount the encapsulated personal-data `/v1/events/batches` and `/api/data/status` routes
 - Mount authenticated device-install-claim issuance/read endpoints used by one-command Bud setup
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
+- Select startup-only `AGENT_INVOCATION_MODE` (`legacy` default or `durable`). Durable mode shares one InvocationRepository between routes and the worker, with `AGENT_AUTOMATION_CONCURRENCY_PER_BUD` (1–32, default 1).
+- Acquire the schema-scoped database admission-mode guard on readiness before starting the durable worker. Stop/await the worker before gateway/pool shutdown; lease interruption rejects pending terminal waits without claiming terminal commands were stopped.
+- Explicitly await the personal-data processor's stop handle before database shutdown. Background drains also run at `preClose`; composition-owned ordering protects against Fastify plugin boot/close-hook ordering.
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
 - Register the proxy, product proxied-site, and file session route families used by Phase 4 daemon-network and web-view features
@@ -69,6 +73,23 @@ Focused regression coverage for service composition behavior that is easiest to 
 - the service composition test binds any enabled gRPC control gateway on an
   ephemeral port so it does not collide with a running local dev server
 - gRPC control shutdown finalization is covered in [grpc/control-gateway.test.ts](./grpc/control-gateway.test.ts)
+
+### `invocation-startup.ts` / `invocation-startup.test.ts`
+
+Validate admission settings and hold a dedicated PostgreSQL session with shared
+mode locks. Same-schema replicas can share a mode; opposite modes cannot coexist.
+Legacy startup refuses unresolved durable invocations; durable startup requires
+the invocation migration and drained legacy pending questions. A lost mode session
+closes the service. Uses one pool connection for the service lifetime (configure
+`PG_POOL_MAX` above one); requires session-preserving PostgreSQL connectivity, not
+transaction pooling. All replicas must use the same automation concurrency cap.
+Older binaries do not participate: drain/stop them before cutover. Tests cover
+settings and real PostgreSQL replica/cutover boundaries in an isolated schema.
+A subprocess test acquires the production guard, verifies opposite-mode refusal,
+kills that test process and acquires the released lock. A second child verifies
+that terminating its dedicated PostgreSQL backend invokes the loss callback and
+closes the child. Only fixture-owned processes/schema/backend sessions are touched;
+this does not replace a complete service/daemon dispatch recovery demonstration.
 
 ### `bud-name.ts`
 
@@ -198,6 +219,10 @@ Environment-based configuration with defaults.
 - `ReasoningEffortSetting` - catalog `ReasoningLevel` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
 
 ## Subfolders
+
+### `personal-data/` → [personal-data.spec.md](./personal-data/personal-data.spec.md)
+
+Authenticated, bounded mobile batch ingestion and owner-scoped status, with atomic raw-event/processing-job persistence. Projections and automations remain future phases.
 
 ### `auth/` → [auth.spec.md](./auth/auth.spec.md)
 
@@ -381,3 +406,37 @@ POST /api/device-auth/flows/:flowId/approve
 ---
 
 *Referenced by: [../service.spec.md](../service.spec.md)*
+
+## Optional automation polling
+
+`APP_DATA_KEYS_ENABLED=0|1` (default 0) independently enables app permission
+issuance and requires durable admission. The composition root passes the same
+setting to the agent tool catalog, human approval routes and `features.app_keys`.
+Readiness checks the request/key schema before workers start. Disabling issuance
+preserves inventory, decline/revoke, installed-key reads and pending continuation
+recovery. Enable locally with `AGENT_INVOCATION_MODE=durable APP_DATA_KEYS_ENABLED=1`;
+the normal mixed-version daemon contract does not change.
+
+`readInvocationSettings` accepts strict `AUTOMATIONS_ENABLED=0|1` (default 0), requiring `AGENT_INVOCATION_MODE=durable` when enabled. Server readiness checks bootstrap group schema, then starts the bounded automation worker and durable invocation executor. The same setting exposes activation capability to both clients. Pre-close and final-close drain automation admission before the invocation worker and database pools. No environment was changed or production rollout performed. Full recovery/client validation remains required before enabling an integrated environment.
+
+`AUTOMATION_PROPOSALS_ENABLED=0|1` (default 0) additionally opts into agent-managed
+drafts/reviews. It requires durable mode and `AUTOMATIONS_ENABLED=1`. The composition
+root passes this single setting to AgentService and personal-data routes, keeping
+the tool catalog, human approval and `features.automation_proposals` aligned.
+`verifyAutomationProposalSchema` checks migration 0033 columns before automation
+or invocation workers start; missing/partial schema fails readiness. Disabling
+the setting preserves review reads, decline/cancel, expiry and continuation recovery.
+Startup tests cover strict settings and missing/partial/migrated PostgreSQL schemas.
+This wiring does not change the environment or require a daemon release; live
+cross-client acceptance remains required before rollout.
+
+`AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED=0|1` (default 0) additionally enables
+the separate agent-requested existing-contact review. It requires
+`AUTOMATION_PROPOSALS_ENABLED=1` and therefore enabled durable automations. Server
+composition passes one setting to the agent catalog and human routes/capability.
+All durable boots now check both 0033 activation and 0034 bootstrap proposal
+columns before starting automation/invocation workers, even with issuance off:
+claim and thread-state recovery still reference those tables. The bootstrap check
+also verifies the ordered membership columns. Isolated PostgreSQL readiness tests
+cover absent, partial and generated migration schemas. No environment or running
+service was changed by this wiring.

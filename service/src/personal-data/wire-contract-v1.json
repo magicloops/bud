@@ -1,0 +1,297 @@
+{
+  "fixture_version": 1,
+  "context": {
+    "userId": "wire-fixture-owner",
+    "installationId": "wire-fixture-phone",
+    "collectionEpoch": "legacy",
+    "batchId": "wire-fixture-batch"
+  },
+  "events": [
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000001",
+      "event_type": "location.visit",
+      "payload": {
+        "latitude": 37.7,
+        "longitude": -122.4,
+        "horizontal_accuracy": 30
+      }
+    },
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000002",
+      "event_type": "health.workout",
+      "payload": {
+        "fixture_only": true
+      }
+    },
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000003",
+      "event_type": "contacts.record.v1",
+      "payload": {
+        "payload_version": 1,
+        "contact_store_id": "00000000-0000-4000-8000-000000000010",
+        "scan_id": "00000000-0000-4000-8000-000000000011",
+        "generation": 1,
+        "previous_generation": 0,
+        "scan_mode": "baseline",
+        "observed_at": "2026-09-04T10:00:00.000Z",
+        "previous_observed_at": null,
+        "time_basis": "observed",
+        "authorization": "3",
+        "source_contact_id": "contact-fixture",
+        "change": "upsert",
+        "newly_observed": false,
+        "contact": {
+          "given_name": "Example 🐦",
+          "family_name": "Contact",
+          "organization": "",
+          "phones": [],
+          "emails": []
+        }
+      }
+    },
+    {
+      "schema_version": 1,
+      "occurred_at": "2026-09-04T10:00:00.000Z",
+      "recorded_at": "2026-09-04T10:01:00.000Z",
+      "actor": {
+        "user_id": "wire-fixture-owner",
+        "installation_id": "wire-fixture-phone"
+      },
+      "source": {
+        "platform": "ios",
+        "app_version": "1",
+        "build": "1",
+        "os_version": "18",
+        "device_model": "fixture"
+      },
+      "consent": {
+        "location_auth": "authorizedAlways",
+        "precise_location": true,
+        "healthkit_auth": "unknown",
+        "photos_auth": "unknown"
+      },
+      "context": {
+        "app_state": "background",
+        "trigger": "contract_fixture",
+        "background_refresh_status": "available",
+        "low_power_mode": false
+      },
+      "event_id": "00000000-0000-4000-8000-000000000004",
+      "event_type": "contacts.scan.v1",
+      "payload": {
+        "payload_version": 1,
+        "contact_store_id": "00000000-0000-4000-8000-000000000010",
+        "scan_id": "00000000-0000-4000-8000-000000000011",
+        "generation": 1,
+        "previous_generation": 0,
+        "scan_mode": "baseline",
+        "observed_at": "2026-09-04T10:00:00.000Z",
+        "previous_observed_at": null,
+        "time_basis": "observed",
+        "authorization": "3",
+        "expected_event_count": 1,
+        "event_ids_sha256": "993224b4fe85990df64db926ca5c034675eb037399e2fcef041c8d7e31e54d3f"
+      }
+    }
+  ],
+  "ack_cases": [
+    {
+      "name": "full",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002",
+          "00000000-0000-4000-8000-000000000003",
+          "00000000-0000-4000-8000-000000000004"
+        ],
+        "accepted_count": 4,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": true,
+      "acked": [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000003",
+        "00000000-0000-4000-8000-000000000004"
+      ]
+    },
+    {
+      "name": "partial",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [
+          "00000000-0000-4000-8000-000000000001"
+        ],
+        "accepted_count": 1,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": true,
+      "acked": [
+        "00000000-0000-4000-8000-000000000001"
+      ]
+    },
+    {
+      "name": "empty",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [],
+        "accepted_count": 0,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": true,
+      "acked": []
+    },
+    {
+      "name": "wrong_batch",
+      "response": {
+        "batch_id": "other",
+        "acked_event_ids": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002",
+          "00000000-0000-4000-8000-000000000003",
+          "00000000-0000-4000-8000-000000000004"
+        ],
+        "accepted_count": 4,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "foreign_id",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [
+          "foreign-event"
+        ],
+        "accepted_count": 4,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate_id",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000001"
+        ],
+        "accepted_count": 4,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "missing_ids",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "request_id": "req-1",
+        "retry_after_s": 0
+      },
+      "valid": false
+    }
+  ]
+}

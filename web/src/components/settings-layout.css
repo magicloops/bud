@@ -1,0 +1,50 @@
+.settings-surface { background: var(--background); color: var(--foreground); }
+.settings-surface.min-h-screen {
+  background: color-mix(in oklab, var(--secondary) 40%, var(--background));
+}
+.settings-action,
+.settings-surface button:not([role="switch"]),
+.settings-surface input:not([type="checkbox"]):not([type="radio"]),
+.settings-surface select,
+.settings-surface textarea {
+  border: 2px solid var(--border);
+  border-radius: .5rem;
+  padding: .5rem .75rem;
+}
+.settings-action, .settings-surface button:not([role="switch"]) {
+  min-height: 2.5rem;
+  font-size: .875rem;
+  font-weight: 600;
+  box-shadow: 2px 2px 0 var(--border);
+}
+.settings-action:hover, .settings-surface button:not(:disabled):hover,
+.settings-action[aria-current="page"] { background: var(--bud-accent-soft, var(--muted)); }
+.settings-action:focus-visible, .settings-surface button:focus-visible,
+.settings-surface summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.settings-surface button:disabled { opacity: .5; cursor: not-allowed; }
+.settings-surface section, .settings-surface article, .settings-surface details { border-color: var(--border); }
+.settings-surface summary { cursor: pointer; }
+
+.settings-action { display: inline-flex; align-items: center; gap: .5rem; }
+
+.review-actions { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.settings-surface button.review-deny { background: #b91c1c; color: white; }
+.settings-surface button.review-deny:not(:disabled):hover { background: #991b1b; }
+.settings-surface button.review-approve { background: #15803d; color: white; }
+.settings-surface button.review-approve:not(:disabled):hover { background: #166534; }
+.settings-surface button.review-details-link {
+  border: 0; box-shadow: none; background: transparent; color: #2563eb;
+  padding: .5rem .25rem; font-weight: 500;
+}
+.settings-surface button.review-details-link:hover { background: transparent; text-decoration: underline; }
+.dark .settings-surface button.review-details-link { color: #60a5fa; }
+
+@media (min-width: 640px) {
+  .app-access-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 1rem; }
+  .app-access-row > div:first-child { grid-column: 1; grid-row: 1; justify-content: start; }
+  .app-access-row > .app-access-details { display: contents; }
+  .app-access-row > .app-access-details > summary { grid-column: 2; grid-row: 1; }
+  .app-access-row > .app-access-details > div { grid-column: 1 / -1; }
+  .app-access-row > button { grid-column: 3; grid-row: 1; }
+  .app-access-row > p { grid-column: 1 / -1; }
+}

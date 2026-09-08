@@ -370,6 +370,10 @@ export class OpenAIProvider implements LLMProvider {
 
     const result = schema as Record<string, unknown>;
 
+    // OpenAI rejects this standard JSON Schema keyword. Domain validation
+    // remains authoritative; only the cloned provider schema is relaxed.
+    delete result.uniqueItems;
+
     if (result.items) {
       result.items = this.transformSchemaNodeForStrictMode(result.items);
     }

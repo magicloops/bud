@@ -11,8 +11,11 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  unique,
   foreignKey,
-  customType
+  customType,
+  check,
+  doublePrecision
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -390,6 +393,7 @@ export const threadTable = pgTable(
   },
   (table) => ({
     budIdx: index("thread_bud_idx").on(table.budId),
+    invocationOwnerKey: unique("thread_invocation_owner_key").on(table.threadId, table.budId, table.createdByUserId),
     deletedIdx: index("thread_deleted_idx").on(table.deletedAt)
   })
 );
@@ -476,6 +480,7 @@ export const messageTable = pgTable(
   },
   (table) => ({
     threadIdx: index("message_thread_idx").on(table.threadId),
+    invocationOwnerKey: unique("message_invocation_owner_key").on(table.messageId, table.threadId, table.createdByUserId),
     clientIdUniqueIdx: uniqueIndex("message_client_id_idx").on(table.clientId)
   })
 );
@@ -1103,6 +1108,7 @@ export const proxiedSiteTable = pgTable(
   },
   (table) => ({
     endpointHostIdx: uniqueIndex("proxied_site_endpoint_host_idx").on(table.endpointHost),
+    appDataOwnerKey: unique("proxied_site_app_data_owner_key").on(table.proxiedSiteId, table.budId, table.createdByUserId),
     ownerIdx: index("proxied_site_owner_idx").on(table.createdByUserId, table.budId),
     budEnabledIdx: index("proxied_site_bud_enabled_idx").on(
       table.budId,
@@ -1303,3 +1309,503 @@ export const auditEventTable = pgTable(
     streamIdx: index("audit_event_stream_idx").on(table.streamId),
   }),
 );
+
+// Personal data belongs to the authenticated user, not a Bud or thread.
+export const dataOwnerStateTable = pgTable("data_owner_state", {
+  createdByUserId: text("created_by_user_id").primaryKey().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  publicationSequence: bigint("publication_sequence", { mode: "number" }).notNull().default(0),
+  storedBytes: bigint("stored_bytes", { mode: "number" }).notNull().default(0),
+  requestWindowAt: timestamp("request_window_at", { withTimezone: true }).notNull().defaultNow(),
+  requestCount: integer("request_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const dataInstallationTable = pgTable("data_installation", {
+  id: text("id").primaryKey(),
+  installationId: text("installation_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerSourceIdx: uniqueIndex("data_installation_owner_source_idx").on(table.createdByUserId, table.installationId),
+  idOwnerIdx: unique("data_installation_id_owner_key").on(table.id, table.createdByUserId),
+}));
+
+export const dataCollectionEpochTable = pgTable("data_collection_epoch", {
+  id: text("id").primaryKey(),
+  installationId: text("installation_id").notNull(),
+  collectionEpoch: text("collection_epoch").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  tenantId: text("tenant_id"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  sourceIdx: uniqueIndex("data_epoch_source_idx").on(table.installationId, table.collectionEpoch),
+  idOwnerIdx: unique("data_epoch_id_owner_key").on(table.id, table.createdByUserId),
+  installationFk: foreignKey({ name: "data_epoch_installation_owner_fk", columns: [table.installationId, table.createdByUserId], foreignColumns: [dataInstallationTable.id, dataInstallationTable.createdByUserId] }),
+}));
+
+export const dataEventTable = pgTable("data_event", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id").notNull(),
+  epochId: text("epoch_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  tenantId: text("tenant_id"),
+  eventType: text("event_type").notNull(),
+  schemaVersion: integer("schema_version").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  batchId: text("batch_id").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  byteLength: integer("byte_length").notNull(),
+  rawEnvelope: jsonb("raw_envelope").$type<Record<string, unknown>>().notNull(),
+}, (table) => ({
+  dedupeIdx: uniqueIndex("data_event_owner_event_idx").on(table.createdByUserId, table.eventId),
+  idOwnerIdx: unique("data_event_id_owner_key").on(table.id, table.createdByUserId),
+  occurrenceIdx: index("data_event_owner_type_time_idx").on(table.createdByUserId, table.eventType, table.occurredAt, table.id),
+  receiptIdx: index("data_event_owner_receipt_idx").on(table.createdByUserId, table.receivedAt, table.id),
+  epochFk: foreignKey({ name: "data_event_epoch_owner_fk", columns: [table.epochId, table.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+export const dataProcessingJobTable = pgTable("data_processing_job", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  tenantId: text("tenant_id"),
+  processorVersion: integer("processor_version").notNull().default(1),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  leaseVersion: integer("lease_version").notNull().default(0),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  errorCode: text("error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  eventVersionIdx: uniqueIndex("data_job_event_version_idx").on(table.eventId, table.processorVersion),
+  dueIdx: index("data_job_due_idx").on(table.status, table.nextAttemptAt),
+  ownerIdx: index("data_job_owner_status_idx").on(table.createdByUserId, table.status),
+  eventFk: foreignKey({ name: "data_job_event_owner_fk", columns: [table.eventId, table.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+}));
+
+// Projection source identity includes the owner-bound installation/epoch.
+export const contactSourceTable = pgTable("contact_source", {
+  id: text("id").primaryKey(),
+  epochId: text("epoch_id").notNull(),
+  storeId: text("store_id").notNull(),
+  generation: integer("generation").notNull().default(0),
+  observedAt: timestamp("observed_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  sourceKey: unique("contact_source_identity_key").on(t.epochId, t.storeId),
+  ownerKey: unique("contact_source_owner_key").on(t.id, t.createdByUserId),
+  epochFk: foreignKey({ name: "contact_source_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+export const contactScanTable = pgTable("contact_scan", {
+  id: text("id").primaryKey(), sourceId: text("source_id").notNull(),
+  scanId: text("scan_id").notNull(), generation: integer("generation").notNull(),
+  manifest: jsonb("manifest").$type<Record<string, unknown>>(),
+  status: text("status").notNull().default("pending"), errorCode: text("error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  scanKey: unique("contact_scan_identity_key").on(t.sourceId, t.scanId),
+  generationKey: unique("contact_scan_generation_key").on(t.sourceId, t.generation),
+  ownerKey: unique("contact_scan_owner_key").on(t.id, t.createdByUserId),
+  dueIdx: index("contact_scan_due_idx").on(t.status, t.createdAt),
+  sourceFk: foreignKey({ name: "contact_scan_source_fk", columns: [t.sourceId, t.createdByUserId], foreignColumns: [contactSourceTable.id, contactSourceTable.createdByUserId] }),
+}));
+
+export const contactScanRecordTable = pgTable("contact_scan_record", {
+  id: text("id").primaryKey(), scanId: text("scan_id").notNull(),
+  rawEventId: text("raw_event_id").notNull(), clientEventId: text("client_event_id").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  eventKey: unique("contact_scan_record_event_key").on(t.rawEventId),
+  scanIdx: index("contact_scan_record_scan_idx").on(t.scanId),
+  scanFk: foreignKey({ name: "contact_record_scan_fk", columns: [t.scanId, t.createdByUserId], foreignColumns: [contactScanTable.id, contactScanTable.createdByUserId] }),
+  eventFk: foreignKey({ name: "contact_record_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+}));
+
+export const contactTable = pgTable("contact", {
+  id: text("id").primaryKey(), sourceId: text("source_id").notNull(), sourceContactId: text("source_contact_id").notNull(),
+  fields: jsonb("fields").$type<Record<string, unknown>>().notNull(),
+  visible: boolean("visible").notNull().default(true), generation: integer("generation").notNull(),
+  firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  sourceKey: unique("contact_identity_key").on(t.sourceId, t.sourceContactId),
+  ownerKey: unique("contact_owner_key").on(t.id, t.createdByUserId),
+  ownerIdx: index("contact_owner_list_idx").on(t.createdByUserId, t.id),
+  sourceFk: foreignKey({ name: "contact_source_owner_fk", columns: [t.sourceId, t.createdByUserId], foreignColumns: [contactSourceTable.id, contactSourceTable.createdByUserId] }),
+}));
+
+export const contactRevisionTable = pgTable("contact_revision", {
+  id: text("id").primaryKey(), contactId: text("contact_id").notNull(), scanId: text("scan_id").notNull(),
+  fields: jsonb("fields").$type<Record<string, unknown>>().notNull(),
+  visible: boolean("visible").notNull(), observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  revisionKey: unique("contact_revision_identity_key").on(t.contactId, t.scanId),
+  ownerKey: unique("contact_revision_owner_key").on(t.id, t.createdByUserId),
+  contactFk: foreignKey({ name: "contact_revision_contact_fk", columns: [t.contactId, t.createdByUserId], foreignColumns: [contactTable.id, contactTable.createdByUserId] }),
+  scanFk: foreignKey({ name: "contact_revision_scan_fk", columns: [t.scanId, t.createdByUserId], foreignColumns: [contactScanTable.id, contactScanTable.createdByUserId] }),
+}));
+
+export const dataDomainEventTable = pgTable("data_domain_event", {
+  id: text("id").primaryKey(), revisionId: text("revision_id").notNull(),
+  eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
+  publicationSequence: bigint("publication_sequence", { mode: "number" }),
+  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  ownerKey: unique("data_domain_owner_key").on(t.id, t.createdByUserId),
+  sequenceKey: unique("data_domain_sequence_key").on(t.createdByUserId, t.publicationSequence),
+  revisionKey: unique("data_domain_revision_key").on(t.revisionId, t.eventType),
+  ownerIdx: index("data_domain_owner_idx").on(t.createdByUserId, t.status, t.id),
+  revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
+}));
+
+
+export const locationObservationTable = pgTable("location_observation", {
+  id: text("id").primaryKey(), rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
+  kind: text("kind").notNull(), latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  eventKey: unique("location_observation_event_key").on(t.rawEventId),
+  ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
+  eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+// One explicit owner-wide agent grant. App grants remain separate consumers.
+export const agentDataGrantTable = pgTable("agent_data_grant", {
+  createdByUserId: text("created_by_user_id").primaryKey().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  scopes: jsonb("scopes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  contactFields: jsonb("contact_fields").$type<string[]>().notNull().default(sql`'["names","organization","phones","emails"]'::jsonb`),
+  version: integer("version").notNull().default(0), historyDays: integer("history_days").notNull().default(90),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedByUserId: text("updated_by_user_id").notNull().references(() => authUserTable.id),
+});
+
+export const agentInvocationStatusValues = [
+  "pending", "retry_wait", "leased", "waiting_for_bud", "waiting_for_model",
+  "running", "waiting_for_user", "succeeded", "failed", "canceled", "expired", "needs_review",
+] as const;
+
+// Admission is staged separately from the existing detached agent runner.
+export const agentInvocationTable = pgTable("agent_invocation", {
+  id: text("id").primaryKey(), turnId: text("turn_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  inputMessageId: uuid("input_message_id").notNull(),
+  origin: text("origin", { enum: ["human", "automation"] }).notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  model: text("model").notNull(), reasoningEffort: text("reasoning_effort").notNull(),
+  status: text("status", { enum: agentInvocationStatusValues }).notNull().default("pending"),
+  reservesThread: boolean("reserves_thread").notNull().default(false),
+  attempt: integer("attempt").notNull().default(0), fence: integer("fence").notNull().default(0),
+  workerId: text("worker_id"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  latestStartAt: timestamp("latest_start_at", { withTimezone: true }),
+  outcomeCode: text("outcome_code"),
+  cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+  canceledByUserId: text("canceled_by_user_id").references(() => authUserTable.id),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("agent_invocation_owner_key").on(t.id, t.createdByUserId),
+  appDataContextKey: unique("agent_invocation_app_data_context_key").on(t.id, t.threadId, t.budId, t.createdByUserId),
+  dedupeKey: unique("agent_invocation_dedupe_key").on(t.createdByUserId, t.idempotencyKey),
+  inputKey: unique("agent_invocation_input_key").on(t.inputMessageId),
+  turnKey: unique("agent_invocation_turn_key").on(t.turnId),
+  activeThread: uniqueIndex("agent_invocation_active_thread_idx").on(t.threadId)
+    .where(sql`${t.reservesThread}`),
+  dueIdx: index("agent_invocation_due_idx").on(t.status, t.nextAttemptAt),
+  ownerIdx: index("agent_invocation_owner_idx").on(t.createdByUserId, t.createdAt),
+  threadFk: foreignKey({ name: "agent_invocation_thread_owner_fk", columns: [t.threadId, t.budId, t.createdByUserId], foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }).onDelete("cascade"),
+  inputFk: foreignKey({ name: "agent_invocation_input_owner_fk", columns: [t.inputMessageId, t.threadId, t.createdByUserId], foreignColumns: [messageTable.messageId, messageTable.threadId, messageTable.createdByUserId] }),
+  statusCheck: check("agent_invocation_status_check", sql`${t.status} in ('pending','retry_wait','leased','waiting_for_bud','waiting_for_model','running','waiting_for_user','succeeded','failed','canceled','expired','needs_review')`),
+  originCheck: check("agent_invocation_origin_check", sql`${t.origin} in ('human','automation')`),
+  leaseCheck: check("agent_invocation_lease_check", sql`(${t.status} in ('leased','running')) = (${t.workerId} is not null and ${t.leaseExpiresAt} is not null)`),
+}));
+
+export const agentInvocationActionTable = pgTable("agent_invocation_action", {
+  id: text("id").primaryKey(), invocationId: text("invocation_id").notNull(),
+  callId: text("call_id").notNull(), fence: integer("fence").notNull(),
+  kind: text("kind").notNull(), status: text("status").notNull().default("intent"),
+  evidence: jsonb("evidence").$type<Record<string, unknown>>(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, t => ({
+  callKey: unique("agent_invocation_action_call_key").on(t.invocationId, t.callId),
+  invocationFk: foreignKey({ name: "agent_action_invocation_owner_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }).onDelete("cascade"),
+}));
+
+// Mutable draft/control state; published definitions live in immutable revisions.
+export const automationTable = pgTable("automation", {
+  id: text("id").primaryKey(),
+  version: integer("version").notNull().default(0),
+  draft: jsonb("draft").$type<Record<string, unknown>>().notNull(),
+  state: text("state").notNull().default("draft"),
+  activeRevision: integer("active_revision"),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id),
+  updatedByUserId: text("updated_by_user_id").notNull().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("automation_owner_key").on(t.id, t.createdByUserId),
+  ownerIdx: index("automation_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
+  stateCheck: check("automation_state_check", sql`${t.state} in ('draft','enabled','paused','deleted')`),
+  versionCheck: check("automation_version_check", sql`${t.version} >= 0 and (${t.activeRevision} is null or ${t.activeRevision} > 0)`),
+}));
+
+export const automationRevisionTable = pgTable("automation_revision", {
+  automationId: text("automation_id").notNull(), revision: integer("revision").notNull(),
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  publicationBoundary: bigint("publication_boundary", { mode: "number" }).notNull(),
+  grantVersion: integer("grant_version").notNull(),
+  activatedByUserId: text("activated_by_user_id").notNull().references(() => authUserTable.id),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ columns: [t.automationId, t.revision] }),
+  ownerKey: unique("automation_revision_owner_key").on(t.automationId, t.revision, t.createdByUserId),
+  automationFk: foreignKey({ name: "automation_revision_owner_fk", columns: [t.automationId, t.createdByUserId], foreignColumns: [automationTable.id, automationTable.createdByUserId] }),
+  revisionCheck: check("automation_revision_number_check", sql`${t.revision} > 0 and ${t.publicationBoundary} >= 0 and ${t.grantVersion} >= 0`),
+}));
+
+export const automationDeliveryTable = pgTable("automation_delivery", {
+  id: text("id").primaryKey(), automationId: text("automation_id").notNull(), revision: integer("revision").notNull(),
+  domainEventId: text("domain_event_id").notNull(), invocationId: text("invocation_id"),
+  status: text("status").notNull().default("pending"), outcomeCode: text("outcome_code"),
+  latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  eventKey: unique("automation_delivery_event_key").on(t.automationId, t.revision, t.domainEventId),
+  invocationKey: unique("automation_delivery_invocation_key").on(t.invocationId),
+  ownerIdx: index("automation_delivery_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
+  dueIdx: index("automation_delivery_due_idx").on(t.status, t.nextAttemptAt),
+  revisionFk: foreignKey({ name: "automation_delivery_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
+  eventFk: foreignKey({ name: "automation_delivery_event_fk", columns: [t.domainEventId, t.createdByUserId], foreignColumns: [dataDomainEventTable.id, dataDomainEventTable.createdByUserId] }),
+  invocationFk: foreignKey({ name: "automation_delivery_invocation_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }),
+  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed')`),
+  admissionCheck: check("automation_delivery_admission_check", sql`(${t.status} = 'admitted') = (${t.invocationId} is not null)`),
+}));
+
+export const automationBootstrapTable = pgTable("automation_bootstrap", {
+  id: text("id").primaryKey(), automationId: text("automation_id").notNull(), revision: integer("revision").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(), request: jsonb("request").$type<Record<string, unknown>>().notNull(),
+  publicationBoundary: bigint("publication_boundary", { mode: "number" }).notNull(),
+  memberCount: integer("member_count").notNull(), groupSize: integer("group_size").notNull(),
+  status: text("status").notNull().default("pending"),
+  latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("automation_bootstrap_owner_key").on(t.id, t.createdByUserId),
+  retryKey: unique("automation_bootstrap_retry_key").on(t.createdByUserId, t.idempotencyKey),
+  ownerIdx: index("automation_bootstrap_owner_idx").on(t.createdByUserId, t.automationId, t.id),
+  revisionFk: foreignKey({ name: "automation_bootstrap_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
+  boundsCheck: check("automation_bootstrap_bounds_check", sql`${t.memberCount} between 0 and 1000 and ${t.groupSize} between 1 and 25 and ${t.publicationBoundary} >= 0`),
+  stateCheck: check("automation_bootstrap_state_check", sql`${t.status} in ('pending','completed','canceled','failed')`),
+}));
+
+export const automationBootstrapMemberTable = pgTable("automation_bootstrap_member", {
+  bootstrapId: text("bootstrap_id").notNull(), ordinal: integer("ordinal").notNull(),
+  contactRevisionId: text("contact_revision_id").notNull(), groupIndex: integer("group_index").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  pk: primaryKey({ columns: [t.bootstrapId, t.ordinal] }),
+  revisionKey: unique("automation_bootstrap_member_revision_key").on(t.bootstrapId, t.contactRevisionId),
+  groupIdx: index("automation_bootstrap_member_group_idx").on(t.bootstrapId, t.groupIndex, t.ordinal),
+  bootstrapFk: foreignKey({ name: "automation_bootstrap_member_owner_fk", columns: [t.bootstrapId, t.createdByUserId], foreignColumns: [automationBootstrapTable.id, automationBootstrapTable.createdByUserId] }),
+  revisionFk: foreignKey({ name: "automation_bootstrap_member_revision_fk", columns: [t.contactRevisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
+  boundsCheck: check("automation_bootstrap_member_bounds_check", sql`${t.ordinal} between 0 and 999 and ${t.groupIndex} between 0 and 999`),
+}));
+
+export const automationBootstrapGroupTable = pgTable("automation_bootstrap_group", {
+  bootstrapId: text("bootstrap_id").notNull(), groupIndex: integer("group_index").notNull(),
+  invocationId: text("invocation_id"), status: text("status").notNull().default("pending"),
+  outcomeCode: text("outcome_code"),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ columns: [t.bootstrapId, t.groupIndex] }),
+  invocationKey: unique("automation_bootstrap_group_invocation_key").on(t.invocationId),
+  dueIdx: index("automation_bootstrap_group_due_idx").on(t.status, t.nextAttemptAt),
+  ownerIdx: index("automation_bootstrap_group_owner_idx").on(t.createdByUserId, t.bootstrapId, t.groupIndex),
+  bootstrapFk: foreignKey({ name: "automation_bootstrap_group_owner_fk", columns: [t.bootstrapId, t.createdByUserId], foreignColumns: [automationBootstrapTable.id, automationBootstrapTable.createdByUserId] }),
+  invocationFk: foreignKey({ name: "automation_bootstrap_group_invocation_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }),
+  boundsCheck: check("automation_bootstrap_group_bounds_check", sql`${t.groupIndex} between 0 and 999`),
+  stateCheck: check("automation_bootstrap_group_state_check", sql`${t.status} in ('pending','admitted','expired','canceled','failed')`),
+  admissionCheck: check("automation_bootstrap_group_admission_check", sql`(${t.status} = 'admitted') = (${t.invocationId} is not null)`),
+}));
+
+// Immutable app permission proposal. Approval is a separate human decision;
+// generic question answers and model output cannot create a query credential.
+export const dataAccessRequestTable = pgTable("data_access_request", {
+  id: text("id").primaryKey(), invocationId: text("invocation_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(), callId: text("call_id").notNull(),
+  proxiedSiteId: text("proxied_site_id").notNull(),
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  definitionHash: text("definition_hash").notNull(),
+  status: text("status", { enum: ["pending", "approved", "declined", "canceled", "expired"] }).notNull().default("pending"),
+  version: integer("version").notNull().default(0),
+  decisionRequest: jsonb("decision_request").$type<Record<string, unknown>>(),
+  decisionIdempotencyKey: text("decision_idempotency_key"),
+  decidedByUserId: text("decided_by_user_id").references(() => authUserTable.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("data_access_request_owner_key").on(t.id, t.createdByUserId),
+  callKey: unique("data_access_request_call_key").on(t.invocationId, t.callId),
+  decisionKey: unique("data_access_request_decision_key").on(t.createdByUserId, t.decisionIdempotencyKey),
+  ownerIdx: index("data_access_request_owner_idx").on(t.createdByUserId, t.status, t.id),
+  expiryIdx: index("data_access_request_expiry_idx").on(t.status, t.expiresAt),
+  invocationFk: foreignKey({ name: "data_access_request_invocation_fk", columns: [t.invocationId, t.threadId, t.budId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.threadId, agentInvocationTable.budId, agentInvocationTable.createdByUserId] }),
+  actionFk: foreignKey({ name: "data_access_request_action_fk", columns: [t.invocationId, t.callId], foreignColumns: [agentInvocationActionTable.invocationId, agentInvocationActionTable.callId] }),
+  siteFk: foreignKey({ name: "data_access_request_site_fk", columns: [t.proxiedSiteId, t.budId, t.createdByUserId], foreignColumns: [proxiedSiteTable.proxiedSiteId, proxiedSiteTable.budId, proxiedSiteTable.createdByUserId] }),
+  stateCheck: check("data_access_request_state_check", sql`${t.status} in ('pending','approved','declined','canceled','expired') and ${t.version} >= 0`),
+  decisionCheck: check("data_access_request_decision_check", sql`(${t.status} in ('approved','declined')) = (${t.decisionRequest} is not null and ${t.decisionIdempotencyKey} is not null and ${t.decidedByUserId} is not null and ${t.decidedAt} is not null)`),
+  actorCheck: check("data_access_request_actor_check", sql`${t.decidedByUserId} is null or ${t.decidedByUserId} = ${t.createdByUserId}`),
+}));
+
+// Frozen automation review, bound to the originating durable tool action.
+// Only an explicit owner decision may publish the captured draft revision.
+export const automationProposalTable = pgTable("automation_proposal", {
+  id: text("id").primaryKey(), automationId: text("automation_id").notNull(),
+  invocationId: text("invocation_id").notNull(), threadId: uuid("thread_id").notNull(),
+  budId: text("bud_id").notNull(), callId: text("call_id").notNull(),
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  draftVersion: integer("draft_version").notNull(), grantVersion: integer("grant_version").notNull(),
+  version: integer("version").notNull().default(0),
+  status: text("status", { enum: ["pending", "approved", "declined", "canceled", "expired", "stale"] }).notNull().default("pending"),
+  activatedRevision: integer("activated_revision"),
+  decisionRequest: jsonb("decision_request").$type<Record<string, unknown>>(),
+  decisionIdempotencyKey: text("decision_idempotency_key"),
+  decidedByUserId: text("decided_by_user_id").references(() => authUserTable.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("automation_proposal_owner_key").on(t.id, t.createdByUserId),
+  callKey: unique("automation_proposal_call_key").on(t.invocationId, t.callId),
+  decisionKey: unique("automation_proposal_decision_key").on(t.createdByUserId, t.decisionIdempotencyKey),
+  ownerIdx: index("automation_proposal_owner_idx").on(t.createdByUserId, t.status, t.id),
+  expiryIdx: index("automation_proposal_expiry_idx").on(t.status, t.expiresAt),
+  automationFk: foreignKey({ name: "automation_proposal_automation_fk", columns: [t.automationId, t.createdByUserId], foreignColumns: [automationTable.id, automationTable.createdByUserId] }),
+  invocationFk: foreignKey({ name: "automation_proposal_invocation_fk", columns: [t.invocationId, t.threadId, t.budId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.threadId, agentInvocationTable.budId, agentInvocationTable.createdByUserId] }),
+  actionFk: foreignKey({ name: "automation_proposal_action_fk", columns: [t.invocationId, t.callId], foreignColumns: [agentInvocationActionTable.invocationId, agentInvocationActionTable.callId] }),
+  revisionFk: foreignKey({ name: "automation_proposal_revision_fk", columns: [t.automationId, t.activatedRevision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
+  stateCheck: check("automation_proposal_state_check", sql`${t.status} in ('pending','approved','declined','canceled','expired','stale')`),
+  versionCheck: check("automation_proposal_version_check", sql`${t.version} >= 0 and ${t.draftVersion} >= 0 and ${t.grantVersion} >= 0`),
+  revisionCheck: check("automation_proposal_revision_check", sql`(${t.status} = 'approved') = (${t.activatedRevision} is not null) and (${t.activatedRevision} is null or ${t.activatedRevision} > 0)`),
+  decisionCheck: check("automation_proposal_decision_check", sql`(${t.decisionRequest} is null and ${t.decisionIdempotencyKey} is null and ${t.decidedByUserId} is null and ${t.decidedAt} is null and ${t.status} not in ('approved','declined')) or (${t.decisionRequest} is not null and ${t.decisionIdempotencyKey} is not null and ${t.decidedByUserId} is not null and ${t.decidedAt} is not null and ${t.status} in ('approved','declined','canceled'))`),
+  actorCheck: check("automation_proposal_actor_check", sql`${t.decidedByUserId} is null or ${t.decidedByUserId} = ${t.createdByUserId}`),
+  expiryCheck: check("automation_proposal_expiry_check", sql`${t.expiresAt} > ${t.createdAt}`),
+}));
+
+// Separate storage prevents older activation-only code from approving bootstrap work.
+export const automationBootstrapProposalTable = pgTable("automation_bootstrap_proposal", {
+  id: text("id").primaryKey(), automationId: text("automation_id").notNull(),
+  revision: integer("revision").notNull(),
+  invocationId: text("invocation_id").notNull(), threadId: uuid("thread_id").notNull(),
+  budId: text("bud_id").notNull(), callId: text("call_id").notNull(),
+  frozen: jsonb("frozen").$type<Record<string, unknown>>().notNull(),
+  fingerprint: text("fingerprint").notNull(), memberCount: integer("member_count").notNull(),
+  version: integer("version").notNull().default(0),
+  status: text("status", { enum: ["pending", "approved", "declined", "canceled", "expired", "stale"] }).notNull().default("pending"),
+  bootstrapId: text("bootstrap_id"),
+  decisionRequest: jsonb("decision_request").$type<Record<string, unknown>>(),
+  decisionIdempotencyKey: text("decision_idempotency_key"),
+  decidedByUserId: text("decided_by_user_id").references(() => authUserTable.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("bootstrap_proposal_owner_key").on(t.id, t.createdByUserId),
+  callKey: unique("bootstrap_proposal_call_key").on(t.invocationId, t.callId),
+  decisionKey: unique("bootstrap_proposal_decision_key").on(t.createdByUserId, t.decisionIdempotencyKey),
+  ownerIdx: index("bootstrap_proposal_owner_idx").on(t.createdByUserId, t.status, t.id),
+  expiryIdx: index("bootstrap_proposal_expiry_idx").on(t.status, t.expiresAt),
+  revisionFk: foreignKey({ name: "bootstrap_proposal_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
+  invocationFk: foreignKey({ name: "bootstrap_proposal_invocation_fk", columns: [t.invocationId, t.threadId, t.budId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.threadId, agentInvocationTable.budId, agentInvocationTable.createdByUserId] }),
+  actionFk: foreignKey({ name: "bootstrap_proposal_action_fk", columns: [t.invocationId, t.callId], foreignColumns: [agentInvocationActionTable.invocationId, agentInvocationActionTable.callId] }),
+  bootstrapFk: foreignKey({ name: "bootstrap_proposal_receipt_fk", columns: [t.bootstrapId, t.createdByUserId], foreignColumns: [automationBootstrapTable.id, automationBootstrapTable.createdByUserId] }),
+  stateCheck: check("bootstrap_proposal_state_check", sql`${t.status} in ('pending','approved','declined','canceled','expired','stale') and ${t.version} >= 0 and ${t.revision} > 0`),
+  memberCheck: check("bootstrap_proposal_member_check", sql`${t.memberCount} between 1 and 1000 and ${t.fingerprint} ~ '^[a-f0-9]{64}$'`),
+  receiptCheck: check("bootstrap_proposal_receipt_check", sql`(${t.status} = 'approved') = (${t.bootstrapId} is not null)`),
+  decisionCheck: check("bootstrap_proposal_decision_check", sql`(${t.decisionRequest} is null and ${t.decisionIdempotencyKey} is null and ${t.decidedByUserId} is null and ${t.decidedAt} is null and ${t.status} not in ('approved','declined')) or (${t.decisionRequest} is not null and ${t.decisionIdempotencyKey} is not null and ${t.decidedByUserId} is not null and ${t.decidedAt} is not null and ${t.status} in ('approved','declined','canceled'))`),
+  actorCheck: check("bootstrap_proposal_actor_check", sql`${t.decidedByUserId} is null or ${t.decidedByUserId} = ${t.createdByUserId}`),
+  expiryCheck: check("bootstrap_proposal_expiry_check", sql`${t.expiresAt} > ${t.createdAt}`),
+}));
+
+export const automationBootstrapProposalMemberTable = pgTable("automation_bootstrap_proposal_member", {
+  proposalId: text("proposal_id").notNull(), ordinal: integer("ordinal").notNull(),
+  contactRevisionId: text("contact_revision_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  pk: primaryKey({ columns: [t.proposalId, t.ordinal] }),
+  revisionKey: unique("bootstrap_proposal_member_revision_key").on(t.proposalId, t.contactRevisionId),
+  proposalFk: foreignKey({ name: "bootstrap_proposal_member_proposal_fk", columns: [t.proposalId, t.createdByUserId], foreignColumns: [automationBootstrapProposalTable.id, automationBootstrapProposalTable.createdByUserId] }),
+  revisionFk: foreignKey({ name: "bootstrap_proposal_member_contact_fk", columns: [t.contactRevisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
+  ordinalCheck: check("bootstrap_proposal_member_ordinal_check", sql`${t.ordinal} between 0 and 999`),
+}));
+
+// One app grant/credential per approved request. No plaintext secret column.
+export const dataAppKeyTable = pgTable("data_app_key", {
+  id: text("id").primaryKey(), requestId: text("request_id").notNull(),
+  verificationHash: text("verification_hash").notNull(),
+  status: text("status", { enum: ["handoff_pending", "installed", "revoked", "setup_failed"] }).notNull().default("handoff_pending"),
+  version: integer("version").notNull().default(0),
+  encryptedEnvelope: jsonb("encrypted_envelope").$type<Record<string, unknown>>(),
+  ciphertextDigest: text("ciphertext_digest").notNull(),
+  setupExpiresAt: timestamp("setup_expires_at", { withTimezone: true }).notNull(),
+  installedAt: timestamp("installed_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByUserId: text("revoked_by_user_id").references(() => authUserTable.id),
+  revokeRequest: jsonb("revoke_request").$type<Record<string, unknown>>(),
+  outcomeCode: text("outcome_code"),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  requestKey: unique("data_app_key_request_key").on(t.requestId),
+  ownerIdx: index("data_app_key_owner_idx").on(t.createdByUserId, t.status, t.id),
+  expiryIdx: index("data_app_key_expiry_idx").on(t.status, t.setupExpiresAt),
+  requestFk: foreignKey({ name: "data_app_key_request_owner_fk", columns: [t.requestId, t.createdByUserId], foreignColumns: [dataAccessRequestTable.id, dataAccessRequestTable.createdByUserId] }),
+  stateCheck: check("data_app_key_state_check", sql`${t.status} in ('handoff_pending','installed','revoked','setup_failed') and ${t.version} >= 0`),
+  envelopeCheck: check("data_app_key_envelope_check", sql`(${t.status} = 'handoff_pending') = (${t.encryptedEnvelope} is not null)`),
+  installedCheck: check("data_app_key_installed_check", sql`${t.status} <> 'installed' or ${t.installedAt} is not null`),
+  revokedCheck: check("data_app_key_revoked_check", sql`(${t.status} in ('revoked','setup_failed')) = (${t.revokedAt} is not null)`),
+  actorCheck: check("data_app_key_actor_check", sql`${t.revokedByUserId} is null or ${t.revokedByUserId} = ${t.createdByUserId}`),
+}));

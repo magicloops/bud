@@ -1,3 +1,4 @@
+import { ChatDataContext } from '@/components/chat-data-context'
 /**
  * Thread View - workspace for an existing thread
  *
@@ -29,7 +30,8 @@ import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
-import { submitQuestionResponseFlow } from '@/features/threads/question-response-submit'
+import { invocationSummary, invocationAllowsLiveActivity, invocationRevision } from '@/features/threads/invocation-state'
+import { submitQuestionResponseFlow, type QuestionResponseContinuation } from '@/features/threads/question-response-submit'
 import {
   ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS,
   createAssistantActivityGateFromAgentState,
@@ -112,6 +114,24 @@ function ThreadView() {
   // Bud status - update context when SSE events indicate bud online/offline
   const { updateStatus: updateBudStatus } = useBudStatus()
 
+  const currentThreadRef = useRef({ threadId })
+  if (currentThreadRef.current.threadId !== threadId) currentThreadRef.current = { threadId }
+  useEffect(() => {
+    currentThreadRef.current = { threadId }
+    return () => { currentThreadRef.current = { threadId: '' } }
+  }, [threadId])
+  const [durableState, setDurableState] = useState(initialAgentState)
+  const durableStateRef = useRef(durableState)
+  durableStateRef.current = durableState
+  const durableSummary = invocationSummary(durableState)
+  const reviewedInvocation = durableSummary?.invocation.status === 'needs_review' ? durableSummary.invocation : null
+  const reviewKey = reviewedInvocation ? `${threadId}:${reviewedInvocation.invocation_id}:${reviewedInvocation.updated_at}` : null
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const reviewInFlightRef = useRef(false)
+  useEffect(() => {
+    setReviewError(null)
+  }, [reviewKey])
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
   const [agentEnvironment, setAgentEnvironment] = useState<ApiAgentEnvironment | null>(
@@ -131,7 +151,7 @@ function ThreadView() {
   // active run's turn id keeps its work group live; final-event outcomes
   // drive failed/canceled badges (session-local — no persisted run status).
   const [liveTurnId, setLiveTurnId] = useState<string | null>(
-    initialAgentState.active ? initialAgentState.turn_id : null,
+    invocationAllowsLiveActivity(initialAgentState) ? initialAgentState.turn_id : null,
   )
   const [turnOutcomes, setTurnOutcomes] = useState<ReadonlyMap<string, 'succeeded' | 'failed' | 'canceled'>>(
     () => new Map(),
@@ -291,10 +311,11 @@ function ThreadView() {
 
   // Update messages when loader data changes
   useEffect(() => {
+    setDurableState(initialAgentState)
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
-    setLiveTurnId(initialAgentState.active ? initialAgentState.turn_id : null)
+    setLiveTurnId(invocationAllowsLiveActivity(initialAgentState) ? initialAgentState.turn_id : null)
     applyAgentStateError(initialAgentState)
     resetAssistantActivityGate(initialAgentState)
   }, [applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
@@ -366,8 +387,11 @@ function ThreadView() {
   }, [initialThread, threadId, threads])
 
   const refreshAgentState = useCallback(async (targetThreadId: string) => {
+    const scope = currentThreadRef.current
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
 
+    if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
+    setDurableState(nextAgentState)
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
@@ -379,23 +403,81 @@ function ThreadView() {
   }, [applyAgentState, applyAgentStateError, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
-    const [nextPage, nextAgentState] = await Promise.all([
-      apiFetchJson<ApiMessagePage>(
-        `/api/threads/${targetThreadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
-      ),
-      apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`),
-    ])
+    const scope = currentThreadRef.current
+    // Read the transcript after state: completion/answer rows committed before
+    // this snapshot must not be missed by an earlier parallel message query.
+    const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
+    const nextPage = await apiFetchJson<ApiMessagePage>(
+      `/api/threads/${targetThreadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
+    )
 
+    if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
+    setDurableState(nextAgentState)
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
-    setLiveTurnId(nextAgentState.active ? nextAgentState.turn_id : null)
+    setLiveTurnId(invocationAllowsLiveActivity(nextAgentState) ? nextAgentState.turn_id : null)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
   }, [applyAgentStateError, mergeLatestBootstrap, resetAssistantActivityGate])
+
+  const durableEnabled = durableState.invocations !== undefined
+  const abandonReviewedInvocation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!reviewedInvocation || !reviewKey || reviewInFlightRef.current) return
+    const scope = currentThreadRef.current
+    reviewInFlightRef.current = true
+    setReviewSubmitting(true)
+    setReviewError(null)
+    try {
+      const response = await apiFetch(`/api/threads/${threadId}/agent/invocations/${encodeURIComponent(reviewedInvocation.invocation_id)}/abandon`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledge_possible_effects: true, expected_updated_at: reviewedInvocation.updated_at }),
+      })
+      if (currentThreadRef.current !== scope || shouldAbortForUnauthorized(response)) return
+      if (response.status === 409) {
+        await refreshAgentBootstrap(threadId)
+        if (currentThreadRef.current === scope) {
+          setReviewError('This run changed. Review its current status before trying again.')
+        }
+        return
+      }
+      if (!response.ok) throw new Error('Could not stop this run. Please try again.')
+      await refreshAgentBootstrap(threadId)
+    } catch {
+      if (currentThreadRef.current === scope && !isAuthRedirectPending()) {
+        setReviewError('Could not confirm this run stopped. Refresh the thread to check its current status.')
+      }
+    } finally {
+      reviewInFlightRef.current = false
+      setReviewSubmitting(false)
+    }
+  }
+  useEffect(() => {
+    if (!durableEnabled) return
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      if (disposed || isAuthRedirectPending()) return
+      try {
+        if (document.visibilityState === 'visible') {
+          const snapshot = await apiFetchJson<ApiAgentState>(`/api/threads/${threadId}/agent/state`)
+          if (!disposed && invocationRevision(snapshot) !== invocationRevision(durableStateRef.current)) {
+            await refreshAgentBootstrap(threadId)
+          }
+        }
+      } catch {
+        // Stream recovery remains active; retry canonical state on the next tick.
+      } finally {
+        if (!disposed) timer = setTimeout(poll, 5000)
+      }
+    }
+    timer = setTimeout(poll, 5000)
+    return () => { disposed = true; clearTimeout(timer) }
+  }, [durableEnabled, refreshAgentBootstrap, threadId])
 
   const handleThreadTitleUpdate = useCallback((title: string) => {
     upsertThreadSummary({ ...initialThread, title })
@@ -635,6 +717,12 @@ function ThreadView() {
     onStatusChange: setStatus,
     onError: setError,
     onToolCall: (event) => {
+      if (event.name === 'data_request_api_key' || event.name === 'automations_request_activation' ||
+        (event.name === 'automations_request_existing_contacts' && event.args?.kind === 'existing_contacts' && event.args?.status === 'pending')) {
+        setStatus('waiting_for_user')
+        void refreshAgentState(threadId).catch(() => {})
+        return
+      }
       noteLiveTurn(event.turnId)
       // Check BEFORE applyToolCall adds this event's own row to history.
       maybeAutoOpenTerminalForTool(event.name)
@@ -691,7 +779,7 @@ function ThreadView() {
           }
 
           return await resp.json() as {
-            continuation: 'live_tool_result' | 'fallback_user_message' | 'already_answered'
+            continuation: QuestionResponseContinuation
           }
         },
         refreshBootstrap: refreshAgentBootstrap,
@@ -921,7 +1009,7 @@ function ThreadView() {
         message: persistedMessage,
         agent,
       } = await messageResp.json() as ApiCreateMessageResponse
-      if (agent) {
+      if (agent?.stream_cursor) {
         agentStreamCursorSetterRef.current(agent.stream_cursor)
       }
       reconcilePersistedUserMessage(
@@ -933,7 +1021,7 @@ function ThreadView() {
 
       try {
         const nextAgentState = await refreshAgentState(threadId)
-        if (!nextAgentState.active) {
+        if (!nextAgentState.active && !nextAgentState.invocations) {
           setStatus('dispatching')
         } else if (cancelAgentTurnRequestedRef.current) {
           void performCancelAgentTurn()
@@ -967,7 +1055,7 @@ function ThreadView() {
     threadId,
   ])
 
-  const activityIndicatorVisible = deriveAssistantActivityIndicatorVisible({
+  const activityIndicatorVisible = (!durableState.invocations || invocationAllowsLiveActivity(durableState)) && deriveAssistantActivityIndicatorVisible({
     status,
     activeCompaction: activeCompaction !== null,
     gate: assistantActivityGate,
@@ -985,6 +1073,7 @@ function ThreadView() {
       fileViewLabel={activeFileEntry ? 'File' : null}
       transcriptMode={transcriptMode}
       onTranscriptModeChange={setTranscriptMode}
+      chatSettings={<ChatDataContext key={threadId} budId={budId} threadId={threadId} />}
       leftPane={(
         <div
           ref={chatPaneRef}
@@ -1000,6 +1089,22 @@ function ThreadView() {
             } as CSSProperties
           }
         >
+          {durableSummary && ['retry_wait', 'waiting_for_bud', 'waiting_for_model', 'needs_review', 'failed', 'expired'].includes(durableSummary.invocation.status) && (
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-sm" role="status">
+              <span>{durableSummary.label}</span>
+            </div>
+          )}
+          {reviewedInvocation && (
+            <form onSubmit={abandonReviewedInvocation} className="space-y-3 border-b px-4 py-3 text-sm" aria-label="Review interrupted run">
+              <p>This run was interrupted. Stop run keeps its history and lets queued work proceed. Terminal commands may still be running; stopping the run does not undo their effects.</p>
+              <button type="button" className="underline" onClick={() => setViewMode('terminal')}>Open terminal</button>
+              <button type="submit" className="rounded border px-3 py-1 disabled:opacity-50"
+                disabled={reviewSubmitting}>
+                {reviewSubmitting ? 'Stopping…' : 'Stop run'}
+              </button>
+              {reviewError && <p role="alert">{reviewError}</p>}
+            </form>
+          )}
           {transcriptMode === 'model' ? (
             <ModelContextView
               threadId={threadId}
@@ -1109,6 +1214,7 @@ function ThreadView() {
           status={status}
           onSubmit={handleSubmit}
           onCancelAgentTurn={cancelAgentTurn}
+          canCancelInvocation={durableSummary?.canCancel ?? false}
           error={error}
           models={models}
           selectedModel={selectedModel}
@@ -1134,7 +1240,8 @@ function ThreadView() {
 }
 
 function getStatusFromAgentState(agentState: ApiAgentState): WorkbenchStatus {
-  if (!agentState.active) {
+  if (agentState.pending_questions?.length || agentState.pending_data_requests?.length || agentState.pending_automation_requests?.length || agentState.pending_bootstrap_requests?.length) return 'waiting_for_user'
+  if (!invocationAllowsLiveActivity(agentState)) {
     return 'idle'
   }
   if (agentState.phase === 'waiting_for_user' || agentState.pending_tool?.name === 'ask_user_questions') {

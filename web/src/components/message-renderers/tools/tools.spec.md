@@ -83,6 +83,25 @@ Node-runner coverage for completed question-result formatting.
 - answered and skipped row formatting
 - malformed payload fallback behavior
 
+### `automation-proposal.tsx`
+
+Renders pending `automations_request_activation` as the shared immutable review
+inside the timeline, keyed by authenticated owner and validated proposal ID.
+Completed canonical rows show their result summary and exact-review link without
+automatically fetching historical proposals. Invalid identities never fetch.
+
+The registry also maps `automations_request_existing_contacts` to this component.
+Validated `bp_` IDs open the separate existing-contact review; terminal decisions
+link to that exact review in Automations. No-work/error results without a proposal
+display their summary without fetching or offering approval.
+
+### `app-permission.tsx`
+
+Registered for `data_request_api_key`. Validates the public request identity,
+uses the owner-keyed shared inline Allow/Deny card for pending reviews and renders
+a compact canonical receipt with an exact-request link after resolution.
+Missing/invalid identities never trigger a fetch. No credential fields are read.
+
 ## Types
 
 From `../types.ts`:

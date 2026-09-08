@@ -36,6 +36,7 @@ type WorkspaceTopBarProps = {
   /** When provided, renders the Model-view toggle: unfold icon to expand into what the model sees, fold to return. */
   transcriptMode?: TranscriptMode
   onTranscriptModeChange?: (mode: TranscriptMode) => void
+  chatSettings?: ReactNode
 }
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
@@ -54,6 +55,7 @@ export function WorkspaceTopBar({
   alignToPaneRef,
   transcriptMode,
   onTranscriptModeChange,
+  chatSettings,
 }: WorkspaceTopBarProps) {
   const barRef = useRef<HTMLDivElement | null>(null)
   const titleBlockRef = useRef<HTMLDivElement | null>(null)
@@ -153,13 +155,16 @@ export function WorkspaceTopBar({
             </p>
           </div>
         </div>
-      {modelViewToggle && toggleRight !== null && (
-        <div className="absolute top-1/2 -translate-y-1/2" style={{ right: toggleRight }}>
-          {modelViewToggle}
-        </div>
-      )}
       <div ref={controlsRef} className="flex shrink-0 items-center gap-1.5 md:gap-2">
-        {modelViewToggle && toggleRight === null && modelViewToggle}
+        {(modelViewToggle || chatSettings) && (
+          <div
+            className={cn('flex shrink-0 items-center gap-1.5 md:gap-2', toggleRight !== null && 'absolute top-1/2 -translate-y-1/2')}
+            style={toggleRight !== null ? { right: toggleRight } : undefined}
+          >
+            {modelViewToggle}
+            {chatSettings}
+          </div>
+        )}
         {showChatTab && (
           <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4" />}>
             Chat
@@ -194,7 +199,7 @@ function ViewToggleButton({ active, children, onClick, icon, pressed = false }: 
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size="icon-sm"
       onClick={onClick}
       // Icon-only buttons: the label survives as accessible name + tooltip.
@@ -205,7 +210,7 @@ function ViewToggleButton({ active, children, onClick, icon, pressed = false }: 
         'rounded-lg border-2 border-black font-mono transition-all',
         active
           ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5 dark:bg-[var(--bud-accent-muted)] dark:text-white'
-          : 'bg-card hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)]'
+          : 'hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)]'
       )}
       style={active ? { boxShadow: '2px 2px 0px rgba(0,0,0,0.4)' } : { boxShadow: '2px 2px 0px rgba(0,0,0,1)' }}
     >

@@ -111,11 +111,13 @@ export type ApiCreateMessageResponse = {
   message_id: string
   client_id: string
   message: ApiMessage
+  invocation?: ApiAgentInvocation
   agent?: {
     started: boolean
+    queued?: boolean
     mode: ApiAgentEnvironmentMode
     bud_status: ApiAgentBudStatus
-    stream_cursor: string
+    stream_cursor?: string
   }
 }
 
@@ -373,7 +375,108 @@ export type ApiDraftReasoning = {
   updated_at: string
 }
 
+export type ApiAgentInvocation = {
+  invocation_id: string
+  turn_id: string
+  input_message_id: string
+  origin: 'human' | 'automation'
+  status: string
+  model: string
+  reasoning_effort: string
+  reserves_thread: boolean
+  attempt: number
+  outcome_code: string | null
+  latest_start_at: string | null
+  next_attempt_at: string
+  cancel_requested_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiPendingQuestion = {
+  request_id: string
+  turn_id: string
+  client_id: string
+  call_id: string
+  request: ApiAskUserQuestionsRequest
+  created_at: string
+}
+
+export type ApiAutomationDefinition = {
+  event_type: 'contact.added'
+  name: string
+  instruction: string
+  sources: { source_ids: string[] }
+  bud_id: string
+  model: string
+  reasoning_effort: ApiReasoningLevel
+  target: { mode: 'new_thread' } | { mode: 'existing_thread'; thread_id: string }
+  data_access: { scopes: Array<'contacts.read' | 'location.read'>; history_days: number }
+  latest_start_seconds: number
+  max_invocations_per_day: number
+}
+
+export type ApiAutomationProposal = {
+  proposal_id: string
+  automation_id: string
+  invocation_id: string
+  thread_id: string
+  bud_id: string
+  call_id: string
+  definition: ApiAutomationDefinition
+  draft_version: number
+  grant_version: number
+  version: number
+  status: 'pending' | 'approved' | 'declined' | 'canceled' | 'expired' | 'stale'
+  activated_revision: number | null
+  expires_at: string
+  decided_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiPendingAutomationRequest = {
+  proposal_id: string
+  turn_id: string
+  client_id: string | null
+  call_id: string
+  created_at: string
+  proposal: ApiAutomationProposal
+}
+
+export type ApiBootstrapSelection = {
+  automation_id: string
+  expected_version: number
+  sources: { source_ids: string[] }
+  search: string
+  max_contacts: number
+  mode: 'batched' | 'per_contact'
+  exclude_previously_delivered: boolean
+}
+
+export type ApiBootstrapProposal = Omit<ApiAutomationProposal, 'draft_version' | 'activated_revision'> & {
+  kind: 'existing_contacts'
+  revision: number
+  selection: ApiBootstrapSelection
+  member_count: number
+  group_size: number
+  group_count: number
+  bootstrap_id: string | null
+}
+
+export type ApiPendingBootstrapRequest = Omit<ApiPendingAutomationRequest, 'proposal'> & {
+  proposal: ApiBootstrapProposal
+}
+
 export type ApiAgentState = {
+  invocations?: ApiAgentInvocation[]
+  pending_questions?: ApiPendingQuestion[]
+  pending_automation_requests?: ApiPendingAutomationRequest[]
+  pending_bootstrap_requests?: ApiPendingBootstrapRequest[]
+  pending_data_requests?: Array<{
+    request_id: string; turn_id: string; client_id: string | null; call_id: string; created_at: string
+    request: { request_id: string; app_label: string; purpose: string; status: string; version: number }
+  }>
   active: boolean
   turn_id: string | null
   phase:

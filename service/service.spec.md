@@ -13,6 +13,7 @@ The service is the central hub of the Bud system:
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via configured providers, with split ownership for conversation loading, model invocation, terminal tool execution, transcript writing, and cancellation
 - **Database** - PostgreSQL with Drizzle ORM
+- **Personal data ingestion** - Owner-scoped mobile batches and durable processing jobs; projections/automations not yet enabled
 
 ## Files
 
@@ -118,7 +119,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 |--------|---------|---------|
 | `dev` | `tsx watch --include src/agent/default-system-prompt.md src/server.ts` | Development with hot reload, including restarts when the markdown-authored agent system prompt changes |
 | `build` | `tsc` | Compile TypeScript |
-| `postbuild` | `node -e "..."` | Copy `src/agent/default-system-prompt.md` to `dist/agent/default-system-prompt.md` so the compiled `system-prompt.js` can load the markdown prompt at runtime |
+| `postbuild` | `node -e "..."` | Copy the agent markdown prompt and standalone `personal-data/app-key-backend.mjs` into their corresponding `dist/` paths for runtime prompt loading and public backend-helper download |
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
 | `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including extracted agent seam coverage plus route/WebSocket gateway regressions |
@@ -151,6 +152,8 @@ startup.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `POST` | `/v1/events/batches` | Bounded plain/gzip NDJSON ingestion with authenticated ownership and explicit durable ACK |
+| `GET` | `/api/data/status` | Owned ingestion source/status and available feature flags |
 | `GET` | `/api/me` | Current authenticated user/profile via cookie or bearer auth |
 | `POST` | `/api/device-install-claims` | Create a 10 minute authenticated Bud install claim and return the service-generated install command |
 | `GET` | `/api/device-install-claims/:id` | Read one owned install claim's status |
@@ -310,3 +313,5 @@ See [src/config.ts](./src/src.spec.md) for complete list.
 ---
 
 *Parent spec: [../bud.spec.md](../bud.spec.md)*
+
+Development automation scheduling is wired behind `AUTOMATIONS_ENABLED=1` together with `AGENT_INVOCATION_MODE=durable`; both remain off/default legacy unless configured. All replicas should use the same settings. Matching and live/bootstrap admission poll bounded durable work, while invocation workers retain exact-model availability and action fencing. Shutdown drains admission first. Current tests validate lifecycle and PostgreSQL publication-to-admission; live model/client/recovery gates remain open.

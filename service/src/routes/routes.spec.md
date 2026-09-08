@@ -535,7 +535,8 @@ allocation, disabled/expired WebSocket upgrade rejection, authorized
 endpoint-host WebSocket open dispatch, browser/daemon text and binary
 forwarding, browser and daemon close propagation, oversized-message and
 open-timeout service closes, data-plane reset cleanup, and per-site/per-Bud
-WebSocket limit enforcement.
+WebSocket limit enforcement. Explicit foreign-owner viewer-session fixtures reject
+both HTTP and WebSocket access before any daemon operation allocation.
 
 ### `files.ts`
 

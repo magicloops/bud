@@ -1,4 +1,5 @@
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '../../lib/api-types'
+import { invocationAllowsLiveActivity } from './invocation-state.ts'
 
 export const getMessageIdentity = (message: Pick<ApiMessage, 'client_id'>) => message.client_id
 
@@ -196,6 +197,11 @@ export const buildPendingToolMessageFromToolCall = ({
 }
 
 export const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (agentState.pending_data_requests !== undefined && agentState.pending_tool?.name === 'data_request_api_key') return null
+  if (agentState.pending_questions !== undefined && agentState.pending_tool?.name === 'ask_user_questions') return null
+  if (agentState.pending_bootstrap_requests !== undefined && agentState.pending_tool?.name === 'automations_request_existing_contacts') return null
+  if (agentState.pending_automation_requests !== undefined && agentState.pending_tool?.name === 'automations_request_activation') return null
+  if (!invocationAllowsLiveActivity(agentState)) return null
   if (!agentState.active || !agentState.turn_id || !agentState.pending_tool) {
     return null
   }
@@ -213,6 +219,7 @@ export const buildPendingToolMessageFromState = (agentState: ApiAgentState): Api
 }
 
 export const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (!invocationAllowsLiveActivity(agentState)) return null
   if (!agentState.active || !agentState.turn_id || !agentState.draft_assistant) {
     return null
   }
@@ -235,6 +242,7 @@ export const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): 
 }
 
 export const buildDraftReasoningMessagesFromState = (agentState: ApiAgentState): ApiMessage[] => {
+  if (!invocationAllowsLiveActivity(agentState)) return []
   if (!agentState.active || !agentState.turn_id) {
     return []
   }
@@ -264,8 +272,57 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
   let nextMessages = messages.filter((message) => !isAgentSyntheticMessage(message))
 
   const pendingToolMessage = buildPendingToolMessageFromState(agentState)
-  if (pendingToolMessage) {
+  if (pendingToolMessage && !nextMessages.some((message) => message.client_id === pendingToolMessage.client_id)) {
     nextMessages = upsertMessage(nextMessages, pendingToolMessage)
+  }
+
+  // Persisted questions survive process restarts without an active runtime.
+  // A canonical result already in the transcript wins over a racing snapshot.
+  for (const question of agentState.pending_questions ?? []) {
+    if (nextMessages.some((message) => message.client_id === question.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: question.turn_id,
+      clientId: question.client_id,
+      callId: question.call_id,
+      name: 'ask_user_questions',
+      args: { ...question.request, request_id: question.request_id },
+      startedAt: question.created_at,
+    }))
+  }
+
+  for (const request of agentState.pending_data_requests ?? []) {
+    if (!request.client_id || request.request.status !== 'pending') continue
+    if (nextMessages.some(message => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: request.turn_id, clientId: request.client_id, callId: request.call_id,
+      name: 'data_request_api_key', args: request.request, startedAt: request.created_at,
+    }))
+  }
+
+  for (const request of agentState.pending_automation_requests ?? []) {
+    if (!request.client_id || request.proposal.status !== 'pending') continue
+    if (nextMessages.some((message) => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: request.turn_id,
+      clientId: request.client_id,
+      callId: request.call_id,
+      name: 'automations_request_activation',
+      args: request.proposal,
+      startedAt: request.created_at,
+    }))
+  }
+
+  for (const request of agentState.pending_bootstrap_requests ?? []) {
+    if (!request.client_id || request.proposal.status !== 'pending') continue
+    if (nextMessages.some((message) => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: request.turn_id,
+      clientId: request.client_id,
+      callId: request.call_id,
+      name: 'automations_request_existing_contacts',
+      args: request.proposal,
+      startedAt: request.created_at,
+    }))
   }
 
   const draftAssistantMessage = buildDraftAssistantMessageFromState(agentState)

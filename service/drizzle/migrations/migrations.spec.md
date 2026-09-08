@@ -192,6 +192,18 @@ Placeholder to ensure the directory exists in git.
 - Adds session/started, thread/started, and bud indexes
 - Drops the retired `terminal_session_output.seq` column and `terminal_session_output_seq_idx` (proto 0.3 makes `byte_offset` the sole ordering/dedup/resume coordinate; dropping `seq` is destructive by design for this pre-release cutover)
 
+### `0024_true_luminals.sql`
+
+Personal-data ingestion foundation: creates `data_owner_state`, `data_installation`, `data_collection_epoch`, `data_event` and `data_processing_job`. Adds required owner stamps, composite owner foreign keys with table-level uniqueness, immutable event dedupe and occurrence/receipt/due-work indexes. Generated from schema and reviewed; equivalent schema applied locally via `db:push`. Staging migration verification has not run.
+
+### `0025_careful_trauma.sql`
+
+Contacts projection foundation: creates `contact_source`, `contact_scan`, `contact_scan_record`, `contact`, `contact_revision` and `data_domain_event`, with source/generation/event uniqueness, composite owner foreign keys and lookup indexes. Equivalent schema applied locally via `db:push`; migration generated and reviewed.
+
+### `0026_supreme_human_cannonball.sql`
+
+Creates normalized `location_observation` and owner-wide versioned `agent_data_grant`, with owner/raw-event/epoch foreign keys, unique raw-event association and owner/occurrence lookup index. Generated and reviewed; equivalent schema applied locally via `db:push`. No daemon protocol change or deployment.
+
 ### Reasoning Message Role Audit
 
 No migration follows `0022` for adding `reasoning` to the TypeScript
@@ -202,6 +214,13 @@ constraint exists, and `pnpm db:generate` reports no schema changes.
 
 ## Migration Naming
 
+### `0035_flippant_killmonger.sql`
+
+Adds `agent_data_grant.contact_fields` JSONB, required with the legacy four-field
+default. Existing grants gain no expanded access. Generated/reviewed SQL applied
+locally in a transaction after canceling `db:push`'s unrelated invocation
+constraint prompt. No table rebuild, grant-version change or deployment.
+
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
 
 ## Subfolder
@@ -210,7 +229,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0023` currently)
+- Snapshot files for each migration (`0000` through `0036` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -302,3 +321,68 @@ v23: terminal proto 0.3 command lifecycle (+ drop terminal_session_output.seq)
 ---
 
 *Referenced by: [../drizzle.spec.md](../drizzle.spec.md)*
+
+### `0027_aspiring_triton.sql`
+
+Creates durable invocation/action tables, stable turn/input/idempotency constraints, owner FKs, lease/state checks and a partial unique active-thread reservation. Adds referenced owner-composite uniqueness on existing message/thread tables without changing their rows. Generated SQL was reviewed and its two referenced unique-constraint statements moved ahead of the dependent FKs. Metadata remains generated. Applied locally via `db:push`; SQL also executes in an isolated-schema test. Runtime adoption and staging deployment remain pending.
+
+### `0028_blue_risque.sql`
+
+Adds `agent_invocation.reserves_thread`, backfills active/review/question reservations and replaces the unique active-thread index with a reservation predicate. Generated SQL was augmented with the backfill before index creation. Column applied by local `db:push`; reviewed backfill/index replacement applied transactionally because push omitted the predicate change. Both invocation migrations execute in isolated-schema validation. Not deployed.
+
+### `0029_absent_white_queen.sql`
+
+Creates automation draft/revision/delivery tables with owner-composite foreign
+keys, dedupe, state checks and due/history indexes. Adds owner publication counters
+and nullable sequence on historical domain events. Moved the generated domain
+owner uniqueness ahead of its dependent delivery FK. Reviewed SQL applied locally
+in one transaction after reviewing db:push, whose proposed ordering had the same
+FK issue. Metadata remains generated. PostgreSQL publication/delivery constraint
+tests pass; deployment and activation/matching integration remain pending.
+
+### `0030_stormy_prima.sql`
+
+Creates owner-bound bootstrap requests and frozen contact-revision membership, including retry uniqueness, count/group/state checks, ordered lookup indexes and composite owner foreign keys. Generated SQL and metadata reviewed; referenced uniqueness precedes dependent foreign keys. Applied the reviewed SQL locally in one transaction after reviewing `pnpm db:push`, excluding unrelated invocation constraint recreation from the push proposal. PostgreSQL snapshot/retry/cutover tests and metadata checks pass. No deployment.
+
+### `0031_next_veda.sql`
+
+Creates durable bootstrap groups with request/group primary key, unique invocation association, owner FKs, admission/state/bounds checks and due/owner indexes. Reviewed generated SQL augmented with membership-derived backfill for preexisting requests, retaining canceled/failed request state. Applied locally in one transaction after reviewing db:push and excluding unrelated constraint recreation. No deployment.
+
+### `0032_flat_wilson_fisk.sql`
+
+Creates immutable app permission requests and one query-key/grant record per
+request, with owner/context/action/site FKs, decision/call/key dedupe, actor and
+handoff state checks, owner inventory and expiry indexes. Stores verification
+hashes and encrypted delivery only. Adds invocation-context/site-owner unique
+constraints; these generated statements were moved before dependent FKs without
+editing generated metadata. Reviewed SQL applied locally transactionally after
+reviewing db:push and excluding unrelated constraint recreation. No deployment.
+
+### `0033_natural_avengers.sql`
+
+Creates automation proposals with frozen definition/draft/grant versions,
+owner-bound rule and invocation context, unique originating action call and
+decision retry key, expiry, typed status checks and approved-revision association.
+Complete human decisions must identify the owner; automatic terminal outcomes
+carry no fabricated actor. Generated SQL executed in a rolled-back isolated
+schema with ownership/dedupe/state tests. Applied locally in one transaction after
+canceling the unrelated invocation constraint prompt in `db:push`. No deployment;
+repository transitions and API/runtime adoption remain pending.
+
+### `0034_bored_butterfly.sql`
+
+Creates separate existing-contact proposal and ordered membership tables. Adds
+owner/context/action/revision/contact/receipt foreign keys, call/decision/member
+uniqueness, owner/expiry indexes and bounded membership/fingerprint/state/actor
+checks. Existing activation proposal rows are untouched, preventing older
+activation-only code from interpreting new reviews. Generated SQL executes in an
+isolated rolled-back schema fixture. Applied locally transactionally after
+canceling db:push's unrelated invocation-constraint prompt. Not deployed; typed
+decision repository and runtime integration remain pending.
+
+### `0036_magical_ken_ellis.sql`
+
+Expands the automation state constraint to include terminal `deleted`; no rows,
+columns or history are removed. Generated metadata remains unedited. Reviewed SQL
+applied locally transactionally after canceling db:push's unrelated invocation
+constraint recreation prompt. Isolated-schema execution and metadata tests pass.

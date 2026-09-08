@@ -142,6 +142,10 @@ Direct tests for transcript normalization in the extracted conversation loader.
 
 Markdown source for the canonical Bud Agent system prompt. This file is the only prompt-body source; `system-prompt.ts` reads it at module load time, the package `dev` script watches it explicitly for `tsx watch` restarts, and the package `postbuild` script copies it beside the compiled prompt module in `dist/agent/`.
 
+Frontend guidance requires new sites to set device-width viewport metadata, preserve zoom, handle safe areas for edge-to-edge layouts, and verify responsive and touch behavior with mobile device emulation when browser tools are available.
+
+The mobile preview may extend behind system UI. For `viewport-fit=cover`, the prompt explicitly assigns safe-area content spacing to the site, including fixed/sticky controls and landscape edges, while allowing backgrounds to fill the screen.
+
 ### `system-prompt.ts`
 
 Single prompt ownership module for the canonical Bud Agent system prompt.
@@ -525,12 +529,12 @@ traffic; failures log and never block boot.
 - `findDanglingToolCalls()` — outbound ledger `tool_use` items with no
   inbound `tool_result` for the same `tool_call_id` in the thread (SQL
   `NOT EXISTS`, `llm_call_item_tool_call_idx`), joined to `llm_call`
-  (turn id) and `thread` (owner stamp); `ask_user_questions` excluded in SQL
-  and re-checked in JS (it has its own durable lifecycle — pending
+  (turn id) and `thread` (owner stamp); `ask_user_questions` and turns associated with durable invocations excluded in SQL
+  (questions are also re-checked in JS) (it has its own durable lifecycle — pending
   `agent_question_request` rows answer as fallback user messages).
 - `buildDanglingToolCallRepair(call)` — pure: synthesizes the result payload
   `{tool, call_id, ...args, kind, error: "server_restarted", code:
-  "SERVER_RESTARTED", ok: false, retryable: true, note,
+  "SERVER_RESTARTED", ok: false, retryable: false, note,
   server_restart_repair: true}`; `terminal.wait` additionally reports
   `outcome: "interrupted"`, and terminal tools carry the "terminal kept
   running on the Bud" guidance.
@@ -915,3 +919,274 @@ From `../config.js`:
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Personal-data query integration
+
+- `personal-data-tools.ts`: canonical schemas for contact search/history, contact-location context and the location timeline. Descriptions state consent, uncertainty and imported-data boundaries; service-only queries remain in the offline catalog.
+- `personal-data-tool-executor.ts`: validates thread and Bud ownership before the grant-aware adapter and again after the query/ceiling check, withholding results if ownership changes or the thread is deleted. Propagates cancellation through the final check and returns structured consent/query failures without raw database errors.
+- `personal-data-tools.test.ts`: offline catalog/parser/replay checks, executor authorization/error/cancellation tests, ownership-loss-during-read and final-check cancellation fixtures, and an agent-loop fixture proving result delivery to the next model step with owner attribution. Provider calls and persistence are mocked in that loop fixture.
+
+Contracts, model parsing, execution, transcript serialization and conversation reload support the four underscore tool names. Query arguments cannot choose an owner; provider-strict optional nulls normalize to omitted options. Live results have `kind: "personal_data"` and `ok`; canonical messages retain the approved result and permission version. Queries require the current owner-wide data grant, and delivery rechecks that version. This adds no daemon protocol or terminal permission restriction. Real-provider and cross-client validation remain phase gates.
+
+Agent query results now include effective `permission.contact_fields`; the
+adapter uses the same approved list for search and contact/history reads. Tool
+executor fixtures use the actual adapter return type to keep permission metadata
+aligned. Persistent agent grants still supply only the legacy field categories.
+
+## Durable invocation foundation (not enabled)
+
+- `invocation-repository.ts`: transactional human/automation input admission with stable turn IDs and immutable idempotency matching; owner/thread/Bud checks; thread-locked, skip-locked claims with a unique active reservation; renewable fenced leases, availability deferral, action intents and bounded expired-lease recovery. Unresolved intents or expired execution become `needs_review` and retain the thread reservation. Preflight expiry may retry. Dispatch boundaries recheck current thread/Bud ownership and cancellation.
+- `invocation-repository.test.ts`: opt-in local PostgreSQL tests for input/admission rollback, duplicate/conflicting retries, concurrent claims, stale workers, ambiguous action recovery, separate-thread progress, completed-work non-replay, deadlines and model-wait deferral. Also executes the migration in an isolated schema to validate foreign-key creation order.
+
+This repository is intentionally not called by routes or a background worker yet. Manual chat still uses the legacy start path; durable runner fencing, cancellation/continuation recovery, worker lifecycle and controlled cutover remain required before enabling phase 5. Its database reservation does not yet serialize legacy starts. No automation scheduling is active.
+
+### Awaitable execution and worker hooks
+
+- `execution-lifecycle.ts`: internal typed turn outcomes and checkpoint/before-tool/after-tool hooks for durable execution.
+- `invocation-worker.ts`: explicitly started polling worker with bounded local concurrency, serialized lease renewals, availability deferral, action-intent/evidence integration, cancellation on lease loss and conservative outcome recording. Construction performs no work; the server has not enabled it.
+- `invocation-worker.test.ts`: intent-before-dispatch, evidence-before-outcome, offline model deferral without fallback, and lease-loss cancellation fixtures.
+
+`startUserMessage` now returns an awaitable `completion` promise in addition to existing startup metadata. Internal callers may supply a reserved turn ID, abort signal and hooks; HTTP bodies do not expose those options. Reserved starts refuse an already-active local thread. Initial conversation-load failures now enter the existing cleanup/error handler. Hooks run around provider/compaction, tool and outcome boundaries. Canonical tool evidence is persisted before after-tool completion. The existing detached manual route still ignores the completion promise and the durable worker remains unbound until shared admission/continuations are ready.
+
+### Durable cancellation and continuation reservations
+
+The invocation repository now distinguishes canceled dispatch from fenced cancellation acknowledgement. Unstarted cancellation releases its reservation; running cancellation waits for acknowledgement, with unresolved actions kept in review. A bounded queued-expiry pass runs independently of claim eligibility, so deadlines advance behind busy threads.
+
+`parkQuestion` verifies the persisted owner/thread/turn/call association, stores the question reference on its action, drops the worker lease and retains the thread reservation. Answered questions become claimable under the same invocation/turn with a new fence. A continuation may defer for Bud/model availability without releasing that reservation; first-start deadlines no longer expire an already-started continuation. `reserves_thread` and its partial unique index enforce this across worker processes. The repository tests cover these transitions and direct database rejection of an overtaking reservation. Runtime parking, answer transcript reconstruction and route cutover remain pending.
+
+### Runtime question parking and replay
+
+The optional execution hook `parkQuestion` makes the agent persist a waiting invocation and return `waiting_for_user`, keeping its pending runtime question visible without retaining a live question promise. The worker stops lease renewal and does not finish that invocation. On reclaim, `prepareQuestionContinuation` atomically reconstructs the accepted question's tool message and provider-ledger input with owner stamps and timing, then completes its waiting action. Retry is idempotent.
+
+- `continuation-results.ts`: explicit not-executed results for provider-batched tool calls after a parked question. The model can reconsider those calls using the answer; they are never silently dispatched with stale arguments. Previously dispatched actions without results cause an ambiguity error instead.
+
+PostgreSQL tests cover answer restoration, trailing undispatched tool results and duplicate restoration; worker tests verify parking stops renewal without finalizing. The actual response route still needs to bypass legacy fallback for durable questions, and shared admission, exact model preflight and durable client snapshots remain required before enabling the worker.
+
+### Exact invocation executor preflight
+
+- `invocation-executor.ts`: `ServiceInvocationExecutor` binds a reserved invocation to AgentService's awaitable execution hooks. It re-resolves thread/Bud ownership, enforces automated Bud availability, validates the persisted model/reasoning explicitly, checks provider registration and local-model capabilities, and rejects cross-Bud local model IDs. Healthy generic local models repopulate the dynamic catalog from owned durable capabilities after restart. Manual cloud chat retains its offline policy. Dispatch checkpoints recheck availability; mid-turn unavailability fails without model substitution or automatic replay.
+- `invocation-executor.test.ts`: automated/manual offline differences, missing ownership/provider, cross-Bud and unavailable local models, stable invocation identity, dispatch-time availability loss and local catalog restoration.
+
+The executor and worker are not yet installed in the server composition root; shared HTTP admission, durable response routing and canonical client state remain cutover prerequisites.
+
+### Optional durable route admission
+
+AgentService accepts an optional `durableInvocations` repository at construction. In that mode, direct starts without an internal reserved turn ID are rejected. Durable question responses return `continuation: "durable_invocation"` plus invocation identity, including accepted retries, instead of creating fallback user messages. The current server constructor has not enabled this mode.
+
+- `invocation-view.ts`: bounded public invocation serialization without worker IDs, fences, leases or raw execution evidence.
+
+The message route uses atomic repository admission, preserving owner, model selection and cached path context. Invocation state and pending question reads filter by owner/thread in SQL. The cancel route persists an owner-stamped cancel before canceling the local executor. Shared client adapters and server cutover remain pending.
+
+### Per-Bud automation capacity
+
+`InvocationRepository` accepts an automation concurrency limit (default 1, integer 1–32; all service workers must use the same configured value). Claim selection skips full Buds. A per-Bud transaction advisory try-lock serializes new automation reservations, followed by a fresh capacity count before the claim commits. Human turns do not consume this limit. Existing continuation reservations keep their slot; review-required work also retains capacity. An unstarted availability wait releases its slot. No schema or daemon protocol changes are required. PostgreSQL tests use separate repository instances to verify races, release/review policy and progress for humans and other Buds. Server cutover remains disabled.
+
+### Durable input context order
+
+`model-context-order.ts` supplies shared SQL visibility and ordering for conversation loading and checkpoint boundaries. Durable inputs remain outside model context until fenced `start` stamps `model_context_at` once. The stamp advances past visible context at millisecond precision and remains unchanged across question continuations. Admission overrides caller-provided stamps. UI transcript timestamps remain unchanged. Loader and checkpoint boundary selection use the same effective timestamp, preventing queued instructions from executing early or disappearing behind a checkpoint. Automation-origin system transcript rows replay as attributed user-priority input, not system instructions. Existing provider-ledger replay remains ordered by executed calls within the reserved thread.
+
+PostgreSQL fixtures exercise queued exclusion, checkpoint survival, clock skew ordering, preserved transcript time, continuation-stamp stability and automation priority. Cutover must begin with no previously running durable invocations lacking an activation stamp; the worker has not yet been enabled.
+
+Restored continuation tool messages now retain `llm_call_id` and `call_id`, preventing duplicate tool-use synthesis when the loader also replays the provider ledger. The PostgreSQL continuation fixture verifies ledger provenance and one question tool-use/result pair.
+
+### Legacy restart-repair boundary
+
+The boot repair selector excludes any provider call associated with a durable invocation's thread/turn. Durable action intents and unanswered/trailing tool calls remain under fenced continuation/review recovery. A PostgreSQL fixture verifies both the exclusion and retained legacy eligibility within the same thread. Generic legacy repair and replay-only orphan repair now report unknown execution outcome rather than recommending an automatic retry; legacy synthesized results carry `retryable: false`. Terminal evidence/inspection guidance remains available.
+
+### Durable server composition (development)
+
+`server.ts` now opts into the shared invocation repository/worker with
+`AGENT_INVOCATION_MODE=durable` (default legacy). The startup guard in
+`../invocation-startup.ts` coordinates same-schema replicas and rejects unsafe
+mode changes. The executor accepts a composition-owned pending-wait interruption
+callback, invoked on lease loss/shutdown while its invocation is executing and
+removed on completion. This releases service waits; it does not stop or replay
+remote terminal commands. Remaining cutover validation is tracked in phase 5.
+
+### Owner review abandonment
+
+`InvocationRepository.abandonReviewed` locks the owned thread then invocation,
+requires current `needs_review` state and the observed update timestamp, preserves
+uncertain action intents and writes an owner-stamped completed review action. It
+atomically fences the old executor and releases the reservation as canceled with
+`user_abandoned_after_review`. Duplicate acknowledgement returns the same outcome;
+it never authorizes replay or changes an uncertain intent to success. Route and
+PostgreSQL coverage exists; web/mobile expose a single Stop run button using this
+versioned compatibility endpoint, without a separate acknowledgement checkbox.
+
+### Atomic automation admission composition
+
+`InvocationRepository.admitInTransaction` exposes the same validated admission path inside a caller-owned database transaction. Automation admission uses it to commit new-thread allocation, attributed input and delivery association together. The regular `admit` method owns its transaction as before. PostgreSQL fault injection verifies that a later delivery failure rolls back all three records.
+
+### Automation dispatch authority
+
+The service invocation executor calls the personal-data automation policy before preflight and at provider/tool execution checkpoints. Automation invocations require an admitted, same-owner delivery and immutable target/model match, current grant and non-revoked source lineage. Preflight pause returns `retry_wait`, releasing an unstarted reservation while keeping continuation reservations. Running work ignores pause alone but still rechecks revocation; explicit active cancellation remains separate. Executor fixtures verify policy deferral and revoked-authority rejection before tool dispatch. Matching/admission scheduling and the atomic pause/start boundary remain unfinished.
+
+### Pause/start ordering and transactional cancellation
+
+Final invocation start now takes the personal-data owner lock before its invocation lock and rechecks associated delivery policy. A pause committed after preflight but before start produces `automation_paused`; the worker defers the lease to `retry_wait` without executing or failing the run. `requestCancelInTransaction` lets automation pause commit cancellation choices together; non-running cancellation closes pending questions even during a continuation model wait. Running cancellation retains the reservation until worker completion or fenced lease recovery, then becomes canceled even with unresolved intents; it never clears uncertain action evidence. PostgreSQL and worker fixtures cover pause after claim, successful start after resume, pending-only versus active cancellation, and reservation retention.
+
+### Per-invocation data query ceilings
+
+AgentService supplies its internal turn ID to personal-data execution. The tool executor resolves a running automation invocation and its immutable revision ceiling before querying, then checks the invocation/fence binding again before returning results. Rule scopes/history intersect the current account grant; a broader account grant cannot expand a narrower rule. Contact cursors bind to invocation/fence/revision as well as grant/history. Completed, canceled or expired-lease automation queries fail closed. Manual turns continue using account-wide agent grants. Focused tests cover narrower scope/time bounds, stale grant versions, query-time fence changes and PostgreSQL lifecycle resolution.
+
+Bootstrap invocations now resolve their admitted group and immutable revision at dispatch and data-query boundaries. Final start rechecks bootstrap policy under the same owner lock as cancellation and pause. All frozen members must retain valid source lineage and permitted evidence; canceled requests fail closed. Query ceilings retain invocation/fence/revision binding. Bootstrap cancellation reuses invocation cancellation and preserves running reservations until worker acknowledgement.
+
+### Durable automation proposal continuation
+
+Draft-creation tool and field descriptions explicitly tell agents to omit model
+and reasoning_effort (or use null) unless the user requests an override. Both
+inherit the admitted chat invocation's exact selection, including on mobile;
+invalid explicit pairs remain errors with targeted recovery guidance.
+
+`automation-tools.ts` defines the seven opt-in automation management tool schemas:
+list/get/history, create/update draft, request activation and pause. Descriptions
+preserve exact server defaults and separate data consent, human activation and
+existing-contact processing. No raw approval tool exists. `automation-tools.test.ts`
+checks catalog/parser parity, forbidden authority fields, optional-null handling,
+bounded history and explicit pause scope. The catalog is registered behind an
+explicit `automations` option and omitted by default; the model runner validates
+these calls through the strict automation parser. Common tool-name/argument
+serialization preserves them unchanged.
+
+The isolated proposal fixture also covers `AutomationManagement` mutations:
+creation/edit/pause receipts commit with rule changes, same-lease retries preserve
+the result, default targets/models remain exact and failed receipt writes roll
+back the mutation. The durable action remains unresolved until its transcript is
+persisted; a crash still requires existing invocation review rather than blind replay.
+
+`AgentExecutionHooks.executeAutomationTool` binds list/get/history and
+create/update/pause execution to the worker's current invocation owner, worker ID,
+fence and call ID. Read authority is checked before and after the bounded query.
+Worker tests verify context binding and read/mutation dispatch; isolated database
+tests reject foreign owners and missing/completed read intents. AgentService now
+consumes the hook behind its optional automation setting and durable hooks, with
+structured validation failures and standard tool-result persistence. Activation
+requests park atomically before emitting the committed proposal through
+`agent.tool_call`; `emitAutomationProposal` sets the waiting-user runtime snapshot.
+The loop returns without executing trailing calls. Actual selected catalog size
+is included in compaction accounting. Production composition still leaves this
+setting disabled. `automation-agent-loop.test.ts` verifies intent/park/prompt
+ordering and no post-park checkpoint or trailing dispatch with mocked provider
+and persistence; real end-to-end execution remains unverified.
+
+`conversation-loader.ts` preserves automation management and proposal decision
+results as recorded tool results. With the original provider ledger it does not
+synthesize another call; canonical fallback reconstructs calls from saved args or
+the proposal's automation ID/draft version, never from a human decision payload.
+`automation-replay.test.ts` covers every proposal outcome plus ordinary/deferred
+management results and verifies that orphan repair injects no replacement result.
+
+`InvocationRepository.parkAutomationProposal` captures a frozen proposal and
+parks the matching action/invocation in one transaction, retaining the thread
+reservation and fencing the old executor. Resolved proposals make the same
+invocation claimable; availability waits retain the reservation. Continuation
+reconstruction persists the decision as one owner-stamped tool message and ledger
+input, then completes the waiting action. Trailing undispatched calls receive
+`not_executed_due_to_automation_review` so the model can reconsider them. Cancel
+and review-abandon paths close pending proposals without changing past approvals.
+`pendingAutomationProposalsForThread` provides bounded owner/context/action-bound
+prompt recovery; route exposure and maintenance reconciliation remain pending.
+
+`invocation-automation-proposal.test.ts` exercises atomic parking rollback,
+pending recovery, stale fences, same-turn reclaim, model waits, idempotent ledger
+restoration and approve/decline/expiry/stale/cancel outcomes in an isolated schema
+invisible to the live development worker. `AgentExecutionHooks.parkAutomationProposal`
+and the worker now connect atomic parking, stop lease renewal before parking and
+leave the waiting invocation unfinished. The worker fixture verifies that boundary.
+Agent tool and client integration are not yet connected.
+
+### Durable app permission continuation
+
+`InvocationRepository.parkAppDataRequest` creates the owned permission request and
+parks its action/invocation in one transaction through `AppKeys.requestInTransaction`.
+The optional execution hook stops worker renewal before releasing the lease and
+retains the thread reservation. Resolved requests become claimable under the same
+turn; cancellation also closes pending requests. Continuation reconstruction
+persists public decision/key metadata once and marks trailing undispatched calls
+`not_executed_due_to_permission`. Secret hashes and encrypted envelopes are excluded.
+
+`invocation-app-data.test.ts` covers transactional rollback, stale fences,
+approval/decline/expiry/cancel, model wait, idempotent restoration and actual
+provider-ledger replay. The same fixture now approves through real local HTTP,
+installs through the standalone encrypted-handoff helper, restarts that helper
+from private disk state, ingests and publishes a baseline contact plus location,
+and revokes through HTTP. The private example backend queries that contact and
+history through the installed helper, enforces names-only matching/projection,
+rounds coordinates while preserving sensor accuracy and uncertainty, and returns
+403 after revocation. Baseline publication emits no live event. The fixture verifies ciphertext deletion and absence of the credential from
+public decision, continuation, replay and query results. PostgreSQL fixture and
+service build pass; live provider execution and UI interaction remain separate
+gates. The loader recognizes permission results directly so
+generic orphan repair cannot replace the accepted decision. Canonical fallback
+uses public request metadata; same-provider replay retains original ledger input.
+Worker tests verify permission parking performs no later renewal or completion.
+`pendingDataRequestsForThread` recovers at most 20 pending prompts through matching
+owner/thread/invocation/action joins, returning stable client IDs and public
+request metadata. PostgreSQL tests verify fresh-repository recovery, foreign
+owner/thread exclusion and removal after approval/cancellation.
+Mobile/web approval controls and startup composition are connected. Issuance is
+enabled explicitly with `APP_DATA_KEYS_ENABLED=1` in durable invocation mode.
+
+`app-permission-tool.ts` defines the opt-in `data_request_api_key` schema and
+backend setup guidance. Field choices include explicit `postal_addresses` and
+`urls` approvals; legacy requests retain their exact stored field list. Tool
+guidance distinguishes contact postal addresses from observed location evidence
+and notes that older sources may not collect expanded fields.
+`app-permission-tool.test.ts` checks catalog gating,
+strict proposal parsing, private-key rejection and the agent's intent/park/prompt
+ordering. AgentService requires its explicit permission setting and durable hook;
+ordinary turns omit the tool. Valid requests park before emitting public request
+metadata through the existing `agent.tool_call` event and waiting-user snapshot.
+The loop returns without renewing, completing the action, or dispatching trailing
+tools. Compaction accounting includes the actual selected tool catalog.
+
+Automation activation request validation now returns through the normal tool
+result/transcript/ledger/action-completion path. Only `DataRequestError` from
+failed atomic parking is handled this way; unknown failures still escape to
+conservative invocation recovery. The existing action intent is reused, no
+proposal event is emitted for a rejected request, and later model steps may
+correct the draft. The worker resumes heartbeat scheduling after a known rejected
+park. Agent-loop and timer-driven worker tests verify continued execution,
+exactly one intent/result, and continued lease renewal.
+# Existing-contact review continuation
+
+`InvocationRepository.parkBootstrapProposal` atomically creates the separate
+existing-contact proposal and waiting action, retains the thread reservation and
+releases the worker lease. It advances the action fence with the parked invocation
+so review authority remains valid. Empty selections return `no_work` and keep the
+lease active for an ordinary result. `pendingBootstrapProposalsForThread` reads
+bounded owner/thread/action-bound review metadata for future client state recovery.
+
+Claim recognizes terminal bootstrap decisions and restores the same invocation
+and turn. Continuation writes the original client tool result with
+`kind: existing_contact_review`, approved bootstrap receipt and explicit guidance
+against duplicate processing; trailing undispatched calls are deferred under the
+automation-review reason. Cancel/abandon closes pending bootstrap proposals.
+PostgreSQL tests cover parking rollback, lease release, pending recovery, exact
+resume, model wait reservation, result dedupe and cancellation. HTTP agent-state
+recovery remains to connect.
+
+The worker's `parkBootstrapProposal` hook now stops renewal only for a committed
+review; no-work and known validation errors resume normal renewal/completion.
+`automations_request_existing_contacts` has a separate catalog capability and
+AgentService setting, both disabled by default. It accepts selection criteria
+only, requires the durable hook and never calls ordinary management dispatch.
+Committed proposals emit through `emitBootstrapProposal` and park before trailing
+calls. No-work and validation errors reuse the original intent and persist one
+normal result before continuing. Shared serialization recognizes the new name;
+canonical replay recovers bootstrap selection separately from activation input.
+Catalog, loop, worker and replay tests cover these paths, including every decision
+outcome with/without the original ledger. Startup and client integration remain.
+
+Phase 13: automation creation guidance defaults to the originating conversation, with explicit new-conversation overrides and destination disclosure before review. The management PostgreSQL fixture covers omitted/null targets, explicit destinations, retry preservation and unchanged existing rules.
+
+### Explicit Stop completion
+
+`invocation-stop.test.ts` isolates PostgreSQL tables from the live worker and
+covers Stop during an unfinished tool, canceled lease expiry, unexpected review,
+owner isolation, pending question/app-request cancellation, preserved intents,
+stale dispatch rejection and following queued work. `finish` and `recoverExpired`
+prioritize a recorded cancellation over unresolved outcomes. `requestCancel`
+also accepts needs-review runs and closes pending approvals in all live states.
+No new schema or daemon protocol is required.

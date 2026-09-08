@@ -1,0 +1,2 @@
+ALTER TABLE "automation" DROP CONSTRAINT "automation_state_check";--> statement-breakpoint
+ALTER TABLE "automation" ADD CONSTRAINT "automation_state_check" CHECK ("automation"."state" in ('draft','enabled','paused','deleted'));

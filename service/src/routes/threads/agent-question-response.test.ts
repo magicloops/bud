@@ -7,6 +7,7 @@ import { registerThreadAgentRoutes } from "./agent.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import { buildAgentEnvironmentSnapshot } from "../../agent/environment.js";
+import { InvocationError } from "../../agent/invocation-repository.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
 type TestLogEntry = {
@@ -110,6 +111,39 @@ const THREAD = {
   createdAt: new Date("2026-05-19T20:00:00.000Z"),
   updatedAt: new Date("2026-05-19T20:00:00.000Z"),
 };
+
+test("review abandonment requires owner access and an explicit current-state acknowledgement", async t => {
+  t.after(() => mock.restoreAll());
+  let signedIn = false;
+  let owned = false;
+  mock.method(auth.api, "getSession", async () => signedIn ? SESSION as never : null);
+  mock.method(db.query.threadTable, "findFirst", async () => owned ? THREAD as never : null);
+  let calls = 0;
+  let failure: string | undefined;
+  const server = createServer();
+  await registerThreadAgentRoutes(server, { durableInvocations: {
+    abandonReviewed: async (owner: string, thread: string, id: string, at: string) => {
+      calls++;
+      assert.deepEqual([owner, thread, id, at], [SESSION.user.id, THREAD_ID, "inv-review", "2026-09-04T00:00:00.000Z"]);
+      if (failure) throw new InvocationError(failure);
+      return { id, status: "canceled", reservesThread: false, outcomeCode: "user_abandoned_after_review" };
+    },
+  } } as never, {} as never);
+  const handler = server.routes.get("POST /api/threads/:threadId/agent/invocations/:invocationId/abandon")!;
+  const request = { params: { threadId: THREAD_ID, invocationId: "inv-review" },
+    body: { acknowledge_possible_effects: true, expected_updated_at: "2026-09-04T00:00:00.000Z" } };
+  assert.equal((await invokeRoute(handler, request)).statusCode, 401);
+  signedIn = true;
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+  owned = true;
+  assert.equal((await invokeRoute(handler, { ...request, body: { ...request.body, acknowledge_possible_effects: false } })).statusCode, 400);
+  assert.equal(calls, 0);
+  assert.equal((await invokeRoute(handler, request)).statusCode, 200);
+  failure = "invocation_review_conflict";
+  assert.equal((await invokeRoute(handler, request)).statusCode, 409);
+  failure = "invocation_not_found";
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+});
 
 test("agent-state route includes runtime last_error after authorization", async (t) => {
   t.after(() => mock.restoreAll());
@@ -327,4 +361,71 @@ test("question-response route maps repository and contract errors to stable HTTP
   const serializedLog = JSON.stringify(logs[0]?.meta);
   assert.match(serializedLog, /"value_length":26/);
   assert.doesNotMatch(serializedLog, /do not log this raw answer/);
+});
+
+test("durable answer responses carry invocation identity after ownership checks", async t => {
+  t.after(() => mock.restoreAll());
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => THREAD as never);
+  const server = createServer();
+  await registerThreadAgentRoutes(server, { submitQuestionResponse: async (args: { answeredByUserId: string }) => {
+    assert.equal(args.answeredByUserId, SESSION.user.id);
+    return { questionRequestId: REQUEST_ID, status: "answered", continuation: "durable_invocation", invocationId: "inv" };
+  } } as never, {} as never);
+  const handler = server.routes.get("POST /api/threads/:threadId/agent/question-requests/:requestId/responses")!;
+  const response = await invokeRoute(handler, { params: { threadId: THREAD_ID, requestId: REQUEST_ID }, body: {} });
+  assert.equal(response.statusCode, 200);
+  assert.equal((response.payload as Record<string, unknown>).invocation_id, "inv");
+  assert.equal((response.payload as Record<string, unknown>).continuation, "durable_invocation");
+});
+
+test("agent state recovers persisted app and automation requests only after thread authorization", async t => {
+  t.after(() => mock.restoreAll());
+  let signedIn = false, owned = false, reads = 0;
+  mock.method(auth.api, "getSession", async () => signedIn ? SESSION as never : null);
+  mock.method(db.query.threadTable, "findFirst", async () => owned ? THREAD as never : null);
+  const pending = [{ request_id: "dar_pending", turn_id: "turn", client_id: "client", call_id: "call",
+    request: { request_id: "dar_pending", status: "pending" } }];
+  const proposals = [{ proposal_id: "ap_pending", turn_id: "turn", client_id: "proposal-client", call_id: "proposal-call",
+    proposal: { proposal_id: "ap_pending", status: "pending" }, created_at: "2026-09-06T00:00:00.000Z" }];
+  const bootstrap = [{ proposal_id: "bp_pending", turn_id: "turn", client_id: "bootstrap-client", call_id: "bootstrap-call",
+    proposal: { proposal_id: "bp_pending", kind: "existing_contacts", status: "pending", member_count: 3 }, created_at: "2026-09-06T00:00:00.000Z" }];
+  let proposalReads = 0, bootstrapReads = 0;
+  let bootstrapResolved = false;
+  const server = createServer();
+  await registerThreadAgentRoutes(server, {
+    getEnvironmentForBud: async () => buildAgentEnvironmentSnapshot({ budId: THREAD.budId, online: false }),
+    durableInvocations: {
+      listForThread: async () => [], pendingQuestionsForThread: async () => [],
+      pendingDataRequestsForThread: async (owner: string, thread: string) => {
+        reads++; assert.deepEqual([owner, thread], [SESSION.user.id, THREAD_ID]); return pending;
+      },
+      pendingAutomationProposalsForThread: async (owner: string, thread: string) => {
+        proposalReads++; assert.deepEqual([owner, thread], [SESSION.user.id, THREAD_ID]); return proposals;
+      },
+      pendingBootstrapProposalsForThread: async (owner: string, thread: string) => {
+        bootstrapReads++; assert.deepEqual([owner, thread], [SESSION.user.id, THREAD_ID]); return bootstrapResolved ? [] : bootstrap;
+      },
+    },
+  } as never, { getSnapshot: () => ({ active: true, pending_tool: null, context_budget: { status: "available" } }) } as never);
+  const handler = server.routes.get("GET /api/threads/:threadId/agent/state")!;
+  const request = { params: { threadId: THREAD_ID } };
+  assert.equal((await invokeRoute(handler, request)).statusCode, 401);
+  signedIn = true;
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+  assert.equal(reads, 0);
+  assert.equal(proposalReads, 0);
+  assert.equal(bootstrapReads, 0);
+  owned = true;
+  const response = await invokeRoute(handler, request);
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual((response.payload as Record<string, unknown>).pending_data_requests, pending);
+  assert.deepEqual((response.payload as Record<string, unknown>).pending_automation_requests, proposals);
+  assert.deepEqual((response.payload as Record<string, unknown>).pending_bootstrap_requests, bootstrap);
+  assert.equal(reads, 1);
+  assert.equal(proposalReads, 1);
+  assert.equal(bootstrapReads, 1);
+  bootstrapResolved = true;
+  const refreshed = await invokeRoute(handler, request);
+  assert.deepEqual((refreshed.payload as Record<string, unknown>).pending_bootstrap_requests, []);
 });
