@@ -192,6 +192,7 @@ export async function registerThreadMessageRoutes(
         threadModel: thread.modelId,
         threadReasoning: thread.reasoningEffort,
         serviceDefaultModel: config.defaultModel,
+        allowRetiredFallback: true,
       });
     } catch (err) {
       if (sendModelSelectionError(reply, err)) {
@@ -231,7 +232,7 @@ export async function registerThreadMessageRoutes(
           owner: viewer.userId, threadId: thread.threadId, origin: "human",
           idempotencyKey: `message:${effectiveClientId}`, clientId: effectiveClientId, text: body.text,
           model: selection.model, reasoningEffort: selection.reasoningEffort,
-          persistModelSelection: selection.source === "explicit_request" || !thread.modelId || !thread.reasoningEffort || !selection.storedModelValid,
+          persistModelSelection: selection.source === "explicit_request",
           metadata: { ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
         });
         const message = serializeMessage(admitted.message);
@@ -282,10 +283,7 @@ export async function registerThreadMessageRoutes(
     }
 
     if (
-      selection.source === "explicit_request" ||
-      !thread.modelId ||
-      !thread.reasoningEffort ||
-      !selection.storedModelValid
+      selection.source === "explicit_request"
     ) {
       await db
         .update(threadTable)

@@ -81,18 +81,19 @@ export class AutomationManagement {
         // A draft does not grant access. Absent consent still allows drafting;
         // the request-activation step requires the human's data permission.
         const defaults: AutomationDefinition = { event_type: "contact.added", name: "", instruction: "",
-          sources: { source_ids: [] }, bud_id: row.invocation.budId, model: row.invocation.model,
-          reasoning_effort: row.invocation.reasoningEffort as AutomationDefinition["reasoning_effort"], target: { mode: "existing_thread", thread_id: row.invocation.threadId },
+          sources: { source_ids: [] }, bud_id: row.invocation.budId, model_mode: "inherit", origin_thread_id: row.invocation.threadId, model: "",
+          reasoning_effort: "none", target: { mode: "existing_thread", thread_id: row.invocation.threadId },
           data_access: { scopes: ["contacts.read"], history_days: Math.min(grant?.historyDays ?? 30, 30) },
           latest_start_seconds: 86400, max_invocations_per_day: 10 };
         const definition = resolveAgentAutomationDraft(args, defaults);
+        definition.origin_thread_id = definition.bud_id === row.invocation.budId ? row.invocation.threadId : null;
         try {
           result = await automations.createInTransaction(tx, context.owner, definition);
         } catch (error) {
           if (error instanceof DataRequestError && error.code === "invalid_automation_model") {
             throw new DataRequestError(400, error.code,
               `Unsupported automation selection: model=${definition.model}, reasoning_effort=${definition.reasoning_effort}. ` +
-              `Omit model and reasoning_effort (or use null) to inherit this chat's model=${defaults.model}, reasoning_effort=${defaults.reasoning_effort}. ` +
+              "Omit model and reasoning_effort to follow the conversation model, or set model_mode=inherit. " +
               "Preserve explicit user choices; if an override was requested, select a supported model/reasoning combination instead of silently substituting.");
           }
           throw error;

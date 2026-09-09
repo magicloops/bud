@@ -235,3 +235,8 @@ Replacement approval uses Update. Destination labels say This conversation,
 New conversation each time, or Another conversation with its title (ID fallback).
 Shared presentation helpers live in automation-proposal-summary.tsx; render tests
 cover operation/destination labels and older-service fallback.
+
+Automation proposal summaries additionally distinguish inherited policy from
+explicit overrides and show server-computed current model/reasoning and fallback
+warnings. They explain retirement fallback separately from offline local waits.
+Render tests cover inherited presentation without stale explicit reasoning.

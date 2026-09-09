@@ -7,6 +7,7 @@ import { db } from "../../db/client.js";
 import { budTable, messageTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedThread, requireViewer } from "../../auth/session.js";
 import {
+  getCatalogEntry,
   isModelSelectionError,
   resolveEffectiveModelSelection,
   type EffectiveModelSelection,
@@ -39,6 +40,7 @@ type SerializedThread = {
   effective_model: string;
   effective_reasoning_effort: ReasoningLevel;
   model_selection_source: "thread" | "service_default";
+  model_warning: string | null;
 };
 
 type SerializedMessage = {
@@ -146,7 +148,13 @@ export function serializeThreadModelSelection(row: {
   | "effective_model"
   | "effective_reasoning_effort"
   | "model_selection_source"
+  | "model_warning"
 > {
+  if (row.modelId && parseBudLocalModelId(row.modelId) && !getCatalogEntry(row.modelId)) {
+    return { model: row.modelId, reasoning_effort: row.reasoningEffort ?? null,
+      effective_model: row.modelId, effective_reasoning_effort: (row.reasoningEffort ?? "none") as ReasoningLevel,
+      model_selection_source: "thread", model_warning: "The selected local model is currently unavailable; no cloud fallback is enabled." };
+  }
   const selection = resolveEffectiveModelSelection({
     threadModel: row.modelId ?? null,
     threadReasoning: row.reasoningEffort ?? null,
@@ -155,6 +163,7 @@ export function serializeThreadModelSelection(row: {
   });
 
   return {
+    model_warning: selection.fallbackFrom ? `${selection.fallbackFrom} unavailable — using ${selection.model}` : null,
     model: row.modelId ?? null,
     reasoning_effort: row.reasoningEffort ?? null,
     effective_model: selection.model,
@@ -164,12 +173,13 @@ export function serializeThreadModelSelection(row: {
 }
 
 export function toModelSelectionMetadata(
-  selection: Pick<EffectiveModelSelection, "model" | "reasoningEffort" | "source">,
+  selection: Pick<EffectiveModelSelection, "model" | "reasoningEffort" | "source" | "fallbackFrom" | "reasoningAdjusted">,
 ): Record<string, unknown> {
   return {
     model: selection.model,
     reasoning_effort: selection.reasoningEffort,
     model_selection_source: selection.source,
+    ...(selection.fallbackFrom ? { model_fallback_from: selection.fallbackFrom, reasoning_adjusted: selection.reasoningAdjusted ?? false } : {}),
   };
 }
 

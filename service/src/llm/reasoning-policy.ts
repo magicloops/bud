@@ -1,6 +1,7 @@
 import type { ReasoningConfig } from "./types.js";
 import {
   getCatalogEntry,
+  isRetiredOpenAIModel,
   type ModelCatalogEntry,
   type ReasoningLevel,
 } from "./model-catalog.js";
@@ -49,6 +50,8 @@ export type EffectiveModelSelection = {
   source: ModelSelectionSource;
   modelReasoning: ResolvedModelReasoning;
   storedModelValid: boolean;
+  fallbackFrom?: string;
+  reasoningAdjusted?: boolean;
 };
 
 export type ResolveEffectiveModelSelectionInput = {
@@ -59,6 +62,7 @@ export type ResolveEffectiveModelSelectionInput = {
   serviceDefaultModel: string;
   serviceDefaultReasoning?: ReasoningLevel;
   validateAvailability?: boolean;
+  allowRetiredFallback?: boolean;
 };
 
 const REASONING_LEVELS = new Set<ReasoningLevel>([
@@ -88,6 +92,9 @@ export function resolveModelReasoning(
   requested?: ReasoningLevel | null,
   defaultReasoning: ReasoningLevel = "none",
 ): ResolvedModelReasoning {
+  if (isRetiredOpenAIModel(model)) {
+    throw new InvalidModelSelectionError(model, `Model ${model} has been retired. Select GPT-5.6 or GPT-6 Astra.`);
+  }
   const entry = getCatalogEntry(model);
   const providerModel = providerRegistry.resolveModelAlias(model);
   let providerName: string;
@@ -135,6 +142,21 @@ export function resolveEffectiveModelSelection(
   const validateAvailability = input.validateAvailability ?? true;
   const defaultReasoning = input.serviceDefaultReasoning ?? "low";
 
+  const persisted = normalizeModelId(input.threadModel);
+  const requested = normalizeModelId(input.requestedModel);
+  const fallbackFrom = input.requestedModel !== undefined
+    ? input.allowRetiredFallback && requested && isRetiredOpenAIModel(requested) ? requested : null
+    : persisted && !getCatalogEntry(persisted) && !persisted.startsWith("bud-local:") && !persisted.startsWith("ds4-") ? persisted : null;
+  if (fallbackFrom) {
+    const entry = getCatalogEntry(input.serviceDefaultModel);
+    if (!entry) throw new InvalidModelSelectionError(input.serviceDefaultModel, "The default model is not configured correctly");
+    const effort = parseReasoningLevel(input.requestedModel !== undefined ? input.requestedReasoning : input.threadReasoning);
+    const preserved = effort.kind === "level" && (entry.reasoning.levels as readonly string[]).includes(effort.value) ? effort.value : undefined;
+    const resolved = resolveEffectiveModelSelection({ requestedModel: entry.id, requestedReasoning: preserved,
+      serviceDefaultModel: entry.id, validateAvailability });
+    return { ...resolved, source: "service_default", storedModelValid: false, fallbackFrom,
+      reasoningAdjusted: effort.kind === "level" && preserved === undefined };
+  }
   if (input.requestedModel !== undefined) {
     const requestedModel = normalizeModelId(input.requestedModel);
     if (!requestedModel) {
@@ -161,7 +183,9 @@ export function resolveEffectiveModelSelection(
   const threadModel = normalizeModelId(input.threadModel);
   if (threadModel) {
     const threadReasoning = parseReasoningLevel(input.threadReasoning);
-    const modelReasoning = resolveCandidateOrNull(
+    const modelReasoning = (validateAvailability && getCatalogEntry(threadModel)) || threadModel.startsWith("bud-local:") || threadModel.startsWith("ds4-")
+      ? resolveCandidateOrThrow(threadModel, threadReasoning, defaultReasoning, validateAvailability)
+      : resolveCandidateOrNull(
       threadModel,
       threadReasoning,
       defaultReasoning,

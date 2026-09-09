@@ -38,7 +38,7 @@ test('review renders the full saved definition and execution consequences', () =
   const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal }))
   for (const text of ['Remember a contact', proposal.definition.instruction, 'target-bud', 'selected-model',
     'high reasoning', 'New conversation each time', 'All permitted contact sources', '17 days of history',
-    '5 runs per 24 hours', '60 minutes', 'no automatic fallback', 'initial imports are not processed']) {
+    '5 runs per 24 hours', '60 minutes', 'retired cloud models use the current default', 'initial imports are not processed']) {
     assert.ok(markup.includes(text), `Missing review information: ${text}`)
   }
   assert.doesNotMatch(markup, /checkbox|<form|<script|origin-bud/)
@@ -71,4 +71,17 @@ test('review identifies replacements, first activations and cross-thread destina
   } }))
   assert.match(markup, /This conversation/)
   assert.doesNotMatch(markup, /Another conversation/)
+})
+
+
+test('inherited review shows effective model and retirement warning without stale reasoning', () => {
+  const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: {
+    ...proposal, definition: { ...proposal.definition, model_mode: 'inherit' },
+    model_resolution: { model: 'gpt-6-astra', reasoning_effort: 'medium', source: 'destination_thread', warning: 'gpt-5.5 unavailable — using gpt-6-astra' },
+  } }))
+  assert.match(markup, /Follows conversation\/default model and reasoning/)
+  assert.match(markup, /Currently: gpt-6-astra/)
+  assert.match(markup, /medium reasoning/)
+  assert.match(markup, /gpt-5.5 unavailable/)
+  assert.doesNotMatch(markup, /high reasoning/)
 })

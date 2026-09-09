@@ -131,13 +131,10 @@ function registerTestProviders(t: TestContext) {
   );
   providerRegistry.register(
     createProvider("openai", [
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.4-2026-03-05",
-      "gpt-5.4-mini-2026-03-17",
-      "gpt-5.4-nano-2026-03-17",
-      "gpt-5.5",
     ]),
   );
 
@@ -202,13 +199,10 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
     "claude-opus-4-7",
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.4-nano",
-    "gpt-5.5",
   ]);
 
   const opus47 = payload.models.find((model) => model.id === "claude-opus-4-7");
@@ -238,22 +232,22 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   ]);
   assert.equal(luna.reasoning.default_level, "high");
 
-  const gpt55 = payload.models.find((model) => model.id === "gpt-5.5");
-  assert.ok(gpt55);
-  assert.equal(gpt55.is_default, false);
-  assert.equal(gpt55.capabilities.context_window_tokens, 1_050_000);
-  assert.equal(gpt55.capabilities.usable_context_window_tokens, 272_000);
-  assert.equal(gpt55.capabilities.reserved_output_tokens, 128_000);
-  assert.equal(gpt55.capabilities.usable_input_window_tokens, 272_000);
-  assert.equal(gpt55.capabilities.max_output_tokens, 128_000);
-  assert.deepEqual(gpt55.reasoning.levels.map((level) => level.value), [
-    "none",
+  const astra = payload.models.find((model) => model.id === "gpt-6-astra");
+  assert.ok(astra);
+  assert.equal(astra.is_default, false);
+  assert.equal(astra.capabilities.context_window_tokens, 1_050_000);
+  assert.equal(astra.capabilities.usable_context_window_tokens, 272_000);
+  assert.equal(astra.capabilities.reserved_output_tokens, 128_000);
+  assert.equal(astra.capabilities.usable_input_window_tokens, 272_000);
+  assert.equal(astra.capabilities.max_output_tokens, 128_000);
+  assert.deepEqual(astra.reasoning.levels.map((level) => level.value), [
     "low",
     "medium",
     "high",
     "xhigh",
+    "max",
   ]);
-  assert.equal(gpt55.reasoning.default_level, "low");
+  assert.equal(astra.reasoning.default_level, "medium");
 });
 
 test("GET /api/models includes direct local-dev ds4 model when provider is registered", async (t) => {

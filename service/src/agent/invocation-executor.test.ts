@@ -6,7 +6,7 @@ import { buildAgentEnvironmentSnapshot } from "./environment.js";
 import type { AgentExecutionHooks } from "./execution-lifecycle.js";
 
 const invocation = { id: "inv", turnId: "turn", threadId: "thread", budId: "bud", createdByUserId: "owner",
-  origin: "automation", model: "gpt-5.4", reasoningEffort: "low" } as Invocation;
+  origin: "automation", model: "gpt-5.6-sol", reasoningEffort: "low" } as Invocation;
 const environment = (online: boolean) => buildAgentEnvironmentSnapshot({ budId: "bud", online, lastSeenAt: null });
 
 test("automation waits for its Bud while manual cloud chat remains available offline", async () => {
@@ -114,4 +114,11 @@ test("automation policy defers paused work and rejects revoked authority before 
   revoked = true;
   await assert.rejects(guarded.beforeTool({ type: "tool_call", tool: "contacts_search", callId: "revoked", args: {} }), /data_permission_changed/);
   assert.equal(dispatched, false);
+});
+
+
+test("retired automation model fails explicitly without running or selecting a replacement", async () => {
+  const executor = new ServiceInvocationExecutor({ getEnvironmentForBud: async () => environment(true) } as never,
+    async () => ({ capabilities: {} }), () => true, false, undefined, async () => "ready");
+  await assert.rejects(executor.preflight({ ...invocation, model: "gpt-5.5" }), { code: "invalid_model" });
 });

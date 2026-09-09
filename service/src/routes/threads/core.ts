@@ -146,8 +146,8 @@ export async function registerThreadCoreRoutes(
       .values({
         budId: body.bud_id,
         title: body.title ?? null,
-        modelId: initialSelection.model,
-        reasoningEffort: initialSelection.reasoningEffort,
+        modelId: initialSelection.source === "explicit_request" ? initialSelection.model : null,
+        reasoningEffort: initialSelection.source === "explicit_request" ? initialSelection.reasoningEffort : null,
         createdByUserId: viewer.userId,
       })
       .returning({ threadId: threadTable.threadId });

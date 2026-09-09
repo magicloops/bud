@@ -634,3 +634,5 @@ an explicit empty array suppresses stale runtime tools, and canonical results
 win over older snapshots. Pending `data_request_api_key` rows stay visible;
 settled results collapse into work. `thread-message-state.test.ts` covers recovery,
 deduplication, settlement precedence and empty-array cleanup.
+
+A failed invocation with `outcome_code: invalid_model` displays an actionable model-unavailable message: choose a supported model and update/review any affected automation. Other failure labels remain generic.

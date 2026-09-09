@@ -9,9 +9,10 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   automationProposalTable as proposals, automationBootstrapProposalTable as bootstrapProposals,
   contactSourceTable as sources, dataCollectionEpochTable as epochs, dataInstallationTable as installations } from "../db/schema.js";
 import { resolveEffectiveModelSelection } from "../llm/index.js";
-import { parseBudLocalModelId, registerBudLocalModelsFromCapabilities } from "../llm/local-llm-capabilities.js";
+import { getCatalogEntry } from "../llm/model-catalog.js";
 import { automationDefinitionSchema, automationDraftSchema, automationActivationSchema, automationPauseSchema, automationDeleteSchema,
   parseAutomationInput, AUTOMATION_LIMITS, type AutomationDefinition } from "./automation-contracts.js";
+import { automationModelResolver } from "./automation-model.js";
 import { DataRequestError } from "./contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -49,7 +50,10 @@ export class Automations {
         filter.bud_id ? sql`${definition}->>'bud_id' = ${filter.bud_id}` : undefined,
         filter.thread_id ? sql`${definition}->'target'->>'mode' = 'existing_thread' and ${definition}->'target'->>'thread_id' = ${filter.thread_id}` : undefined))
       .orderBy(desc(rules.id)).limit(AUTOMATION_LIMITS.rules_per_owner);
-    return { context_filter: true, items: rows.map(({ rule, revision }) => ({ ...serializeAutomation(rule),
+    const definitions = rows.flatMap(({ rule, revision }) => [rule.draft, ...(revision ? [revision.definition] : [])]).map(d => parseAutomationInput(automationDefinitionSchema, d));
+    const resolve = await automationModelResolver(this.database, owner, definitions);
+    const project = (d: unknown) => { try { return resolve(parseAutomationInput(automationDefinitionSchema, d)); } catch { return null; } };
+    return { context_filter: true, items: rows.map(({ rule, revision }) => ({ ...serializeAutomation(rule), model_resolution: project(revision?.definition ?? rule.draft), draft_model_resolution: project(rule.draft),
       active: revision ? { revision: revision.revision, definition: revision.definition } : null })) };
   }
 
@@ -60,7 +64,9 @@ export class Automations {
         eq(revisions.revision, rules.activeRevision), eq(revisions.createdByUserId, owner)))
       .where(and(eq(rules.id, id), eq(rules.createdByUserId, owner))).limit(1);
     if (!row) throw new DataRequestError(404, "automation_not_found", "Automation not found");
-    return { ...serializeAutomation(row.rule), active: row.revision ? {
+    const resolve = await automationModelResolver(this.database, owner, [row.rule.draft, ...(row.revision ? [row.revision.definition] : [])].map(d => parseAutomationInput(automationDefinitionSchema, d)));
+    const project = (d: unknown) => { try { return resolve(parseAutomationInput(automationDefinitionSchema, d)); } catch { return null; } };
+    return { ...serializeAutomation(row.rule), model_resolution: project(row.revision?.definition ?? row.rule.draft), draft_model_resolution: project(row.rule.draft), active: row.revision ? {
       revision: row.revision.revision, definition: row.revision.definition,
       grant_version: row.revision.grantVersion, activated_at: row.revision.createdAt,
     } : null };
@@ -88,7 +94,8 @@ export class Automations {
     const invocationIds = page.flatMap(row => row.invocationId ? [row.invocationId] : []);
     const runs = invocationIds.length ? await this.database.select({ id: invocations.id,
       thread_id: invocations.threadId, bud_id: invocations.budId, status: invocations.status,
-      outcome_code: invocations.outcomeCode }).from(invocations)
+      outcome_code: invocations.outcomeCode, model: invocations.model, reasoning_effort: invocations.reasoningEffort, model_resolution: sql`${messages.metadata}->'model_resolution'` }).from(invocations)
+      .leftJoin(messages, and(eq(messages.messageId, invocations.inputMessageId), eq(messages.createdByUserId, owner)))
       .where(and(eq(invocations.createdByUserId, owner), inArray(invocations.id, invocationIds))) : [];
     const byId = new Map(runs.map(run => [run.id, run]));
     return { items: page.map(row => ({ delivery_id: row.id, revision: row.revision,
@@ -112,7 +119,7 @@ export class Automations {
     return row;
   }
 
-  async validateTargetsInTransaction(tx: Transaction, owner: string, definition: AutomationDefinition) {
+  async validateTargetsInTransaction(tx: Transaction, owner: string, definition: AutomationDefinition, allowRetired = false) {
     const [bud] = await tx.select().from(buds).where(and(eq(buds.budId, definition.bud_id), eq(buds.createdByUserId, owner))).limit(1);
     if (!bud) throw new DataRequestError(404, "automation_target_not_found", "Bud not found");
     if (definition.target.mode === "existing_thread") {
@@ -129,13 +136,16 @@ export class Automations {
           isNull(epochs.revokedAt), isNull(installations.revokedAt)));
       if (visible.length !== definition.sources.source_ids.length) throw new DataRequestError(404, "automation_source_not_found", "Source not found or revoked");
     }
-    const local = parseBudLocalModelId(definition.model);
-    if (local?.budId && local.budId !== definition.bud_id) throw new DataRequestError(400, "invalid_automation_model", "Selected model belongs to a different Bud");
-    registerBudLocalModelsFromCapabilities(definition.bud_id, bud.capabilities);
+    if (definition.origin_thread_id) {
+      const [origin] = await tx.select({ id: threads.threadId }).from(threads).where(and(eq(threads.threadId, definition.origin_thread_id), eq(threads.createdByUserId, owner), eq(threads.budId, definition.bud_id))).limit(1);
+      if (!origin) throw new DataRequestError(404, "automation_target_not_found", "Source conversation not found");
+    }
+    const resolve = await automationModelResolver(tx, owner, [definition]);
+    resolve(definition);
+    if (definition.model_mode !== "explicit" || allowRetired) return;
     try {
-      const selected = resolveEffectiveModelSelection({ requestedModel: definition.model,
-        requestedReasoning: definition.reasoning_effort, serviceDefaultModel: definition.model, validateAvailability: false });
-      if (selected.model !== definition.model || selected.reasoningEffort !== definition.reasoning_effort) throw new Error("selection_changed");
+      resolveEffectiveModelSelection({ requestedModel: definition.model, requestedReasoning: definition.reasoning_effort,
+        serviceDefaultModel: definition.model, validateAvailability: false });
     } catch { throw new DataRequestError(400, "invalid_automation_model", "Choose a supported model and reasoning level"); }
   }
 
@@ -145,6 +155,9 @@ export class Automations {
 
   async createInTransaction(tx: Transaction, owner: string, input: unknown, idempotencyKey?: string) {
     const definition = parseAutomationInput(automationDefinitionSchema, input);
+    definition.model_mode ??= definition.model ? "explicit" : "inherit";
+    if (definition.model_mode === "explicit" && !(input as Record<string, unknown>).reasoning_effort)
+      definition.reasoning_effort = getCatalogEntry(definition.model)?.reasoning.defaultLevel ?? "none";
     if (idempotencyKey !== undefined && (!idempotencyKey || idempotencyKey.length > 256))
       throw new DataRequestError(400, "invalid_automation", "A valid creation retry key is required");
     const id = idempotencyKey === undefined ? ulid() : "auto_" + createHash("sha256")
@@ -173,7 +186,11 @@ export class Automations {
       await this.lockOwner(tx, owner);
       const prior = await this.load(tx, owner, id);
       if (prior.version !== value.expected_version) throw conflict();
-      await this.validateTargetsInTransaction(tx, owner, value.definition);
+      const priorDefinition = parseAutomationInput(automationDefinitionSchema, prior.draft);
+      value.definition.origin_thread_id = value.definition.bud_id === priorDefinition.bud_id ? priorDefinition.origin_thread_id ?? null : null;
+      value.definition.model_mode ??= priorDefinition.model_mode ?? "inherit";
+      await this.validateTargetsInTransaction(tx, owner, value.definition,
+        priorDefinition.model_mode === "explicit" && value.definition.model === priorDefinition.model && value.definition.reasoning_effort === priorDefinition.reasoning_effort);
       const [row] = await tx.update(rules).set({ draft: value.definition, version: prior.version + 1,
         updatedByUserId: owner, updatedAt: sql`clock_timestamp()` }).where(eq(rules.id, id)).returning();
       return serializeAutomation(row);
@@ -189,7 +206,7 @@ export class Automations {
     const prior = await this.load(tx, owner, id);
     if (prior.version !== value.expected_version) throw conflict();
     const definition = parseAutomationInput(automationDefinitionSchema, prior.draft);
-    await this.validateTargetsInTransaction(tx, owner, definition);
+    await this.validateTargetsInTransaction(tx, owner, definition, true);
     const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, owner));
     if ((grant?.version ?? 0) !== value.expected_grant_version) throw new DataRequestError(409, "grant_conflict", "Data permissions changed; reload before activating");
     if (!grant || !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)) ||

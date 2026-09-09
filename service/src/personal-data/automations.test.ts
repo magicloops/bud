@@ -33,7 +33,7 @@ test("automation drafts and activation preserve consent, ownership and immutable
   const repo = new Automations(db);
   const grants = new DataGrants(db);
   const definition = { event_type: "contact.added", name: "New contacts", instruction: "Read available evidence.",
-    sources: { source_ids: [] }, bud_id: budIds[0], model: "gpt-5.4", reasoning_effort: "low",
+    sources: { source_ids: [] }, bud_id: budIds[0], model: "gpt-5.6-luna", reasoning_effort: "low",
     target: { mode: "new_thread" }, data_access: { scopes: ["contacts.read"], history_days: 30 },
     latest_start_seconds: 86400, max_invocations_per_day: 100 };
   const code = (expected: string) => (error: unknown) => (error as { code?: string }).code === expected;

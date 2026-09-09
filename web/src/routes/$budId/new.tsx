@@ -48,6 +48,7 @@ function NewThreadView() {
   // the selected model (e.g. Luna defaults to "high"); the pre-load 'low'
   // seed must not stick just because the default model also supports low.
   const reasoningTouchedRef = useRef(false)
+  const modelTouchedRef = useRef(false)
   const [viewMode, setViewMode] = useState<ViewMode>('none')
   // Clicking the already-active viewer tab collapses the viewer.
   const handleViewChange = useCallback((view: ViewMode) => {
@@ -63,6 +64,7 @@ function NewThreadView() {
   const fitAddonRef = useRef<FitAddon | null>(null)
 
   const handleModelChange = (nextModel: string) => {
+    modelTouchedRef.current = true
     setSelectedModel(nextModel)
     setReasoningEffort((current) => normalizeReasoningForModel(models, nextModel, current))
   }
@@ -156,8 +158,8 @@ function NewThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bud_id: budId,
-          model: selectedModel || undefined,
-          reasoning_effort: selectedModel ? reasoningEffort : undefined
+          model: (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined,
+          reasoning_effort: (modelTouchedRef.current || reasoningTouchedRef.current) && selectedModel ? reasoningEffort : undefined
         })
       })
       if (!threadResp.ok) {
@@ -173,8 +175,8 @@ function NewThreadView() {
         body: JSON.stringify({
           text: trimmedMessage,
           client_id: clientId,
-          model: selectedModel || undefined,
-          reasoning_effort: selectedModel ? reasoningEffort : undefined
+          model: (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined,
+          reasoning_effort: (modelTouchedRef.current || reasoningTouchedRef.current) && selectedModel ? reasoningEffort : undefined
         })
       })
       if (!messageResp.ok) {

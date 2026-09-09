@@ -199,6 +199,8 @@ function ThreadView() {
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
+  const explicitSelectionThreadRef = useRef<string | null>(null)
+  useEffect(() => { explicitSelectionThreadRef.current = null }, [threadId])
   const assistantMessageDoneTimerRef = useRef<number | null>(null)
   const cancelAgentTurnRequestedRef = useRef(false)
   const cancelAgentTurnInFlightRef = useRef(false)
@@ -491,6 +493,7 @@ function ThreadView() {
       return
     }
 
+    explicitSelectionThreadRef.current = threadId
     const sequence = persistModelSelectionSeqRef.current + 1
     persistModelSelectionSeqRef.current = sequence
     patchThreadSummary(threadId, {
@@ -989,8 +992,8 @@ function ThreadView() {
         body: JSON.stringify({
           text: trimmedMessage,
           client_id: optimisticId,
-          model: selectedModel || undefined,
-          reasoning_effort: selectedModel ? reasoningEffort : undefined
+          model: explicitSelectionThreadRef.current === threadId ? selectedModel || undefined : undefined,
+          reasoning_effort: explicitSelectionThreadRef.current === threadId && selectedModel ? reasoningEffort : undefined
         })
       })
       if (shouldAbortForUnauthorized(messageResp)) {
@@ -1094,6 +1097,7 @@ function ThreadView() {
               <span>{durableSummary.label}</span>
             </div>
           )}
+          {initialThread.model_warning && explicitSelectionThreadRef.current !== threadId && <p role="status" className="px-4 py-2 text-sm text-amber-700">{initialThread.model_warning}</p>}
           {reviewedInvocation && (
             <form onSubmit={abandonReviewedInvocation} className="space-y-3 border-b px-4 py-3 text-sm" aria-label="Review interrupted run">
               <p>This run was interrupted. Stop run keeps its history and lets queued work proceed. Terminal commands may still be running; stopping the run does not undo their effects.</p>

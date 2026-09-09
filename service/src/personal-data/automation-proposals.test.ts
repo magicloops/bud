@@ -33,12 +33,12 @@ test("automation proposals freeze review, atomically activate once and reject st
   await db.insert(schema.threadTable).values({ threadId: thread, budId: buds[0], createdByUserId: owners[0] });
   const [message] = await db.insert(schema.messageTable).values({ threadId: thread, clientId: randomUUID(), role: "user", content: "Create automation", createdByUserId: owners[0] }).returning();
   await db.insert(schema.agentInvocationTable).values({ id: invocation, turnId: randomUUID(), threadId: thread, budId: buds[0], inputMessageId: message.messageId,
-    origin: "human", idempotencyKey: "fixture", model: "gpt-5.4", reasoningEffort: "low", status: "running", reservesThread: true,
+    origin: "human", idempotencyKey: "fixture", model: "gpt-5.6-luna", reasoningEffort: "low", status: "running", reservesThread: true,
     workerId: "proposal-test", fence: 1, leaseExpiresAt: new Date(Date.now() + 3600_000), createdByUserId: owners[0] });
   const repo = new AutomationProposals(db), automations = new Automations(db), grants = new DataGrants(db);
   await grants.update(owners[0], { version: 0, scopes: ["contacts.read"], history_days: 30 });
   const definition = { event_type: "contact.added", name: "Fixture", instruction: "Read evidence", sources: { source_ids: [] },
-    bud_id: buds[0], model: "gpt-5.4", reasoning_effort: "low", target: { mode: "new_thread" },
+    bud_id: buds[0], model: "gpt-5.6-luna", reasoning_effort: "low", target: { mode: "new_thread" },
     data_access: { scopes: ["contacts.read"], history_days: 30 }, latest_start_seconds: 86400, max_invocations_per_day: 5 };
   const context = { owner: owners[0], invocationId: invocation, workerId: "proposal-test", fence: 1, callId: "first" };
   const code = (expected: string) => (error: unknown) => { assert.ok(error instanceof DataRequestError); assert.equal(error.code, expected); return true; };

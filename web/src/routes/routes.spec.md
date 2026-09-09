@@ -348,3 +348,9 @@ restrained theme-aware controls. Automation inventory accepts `bud_id`,
 provide a return conversation. Older servers lacking `context_filter` show an
 unavailable state instead of an incorrectly unfiltered list. See phase 15 for the
 additive REST contract. No daemon, SSE or database schema change.
+
+Automation model editors now default to Use conversation model / Use default
+model, with explicit picker overrides. Origin is carried from authorized chat
+context. List rows show active resolution and amber warnings; editing/review uses
+the separate draft resolution. History shows the frozen invocation model/warning.
+Changing unrelated settings preserves selection mode; changing Bud clears origin.

@@ -14,10 +14,10 @@ import {
 } from "./context-budget.js";
 
 test("resolveModelContextPolicy defaults usable context and output reserve", () => {
-  const entry = getCatalogEntry("gpt-5.4");
+  const entry = getCatalogEntry("gpt-5.6-sol");
   assert.ok(entry);
 
-  const policy = resolveModelContextPolicy(entry);
+  const policy = resolveModelContextPolicy({ ...entry, capabilities: { ...entry.capabilities, usableContextWindowTokens: undefined, reservedOutputTokens: undefined } });
 
   assert.equal(policy.contextWindowTokens, 1_050_000);
   assert.equal(policy.usableContextWindowTokens, 1_050_000);
@@ -26,15 +26,15 @@ test("resolveModelContextPolicy defaults usable context and output reserve", () 
   assert.equal(policy.invalidReason, null);
 });
 
-test("resolveContextBudget derives GPT-5.5 usable input threshold", () => {
+test("resolveContextBudget derives GPT-5.6 Sol usable input threshold", () => {
   const previousRatio = config.agentAutoCompactionRatio;
   const previousEnabled = config.agentAutoCompactionEnabled;
   config.agentAutoCompactionRatio = 1;
   config.agentAutoCompactionEnabled = true;
   try {
     const selection = resolveEffectiveModelSelection({
-      requestedModel: "gpt-5.5",
-      serviceDefaultModel: "gpt-5.5",
+      requestedModel: "gpt-5.6-sol",
+      serviceDefaultModel: "gpt-5.6-sol",
       validateAvailability: false,
     });
 
@@ -68,7 +68,7 @@ test("resolveContextBudget derives valid ds4 usable input window", () => {
   try {
     const selection = resolveEffectiveModelSelection({
       requestedModel: "ds4-deepseek-v4-flash",
-      serviceDefaultModel: "gpt-5.5",
+      serviceDefaultModel: "gpt-5.6-sol",
       validateAvailability: false,
     });
 
@@ -98,8 +98,8 @@ test("resolveContextBudget honors lower auto-compaction ratio overrides", () => 
   config.agentAutoCompactionEnabled = true;
   try {
     const selection = resolveEffectiveModelSelection({
-      requestedModel: "gpt-5.5",
-      serviceDefaultModel: "gpt-5.5",
+      requestedModel: "gpt-5.6-sol",
+      serviceDefaultModel: "gpt-5.6-sol",
       validateAvailability: false,
     });
 
@@ -127,8 +127,8 @@ test("resolveContextBudget uses usable input window for compaction summary budge
   config.agentAutoCompactionEnabled = true;
   try {
     const selection = resolveEffectiveModelSelection({
-      requestedModel: "gpt-5.5",
-      serviceDefaultModel: "gpt-5.5",
+      requestedModel: "gpt-5.6-sol",
+      serviceDefaultModel: "gpt-5.6-sol",
       validateAvailability: false,
     });
 
@@ -147,7 +147,7 @@ test("resolveContextBudget uses usable input window for compaction summary budge
 });
 
 test("resolveModelContextPolicy returns invalid policy when reserve exceeds the hard window", () => {
-  const entry = getCatalogEntry("gpt-5.4");
+  const entry = getCatalogEntry("gpt-5.6-sol");
   assert.ok(entry);
 
   const policy = resolveModelContextPolicy({
@@ -155,6 +155,7 @@ test("resolveModelContextPolicy returns invalid policy when reserve exceeds the 
     capabilities: {
       ...entry.capabilities,
       contextWindowTokens: 1_000,
+      usableContextWindowTokens: undefined,
       reservedOutputTokens: 2_000,
     },
   });
@@ -167,7 +168,7 @@ test("resolveModelContextPolicy returns invalid policy when reserve exceeds the 
 });
 
 test("resolveModelContextPolicy treats a usable cap below the reserve as a small input window, not an error", () => {
-  const entry = getCatalogEntry("gpt-5.4");
+  const entry = getCatalogEntry("gpt-5.6-sol");
   assert.ok(entry);
   // The reserve binds against the hard window only; a 1K usable cap is a
   // (tiny) valid input budget.
@@ -229,8 +230,10 @@ test("resolveContextBudget gives GPT-5.6 Sol the full 272K usable input window (
 });
 
 test("resolveModelContextPolicy keeps the output reserve binding when the usable window is the hard window", () => {
-  // gpt-5.4-mini: 400K hard, no usable cap, 128K reserve → input must leave room.
-  const policy = resolveModelContextPolicy(getCatalogEntry("gpt-5.4-mini"));
+  // Synthetic uncapped 400K window: input must leave room for output.
+  const entry = getCatalogEntry("gpt-6-astra")!;
+  const policy = resolveModelContextPolicy({ ...entry, capabilities: { ...entry.capabilities,
+    contextWindowTokens: 400_000, usableContextWindowTokens: undefined } });
   assert.equal(policy.usableContextWindowTokens, 400_000);
   assert.equal(policy.usableInputWindowTokens, 272_000);
 });

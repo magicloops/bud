@@ -13,16 +13,6 @@ import { getCatalogEntry, resolveProviderModel, type ProviderId } from "./model-
  * Maps friendly names to specific model versions.
  */
 const MODEL_ALIASES: Record<string, string> = {
-  // OpenAI GPT-5 aliases
-  "gpt-5.2": "gpt-5.2-2025-12-11",
-  "gpt-5-mini": "gpt-5-mini-2025-08-07",
-  "gpt-5-nano": "gpt-5-nano-2025-08-07",
-
-  // Current OpenAI product aliases
-  "gpt-5.4": "gpt-5.4-2026-03-05",
-  "gpt-5.4-mini": "gpt-5.4-mini-2026-03-17",
-  "gpt-5.4-nano": "gpt-5.4-nano-2026-03-17",
-
   // Anthropic official aliases (point to latest dated version)
   "claude-opus-4-5": "claude-opus-4-5-20251101",
   "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",

@@ -1,3 +1,5 @@
+import { DataRequestError } from "./contracts.js";
+import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
@@ -95,21 +97,27 @@ export class AutomationAdmission {
       const usage = await automationUsage(tx, owner, delivery.automationId);
       if (usage.ownerCount >= AUTOMATION_LIMITS.invocations_per_owner_day || usage.ruleCount >= definition.max_invocations_per_day)
         return wait("daily_work_limit");
+      let modelResolution: AutomationModelResolution;
+      try { modelResolution = (await automationModelResolver(tx, owner, [definition]))(definition); }
+      catch (error) {
+        if (error instanceof DataRequestError) return finish("failed", error.code);
+        throw error;
+      }
       let threadId: string;
       if (definition.target.mode === "existing_thread") threadId = definition.target.thread_id;
       else {
         const [thread] = await tx.insert(threads).values({ budId: definition.bud_id, title: definition.name,
-          modelId: definition.model, reasoningEffort: definition.reasoning_effort, createdByUserId: owner }).returning();
+          modelId: modelResolution.model, reasoningEffort: modelResolution.reasoning_effort, createdByUserId: owner }).returning();
         threadId = thread.threadId;
       }
       const admitted = await this.invocations.admitInTransaction(tx, { owner, threadId, origin: "automation",
-        idempotencyKey: "automation-delivery:" + delivery.id, model: definition.model, reasoningEffort: definition.reasoning_effort,
+        idempotencyKey: "automation-delivery:" + delivery.id, model: modelResolution.model, reasoningEffort: modelResolution.reasoning_effort,
         latestStartAt: delivery.latestStartAt,
         text: `Automation: ${definition.name}\n\n${definition.instruction}\n\n` +
           `A contact was newly observed, not necessarily created or met, at ${contact.observedAt.toISOString()}.\n` +
           `Contact ID: ${contact.id}\nContact revision ID: ${contact.revisionId}\n` +
           "Query available evidence now, label location uncertainty, and do not repeat completed actions when evidence is enriched.",
-        metadata: { automation_id: delivery.automationId, automation_revision: delivery.revision,
+        metadata: { model_resolution: modelResolution, automation_id: delivery.automationId, automation_revision: delivery.revision,
           delivery_id: delivery.id, domain_event_id: delivery.domainEventId, contact_id: contact.id,
           contact_revision_id: contact.revisionId, source_id: contact.sourceId, grant_version: grant.version },
       });

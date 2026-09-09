@@ -20,6 +20,25 @@ Bud is a **device-agent platform** enabling AI-assisted terminal access and comm
 
 For full architectural details, see [`bud.spec.md`](./bud.spec.md).
 
+### Development stage and design defaults
+
+Bud is pre-launch software under active development. We control the deployed
+service, web/mobile clients, and daemon machines, including the environment
+called production. Assume coordinated upgrades are feasible; do not assume an
+unmanaged fleet of old clients that must be supported indefinitely.
+
+Prefer the simplest complete implementation for the current product. Breaking
+changes, explicit migrations, model replacements, and coordinated restarts are
+acceptable development strategies. Do not add legacy aliases, compatibility
+flags, dual execution paths, prolonged deprecation periods, or staged rollout
+machinery solely for hypothetical external users. Add compatibility when a
+concrete current dependency needs it, and explain that dependency.
+
+Document affected components and necessary upgrade/migration steps. Development
+status does not waive authentication, ownership, permissions, data integrity,
+or the existing authorization requirements for deployments and destructive
+operations. Revisit this policy before a stable public launch.
+
 ---
 
 ## 1) Spec Documentation System
@@ -274,31 +293,23 @@ Implementation guardrails:
 - When adding a new write path, verify both authorization and owner stamping in the same change.
 - When adding a new read/stream path, add the corresponding multi-user validation item to the auth checklist in `plan/init-auth/validation-checklist.md`.
 
-### 4.7) Service ↔ Daemon Deploy Order Independence
+### 4.7) Coordinated service and client upgrades
 
-The service auto-deploys from `main` on merge; daemons upgrade later (per box,
-via `bud upgrade`) and old daemon versions stay in the field indefinitely. So
-**any change touching the Bud↔Service wire contract or cross-tier behavior
-must be order-independent**: a new service against an old daemon AND an old
-service against a new daemon must both degrade gracefully — never tear down
-connections, corrupt sessions, or mislead the agent. Deviate only when
-explicitly requested, and say so in the PR.
+The service auto-deploys from `main` on merge; daemon and mobile upgrades are
+separate steps. For cross-tier changes, state the required versions, deployment
+order, and any restart or migration in the PR/design doc. Prefer a coordinated
+upgrade when it avoids unnecessary compatibility code. Do not require every
+old/new pairing to work unless a current deployment constraint calls for it.
 
-Ways to achieve it (pick the cheapest that fits):
-- **Capability gate**: the daemon advertises new request-side behavior in
-  `hello.capabilities` (e.g. `terminal_send_auto`); the service sends the new
-  form only when advertised. Required whenever an old daemon would choke on a
-  new request field/value (unknown enum variants fail serde and tear down the
-  connection).
-- **Tolerant result handling**: new daemon→service data (new outcome events,
-  extra fields) rides tolerant schemas (`z.string()` events, optional fields)
-  and unknown values degrade to a safe default on old services.
-- **Service-side implementation**: when the daemon already provides the data,
-  prefer implementing in the service — it ships on merge and works with every
-  deployed daemon (e.g. launch-proof deltas via an extra observe).
+When mixed versions must coexist during the actual rollout, use the smallest
+needed bridge: a capability gate, tolerant response parsing, or a service-side
+implementation. If a pairing is unsupported, identify it and make the failure
+clear; avoid silent misexecution, duplicate actions, or corrupted sessions.
+Remove temporary bridges once the controlled deployment has upgraded.
 
-State the rollout story in the PR/design doc: what each mixed-version pairing
-does, and whether a daemon release/`bud upgrade` is required for full effect.
+Existing capability negotiation remains part of the current protocol; change
+or remove it deliberately with corresponding implementation and documentation
+updates. This policy changes the default design assumption, not deployed code.
 
 ---
 
@@ -489,4 +500,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-09-04*
+*Last updated: 2026-09-09*

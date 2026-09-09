@@ -26,8 +26,10 @@ export const automationDefinitionSchema = z.object({
   instruction: z.string().trim().min(1).max(20_000),
   sources: sourceFilter,
   bud_id: identifier,
-  model: z.string().min(1).max(256),
-  reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  model_mode: z.enum(["inherit", "explicit"]).optional(),
+  origin_thread_id: z.string().uuid().nullable().optional(),
+  model: z.string().max(256).default(""),
+  reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("none"),
   target,
   data_access: z.object({
     scopes: z.array(z.enum(["contacts.read", "location.read"])).min(1).max(2)
@@ -72,7 +74,7 @@ export const automationActivateBootstrapSchema = z.object({
   bootstrap: automationBootstrapSchema,
 }).strict();
 
-export function parseAutomationInput<T>(schema: z.ZodType<T>, input: unknown): T {
+export function parseAutomationInput<T>(schema: z.ZodType<T, z.ZodTypeDef, any>, input: unknown): T {
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new DataRequestError(400, "invalid_automation", "Check the automation settings and required acknowledgements");
   return parsed.data;

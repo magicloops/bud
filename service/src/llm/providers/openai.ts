@@ -2,12 +2,12 @@
  * OpenAI Provider Implementation
  *
  * Implements the LLMProvider interface for OpenAI models,
- * including GPT-5 series with reasoning support.
+ * with reasoning support driven by the product catalog.
  */
 
 import OpenAI from "openai";
 import { ProviderContextWindowError, type LLMProvider } from "../provider.js";
-import { getCatalogEntry } from "../model-catalog.js";
+import { getCatalogEntry, listCatalogEntries } from "../model-catalog.js";
 import type {
   CanonicalMessage,
   CanonicalTool,
@@ -29,22 +29,9 @@ type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai";
-  readonly supportedModels = [
-    // GPT-5.6 family (Sol/Terra/Luna; undated snapshots)
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    // GPT-5.5
-    "gpt-5.5",
-    // GPT-5.4 series
-    "gpt-5.4-2026-03-05",
-    "gpt-5.4-mini-2026-03-17",
-    "gpt-5.4-nano-2026-03-17",
-    // GPT-5 series (with reasoning) - dated versions
-    "gpt-5.2-2025-12-11",
-    "gpt-5-mini-2025-08-07",
-    "gpt-5-nano-2025-08-07",
-  ] as const;
+  readonly supportedModels = listCatalogEntries()
+    .filter((entry) => entry.provider === "openai")
+    .map((entry) => entry.providerModel);
 
   private client: OpenAI;
 
@@ -57,14 +44,14 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   supportsModel(model: string): boolean {
-    return model.startsWith("gpt-");
+    return getCatalogEntry(model)?.provider === "openai";
   }
 
   /**
-   * Check if model is a reasoning model (GPT-5 series).
+   * Check reasoning support in the product catalog.
    */
   private isReasoningModel(model: string): boolean {
-    return model.startsWith("gpt-5");
+    return getCatalogEntry(model)?.reasoning.kind === "openai_reasoning_effort";
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
@@ -148,13 +135,13 @@ export class OpenAIProvider implements LLMProvider {
       tool_choice: this.transformToolChoice(config.toolChoice),
       parallel_tool_calls: false,
       max_output_tokens: config.maxOutputTokens,
-      // GPT-5 series doesn't support temperature/top_p
+      // Omit sampling parameters for catalog reasoning models
       temperature: isReasoning ? undefined : config.temperature,
       top_p: isReasoning ? undefined : config.topP,
       stream: true,
     };
 
-    // Add reasoning configuration for GPT-5 series.
+    // Add reasoning configuration for catalog reasoning models.
     this.applyReasoningConfig(params, config, isReasoning);
 
     // Add JSON response format if requested

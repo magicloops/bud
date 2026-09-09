@@ -307,3 +307,31 @@ See [plan](../../../plan/thread-scoped-automation-authoring.md).
 Evidence is written to owner-scoped conversation history only at first start;
 revocation stops subsequent automated execution/read access, not historical text.
 No schema migration or mobile/daemon change is required.
+
+## Automation model inheritance (September 2026)
+
+This supersedes the earlier copied-model default. `automation-model.ts` resolves
+`model_mode: inherit | explicit` using owner/Bud-scoped source reads. Existing
+thread targets follow their destination; new-thread targets follow the immutable
+`origin_thread_id` in the definition, or the service default. Agent origins come
+from the fenced invocation; updates preserve origin (changing Bud clears it).
+`automation-model.test.ts` covers source changes, retirement/reasoning fallback,
+local-model exclusion, owner isolation, deleted origins and migration replay.
+
+Definitions retain top-level model/reasoning fields; only explicit mode uses
+them as overrides. Agent omission creates inherited policy rather than copying
+the current invocation. Fresh explicit choices are validated; persisted retired
+cloud choices fall back without changing the saved policy. Activation and
+existing-contact reviews permit this documented fallback. Provider outages and
+missing local capabilities are not retirement.
+
+Both admission paths freeze the resolution in input-message
+`metadata.model_resolution` and the existing invocation model/effort columns.
+Dispatch checks snapshot integrity, target and permission, never the source's
+newer model. Bad default configuration fails delivery with
+`default_model_unavailable`. Pre-cutover invocations retain their saved models.
+Lists/details return `model_resolution` for active behavior and
+`draft_model_resolution` separately; review detail resolves the reviewed policy.
+Delivery history returns actual invocation model/effort and its recorded resolution.
+Reads do not change preferences or grants. Migration 0038 marks prior definitions
+inherited; see [implementation plan](../../../plan/automation-model-inheritance-and-fallback.md).

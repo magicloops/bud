@@ -98,7 +98,7 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       messageCount: 4,
       pinned: false,
       archived: false,
-      modelId: "gpt-5.5",
+      modelId: "gpt-5.6-sol",
       reasoningEffort: "low",
       lastAttentionMessageId: "22222222-2222-4222-8222-222222222222",
       lastAttentionMessageCreatedAt: new Date("2026-04-21T20:19:00.000Z"),
@@ -166,11 +166,11 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       message_count: 4,
       pinned: false,
       archived: false,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoning_effort: "low",
-      effective_model: "gpt-5.5",
+      effective_model: "gpt-5.6-sol",
       effective_reasoning_effort: "low",
-      model_selection_source: "thread",
+      model_selection_source: "thread", model_warning: null,
       has_unseen_attention: true,
       last_attention_kind: "assistant_completed",
       has_terminal_session: true,
@@ -191,7 +191,7 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       reasoning_effort: null,
       effective_model: "gpt-5.6-luna",
       effective_reasoning_effort: "high",
-      model_selection_source: "service_default",
+      model_selection_source: "service_default", model_warning: null,
       has_unseen_attention: false,
       last_attention_kind: "assistant_completed",
       has_terminal_session: false,
@@ -272,13 +272,13 @@ test("PATCH /api/threads/:threadId/model-preference persists resolved thread mod
 
   const response = await invokeRoute(handler, {
     params: { threadId: thread.threadId },
-    body: { model: "gpt-5.5", reasoning_effort: null },
+    body: { model: "gpt-5.6-sol", reasoning_effort: null },
     headers: {},
   });
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(updateValues, {
-    modelId: "gpt-5.5",
+    modelId: "gpt-5.6-sol",
     reasoningEffort: "low",
   });
   assert.deepEqual(response.payload, {
@@ -291,11 +291,11 @@ test("PATCH /api/threads/:threadId/model-preference persists resolved thread mod
     message_count: 0,
     pinned: false,
     archived: false,
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     reasoning_effort: "low",
-    effective_model: "gpt-5.5",
+    effective_model: "gpt-5.6-sol",
     effective_reasoning_effort: "low",
-    model_selection_source: "thread",
+    model_selection_source: "thread", model_warning: null,
   });
 });
 

@@ -1,3 +1,4 @@
+import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { and, desc, eq, isNull, lt, lte } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { ulid } from "ulid";
@@ -39,7 +40,9 @@ export class AutomationProposals {
       ? await tx.select({ title: threads.title }).from(threads).where(and(
         eq(threads.threadId, definition.target.thread_id), eq(threads.budId, definition.bud_id),
         eq(threads.createdByUserId, row.createdByUserId), isNull(threads.deletedAt))).limit(1) : [];
-    return { ...serializeAutomationProposal(row), review_operation: prior ? "update" as const : "create" as const,
+    let modelResolution: AutomationModelResolution | null = null;
+    try { if (definition.model_mode) modelResolution = (await automationModelResolver(tx, row.createdByUserId, [definition]))(definition); } catch { /* Unavailable targets retain readable historical reviews. */ }
+    return { ...serializeAutomationProposal(row), model_resolution: modelResolution, review_operation: prior ? "update" as const : "create" as const,
       destination_thread_title: destination?.title ?? null };
   }
 
