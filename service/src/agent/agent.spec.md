@@ -1204,3 +1204,12 @@ stale dispatch rejection and following queued work. `finish` and `recoverExpired
 prioritize a recorded cancellation over unresolved outcomes. `requestCancel`
 also accepts needs-review runs and closes pending approvals in all live states.
 No new schema or daemon protocol is required.
+
+## Thread-scoped automation discovery
+
+`automation-tools.ts` defaults list discovery to the current conversation, with
+explicit `scope: all` for owner-wide management. Guidance treats separate workflows
+sharing a trigger as independent; cross-conversation edits require user direction.
+`invocation-automation-proposal.test.ts` covers omitted/null/thread/all scopes,
+foreign-owner exclusion, destination defaults and invalid authority/arguments.
+See [plan](../../../plan/thread-scoped-automation-authoring.md).

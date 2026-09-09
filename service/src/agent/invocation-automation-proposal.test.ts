@@ -95,6 +95,26 @@ test("automation review parks atomically and resumes the same invocation with on
       assert.deepEqual(await management.mutate(context, "automations_create_draft", input), created);
       await repo.completeAction(first.lease, callId, { message_id: "fixture" });
     }
+    // Isolated schema has no FKs: insert a foreign-owner row that even targets
+    // this thread, ensuring list SQL filters ownership rather than just target.
+    await db.insert(schema.automationTable).values({ id: "foreign-rule", createdByUserId: "foreign-owner", updatedByUserId: "foreign-owner",
+      draft: { ...definition, target: { mode: "existing_thread", thread_id: first.thread } } });
+    await repo.recordAction(first.lease, "list-scope", "automations_list");
+    const listContext = { ...managementContext, callId: "list-scope" };
+    for (const input of [{}, { scope: null }, { scope: "thread" }]) {
+      const result = await management.read(listContext, "automations_list", input);
+      assert.equal(result.scope, "thread");
+      const items = result.items as Array<{ draft: { target: { thread_id?: string } } }>;
+      assert.equal(items.length, 2);
+      assert.ok(items.every(item => item.draft.target.thread_id === first.thread));
+    }
+    const all = await management.read(listContext, "automations_list", { scope: "all" });
+    assert.equal(all.scope, "all");
+    assert.equal((all.items as unknown[]).length, 5);
+    await assert.rejects(management.read(listContext, "automations_list", { scope: "foreign" }), /tool arguments/);
+    await assert.rejects(management.read(listContext, "automations_list", { thread_id: otherThread }), /tool arguments/);
+    await assert.rejects(management.read({ ...listContext, owner: "foreign" }, "automations_list", { scope: "all" }), /no longer owns/);
+    await repo.completeAction(first.lease, "list-scope", { message_id: "fixture" });
     assert.deepEqual((await rules.get(owner, first.input.automation_id)).draft.target, { mode: "new_thread" });
     await repo.recordAction(first.lease, "invalid-reasoning", "automations_create_draft");
     const beforeInvalid = (await rules.list(owner)).items.length;

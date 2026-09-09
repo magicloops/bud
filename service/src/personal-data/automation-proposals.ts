@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, lt, lte } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
-import { automationProposalTable as proposals, automationTable as rules, agentDataGrantTable as grants,
+import { automationProposalTable as proposals, automationTable as rules, automationRevisionTable as revisions, agentDataGrantTable as grants,
   dataOwnerStateTable as owners, agentInvocationTable as invocations, agentInvocationActionTable as actions,
   threadTable as threads, budTable as buds } from "../db/schema.js";
 import { Automations } from "./automations.js";
@@ -28,6 +28,20 @@ export function serializeAutomationProposal(row: Proposal) {
 
 export class AutomationProposals {
   constructor(private readonly database: Database = db, private readonly now = () => new Date()) {}
+
+  private async serialize(tx: Transaction, row: Proposal) {
+    // Historical revisions make this stable after approval and later edits.
+    const [prior] = await tx.select({ revision: revisions.revision }).from(revisions).where(and(
+      eq(revisions.automationId, row.automationId), eq(revisions.createdByUserId, row.createdByUserId),
+      lte(revisions.revision, row.draftVersion))).limit(1);
+    const definition = parseAutomationInput(automationDefinitionSchema, row.definition);
+    const [destination] = definition.target.mode === "existing_thread"
+      ? await tx.select({ title: threads.title }).from(threads).where(and(
+        eq(threads.threadId, definition.target.thread_id), eq(threads.budId, definition.bud_id),
+        eq(threads.createdByUserId, row.createdByUserId), isNull(threads.deletedAt))).limit(1) : [];
+    return { ...serializeAutomationProposal(row), review_operation: prior ? "update" as const : "create" as const,
+      destination_thread_title: destination?.title ?? null };
+  }
 
   private async lockOwner(tx: Transaction, owner: string) {
     await tx.insert(owners).values({ createdByUserId: owner }).onConflictDoNothing();
@@ -66,7 +80,7 @@ export class AutomationProposals {
   async get(owner: string, id: string) {
     return this.database.transaction(async tx => {
       await this.lockOwner(tx, owner);
-      return serializeAutomationProposal(await this.reconcile(tx, await this.load(tx, owner, id)));
+      return this.serialize(tx, await this.reconcile(tx, await this.load(tx, owner, id)));
     });
   }
 
@@ -95,7 +109,7 @@ export class AutomationProposals {
         before ? lt(proposals.id, before) : undefined, query.pending_only ? eq(proposals.status, "pending") : undefined))
         .orderBy(desc(proposals.id)).limit(limit + 1);
       const page = rows.slice(0, limit);
-      return { items: page.map(serializeAutomationProposal), next_cursor: rows.length > limit
+      return { items: await Promise.all(page.map(row => this.serialize(tx, row))), next_cursor: rows.length > limit
         ? Buffer.from(JSON.stringify({ owner, pending: !!query.pending_only, before: page[page.length - 1].id })).toString("base64url") : null };
     });
   }
@@ -155,13 +169,13 @@ export class AutomationProposals {
       const prior = await this.load(tx, owner, id);
       if (prior.decisionIdempotencyKey === value.idempotency_key) {
         if (!isDeepStrictEqual(prior.decisionRequest, value)) throw conflict();
-        return serializeAutomationProposal(prior);
+        return this.serialize(tx, prior);
       }
       if (prior.status !== "pending" || prior.version !== value.expected_version) throw conflict();
       const [used] = await tx.select({ id: proposals.id }).from(proposals).where(and(eq(proposals.createdByUserId, owner), eq(proposals.decisionIdempotencyKey, value.idempotency_key)));
       if (used) throw conflict();
       const current = await this.reconcile(tx, prior);
-      if (current.status !== "pending") return serializeAutomationProposal(current);
+      if (current.status !== "pending") return this.serialize(tx, current);
       let activatedRevision: number | null = null;
       if (value.decision === "approve") {
         try {
@@ -173,13 +187,13 @@ export class AutomationProposals {
           // Known validation errors happen before activation writes. SQL failures
           // must escape so the entire decision/activation transaction rolls back.
           if (!(error instanceof DataRequestError)) throw error;
-          return serializeAutomationProposal(await this.finish(tx, prior, "stale"));
+          return this.serialize(tx, await this.finish(tx, prior, "stale"));
         }
       }
       const [row] = await tx.update(proposals).set({ status: value.decision === "approve" ? "approved" : value.decision === "decline" ? "declined" : "canceled",
         activatedRevision, version: prior.version + 1, decisionRequest: value, decisionIdempotencyKey: value.idempotency_key,
         decidedByUserId: owner, decidedAt: this.now(), updatedAt: this.now() }).where(and(eq(proposals.id, id), eq(proposals.createdByUserId, owner))).returning();
-      return serializeAutomationProposal(row);
+      return this.serialize(tx, row);
     });
   }
 

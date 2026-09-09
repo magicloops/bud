@@ -340,3 +340,18 @@ schemas and tests reject agent-supplied consent or membership and preserve expli
 repeat intent. Repository/storage, tool continuation and both review UIs remain
 to implement; the current manual preview remains advisory and is not evidence of
 this separate agent flow.
+
+## Follow-up: independent workflows per conversation
+
+Implemented [thread-scoped authoring](../thread-scoped-automation-authoring.md):
+agent list defaults to the invoking thread, explicit all remains owner-wide,
+create/update guidance preserves independent workflows, and web/mobile reviews
+identify replacement and destination. Existing saved rules are not rewritten.
+
+API addition: human automation proposal detail/list/decision responses optionally
+include `review_operation: create | update` and `destination_thread_title: string
+| null`. Operation uses prior activated revisions at/before the reviewed draft
+version; it is stable after approval. Title is current owner-scoped display data;
+frozen definition target ID remains the execution authority. Initial tool/state
+snapshots can omit both fields; clients fetch details and fall back neutrally.
+No schema or daemon wire change; old clients ignore additive fields.

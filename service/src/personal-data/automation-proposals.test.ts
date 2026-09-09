@@ -76,6 +76,24 @@ test("automation proposals freeze review, atomically activate once and reject st
   assert.deepEqual(await new AutomationProposals(db).decide(owners[0], pending.proposal_id, decision), approved[0], "restart preserves decision receipt");
   await assert.rejects(repo.decide(owners[0], pending.proposal_id, { ...decision, decision: "decline" }), code("automation_proposal_conflict"));
 
+  assert.equal((await repo.get(owners[0], pending.proposal_id)).review_operation, "create");
+  const destination = randomUUID();
+  await db.insert(schema.threadTable).values({ threadId: destination, budId: buds[0], createdByUserId: owners[0], title: "Other workflow" });
+  await automations.update(owners[0], rule.automation_id, { expected_version: 1,
+    definition: { ...definition, target: { mode: "existing_thread", thread_id: destination } } });
+  const replacement = await repo.request(await intent("replacement"), { automation_id: rule.automation_id, expected_version: 2 });
+  const review = await repo.get(owners[0], replacement.proposal_id);
+  assert.equal(review.review_operation, "update");
+  assert.equal(review.destination_thread_title, "Other workflow");
+  const replaced = await repo.decide(owners[0], replacement.proposal_id, { ...decision, idempotency_key: "replace" });
+  assert.equal(replaced.review_operation, "update");
+  assert.equal((await repo.get(owners[0], pending.proposal_id)).review_operation, "create", "old review keeps its operation after later activations");
+  const fresh = await automations.create(owners[0], definition);
+  await automations.update(owners[0], fresh.automation_id, { expected_version: 0, definition });
+  const editedFresh = await repo.request(await intent("edited-fresh"), { automation_id: fresh.automation_id, expected_version: 1 });
+  assert.equal((await repo.get(owners[0], editedFresh.proposal_id)).review_operation, "create", "draft edits do not imply prior activation");
+  await repo.cancel(owners[0], editedFresh.proposal_id, { expected_version: 0, idempotency_key: "cancel-edited-fresh" });
+
   const race = await make("race");
   const raceResults = await Promise.allSettled([repo.decide(owners[0], race.proposal_id, { ...decision, idempotency_key: "race-approve" }),
     repo.decide(owners[0], race.proposal_id, { ...decision, decision: "decline", idempotency_key: "race-decline" })]);

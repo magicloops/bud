@@ -228,3 +228,10 @@ Components use bud-specific CSS variables:
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+Automation review cards/details now distinguish Create automation from Update
+existing automation using server review_operation metadata, with neutral fallback.
+Replacement approval uses Update. Destination labels say This conversation,
+New conversation each time, or Another conversation with its title (ID fallback).
+Shared presentation helpers live in automation-proposal-summary.tsx; render tests
+cover operation/destination labels and older-service fallback.

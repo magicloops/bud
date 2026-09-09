@@ -49,9 +49,26 @@ test('review preserves an explicit existing thread, selected sources and locatio
     definition: { ...proposal.definition, target: { mode: 'existing_thread', thread_id: 'chosen-thread' },
       sources: { source_ids: ['chosen-source'] }, data_access: { scopes: ['contacts.read', 'location.read'], history_days: 9 } },
   } }))
-  assert.match(markup, /Existing conversation: chosen-thread/)
+  assert.match(markup, /Another conversation: chosen-thread/)
   assert.match(markup, /chosen-source/)
   assert.match(markup, /Contacts and Location at collected precision/)
   assert.match(markup, /9 days of history/)
   assert.doesNotMatch(markup, /All permitted contact sources|New conversation each time/)
+})
+
+
+test('review identifies replacements, first activations and cross-thread destinations', () => {
+  for (const operation of ['create', 'update', undefined] as const) {
+    const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: {
+      ...proposal, review_operation: operation, destination_thread_title: "Adam’s Contacts",
+      definition: { ...proposal.definition, target: { mode: 'existing_thread', thread_id: 'other' } },
+    } }))
+    assert.match(markup, /Another conversation: Adam’s Contacts/)
+    assert.ok(markup.includes(operation === 'update' ? 'Update existing automation' : operation === 'create' ? 'Create automation' : 'Review automation'))
+  }
+  const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: {
+    ...proposal, definition: { ...proposal.definition, target: { mode: 'existing_thread', thread_id: proposal.thread_id } },
+  } }))
+  assert.match(markup, /This conversation/)
+  assert.doesNotMatch(markup, /Another conversation/)
 })

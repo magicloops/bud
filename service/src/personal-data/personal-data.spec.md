@@ -267,3 +267,21 @@ stamped by these reads. Existing clients/daemons require no changes.
 `routes.test.ts` covers auth and strict filter forwarding;
 `automations.test.ts` verifies foreign context rejection and active-target
 selection despite draft edits. Full contract and rollout: [phase 15](../../../plan/personal-data-ingestion-and-agent-triggers/phase-15-data-navigation-and-workspace-style.md).
+
+## Thread-scoped agent authoring
+
+`automation-tool-contracts.ts` accepts optional `scope: thread | all` for listing;
+omission/provider-null defaults to thread. `AutomationManagement` resolves the
+Bud/thread from the live fenced human invocation and reuses `Automations.list`
+SQL owner/active-target filters. Explicit all remains owner-wide; reads recheck
+invocation authority before returning. Results include scope/current_thread_id.
+New-thread-per-run rules are visible through all scope, not attached-thread scope.
+
+Automation proposal detail/list/decision serializers add `review_operation`
+(create/update), derived from immutable revisions at or before draft_version,
+and `destination_thread_title` from an owner/Bud-scoped nondeleted thread lookup.
+Initial tool/snapshot payloads retain their original shape; clients fetch details
+before approval and use neutral wording on older services. Titles are current
+presentation metadata; the frozen definition's target ID remains authoritative.
+No schema, grant or standing-rule mutation is introduced by this feature.
+See [plan](../../../plan/thread-scoped-automation-authoring.md).

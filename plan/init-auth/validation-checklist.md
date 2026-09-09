@@ -241,3 +241,11 @@ remain off until the explicit composition setting is enabled.
 
 Context reads stamp no rows. Inline decisions reuse existing owner-authorized,
 versioned human endpoints and their existing decision/cancellation actors.
+
+## Thread-scoped automation authoring
+- [x] Local PostgreSQL: default/null thread listing excludes other threads and
+  foreign-owner rows, even when a foreign row claims the same destination.
+- [x] Explicit all listing still filters owner; foreign invocation context fails.
+- [x] Proposal detail/decision owner rejection remains covered with added review
+  metadata; title lookup filters owner, Bud and nondeleted destination.
+- [ ] Live two-account review: another user's proposal/title remains inaccessible.

@@ -18,7 +18,7 @@ export class AutomationManagement {
   constructor(private readonly database: Database = db) {}
 
   private async assertReadAuthority(context: AutomationProposalContext, name: Read) {
-    const [row] = await this.database.select({ origin: invocations.origin }).from(invocations)
+    const [row] = await this.database.select({ origin: invocations.origin, threadId: invocations.threadId, budId: invocations.budId }).from(invocations)
       .innerJoin(threads, and(eq(threads.threadId, invocations.threadId), eq(threads.createdByUserId, context.owner), isNull(threads.deletedAt)))
       .innerJoin(buds, and(eq(buds.budId, invocations.budId), eq(buds.createdByUserId, context.owner)))
       .innerJoin(actions, and(eq(actions.invocationId, invocations.id), eq(actions.createdByUserId, context.owner),
@@ -28,14 +28,20 @@ export class AutomationManagement {
         isNull(invocations.cancelRequestedAt), sql`${invocations.leaseExpiresAt} > clock_timestamp()`));
     if (!row) throw new DataRequestError(409, "invocation_unavailable", "Invocation no longer owns this operation");
     if (row.origin !== "human") throw new DataRequestError(403, "automation_management_origin_denied", "Automated runs cannot manage standing work");
+    return row;
   }
 
   async read(context: AutomationProposalContext, name: Read, input: unknown) {
     const args = parseAutomationToolInput(name, input);
-    await this.assertReadAuthority(context, name);
+    const invocation = await this.assertReadAuthority(context, name);
     const automations = new Automations(this.database);
     let result: Record<string, unknown>;
-    if (name === "automations_list") result = await automations.list(context.owner);
+    if (name === "automations_list") {
+      const scope = parseAutomationToolInput(name, args).scope ?? "thread";
+      result = { ...await automations.list(context.owner, scope === "all" ? {} : {
+        bud_id: invocation.budId, thread_id: invocation.threadId,
+      }), scope, current_thread_id: invocation.threadId };
+    }
     else if (name === "automations_get") {
       const value = parseAutomationToolInput(name, args);
       result = await automations.get(context.owner, value.automation_id);
