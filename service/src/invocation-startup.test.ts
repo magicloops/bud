@@ -6,33 +6,19 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import { acquireInvocationMode, readInvocationSettings, verifyAutomationProposalSchema, verifyBootstrapProposalSchema } from "./invocation-startup.js";
 
-test("admission settings reject ambiguous modes and invalid capacity", () => {
-  assert.deepEqual(readInvocationSettings({}), { mode: "legacy", automationConcurrencyPerBud: 1, automationsEnabled: false, appKeysEnabled: false, automationProposalsEnabled: false, bootstrapProposalsEnabled: false });
-  assert.throws(() => readInvocationSettings({ APP_DATA_KEYS_ENABLED: "1" }), /app_data_keys_require_durable/);
-  assert.throws(() => readInvocationSettings({ APP_DATA_KEYS_ENABLED: "true" }), /invalid_app_data_keys_enabled/);
-  assert.equal(readInvocationSettings({ AGENT_INVOCATION_MODE: "durable", APP_DATA_KEYS_ENABLED: "1" }).appKeysEnabled, true);
-  assert.equal(readInvocationSettings({ AGENT_INVOCATION_MODE: "durable" }).mode, "durable");
-  assert.throws(() => readInvocationSettings({ AGENT_INVOCATION_MODE: "yes" }), /invalid_agent_invocation_mode/);
-  assert.throws(() => readInvocationSettings({ AUTOMATIONS_ENABLED: "1" }), /require_durable/);
-  assert.throws(() => readInvocationSettings({ AUTOMATIONS_ENABLED: "true" }), /invalid_automations_enabled/);
-  assert.equal(readInvocationSettings({ AGENT_INVOCATION_MODE: "durable", AUTOMATIONS_ENABLED: "1" }).automationsEnabled, true);
+test("durable capabilities require no rollout configuration", () => {
+  const expected = { mode: "durable", automationConcurrencyPerBud: 1,
+    automationsEnabled: true, appKeysEnabled: true, automationProposalsEnabled: true,
+    bootstrapProposalsEnabled: true };
+  assert.deepEqual(readInvocationSettings({}), expected);
+  assert.deepEqual(readInvocationSettings({ AGENT_INVOCATION_MODE: "legacy",
+    AUTOMATIONS_ENABLED: "0", APP_DATA_KEYS_ENABLED: "0",
+    AUTOMATION_PROPOSALS_ENABLED: "0", AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED: "0" }), expected);
+  assert.deepEqual(readInvocationSettings({ AGENT_AUTOMATION_CONCURRENCY_PER_BUD: "4" }),
+    { ...expected, automationConcurrencyPerBud: 4 });
   for (const cap of ["0", "33", "1.5", "oops", ""]) {
     assert.throws(() => readInvocationSettings({ AGENT_AUTOMATION_CONCURRENCY_PER_BUD: cap }), /invalid_automation_concurrency/);
   }
-});
-
-test("proposal defaults follow automation admission and preserve explicit overrides", () => {
-  for (const value of ["true", "", "yes", "2"]) {
-    assert.throws(() => readInvocationSettings({ AUTOMATION_PROPOSALS_ENABLED: value }), /invalid_automation_proposals_enabled/);
-  }
-  for (const mode of ["legacy", "durable"]) {
-    assert.throws(() => readInvocationSettings({ AGENT_INVOCATION_MODE: mode,
-      AUTOMATION_PROPOSALS_ENABLED: "1" }), /automation_proposals_require_enabled_durable_automations/);
-  }
-  const base = { AGENT_INVOCATION_MODE: "durable", AUTOMATIONS_ENABLED: "1" };
-  assert.equal(readInvocationSettings(base).automationProposalsEnabled, true);
-  assert.equal(readInvocationSettings({ ...base, AUTOMATION_PROPOSALS_ENABLED: "1" }).automationProposalsEnabled, true);
-  assert.equal(readInvocationSettings({ ...base, AUTOMATION_PROPOSALS_ENABLED: "0" }).automationProposalsEnabled, false);
 });
 
 test("proposal readiness rejects missing and partial schema and accepts migration 0033 columns", {
@@ -206,17 +192,6 @@ test("database guard permits same-mode replicas and rejects unsafe cutovers", {
 });
 
 
-test("existing-contact review defaults follow proposals and validate explicit overrides", () => {
-  const base = { AGENT_INVOCATION_MODE: "durable", AUTOMATIONS_ENABLED: "1", AUTOMATION_PROPOSALS_ENABLED: "1" };
-  assert.equal(readInvocationSettings(base).bootstrapProposalsEnabled, true);
-  assert.equal(readInvocationSettings({ ...base, AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED: "1" }).bootstrapProposalsEnabled, true);
-  for (const value of ["true", "", "2"]) assert.throws(() => readInvocationSettings({ ...base,
-    AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED: value }), /invalid_existing_contact_reviews_enabled/);
-  for (const settings of [{}, { AGENT_INVOCATION_MODE: "durable" }, { AGENT_INVOCATION_MODE: "durable", AUTOMATIONS_ENABLED: "1", AUTOMATION_PROPOSALS_ENABLED: "0" }]) {
-    assert.throws(() => readInvocationSettings({ ...settings, AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED: "1" }), /existing_contact_reviews_require/);
-  }
-});
-
 test("bootstrap readiness requires complete proposal and membership schema", {
   skip: process.env.BUD_DATA_DB_TEST !== "1",
 }, async () => {
@@ -245,20 +220,4 @@ test("bootstrap readiness requires complete proposal and membership schema", {
     await admin.query(`drop schema if exists ${schema} cascade`);
     await admin.end();
   }
-});
-
-
-test("rolled-out capabilities need no opt-in variables and remain independently disableable", () => {
-  const base = { AGENT_INVOCATION_MODE: "durable", AUTOMATIONS_ENABLED: "1" };
-  assert.deepEqual(readInvocationSettings(base), { mode: "durable", automationConcurrencyPerBud: 1,
-    automationsEnabled: true, appKeysEnabled: true, automationProposalsEnabled: true, bootstrapProposalsEnabled: true });
-  const keysOnly = readInvocationSettings({ AGENT_INVOCATION_MODE: "durable" });
-  assert.equal(keysOnly.appKeysEnabled, true);
-  assert.equal(keysOnly.automationProposalsEnabled, false);
-  assert.equal(keysOnly.bootstrapProposalsEnabled, false);
-  assert.equal(readInvocationSettings({ ...base, APP_DATA_KEYS_ENABLED: "0" }).appKeysEnabled, false);
-  assert.equal(readInvocationSettings({ ...base, AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED: "0" }).bootstrapProposalsEnabled, false);
-  const noProposals = readInvocationSettings({ ...base, AUTOMATION_PROPOSALS_ENABLED: "0" });
-  assert.equal(noProposals.automationProposalsEnabled, false);
-  assert.equal(noProposals.bootstrapProposalsEnabled, false);
 });
