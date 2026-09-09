@@ -322,10 +322,10 @@ See [src/config.ts](./src/src.spec.md) for complete list.
 
 *Parent spec: [../bud.spec.md](../bud.spec.md)*
 
-Development automation scheduling is wired behind `AUTOMATIONS_ENABLED=1` together with `AGENT_INVOCATION_MODE=durable`; both remain off/default legacy unless configured. All replicas should use the same settings. Matching and live/bootstrap admission poll bounded durable work, while invocation workers retain exact-model availability and action fencing. Shutdown drains admission first. Current tests validate lifecycle and PostgreSQL publication-to-admission; live model/client/recovery gates remain open.
-
-App data keys default on in durable mode; agent automation proposals default on
-with automation scheduling, and existing-contact reviews default to proposal
-enablement. Their three former opt-in variables may be omitted; explicit `=0`
-remains available for rollback. Existing human approval and ownership checks are
-unchanged. See `src/invocation-startup.ts` and its settings tests.
+Durable invocations, automation scheduling, app-key requests, automation proposals
+and existing-contact reviews are standard service behavior. Their former rollout
+environment variables are ignored. AGENT_AUTOMATION_CONCURRENCY_PER_BUD remains
+configurable (default 1). User approvals, ownership, schema checks and durable
+recovery remain enforced. Stop legacy service processes before cutover; admission
+mode guards reject conflicting processes or unresolved legacy questions.
+See [rollout plan](../plan/rolled-out-capability-defaults.md).

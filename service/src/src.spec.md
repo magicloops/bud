@@ -32,7 +32,7 @@ Application entry point and thin Fastify composition root.
 - Mount the encapsulated personal-data `/v1/events/batches` and `/api/data/status` routes
 - Mount authenticated device-install-claim issuance/read endpoints used by one-command Bud setup
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
-- Select startup-only `AGENT_INVOCATION_MODE` (`legacy` default or `durable`). Durable mode shares one InvocationRepository between routes and the worker, with `AGENT_AUTOMATION_CONCURRENCY_PER_BUD` (1–32, default 1).
+- Always start durable invocation mode; retired rollout environment variables are ignored. Durable mode shares one InvocationRepository between routes and the worker, with `AGENT_AUTOMATION_CONCURRENCY_PER_BUD` (1–32, default 1).
 - Acquire the schema-scoped database admission-mode guard on readiness before starting the durable worker. Stop/await the worker before gateway/pool shutdown; lease interruption rejects pending terminal waits without claiming terminal commands were stopped.
 - Explicitly await the personal-data processor's stop handle before database shutdown. Background drains also run at `preClose`; composition-owned ordering protects against Fastify plugin boot/close-hook ordering.
 - Start the push-notification outbox worker when APNs credentials are configured
@@ -414,43 +414,19 @@ POST /api/device-auth/flows/:flowId/approve
 
 *Referenced by: [../service.spec.md](../service.spec.md)*
 
-## Optional automation polling
+## Standard automation capabilities
 
-`APP_DATA_KEYS_ENABLED=0|1` (defaults on in durable mode) independently enables app permission
-issuance and requires durable admission. The composition root passes the same
-setting to the agent tool catalog, human approval routes and `features.app_keys`.
-Readiness checks the request/key schema before workers start. Disabling issuance
-preserves inventory, decline/revoke, installed-key reads and pending continuation
-recovery. Enable locally with `AGENT_INVOCATION_MODE=durable APP_DATA_KEYS_ENABLED=1`;
-the normal mixed-version daemon contract does not change.
+Durable invocations, automation scheduling, app-key requests, agent automation
+proposals and existing-contact reviews are always enabled by readInvocationSettings.
+The five former rollout variables (AGENT_INVOCATION_MODE, AUTOMATIONS_ENABLED,
+APP_DATA_KEYS_ENABLED, AUTOMATION_PROPOSALS_ENABLED and
+AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED) are no longer read. Stale overrides
+cannot hide tools. AGENT_AUTOMATION_CONCURRENCY_PER_BUD remains configurable.
 
-`readInvocationSettings` accepts strict `AUTOMATIONS_ENABLED=0|1` (default 0), requiring `AGENT_INVOCATION_MODE=durable` when enabled. Server readiness checks bootstrap group schema, then starts the bounded automation worker and durable invocation executor. The same setting exposes activation capability to both clients. Pre-close and final-close drain automation admission before the invocation worker and database pools. No environment was changed or production rollout performed. Full recovery/client validation remains required before enabling an integrated environment.
-
-`AUTOMATION_PROPOSALS_ENABLED=0|1` (defaults on when automations are enabled) controls agent-managed
-drafts/reviews. It requires durable mode and `AUTOMATIONS_ENABLED=1`. The composition
-root passes this single setting to AgentService and personal-data routes, keeping
-the tool catalog, human approval and `features.automation_proposals` aligned.
-`verifyAutomationProposalSchema` checks migration 0033 columns before automation
-or invocation workers start; missing/partial schema fails readiness. Disabling
-the setting preserves review reads, decline/cancel, expiry and continuation recovery.
-Startup tests cover strict settings and missing/partial/migrated PostgreSQL schemas.
-This wiring does not change the environment or require a daemon release; live
-cross-client acceptance remains required before rollout.
-
-`AUTOMATION_EXISTING_CONTACT_REVIEWS_ENABLED=0|1` (defaults to proposal enablement) controls
-the separate agent-requested existing-contact review. It requires
-`AUTOMATION_PROPOSALS_ENABLED=1` and therefore enabled durable automations. Server
-composition passes one setting to the agent catalog and human routes/capability.
-All durable boots now check both 0033 activation and 0034 bootstrap proposal
-columns before starting automation/invocation workers, even with issuance off:
-claim and thread-state recovery still reference those tables. The bootstrap check
-also verifies the ordered membership columns. Isolated PostgreSQL readiness tests
-cover absent, partial and generated migration schemas. No environment or running
-service was changed by this wiring.
-
-The three rolled-out capabilities no longer require explicit `=1` settings.
-Keep `AGENT_INVOCATION_MODE=durable` and `AUTOMATIONS_ENABLED=1` to enable the
-complete flow. Explicit `=0` remains an operational override; disabling proposals
-also disables existing-contact reviews by default. Explicit incompatible `=1`
-settings still fail startup. Legacy mode retains its existing default behavior.
-User consent, review, ownership and schema readiness checks remain enforced.
+Composition passes the same enabled capabilities to tools, routes and status.
+Readiness verifies invocation, app-key and proposal schemas, including migrations
+0033/0034, before starting workers. Shutdown drains admission before execution
+and database pools. Human review and ownership checks remain enforced.
+Database admission locks still reject overlapping legacy processes and unresolved
+legacy questions on cutover; removing feature flags does not bypass data integrity.
+See [rollout plan](../../plan/rolled-out-capability-defaults.md).
