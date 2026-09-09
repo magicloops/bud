@@ -417,6 +417,8 @@ export type ApiAutomationDefinition = {
 }
 
 export type ApiAutomationProposal = {
+  review_operation?: 'create' | 'update'
+  destination_thread_title?: string | null
   proposal_id: string
   automation_id: string
   invocation_id: string

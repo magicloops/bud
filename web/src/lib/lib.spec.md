@@ -423,3 +423,7 @@ describe the separate existing-contact review, including frozen member/group
 counts, selection and resulting bootstrap receipt. They omit activation-only
 fields. Optional `ApiAgentState.pending_bootstrap_requests` supports cold recovery;
 an explicit empty array clears that review kind independently of activation.
+
+`ApiAutomationProposal` accepts additive optional `review_operation` (create/update)
+and nullable `destination_thread_title` for explicit replacement/destination review.
+Older service/snapshot payloads remain valid.

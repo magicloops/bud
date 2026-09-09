@@ -6,7 +6,7 @@ import { automationBootstrapReviewRequestSchema } from "./automation-bootstrap-r
 
 const identifier = z.string().min(1).max(128);
 export const AUTOMATION_TOOL_SCHEMAS = {
-  automations_list: z.object({}).strict(),
+  automations_list: z.object({ scope: z.enum(["thread", "all"]).optional() }).strict(),
   automations_get: z.object({ automation_id: identifier }).strict(),
   automations_history: z.object({ automation_id: identifier,
     limit: z.number().int().min(1).max(100).optional(), cursor: z.string().max(2048).optional() }).strict(),
