@@ -14,7 +14,7 @@ function fixture() {
     calls.push({ method, args }); afterRead?.(); return { items: [], next_cursor: null };
   };
   type Dependencies = ConstructorParameters<typeof AgentDataQueries>;
-  const contacts = { list: query("search"), get: query("contact"), history: query("history") } as unknown as Dependencies[0];
+  const contacts = { list: query("search"), get: query("contact"), getRevision: query("revision"), history: query("history") } as unknown as Dependencies[0];
   const locations = { list: query("timeline"), contactContext: query("context") } as unknown as Dependencies[1];
   const grants = { require: async (_owner: string, required: DataScope[]) => {
     if (!required.every(s => scopes.includes(s))) throw new DataRequestError(403, "data_permission_required", "Permission required");
@@ -107,4 +107,18 @@ test("removing field permission during a read withholds the result", async () =>
   await assert.rejects(f.adapter.execute("alice", "contacts_history", { contact_id: "contact" }),
     (error: unknown) => error instanceof DataRequestError && error.code === "grant_changed");
   assert.equal(f.calls.length, 1);
+});
+
+
+test("exact lookup uses contact/revision IDs and preserves field, history and revocation policy", async () => {
+  const f = fixture();
+  await f.adapter.execute("alice", "contacts_get", { contact_id: "contact", revision_id: "revision" });
+  assert.equal(f.calls[0].method, "revision");
+  assert.deepEqual(f.calls[0].args.slice(0, 3), ["alice", "contact", "revision"]);
+  await f.adapter.execute("alice", "contacts_get", { contact_id: "contact", revision_id: null });
+  assert.equal(f.calls[1].method, "contact");
+  await assert.rejects(f.adapter.execute("alice", "contacts_get", { contact_id: "contact", owner: "bob" }));
+  f.changeDuringRead();
+  await assert.rejects(f.adapter.execute("alice", "contacts_get", { contact_id: "contact", revision_id: "revision" }),
+    (error: unknown) => error instanceof DataRequestError && error.code === "grant_changed");
 });

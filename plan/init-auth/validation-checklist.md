@@ -249,3 +249,11 @@ versioned human endpoints and their existing decision/cancellation actors.
 - [x] Proposal detail/decision owner rejection remains covered with added review
   metadata; title lookup filters owner, Bud and nondeleted destination.
 - [ ] Live two-account review: another user's proposal/title remains inaccessible.
+
+## Contact trigger evidence
+- [x] Exact revision lookup rejects foreign owners and mismatched contact IDs.
+- [x] Exact revision fields and history are filtered by server-owned permission.
+- [x] First start rejects revoked Contacts permission before publishing evidence.
+- [x] Query-time permission changes withhold contacts_get results.
+- [ ] Live two-account validation: trigger evidence and resulting transcript are
+  visible only to the owning user; data revocation prevents subsequent starts.

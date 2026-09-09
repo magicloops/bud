@@ -23,7 +23,7 @@ const queryResult: Awaited<ReturnType<AgentDataQueries["execute"]>> = {
 test("personal-data tools remain available offline and normalize optional null arguments", () => {
   const environment = buildAgentEnvironmentSnapshot({ budId: "bud", online: false, lastSeenAt: null });
   const names = resolveAgentToolsForEnvironment(environment).map(t => t.name);
-  for (const name of ["contacts_search", "contacts_history", "location_context", "timeline_query"]) assert.ok(names.includes(name));
+  for (const name of ["contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query"]) assert.ok(names.includes(name));
   assert.ok(!names.includes("terminal_send"));
   const runner = new AgentModelRunner({} as never, logger as never, false, false);
   const parsed = runner.extractToolCalls({ id: "response", content: [], stopReason: "tool_use", toolCalls: [
@@ -170,4 +170,17 @@ test("cancellation during final ownership validation withholds queried data", as
   }, async () => undefined);
   await assert.rejects(executor.execute("owned", directive, "alice", controller.signal), { name: "AbortError" });
   assert.equal(checks, 2);
+});
+
+
+test("exact contact lookup survives model extraction and stored transcript replay", () => {
+  const runner = new AgentModelRunner({} as never, logger as never, false, false);
+  const input = { contact_id: "contact", revision_id: "revision" };
+  const calls = runner.extractToolCalls({ id: "r", content: [], stopReason: "tool_use",
+    toolCalls: [{ name: "contacts_get", id: "exact", input }] });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(buildToolArgs(calls[0]), input);
+  const loader = new AgentConversationLoader();
+  const parse = Reflect.get(loader, "parseStoredToolDirective").bind(loader);
+  assert.deepEqual(parse(JSON.stringify({ tool: "contacts_get", call_id: "exact", args: input })), calls[0]);
 });

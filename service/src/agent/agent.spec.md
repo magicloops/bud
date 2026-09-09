@@ -1213,3 +1213,15 @@ sharing a trigger as independent; cross-conversation edits require user directio
 `invocation-automation-proposal.test.ts` covers omitted/null/thread/all scopes,
 foreign-owner exclusion, destination defaults and invalid authority/arguments.
 See [plan](../../../plan/thread-scoped-automation-authoring.md).
+
+## Contact evidence at automation start
+
+`InvocationRepository.start` attaches permission-filtered exact contact revisions
+before setting model_context_at, under the existing owner/lease locks and policy
+check. It preserves original automation admission text in server-written metadata
+for idempotent admission retries. Continuations retain already-visible evidence;
+queued work receives no copied contact fields before first start.
+`personal-data-tools.ts`, `contracts.ts`, `model-runner.ts` and
+`conversation-loader.ts` register, dispatch and replay contacts_get; text search
+explicitly excludes ID lookup. Personal-data renderers use the existing payload
+kind. See [phase 18](../../../plan/personal-data-ingestion-and-agent-triggers/phase-18-contact-trigger-evidence.md).

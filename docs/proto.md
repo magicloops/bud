@@ -2748,3 +2748,15 @@ Each contains `proposal_id`, `turn_id`, `client_id`, `call_id`, `created_at` and
 public `proposal`. Thread authorization occurs before any repository read.
 An empty array is authoritative; absence supports older-service compatibility.
 This field is independent of process-local `pending_tool` and issuance gating.
+
+### Automation contact evidence metadata
+
+At the first durable automation start, the existing owner-scoped input message
+receives a labeled untrusted JSON contact-evidence block before model_context_at
+becomes visible. Additive message metadata `contact_evidence_version: 1` identifies
+this input; `automation_admission_text` preserves the original service-generated
+input for admission retry comparison. Existing message IDs/owner stamps and event
+shapes remain unchanged. No daemon frame or new SSE event is introduced. Evidence
+uses the exact delivery/bootstrap revisions filtered by current granted fields and
+approved history; it is not an unfiltered iOS payload. See
+`plan/personal-data-ingestion-and-agent-triggers/phase-18-contact-trigger-evidence.md`.

@@ -20,7 +20,7 @@ function permittedFields(column: SQLWrapper, policy?: ContactReadPolicy) {
 }
 
 export class ContactQueries {
-  constructor(private readonly database: Database = db) {}
+  constructor(private readonly database: Pick<Database, "select"> = db) {}
 
   async list(owner: string, query: { search?: string; limit?: number; cursor?: string; visibility?: string }, policy?: ContactReadPolicy) {
     const limit = this.limit(query.limit);
@@ -46,6 +46,18 @@ export class ContactQueries {
     const [row] = await this.database.select({ ...getTableColumns(contacts), fields: permittedFields(contacts.fields, policy) }).from(contacts).where(and(eq(contacts.createdByUserId, owner), eq(contacts.id, id), policy ? gte(contacts.observedAt, policy.observedSince) : undefined));
     if (!row) throw new DataRequestError(404, "not_found", "Contact not found");
     return this.present(row);
+  }
+
+  async getRevision(owner: string, id: string, revisionId: string, policy?: ContactReadPolicy) {
+    const [row] = await this.database.select({ id: contacts.id, revision_id: revisions.id,
+      source_id: contacts.sourceId, fields: permittedFields(revisions.fields, policy),
+      visible: revisions.visible, observed_at: revisions.observedAt, generation: scans.generation })
+      .from(revisions).innerJoin(contacts, and(eq(contacts.id, revisions.contactId), eq(contacts.createdByUserId, owner)))
+      .innerJoin(scans, and(eq(scans.id, revisions.scanId), eq(scans.createdByUserId, owner)))
+      .where(and(eq(revisions.createdByUserId, owner), eq(revisions.contactId, id), eq(revisions.id, revisionId),
+        policy ? gte(revisions.observedAt, policy.observedSince) : undefined)).limit(1);
+    if (!row) throw new DataRequestError(404, "not_found", "Contact revision not found");
+    return { ...row, time_basis: "observed", creation_time_known: false };
   }
 
   async history(owner: string, id: string, query: { limit?: number; cursor?: string }, policy?: ContactReadPolicy) {

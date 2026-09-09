@@ -126,3 +126,17 @@ Writes use the same disabled-by-default activation capability and authorize the 
 Default prior-work exclusion follows pending/admitted group state, including admitted groups inside canceled requests. Canceling a receipt never implicitly authorizes repeating already-dispatched work; explicit rerun consent is still required. Mobile now implements preview, approval, stable retry, history, progress and cancellation against these APIs; simulator build passes, with tests and live interaction validation tracked separately.
 
 Development composition can enable activation and scheduled processing with `AUTOMATIONS_ENABLED=1` plus `AGENT_INVOCATION_MODE=durable`; invalid/legacy combinations fail startup. Defaults are unchanged, and no environment was enabled by this implementation. `features.automations` and `features.automation_activation` follow this setting. All replicas must use consistent configuration; mixed legacy/durable mode remains blocked by the startup guard. Full integration validation is still pending.
+
+## Agent exact lookup and trigger inputs (phase 18)
+
+`contacts_get` is an agent tool with required `contact_id` and optional
+`revision_id` (null/omitted selects current). An explicit revision must belong to
+that contact and owner, and fall within approved history. Returns the permitted
+fields through the normal `{ data, permission, interpretation }` tool envelope.
+Revision responses include `id` (contact), `revision_id`, `source_id`, `fields`,
+`visible`, `observed_at`, `generation`, `time_basis: observed` and
+`creation_time_known: false`. This adds no app-key/browser endpoint.
+
+Automation inputs receive the approved triggering revisions at first start;
+see [phase 18](phase-18-contact-trigger-evidence.md) for bounds, ownership,
+transcript retention semantics and continuation behavior.

@@ -356,7 +356,7 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
   );
 
   assert.deepEqual(capturedTools.map((tool) => tool.name), [
-    "contacts_search", "contacts_history", "location_context", "timeline_query", "ask_user_questions",
+    "contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query", "ask_user_questions",
   ]);
 });
 
