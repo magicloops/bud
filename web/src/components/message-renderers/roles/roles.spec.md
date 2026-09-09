@@ -98,3 +98,7 @@ Pure helper seam for the Markdown renderer's file-open affordances.
 ---
 
 *Referenced by: [../message-renderers.spec.md](../message-renderers.spec.md)*
+
+### `proxy-link.tsx`, `proxy-link-resolution.ts`
+
+Markdown HTTP(S) link clicks reserve a browser tab, resolve the clicked hostname through the authenticated API, and mint a viewer grant for the exact encoded path/query/fragment when owned. No dependency on the current Bud or attachment; old aliases remain usable. Only a resolver 404 falls back to the original external link; other errors display inline. The resolver sends only the hostname; it does not send external page paths. `proxy-link-resolution.test.ts` covers old links, path preservation, external fallback and grant failures. Context-menu copy/open uses the original clean URL and requires an existing viewer cookie when opened outside Bud.

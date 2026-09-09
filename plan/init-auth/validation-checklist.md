@@ -257,3 +257,8 @@ versioned human endpoints and their existing decision/cancellation actors.
 - [x] Query-time permission changes withhold contacts_get results.
 - [ ] Live two-account validation: trigger evidence and resulting transcript are
   visible only to the owning user; data revocation prevents subsequent starts.
+
+### Proxy hostname resolution
+
+- [ ] Verify `/api/proxied-sites/resolve?endpoint_host=...` returns 401 without auth, 404 for another owner's or missing site, and metadata only for the owner (including another owned Bud).
+- [ ] Open historical proxy links on web/mobile without changing the current thread attachment; grant ownership and disabled/expired enforcement remain intact.

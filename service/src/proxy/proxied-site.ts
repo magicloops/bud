@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { config } from "../config.js";
@@ -83,7 +83,7 @@ export function normalizeProxiedSiteTargetHost(host: string): string {
 
 export function normalizeProxiedSitePath(path: string | undefined): string {
   const value = (path ?? "/").trim() || "/";
-  if (!value.startsWith("/")) {
+  if (!value.startsWith("/") || value.startsWith("//") || /[\\\r\n\t]/.test(value)) {
     throw new ProxiedSiteValidationError(
       "invalid_proxy_path",
       "Proxy path must start with /",
@@ -242,11 +242,11 @@ export async function createOrReuseProxiedSite(args: {
           eq(proxiedSiteTable.createdByUserId, args.viewer.userId),
           eq(proxiedSiteTable.targetHost, targetHost),
           eq(proxiedSiteTable.targetPort, args.body.target_port),
-          eq(proxiedSiteTable.defaultPath, defaultPath),
           eq(proxiedSiteTable.accessPolicy, PROXIED_SITE_PRIVATE_OWNER),
           eq(proxiedSiteTable.enabled, true),
         ),
       )
+      .orderBy(asc(proxiedSiteTable.createdAt), asc(proxiedSiteTable.proxiedSiteId))
       .limit(1);
 
     if (existing) {
@@ -331,6 +331,22 @@ export async function getAuthorizedProxiedSite(
     )
     .limit(1);
   return row ?? null;
+}
+
+/** Exact owner-scoped lookup; never fetch the supplied hostname. */
+export async function resolveAuthorizedProxiedSiteHost(
+  viewer: Viewer,
+  endpointHost: string,
+): Promise<ProxiedSiteRow | null> {
+  const [site] = await db
+    .select()
+    .from(proxiedSiteTable)
+    .where(and(
+      eq(proxiedSiteTable.endpointHost, endpointHost.toLowerCase()),
+      eq(proxiedSiteTable.createdByUserId, viewer.userId),
+    ))
+    .limit(1);
+  return site ?? null;
 }
 
 export async function getProxiedSiteByEndpointHost(endpointHost: string): Promise<ProxiedSiteRow | null> {

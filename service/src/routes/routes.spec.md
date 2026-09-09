@@ -702,3 +702,7 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Proxy hostname resolution
+
+`GET /api/proxied-sites/resolve?endpoint_host=...` requires a viewer and returns serialized site metadata after an exact hostname + owner SQL lookup. Missing/foreign sites return 404, unauthenticated requests 401. The resolver neither fetches the hostname nor attaches/renews/mutates a site. Existing viewer-grant checks still enforce enabled/expiry state. Reads return Cache-Control: no-store.

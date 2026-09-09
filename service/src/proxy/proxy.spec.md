@@ -148,3 +148,7 @@ cleanup helpers used by disabled/expired sites and Bud-level transport loss.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Stable origin links
+
+Site reuse selects the oldest enabled row by exact owner, Bud, target host and port, independent of default path. Existing aliases remain unchanged. `resolveAuthorizedProxiedSiteHost` filters exact endpoint hostname and acting owner in SQL; no thread attachment is required. Default path remains an opening preference. Viewer-grant paths preserve query/fragment and reject network-path references, backslashes and control characters to keep redirects on the site origin. Regression tests cover owner predicates, stable reuse and safe deep links. See [plan](../../../plan/proxy-origin-links.md).
