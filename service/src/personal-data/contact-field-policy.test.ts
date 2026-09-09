@@ -19,6 +19,7 @@ test("restricted contact fields affect SQL matching, current/history projection 
         await tx.execute(sql.raw(`create temporary table ${table} (like public.${table} including defaults) on commit drop`));
       const ids = [ulid(), ulid()].sort();
       const scan = ulid();
+      const revision = ulid();
       const fields = { given_name: "Ada", family_name: "Lovelace", organization: "HiddenCompany",
         phones: [{ label: "phone", value: "5559991234" }], emails: [{ label: "email", value: "private@example.invalid" }],
         postal_addresses: [{ label: "home", street: "HiddenStreet", city: "京都", sub_administrative_area: "", state: "", postal_code: "", country: "日本", iso_country_code: "JP" }],
@@ -29,13 +30,19 @@ test("restricted contact fields affect SQL matching, current/history projection 
       await tx.insert(contactTable).values({ id: ulid(), sourceId: "source-b", sourceContactId: "foreign", fields,
         visible: true, generation: 1, firstObservedAt: at, observedAt: at, createdByUserId: "owner-b" });
       await tx.insert(contactScanTable).values({ id: scan, sourceId: "source", scanId: "scan", generation: 1, createdByUserId: "owner-a" });
-      await tx.insert(contactRevisionTable).values({ id: ulid(), contactId: ids[0], scanId: scan, fields,
+      await tx.insert(contactRevisionTable).values({ id: revision, contactId: ids[0], scanId: scan, fields,
         visible: true, observedAt: at, createdByUserId: "owner-a" });
       const query = new ContactQueries(tx as unknown as Database);
       const policy = { observedSince: new Date("2026-09-01T00:00:00Z"), cursorBinding: "app:key:1", contactFields: ["names"] as const };
       assert.equal((await query.list("owner-a", { search: "5559991234" }, policy)).items.length, 0);
       assert.equal((await query.list("owner-a", { search: "HiddenCompany" }, policy)).items.length, 0);
       assert.equal((await query.list("owner-a", { search: "private@example.invalid" }, policy)).items.length, 0);
+      assert.deepEqual((await query.getRevision("owner-a", ids[0], revision, policy)).fields,
+        { given_name: "Ada", family_name: "Lovelace" });
+      await assert.rejects(query.getRevision("owner-b", ids[0], revision, policy), { code: "not_found" });
+      await assert.rejects(query.getRevision("owner-a", ids[1], revision, policy), { code: "not_found" });
+      await assert.rejects(query.getRevision("owner-a", ids[0], revision, { ...policy,
+        observedSince: new Date("2026-09-04T00:00:00Z") }), { code: "not_found" });
       const legacyPolicy = { observedSince: policy.observedSince, cursorBinding: "old-agent-grant" };
       for (const search of ["HiddenStreet", "hidden.example.invalid", "京都"]) {
         assert.equal((await query.list("owner-a", { search }, policy)).items.length, 0);

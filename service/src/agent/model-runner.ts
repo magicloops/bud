@@ -589,6 +589,7 @@ export class AgentModelRunner {
       }
       case "web_search":
       case "web_read":
+      case "contacts_get":
       case "contacts_search":
       case "contacts_history":
       case "location_context":

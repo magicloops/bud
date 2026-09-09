@@ -10,7 +10,7 @@ export type AgentDataCeiling = { scopes: DataScope[]; historyDays: number; grant
  * Permission changes during a query withhold the result before model delivery. */
 export class AgentDataQueries {
   constructor(
-    private readonly contacts: Pick<ContactQueries, "list" | "get" | "history"> = new ContactQueries(),
+    private readonly contacts: Pick<ContactQueries, "list" | "get" | "history" | "getRevision"> = new ContactQueries(),
     private readonly locations: Pick<LocationQueries, "list" | "contactContext"> = new LocationQueries(),
     private readonly grants: Pick<DataGrants, "require"> = new DataGrants(),
     private readonly now: () => Date = () => new Date(),
@@ -20,6 +20,7 @@ export class AgentDataQueries {
     if (!owner) throw new DataRequestError(403, "data_permission_required", "An authenticated owner is required");
     if (!isRecord(input)) throw new DataRequestError(400, "invalid_query", "Expected query arguments");
     const keys: Record<PersonalDataTool, string[]> = {
+      contacts_get: ["contact_id", "revision_id"],
       contacts_search: ["search", "visibility", "limit", "cursor"],
       contacts_history: ["contact_id", "limit", "cursor"],
       location_context: ["contact_id", "from", "to"],
@@ -49,7 +50,11 @@ export class AgentDataQueries {
       throw new DataRequestError(400, "invalid_limit", "Limit must be 1–200");
     const page = { limit: limit as number | undefined, cursor: string("cursor") };
     let data: unknown;
-    if (tool === "contacts_search") {
+    if (tool === "contacts_get") {
+      const id = string("contact_id", true)!;
+      const revision = input.revision_id == null ? undefined : string("revision_id", true);
+      data = revision ? await this.contacts.getRevision(owner, id, revision, policy) : await this.contacts.get(owner, id, policy);
+    } else if (tool === "contacts_search") {
       data = await this.contacts.list(owner, { ...page, search: string("search"), visibility: string("visibility") }, policy);
     } else if (tool === "contacts_history") {
       data = await this.contacts.history(owner, string("contact_id", true)!, page, policy);

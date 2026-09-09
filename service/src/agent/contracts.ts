@@ -327,6 +327,7 @@ export function toolNameForConversation(
     case "data_request_api_key":
     case "web_search":
     case "web_read":
+    case "contacts_get":
     case "contacts_search":
     case "contacts_history":
     case "location_context":
@@ -407,6 +408,7 @@ export function buildToolArgs(
     case "data_request_api_key":
     case "web_search":
     case "web_read":
+    case "contacts_get":
     case "contacts_search":
     case "contacts_history":
     case "location_context":

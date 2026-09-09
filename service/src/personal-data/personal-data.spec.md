@@ -285,3 +285,25 @@ before approval and use neutral wording on older services. Titles are current
 presentation metadata; the frozen definition's target ID remains authoritative.
 No schema, grant or standing-rule mutation is introduced by this feature.
 See [plan](../../../plan/thread-scoped-automation-authoring.md).
+
+## Contact trigger evidence (phase 18)
+
+- `automation-contact-context.ts`: first-start, owner-locked evidence builder for
+  admitted live deliveries and bootstrap groups. Resolves authoritative revision
+  references from relational tables, intersects current fields/history with the
+  approved automation scope, and serializes exact observed revisions as explicitly
+  untrusted JSON. At most 25 contacts and 64 KiB of fields; oversized records keep
+  IDs/times with an explicit omission reason and contacts_get recovery guidance.
+- `ContactQueries.getRevision` reads an exact owner/contact/revision association,
+  including historical fields/visibility and source/observation information, with
+  the existing SQL field projection and revision-time history bound.
+- `AgentDataQueries` and `tool-names.ts` expose contacts_get(contact_id, revision_id?)
+  with the normal scope/ceiling and post-read grant checks. Omitted/null revision
+  selects current contact; specified revision never substitutes current fields.
+- Tests cover foreign/mismatched IDs, old revisions, field filtering, query-time
+  revocation, live/bootstrap startup evidence, later edits, oversized fields and
+  unchanged admission retry identity after context enrichment.
+
+Evidence is written to owner-scoped conversation history only at first start;
+revocation stops subsequent automated execution/read access, not historical text.
+No schema migration or mobile/daemon change is required.

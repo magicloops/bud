@@ -8,6 +8,7 @@ import { parseStoredAskUserQuestionsRequest, validateAskUserQuestionsResponse, b
 import { buildExecutedUserQuestionTool } from "./user-question-repository.js";
 import { deferredToolResult } from "./continuation-results.js";
 import { modelContextMessageCreatedAt, modelContextMessageVisible } from "./model-context-order.js";
+import { automationContactContext } from "../personal-data/automation-contact-context.js";
 import { checkAutomationPolicy } from "../personal-data/automation-policy.js";
 import { dataOwnerStateTable, automationDeliveryTable, automationBootstrapGroupTable,
   dataAccessRequestTable as dataRequest, dataAppKeyTable as appKey, automationProposalTable as automationProposal, automationBootstrapProposalTable as bootstrapProposal } from "../db/schema.js";
@@ -130,7 +131,7 @@ export class InvocationRepository {
     if (existing) {
       const [message] = await tx.select().from(messageTable).where(eq(messageTable.messageId, existing.inputMessageId));
       if (existing.threadId !== input.threadId || existing.origin !== input.origin || existing.model !== input.model ||
-        existing.reasoningEffort !== input.reasoningEffort || message?.content !== input.text ||
+        existing.reasoningEffort !== input.reasoningEffort || (existing.origin === "automation" ? message?.metadata?.automation_admission_text ?? message?.content : message?.content) !== input.text ||
         (input.clientId && message.clientId !== input.clientId)) throw new InvocationError("admission_conflict");
       return { invocation: existing, message, duplicate: true };
     }
@@ -281,6 +282,19 @@ export class InvocationRepository {
         // Generic repository callers may use other automation origins. The
         // production executor separately requires a supported delivery policy.
         if ((delivery || group) && await checkAutomationPolicy(row, true, tx) !== "ready") throw new InvocationError("automation_paused");
+        if (delivery || group) {
+          const [input] = await tx.select().from(messageTable).where(and(eq(messageTable.messageId, row.inputMessageId),
+            eq(messageTable.threadId, row.threadId), eq(messageTable.createdByUserId, row.createdByUserId))).limit(1);
+          if (!input) throw new InvocationError("input_message_missing");
+          // First start only: continuations must not replace event evidence or
+          // accidentally repeat completed actions against a newer revision.
+          if (!input.metadata?.model_context_at) {
+            const context = await automationContactContext(tx, row);
+            await tx.update(messageTable).set({ content: input.content + context,
+              metadata: { ...input.metadata, automation_admission_text: input.content, contact_evidence_version: 1 } })
+              .where(and(eq(messageTable.messageId, input.messageId), eq(messageTable.createdByUserId, row.createdByUserId)));
+          }
+        }
       }
       const [clock] = await tx.select({ expired: sql<boolean>`${inv.latestStartAt} is not null and ${inv.latestStartAt} <= clock_timestamp()
         and not exists (select 1 from agent_invocation_action a where a.invocation_id = agent_invocation.id and a.status = 'waiting_for_user')` })

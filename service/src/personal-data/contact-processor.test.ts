@@ -19,6 +19,7 @@ import { InvocationRepository } from "../agent/invocation-repository.js";
 import { ContactProcessor } from "./contact-processor.js";
 import { PostgresIngestRepository } from "./repository.js";
 import { parseBatch } from "./parser.js";
+import { automationContactContext } from "./automation-contact-context.js";
 import { ContactQueries } from "./contact-queries.js";
 import { DataRequestError } from "./contracts.js";
 import { contactManifestDigest } from "./contacts.js";
@@ -200,7 +201,37 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   assert.equal(await checkAutomationPolicy(admitted[0], true, db), "retry_wait");
   assert.equal(await checkAutomationPolicy(admitted[0], false, db), "ready");
   await db.update(s.automationTable).set({ state: "enabled" }).where(eq(s.automationTable.id, rule));
+  const [triggerDelivery] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.invocationId, lease.id));
+  const [triggerEvent] = await db.select().from(s.dataDomainEventTable).where(eq(s.dataDomainEventTable.id, triggerDelivery.domainEventId));
+  const [triggerRevision] = await db.select().from(s.contactRevisionTable).where(eq(s.contactRevisionTable.id, triggerEvent.revisionId));
+  const [originalInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, lease.inputMessageId));
+  await db.update(s.contactTable).set({ fields: { given_name: "Later edit" } }).where(eq(s.contactTable.id, triggerRevision.contactId));
+  await db.update(s.agentDataGrantTable).set({ contactFields: ["names"], scopes: [] }).where(eq(s.agentDataGrantTable.createdByUserId, owner));
+  await assert.rejects(invocationRepository.start(lease), /data_permission_changed/);
+  await db.update(s.agentDataGrantTable).set({ scopes: ["contacts.read"] }).where(eq(s.agentDataGrantTable.createdByUserId, owner));
   await invocationRepository.start(lease);
+  const [enriched] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, lease.inputMessageId));
+  const triggerData = JSON.parse(enriched.content.slice(enriched.content.lastIndexOf('\n') + 1));
+  assert.equal(triggerData.contacts[0].revision_id, triggerRevision.id);
+  assert.deepEqual(triggerData.contacts[0].fields, { given_name: "d", family_name: "" });
+  assert.doesNotMatch(enriched.content, /Later edit/);
+  assert.equal(enriched.metadata?.automation_admission_text, originalInput.content);
+  assert.equal(enriched.metadata?.contact_evidence_version, 1);
+  // Model the leased state of a resumed invocation; already-visible input must
+  // retain the original evidence even though the current contact changed.
+  await db.update(s.agentInvocationTable).set({ status: "leased" }).where(eq(s.agentInvocationTable.id, lease.id));
+  await invocationRepository.start(lease);
+  const [resumedInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, lease.inputMessageId));
+  assert.equal(resumedInput.content, enriched.content, "resumption must not append or replace evidence");
+  assert.equal((await invocationRepository.admit({ owner, threadId: lease.threadId, origin: "automation",
+    idempotencyKey: lease.idempotencyKey, model: lease.model, reasoningEffort: lease.reasoningEffort,
+    text: originalInput.content })).duplicate, true);
+  await db.update(s.contactRevisionTable).set({ fields: { given_name: "x".repeat(70 * 1024) } }).where(eq(s.contactRevisionTable.id, triggerRevision.id));
+  const bounded = await db.transaction(tx => automationContactContext(tx, lease));
+  assert.match(bounded, /context_size_limit/);
+  assert.ok(bounded.length < 2048);
+  await db.update(s.contactRevisionTable).set({ fields: triggerRevision.fields }).where(eq(s.contactRevisionTable.id, triggerRevision.id));
+  await db.update(s.contactTable).set({ fields: triggerRevision.fields }).where(eq(s.contactTable.id, triggerRevision.contactId));
   const ceiling = await loadAutomationDataCeiling(lease.threadId, owner, lease.turnId, db);
   assert.deepEqual(ceiling?.scopes, ["contacts.read"]);
   assert.equal(ceiling?.historyDays, 90);
@@ -446,6 +477,8 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   await assert.rejects(invocationRepository.start(bootstrapLease), /automation_paused/);
   await db.update(s.automationTable).set({ state: "enabled" }).where(eq(s.automationTable.id, combinedRule.automation_id));
   await invocationRepository.start(bootstrapLease);
+  const [bootstrapEvidence] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, bootstrapLease.inputMessageId));
+  assert.equal(JSON.parse(bootstrapEvidence.content.slice(bootstrapEvidence.content.lastIndexOf('\n') + 1)).contacts.length, 6);
   const bootstrapCeiling = await loadAutomationDataCeiling(bootstrapLease.threadId, owner, bootstrapLease.turnId, db);
   assert.deepEqual(bootstrapCeiling?.scopes, ["contacts.read"]);
   assert.equal(bootstrapCeiling?.historyDays, 90);
