@@ -1,3 +1,4 @@
+import { isModelSelectionError } from "../llm/reasoning-policy.js";
 import { randomUUID } from "node:crypto";
 import { InvocationError, InvocationRepository, type Invocation } from "./invocation-repository.js";
 import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycle.js";
@@ -201,7 +202,7 @@ export class InvocationWorker {
       // execution; a currently-owned invocation records failure conservatively.
       try {
         await this.repository.finish(invocation, controller.signal.aborted ? "needs_review" : "failed",
-          controller.signal.aborted ? "execution_interrupted" : "execution_failed");
+          controller.signal.aborted ? "execution_interrupted" : isModelSelectionError(error) ? error.code : "execution_failed");
       } catch { this.reportError("invocation_outcome_not_committed"); }
       return true;
     } finally {

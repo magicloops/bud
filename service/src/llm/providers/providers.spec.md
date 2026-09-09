@@ -16,22 +16,18 @@ Each provider implements the `LLMProvider` interface, handling:
 
 OpenAI provider using the Responses API (~795 lines).
 
-**Supported Models** (dated versions in `supportedModels`):
+**Supported Models** (derived from the product catalog):
 | Model | Type | Notes |
 |-------|------|-------|
+| `gpt-6-astra` | Reasoning | Supports low through max; default medium; no none |
 | `gpt-5.6-sol` | Reasoning | GPT-5.6 frontier tier; supports `max` |
 | `gpt-5.6-terra` | Reasoning | GPT-5.6 balanced tier; supports `max` |
 | `gpt-5.6-luna` | Reasoning | GPT-5.6 fast tier; supports `max`; global default model |
-| `gpt-5.5` | Reasoning | Previous frontier GPT model |
-| `gpt-5.4-2026-03-05` | Reasoning | GPT-5.4 snapshot, supports `xhigh` |
-| `gpt-5.4-mini-2026-03-17` | Reasoning | Smaller GPT-5.4 variant, supports `xhigh` |
-| `gpt-5.4-nano-2026-03-17` | Reasoning | Smallest GPT-5.4 variant, supports `xhigh` |
-| `gpt-5.2-2025-12-11`, `gpt-5-mini-2025-08-07`, `gpt-5-nano-2025-08-07` | Reasoning | Hidden legacy compatibility |
 
-Public product IDs and capability limits are owned by `model-catalog.ts`; the provider keeps enough `supportedModels` for registration and hidden compatibility.
+Public product IDs and capability limits are owned by `model-catalog.ts`; both `supportedModels` and `supportsModel` use that catalog. Arbitrary GPT IDs and retired aliases are not accepted.
 
 **Key Features**:
-- **Reasoning support**: GPT-5 series with `reasoning.effort` (`none` omits reasoning, other supported values pass through including `xhigh`)
+- **Reasoning support**: Catalog reasoning models with `reasoning.effort` (`none` omits reasoning, other supported values pass through including `xhigh` and `max`)
 - **Strict mode tools**: All tools use `strict: true` for reliable schema adherence
 - **Multi-turn reasoning**: Preserves reasoning blocks via `providerData` for tool loops
 - **Encrypted reasoning replay**: Requests `reasoning.encrypted_content` so durable same-provider replay has the provider payload needed for reasoning continuity
@@ -68,7 +64,7 @@ The OpenAI request copy recursively omits unsupported `uniqueItems`; canonical s
 
 This allows tool definitions to use clean standard JSON Schema while ensuring OpenAI strict mode compliance.
 
-`openai-tool-schema.test.ts` captures streaming and non-streaming requests with the full enabled agent catalog, checking nested strict schemas, omitted `uniqueItems`, retained bounds, optional-null conversion and canonical immutability.
+`openai-tool-schema.test.ts` captures streaming and non-streaming requests with the full enabled agent catalog, using Astra and checking its reasoning, encrypted replay request, omitted sampling parameters, nested strict schemas, omitted `uniqueItems`, retained bounds, optional-null conversion and canonical immutability.
 
 **Streaming Events Mapped**:
 | OpenAI Event | Canonical Event |

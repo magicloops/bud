@@ -1225,3 +1225,7 @@ queued work receives no copied contact fields before first start.
 `conversation-loader.ts` register, dispatch and replay contacts_get; text search
 explicitly excludes ID lookup. Personal-data renderers use the existing payload
 kind. See [phase 18](../../../plan/personal-data-ingestion-and-agent-triggers/phase-18-contact-trigger-evidence.md).
+
+## OpenAI catalog retirement
+
+Invocation preflight rejects retired model snapshots before execution. The worker preserves model-selection errors as `invalid_model` or `invalid_reasoning_effort` outcome codes instead of generic `execution_failed`. Clients can explain recovery without silently changing an approved automation model. No daemon upgrade is required. See [refresh plan](../../../plan/openai-model-refresh.md).

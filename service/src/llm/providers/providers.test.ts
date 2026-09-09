@@ -539,7 +539,7 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   };
 
   const xhighConfig: ModelConfig = {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: true,
@@ -550,7 +550,7 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   await drain(provider.invoke(messages, [], xhighConfig));
 
   const fastConfig: ModelConfig = {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -633,7 +633,7 @@ test("OpenAI provider normalizes context-window request errors", async () => {
 
   await assert.rejects(
     async () => drain(provider.invoke(messages, [], {
-      model: "gpt-5.4-2026-03-05",
+      model: "gpt-5.6-sol",
       maxOutputTokens: 128000,
       reasoning: { enabled: false },
     })),
@@ -697,7 +697,7 @@ test("OpenAI provider recursively transforms nested tool schemas for strict mode
       },
     },
   ], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: { enabled: false },
   }));
@@ -760,7 +760,7 @@ test("OpenAI provider preserves completed response payload for diagnostics", asy
 
   const events = [];
   for await (const event of provider.invoke(messages, [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -836,7 +836,7 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
 
   const events = [];
   for await (const event of provider.invoke(messages, [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -955,7 +955,7 @@ test("OpenAI provider preserves text between multiple streamed tool calls", asyn
 
   const events = [];
   for await (const event of provider.invoke(messages, [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -1032,7 +1032,7 @@ test("OpenAI provider sends assistant history in canonical block order", async (
       ],
     },
   ], [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -1142,7 +1142,7 @@ test("OpenAI provider preserves streamed output message phase on text events", a
 
   const events = [];
   for await (const event of provider.invoke(messages, [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -1212,7 +1212,7 @@ test("OpenAI provider preserves non-streaming output message phase", async () =>
   });
 
   const response = await provider.invokeSync(messages, [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,
@@ -1247,7 +1247,7 @@ test("OpenAI provider lowers final_answer assistant phase on replay", async () =
       content: [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
     },
   ], [], {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     maxOutputTokens: 128000,
     reasoning: {
       enabled: false,

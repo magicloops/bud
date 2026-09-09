@@ -155,3 +155,8 @@ test('existing-contact reviews recover once and completed decisions beat stale p
   assert.notEqual(invocationRevision(snapshot), invocationRevision({ ...snapshot,
     pending_bootstrap_requests: [{ ...pending, proposal: { ...pending.proposal, version: 1, status: 'approved' } }] }))
 })
+
+
+test('unavailable model failures explain how to recover', () => {
+  assert.match(invocationSummary(state({ invocations: [invocation({ status: 'failed', outcome_code: 'invalid_model' })] }))!.label, /Select a supported model/)
+})

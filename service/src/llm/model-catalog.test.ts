@@ -15,33 +15,24 @@ test("model catalog exposes the current default model lineup", () => {
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
     "claude-opus-4-7",
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.4-nano",
-    "gpt-5.5",
     "ds4-deepseek-v4-flash",
   ]);
   assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.6-luna");
 });
 
 test("model catalog captures provider-specific reasoning levels", () => {
-  const gpt54 = getCatalogEntry("gpt-5.4");
   const opus46 = getCatalogEntry("claude-opus-4-6");
   const opus47 = getCatalogEntry("claude-opus-4-7");
   const haiku45 = getCatalogEntry("claude-haiku-4-5");
   const ds4 = getCatalogEntry("ds4-deepseek-v4-flash");
-
-  assert.ok(gpt54);
-  assert.deepEqual(gpt54.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
-  assert.equal(gpt54.reasoning.defaultLevel, "none");
-
-  const gpt55 = getCatalogEntry("gpt-5.5");
-  assert.ok(gpt55);
-  assert.deepEqual(gpt55.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
-  assert.equal(gpt55.reasoning.defaultLevel, "low");
+  const astra = getCatalogEntry("gpt-6-astra");
+  assert.ok(astra);
+  assert.deepEqual(astra.reasoning.levels, ["low", "medium", "high", "xhigh", "max"]);
+  assert.equal(astra.reasoning.defaultLevel, "medium");
 
   // GPT-5.6 family: first OpenAI tier with all six levels, incl. `max`.
   for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
@@ -76,8 +67,8 @@ test("model catalog captures provider-specific reasoning levels", () => {
   );
 });
 
-test("model catalog captures GPT-5.5 usable context policy", () => {
-  const gpt55 = getCatalogEntry("gpt-5.5");
+test("model catalog captures GPT-6 Astra usable context policy", () => {
+  const gpt55 = getCatalogEntry("gpt-6-astra");
   assert.ok(gpt55);
 
   assert.equal(gpt55.capabilities.contextWindowTokens, 1_050_000);
@@ -123,4 +114,11 @@ test("reasoning option labels are stable for API clients", () => {
     { value: "none", label: "Fast" },
     { value: "low", label: "Thinking" },
   ]);
+});
+
+
+test("retired OpenAI names and snapshots are absent", () => {
+  for (const id of ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.4-2026-03-05", "gpt-5.4-mini-2026-03-17", "gpt-5.4-nano-2026-03-17"]) {
+    assert.equal(getCatalogEntry(id), null);
+  }
 });

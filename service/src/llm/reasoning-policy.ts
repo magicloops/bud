@@ -1,6 +1,7 @@
 import type { ReasoningConfig } from "./types.js";
 import {
   getCatalogEntry,
+  isRetiredOpenAIModel,
   type ModelCatalogEntry,
   type ReasoningLevel,
 } from "./model-catalog.js";
@@ -88,6 +89,9 @@ export function resolveModelReasoning(
   requested?: ReasoningLevel | null,
   defaultReasoning: ReasoningLevel = "none",
 ): ResolvedModelReasoning {
+  if (isRetiredOpenAIModel(model)) {
+    throw new InvalidModelSelectionError(model, `Model ${model} has been retired. Select GPT-5.6 or GPT-6 Astra.`);
+  }
   const entry = getCatalogEntry(model);
   const providerModel = providerRegistry.resolveModelAlias(model);
   let providerName: string;
@@ -159,6 +163,9 @@ export function resolveEffectiveModelSelection(
   }
 
   const threadModel = normalizeModelId(input.threadModel);
+  if (threadModel && validateAvailability && isRetiredOpenAIModel(threadModel)) {
+    throw new InvalidModelSelectionError(threadModel, `Model ${threadModel} has been retired. Select GPT-5.6 or GPT-6 Astra.`);
+  }
   if (threadModel) {
     const threadReasoning = parseReasoningLevel(input.threadReasoning);
     const modelReasoning = resolveCandidateOrNull(

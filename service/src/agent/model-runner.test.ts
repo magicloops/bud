@@ -109,10 +109,10 @@ function registerTestProviders(t: TestContext) {
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
     createProvider("openai", [
-      "gpt-5.4-2026-03-05",
-      "gpt-5.4-mini-2026-03-17",
-      "gpt-5.4-nano-2026-03-17",
-      "gpt-5.5",
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
     ]),
   );
   providerRegistry.register(
@@ -146,7 +146,7 @@ test("resolveReasoningEffort follows model-specific reasoning policies", (t) => 
     "none",
   );
 
-  assert.equal(runner.resolveReasoningEffort("gpt-5.4", "xhigh"), "xhigh");
+  assert.equal(runner.resolveReasoningEffort("gpt-5.6-sol", "xhigh"), "xhigh");
   assert.equal(runner.resolveReasoningEffort("claude-opus-4-6"), "high");
   assert.equal(runner.resolveReasoningEffort("claude-opus-4-7"), "xhigh");
   assert.throws(
@@ -166,7 +166,7 @@ test("invokeModel caps max output tokens from selected model capabilities", asyn
   providerRegistry.unregister("anthropic");
   providerRegistry.register({
     name: "openai",
-    supportedModels: ["gpt-5.4-2026-03-05"],
+    supportedModels: ["gpt-5.6-sol"],
     async *invoke(_messages, _tools, modelConfig): AsyncIterable<CanonicalStreamEvent> {
       capturedConfigs.push(modelConfig);
       yield { type: "message_start", id: "resp_cap" };
@@ -214,11 +214,11 @@ test("invokeModel caps max output tokens from selected model capabilities", asyn
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
   );
 
-  assert.equal(capabilityModel, "gpt-5.4");
+  assert.equal(capabilityModel, "gpt-5.6-sol");
   assert.equal(capturedConfigs[0]?.maxOutputTokens, 32000);
 });
 
@@ -230,7 +230,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], (tools) => {
+    createProvider("openai", ["gpt-5.6-sol"], (tools) => {
       capturedTools = tools;
     }),
   );
@@ -256,8 +256,8 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
   );
 
   const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
@@ -322,7 +322,7 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], (tools) => {
+    createProvider("openai", ["gpt-5.6-sol"], (tools) => {
       capturedTools = tools;
     }),
   );
@@ -349,8 +349,8 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
     undefined,
     resolveAgentToolsForEnvironment(environment, { webRetrieval: false }),
   );
@@ -367,7 +367,7 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+    createProvider("openai", ["gpt-5.6-sol"], undefined, [
       { type: "message_start", id: "resp_test" },
       {
         type: "message_done",
@@ -404,8 +404,8 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
   );
 
   assert.equal(response.providerData?.provider, "openai");
@@ -422,7 +422,7 @@ test("invokeModel emits and returns visible reasoning segments", async (t) => {
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+    createProvider("openai", ["gpt-5.6-sol"], undefined, [
       { type: "message_start", id: "resp_reasoning" },
       { type: "reasoning_start", index: 0 },
       { type: "reasoning_delta", index: 0, delta: "Check terminal state." },
@@ -467,8 +467,8 @@ test("invokeModel emits and returns visible reasoning segments", async (t) => {
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
     undefined,
     undefined,
     undefined,
@@ -513,7 +513,7 @@ test("invokeModel captures model context drift prompt and response when recorder
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+    createProvider("openai", ["gpt-5.6-sol"], undefined, [
       { type: "message_start", id: "resp_context_drift" },
       { type: "content_start", index: 0, content_type: "text", assistantPhase: "final_answer" },
       { type: "text_delta", index: 0, delta: "done", assistantPhase: "final_answer" },
@@ -554,12 +554,12 @@ test("invokeModel captures model context drift prompt and response when recorder
     recorder,
   );
 
-  const modelReasoning = runner.resolveModelReasoning("gpt-5.4");
+  const modelReasoning = runner.resolveModelReasoning("gpt-5.6-sol");
   const { response } = await runner.invokeModel(
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
+    "gpt-5.6-sol",
     modelReasoning,
   );
 
@@ -567,14 +567,14 @@ test("invokeModel captures model context drift prompt and response when recorder
   assert.equal(promptCaptures[0]?.threadId, "thread_test");
   assert.equal(promptCaptures[0]?.turnId, "turn_test");
   assert.equal(promptCaptures[0]?.provider, "openai");
-  assert.equal(promptCaptures[0]?.productModel, "gpt-5.4");
-  assert.equal(promptCaptures[0]?.providerModel, "gpt-5.4-2026-03-05");
+  assert.equal(promptCaptures[0]?.productModel, "gpt-5.6-sol");
+  assert.equal(promptCaptures[0]?.providerModel, "gpt-5.6-sol");
   assert.equal(promptCaptures[0]?.reasoningEffort, modelReasoning.reasoningLevel);
   assert.equal(promptCaptures[0]?.messages.length, 1);
   assert.ok(promptCaptures[0]?.tools.some((tool) => tool.name === "terminal_observe"));
-  assert.equal(promptCaptures[0]?.modelConfig.model, "gpt-5.4-2026-03-05");
+  assert.equal(promptCaptures[0]?.modelConfig.model, "gpt-5.6-sol");
   assert.deepEqual(promptCaptures[0]?.providerRenderedRequest, {
-    model: "gpt-5.4-2026-03-05",
+    model: "gpt-5.6-sol",
     messageCount: 1,
     toolCount: promptCaptures[0]?.tools.length,
   });
@@ -634,7 +634,7 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.register(
-    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+    createProvider("openai", ["gpt-5.6-sol"], undefined, [
       { type: "message_start", id: "resp_interleaved" },
       { type: "content_start", index: 0, content_type: "text", assistantPhase: "commentary" },
       { type: "text_delta", index: 0, delta: "before tool", assistantPhase: "commentary" },
@@ -682,12 +682,12 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
     "thread_test",
     "turn_test",
     [{ role: "user", content: "hello" }],
-    "gpt-5.4",
-    runner.resolveModelReasoning("gpt-5.4"),
+    "gpt-5.6-sol",
+    runner.resolveModelReasoning("gpt-5.6-sol"),
   );
 
   assert.equal(provider, "openai");
-  assert.equal(providerModel, "gpt-5.4-2026-03-05");
+  assert.equal(providerModel, "gpt-5.6-sol");
   assert.ok(assistantClientId);
   assert.deepEqual(response.content, [
     { type: "text", text: "before tool", assistantPhase: "commentary" },

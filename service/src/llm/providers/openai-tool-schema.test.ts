@@ -27,6 +27,11 @@ test("OpenAI accepts the full enabled tool catalog without forwarding uniqueItem
   };
   (provider as any).client.responses.create = async (params: any) => {
     requests++;
+    assert.equal(params.model, "gpt-6-astra");
+    assert.deepEqual(params.reasoning, { effort: "medium", summary: "auto" });
+    assert.deepEqual(params.include, ["reasoning.encrypted_content"]);
+    assert.equal(params.temperature, undefined);
+    assert.equal(params.top_p, undefined);
     assert.equal(params.tools.length, tools.length);
     for (const tool of params.tools) {
       assert.equal(tool.strict, true);
@@ -42,7 +47,7 @@ test("OpenAI accepts the full enabled tool catalog without forwarding uniqueItem
     if (!params.stream) return response;
     return (async function* () { yield { type: "response.completed", response }; })();
   };
-  const config = { model: "gpt-5.6-luna" };
+  const config = { model: "gpt-6-astra", reasoning: { enabled: true, effort: "medium" as const } };
   await provider.invokeSync([{ role: "user", content: "Schema fixture" }], tools, config);
   for await (const _event of provider.invoke([{ role: "user", content: "Schema fixture" }], tools, config)) { /* consume */ }
   assert.equal(requests, 2);

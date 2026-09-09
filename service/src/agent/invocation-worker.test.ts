@@ -1,3 +1,4 @@
+import { InvalidModelSelectionError } from "../llm/reasoning-policy.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { InvocationWorker } from "./invocation-worker.js";
@@ -236,4 +237,19 @@ test("rejected automation parking retains a usable lease for the error result an
   await worker.runOnce();
   assert.ok(events.indexOf("evidence") > events.indexOf("rejected"));
   assert.equal(events.at(-1), "succeeded");
+});
+
+
+test("unavailable model records an actionable failure before running", async () => {
+  const events: string[] = [];
+  let outcome: string | undefined;
+  const repo = { ...repository(events), finish: async (_row: unknown, status: string, code?: string) => {
+    events.push(status); outcome = code;
+  } };
+  await new InvocationWorker({
+    preflight: async () => { throw new InvalidModelSelectionError("gpt-5.5"); },
+    execute: async () => { throw new Error("must not execute"); },
+  }, repo).runOnce();
+  assert.equal(outcome, "invalid_model");
+  assert.ok(!events.includes("running"));
 });

@@ -32,8 +32,8 @@ test("buildContextBudgetSnapshot exposes the same threshold as automatic compact
   config.agentAutoCompactionEnabled = true;
   try {
     const selection = resolveEffectiveModelSelection({
-      requestedModel: "gpt-5.5",
-      serviceDefaultModel: "gpt-5.5",
+      requestedModel: "gpt-5.6-sol",
+      serviceDefaultModel: "gpt-5.6-sol",
       validateAvailability: false,
     });
     const budget = resolveContextBudget({

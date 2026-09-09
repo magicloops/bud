@@ -72,7 +72,7 @@ export type ReasoningLevelOption = {
   label: string;
 };
 
-const OPENAI_GPT_5_4_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh"] as const;
+const OPENAI_ASTRA_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 // GPT-5.6 (Sol/Terra/Luna) adds `max` — the first OpenAI tier with all six
 // levels (developers.openai.com model pages, GA 2026-07-09).
 const OPENAI_GPT_5_6_REASONING_LEVELS = [
@@ -195,6 +195,31 @@ export const MODEL_CATALOG = [
     },
   },
   {
+    id: "gpt-6-astra",
+    provider: "openai",
+    providerModel: "gpt-6-astra",
+    displayName: "GPT-6 Astra",
+    family: "gpt",
+    tier: "frontier",
+    sortOrder: 100,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_ASTRA_REASONING_LEVELS,
+      defaultLevel: "medium",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
     id: "gpt-5.6-sol",
     provider: "openai",
     providerModel: "gpt-5.6-sol",
@@ -257,6 +282,7 @@ export const MODEL_CATALOG = [
     tier: "fast",
     sortOrder: 108,
     globalDefault: true,
+    defaultForProvider: true,
     capabilities: {
       vision: true,
       tools: true,
@@ -271,104 +297,6 @@ export const MODEL_CATALOG = [
       kind: "openai_reasoning_effort",
       levels: OPENAI_GPT_5_6_REASONING_LEVELS,
       defaultLevel: "high",
-      requestField: "reasoning.effort",
-    },
-  },
-  {
-    id: "gpt-5.4",
-    provider: "openai",
-    providerModel: "gpt-5.4-2026-03-05",
-    displayName: "GPT-5.4",
-    family: "gpt",
-    tier: "frontier",
-    sortOrder: 110,
-    defaultForProvider: true,
-    capabilities: {
-      vision: true,
-      tools: true,
-      streaming: true,
-      structuredOutputs: true,
-      contextWindowTokens: 1_050_000,
-      maxOutputTokens: 128_000,
-    },
-    reasoning: {
-      kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_4_REASONING_LEVELS,
-      defaultLevel: "none",
-      requestField: "reasoning.effort",
-    },
-  },
-  {
-    id: "gpt-5.4-mini",
-    provider: "openai",
-    providerModel: "gpt-5.4-mini-2026-03-17",
-    displayName: "GPT-5.4 Mini",
-    family: "gpt",
-    tier: "balanced",
-    sortOrder: 120,
-    capabilities: {
-      vision: true,
-      tools: true,
-      streaming: true,
-      structuredOutputs: true,
-      contextWindowTokens: 400_000,
-      maxOutputTokens: 128_000,
-    },
-    reasoning: {
-      kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_4_REASONING_LEVELS,
-      defaultLevel: "none",
-      requestField: "reasoning.effort",
-    },
-  },
-  {
-    id: "gpt-5.4-nano",
-    provider: "openai",
-    providerModel: "gpt-5.4-nano-2026-03-17",
-    displayName: "GPT-5.4 Nano",
-    family: "gpt",
-    tier: "fast",
-    sortOrder: 130,
-    capabilities: {
-      vision: true,
-      tools: true,
-      streaming: true,
-      structuredOutputs: true,
-      contextWindowTokens: 400_000,
-      maxOutputTokens: 128_000,
-    },
-    reasoning: {
-      kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_4_REASONING_LEVELS,
-      defaultLevel: "none",
-      requestField: "reasoning.effort",
-    },
-  },
-  {
-    id: "gpt-5.5",
-    provider: "openai",
-    providerModel: "gpt-5.5",
-    displayName: "GPT-5.5",
-    family: "gpt",
-    tier: "frontier",
-    sortOrder: 140,
-    capabilities: {
-      vision: true,
-      tools: true,
-      streaming: true,
-      structuredOutputs: true,
-      contextWindowTokens: 1_050_000,
-      maxOutputTokens: 128_000,
-      // Same 272K input cap as the GPT-5.6 family. The earlier 400K value
-      // was chosen so that 400K - 128K landed on 272K under the old
-      // (incorrect) subtract-the-reserve formula.
-      usableContextWindowTokens: 272_000,
-      reservedOutputTokens: 128_000,
-    },
-    reasoning: {
-      kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_4_REASONING_LEVELS,
-      defaultLevel: "low",
       requestField: "reasoning.effort",
     },
   },
@@ -451,6 +379,10 @@ export function getCatalogEntry(modelId: string): ModelCatalogEntry | null {
     MODEL_CATALOG_BY_PROVIDER_MODEL.get(modelId) ??
     getDynamicCatalogEntry(modelId)
   );
+}
+
+export function isRetiredOpenAIModel(model: string): boolean {
+  return /^gpt-5\.(?:4|5)(?:$|-)/.test(model);
 }
 
 export function resolveProviderModel(modelId: string): string {

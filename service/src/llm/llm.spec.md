@@ -29,7 +29,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐
 │ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
 │                 │ │                 │ │ BudLocalDs4Provider      │
-│ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
+│ - GPT-5.6 / Astra   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
 │ - reasoning     │ │ - thinking      │ │ - Responses + thinking   │
 └─────────────────┘ └─────────────────┘ └──────────────────────────┘
 ```
@@ -166,13 +166,10 @@ Central product model catalog and reasoning-control metadata.
 | `claude-sonnet-4-6` | `claude-sonnet-4-6` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `max`; default `medium` |
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` | Manual thinking budgets: `none`, `low`, `medium`, `high`; default `none` |
 | `claude-opus-4-7` | `claude-opus-4-7` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `xhigh` |
+| `gpt-6-astra` | `gpt-6-astra` | OpenAI `reasoning.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `medium` |
 | `gpt-5.6-sol` | `gpt-5.6-sol` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
 | `gpt-5.6-terra` | `gpt-5.6-terra` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
 | `gpt-5.6-luna` | `gpt-5.6-luna` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `high`; global default |
-| `gpt-5.4` | `gpt-5.4-2026-03-05` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
-| `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
-| `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
-| `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
 | `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | ds4 Responses `reasoning.effort`: `none` (`Fast`) and `low` (`Thinking`); default `none`; `max` deferred until context is at least 393,216 |
 
 **Usable Context Policy**:
@@ -185,10 +182,9 @@ Central product model catalog and reasoning-control metadata.
   contextWindowTokens - reservedOutputTokens)`: the output reserve protects the
   hard window only, and the usable cap applies to input directly
   (design/context-window-output-reserve-correction.md)
-- GPT-5.5 and the GPT-5.6 family (Sol/Terra/Luna) declare
+- GPT-6 Astra and the GPT-5.6 family (Sol/Terra/Luna) declare
   `contextWindowTokens: 1_050_000` with `usableContextWindowTokens: 272_000` —
-  OpenAI's pricing knee (prompts above 272K input bill 2x input / 1.5x output
-  for the whole request) and Codex's active window — and
+  Bud's chosen active input window — and
   `reservedOutputTokens: 128_000`, producing a 272,000 token usable input
   window before the auto-compaction ratio (threshold 244,800 at 0.9)
 - ds4 DeepSeek V4 declares `contextWindowTokens: 100_000`,
@@ -205,7 +201,8 @@ Model-specific reasoning validation and lowering.
 - reject unsupported model/reasoning combinations with `InvalidReasoningEffortError`
 - build the canonical `ReasoningConfig` consumed by providers
 - resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-5.6-luna` + its catalog default `high`; the service-default path leaves reasoning omitted so the default model's catalog `defaultLevel` applies unless `serviceDefaultReasoning` is pinned)
-- ignore invalid stored thread selections while still rejecting invalid explicit submissions
+- read projections may fall back from invalid saved preferences without rewriting them; execution rejects retired GPT-5.4/GPT-5.5 thread preferences unless an explicit supported model is submitted
+- reject retired IDs and dated variants; approved automation model snapshots never silently switch models
 
 ### `model-catalog.test.ts`
 
@@ -213,7 +210,7 @@ Standalone Node tests for catalog invariants and reasoning option labels.
 
 **Current Coverage**:
 - current product model order and global default
-- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
+- provider-specific reasoning levels for GPT-5.6/GPT-6 Astra, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
 - stable reasoning labels exposed to API clients
 
 ### `reasoning-policy.test.ts`
@@ -270,17 +267,11 @@ Standalone tests for provider-ledger persistence/reconstruction helpers.
 **Aliases** (map legacy/friendly names to dated model versions):
 | Alias | Resolves To |
 |-------|-------------|
-| `gpt-5.2` | `gpt-5.2-2025-12-11` |
-| `gpt-5-mini` | `gpt-5-mini-2025-08-07` |
-| `gpt-5-nano` | `gpt-5-nano-2025-08-07` |
-| `gpt-5.4` | `gpt-5.4-2026-03-05` |
-| `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` |
-| `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` |
 | `claude-opus-4-5` | `claude-opus-4-5-20251101` |
 | `claude-sonnet-4-5` | `claude-sonnet-4-5-20250929` |
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
-Catalog entries are preferred for product IDs. Legacy aliases remain as hidden compatibility for env overrides and older explicit model references; `/api/models` exposes catalog product IDs only.
+Catalog entries are preferred for product IDs. Only Anthropic legacy aliases remain as hidden compatibility for env overrides and older explicit model references; `/api/models` exposes catalog product IDs only.
 
 **Key Methods**:
 | Method | Description |
@@ -341,9 +332,9 @@ import { providerRegistry, initializeProviders, type CanonicalMessage } from "./
 initializeProviders();
 
 // In agent service
-const provider = providerRegistry.getProviderForModel("gpt-5.4");
+const provider = providerRegistry.getProviderForModel("gpt-6-astra");
 for await (const event of provider.invoke(messages, tools, {
-  model: "gpt-5.4-2026-03-05",
+  model: "gpt-6-astra",
   maxOutputTokens: 4096,
   reasoning: { enabled: true, effort: "xhigh" },
   responseFormat: "text",
