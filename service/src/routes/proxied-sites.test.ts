@@ -270,6 +270,7 @@ test("proxied site routes register product and gateway contracts", async () => {
       "GET /*",
       "GET /api/buds/:budId/proxied-sites",
       "GET /api/proxied-sites/:proxiedSiteId",
+      "GET /api/proxied-sites/resolve",
       "GET /api/threads/:threadId/web-view",
       "HEAD /*",
       "PATCH /api/proxied-sites/:proxiedSiteId",
@@ -1495,4 +1496,19 @@ test("private HTTP and WebSocket gateways reject another owner's viewer session 
   await ws(socket, request);
   assert.deepEqual(socket.closed, [{ code: 1008, reason: "proxy viewer unauthorized" }]);
   assert.equal(allocations, 0);
+});
+
+
+test("hostname resolution authenticates before lookup and hides unknown/non-owner sites", async (t) => {
+  t.after(() => mock.restoreAll());
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const handler = server.handlers.get("GET /api/proxied-sites/resolve")!;
+  mock.method(auth.api, "getSession", async () => null);
+  assert.equal((await invokeRoute(handler, { query: { endpoint_host: "old.bud.show" } })).statusCode, 401);
+  mock.restoreAll();
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db, "select", () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) as never);
+  assert.equal((await invokeRoute(handler, { query: { endpoint_host: "old.bud.show" } })).statusCode, 404);
+  assert.equal((await invokeRoute(handler, { query: { endpoint_host: "https://evil.test/path" } })).statusCode, 400);
 });

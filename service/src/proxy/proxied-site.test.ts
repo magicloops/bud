@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { db } from "../db/client.js";
 import {
   CreateProxiedSiteBodySchema,
+  createOrReuseProxiedSite,
+  resolveAuthorizedProxiedSiteHost,
   buildViewerCookie,
   endpointHostForSlug,
   isProxyGatewayRequest,
@@ -129,4 +133,58 @@ test("proxied site viewer cookies use local HTTP and hosted HTTPS browser attrib
   assert.match(hostedCookie, /SameSite=None/);
   assert.match(hostedCookie, /Secure/);
   assert.doesNotMatch(hostedCookie, /Domain=/i);
+});
+
+
+test("viewer paths preserve deep links and reject origin-changing redirects", () => {
+  assert.equal(normalizeProxiedSitePath("/people/a%20b?x=%2F#bio"), "/people/a%20b?x=%2F#bio");
+  for (const path of ["//evil.test", "/\\evil.test", "/\nevil.test", "/\tevil.test"]) {
+    assert.throws(() => normalizeProxiedSitePath(path));
+  }
+});
+
+
+test("reuse matches owner/Bud/origin rather than path and only renews the oldest alias", async (t) => {
+  t.after(() => mock.restoreAll());
+  const dialect = new PgDialect();
+  let predicate = "";
+  let ordering = "";
+  const existing = { proxiedSiteId: "old-root", defaultPath: "/", endpointHost: "old.bud.show" };
+  mock.method(db, "select", () => ({ from: () => ({ where: (where: never) => {
+    const query = dialect.sqlToQuery(where);
+    predicate = query.sql;
+    assert.deepEqual(query.params, ["bud-1", "owner", "127.0.0.1", 5176, "private_owner", true]);
+    return { orderBy: (...order: never[]) => {
+      ordering = order.map(value => dialect.sqlToQuery(value).sql).join(",");
+      return { limit: async () => [existing] };
+    } };
+  } }) }) as never);
+  mock.method(db, "update", () => ({ set: (values: object) => {
+    assert.deepEqual(Object.keys(values).sort(), ["expiresAt", "lastRenewedAt", "updatedAt"]);
+    return { where: () => ({ returning: async () => [existing] }) };
+  } }) as never);
+  const result = await createOrReuseProxiedSite({
+    viewer: { userId: "owner", sessionId: null, email: null, authType: "cookie" },
+    budId: "bud-1", body: CreateProxiedSiteBodySchema.parse({ target_host: "127.0.0.1", target_port: 5176, path: "/people/dennis/index.html" }),
+  });
+  assert.equal(result.site.endpointHost, "old.bud.show");
+  assert.equal(result.site.defaultPath, "/");
+  assert.equal(result.reused, true);
+  assert.doesNotMatch(predicate, /default_path/);
+  assert.match(ordering, /created_at.*asc/);
+});
+
+test("hostname resolution scopes the SQL query to the acting owner", async (t) => {
+  t.after(() => mock.restoreAll());
+  const dialect = new PgDialect();
+  mock.method(db, "select", () => ({ from: () => ({ where: (where: never) => {
+    const query = dialect.sqlToQuery(where);
+    assert.match(query.sql, /endpoint_host/);
+    assert.match(query.sql, /created_by_user_id/);
+    assert.deepEqual(query.params, ["old.bud.show", "owner"]);
+    return { limit: async () => [] };
+  } }) }) as never);
+  assert.equal(await resolveAuthorizedProxiedSiteHost(
+    { userId: "owner", sessionId: null, email: null, authType: "cookie" }, "OLD.BUD.SHOW",
+  ), null);
 });

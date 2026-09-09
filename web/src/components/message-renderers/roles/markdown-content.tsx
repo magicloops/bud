@@ -11,6 +11,7 @@ import { createCodePlugin } from '@streamdown/code'
 import { mermaid } from '@streamdown/mermaid'
 import { math } from '@streamdown/math'
 import remarkBreaks from 'remark-breaks'
+import { ProxyLink } from './proxy-link'
 import { FileText } from 'lucide-react'
 import { InlineCode } from '@/components/ui/inline-code'
 import { filePathCandidateDisplayPath } from '@/lib/file-paths'
@@ -141,14 +142,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         )
       }
       return (
-        <a
-          href={linkAction.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-accent underline underline-offset-2 hover:text-accent/80"
-        >
-          {children}
-        </a>
+        <ProxyLink href={linkAction.href}>{children}</ProxyLink>
       )
     },
   }), [allowedFilePathKinds, fileActions, inertLocalLinks])

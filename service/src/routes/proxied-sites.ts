@@ -24,6 +24,7 @@ import {
   detachThreadWebView,
   effectiveProxiedSiteState,
   getAuthorizedProxiedSite,
+  resolveAuthorizedProxiedSiteHost,
   getProxiedSiteByEndpointHost,
   getThreadWebViewForThread,
   isProxiedSiteOpenable,
@@ -44,6 +45,10 @@ const BudProxiedSitesParamsSchema = z.object({
 
 const ProxiedSiteParamsSchema = z.object({
   proxiedSiteId: z.string().min(1),
+});
+
+const ResolveProxiedSiteQuerySchema = z.object({
+  endpoint_host: z.string().min(1).max(253).regex(/^[a-zA-Z0-9.:[\]-]+$/),
 });
 
 const BootstrapQuerySchema = z.object({
@@ -112,6 +117,23 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
       transport: serializeProxyTransportStatus(transportStatus),
       websocket_transport: serializeProxyTransportStatus(websocketTransportStatus),
     };
+  });
+
+  server.get("/api/proxied-sites/resolve", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+    const query = ResolveProxiedSiteQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: "invalid_proxy_host" });
+    }
+    const site = await resolveAuthorizedProxiedSiteHost(viewer, query.data.endpoint_host);
+    if (!site) {
+      return reply.status(404).send({ error: "proxied_site_not_found" });
+    }
+    reply.header("Cache-Control", "no-store");
+    return serializeProxiedSite(site, resolveProxyTransportStatus(site.budId));
   });
 
   server.get("/api/proxied-sites/:proxiedSiteId", async (request, reply) => {

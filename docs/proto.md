@@ -2760,3 +2760,7 @@ shapes remain unchanged. No daemon frame or new SSE event is introduced. Evidenc
 uses the exact delivery/bootstrap revisions filtered by current granted fields and
 approved history; it is not an unfiltered iOS payload. See
 `plan/personal-data-ingestion-and-agent-triggers/phase-18-contact-trigger-evidence.md`.
+
+### Owner-authorized proxy link resolution
+
+`GET /api/proxied-sites/resolve?endpoint_host=<hostname>` uses the authenticated app/API viewer. Returns the existing serialized proxied-site shape with 200, 404 for unknown/foreign hosts, 401 without auth, 400 for malformed hostnames; successful responses are not cacheable. No network fetch or thread mutation occurs. Clients then POST the clicked absolute path (including optional query and fragment) to the existing viewer-grant endpoint. Grants are minted only for openable owned sites. Origin-changing paths are rejected. Site reuse is now owner/Bud/host/port based; historical hostname rows are preserved. No daemon protocol changes.
