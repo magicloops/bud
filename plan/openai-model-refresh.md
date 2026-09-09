@@ -57,6 +57,18 @@ Update the LLM/provider specs, affected route/agent specs, and client docs if th
 
 Focused catalog, reasoning, provider request/replay/schema, model-runner, context-budget, thread-route and invocation tests passed after updating active fixtures (115 tests). Additional agent/conversation tests passed (24 tests); two database-backed automation suites were skipped because their integration flag was not enabled. Web invocation-state tests and service/web/iOS simulator builds passed. Web build retains its existing bundle-size warning.
 
-Before deployment: audit production saved models and pinned automation/invocation snapshots, replace any retired DEFAULT_MODEL/OPENAI_MODEL overrides, and validate live Astra tool/approval continuation. The read-only production inventory attempt failed; no assumption of an empty inventory is made. Physical-client picker validation remains open.
+Production database inventory succeeded after inbound access was updated; see the audit below. Live Render environment verification, full Bud tool/approval continuation and physical-client picker validation remain open.
 
 Live smoke: Astra text response, forced synthetic function call, encrypted reasoning replay and streamed tool-result continuation passed using the local service OpenAI credential. This does not replace full Bud terminal/web/approval end-to-end validation.
+
+## Production audit — September 9, 2026
+
+Read-only transaction against production, with a statement timeout and aggregate-only output. No database rows were changed.
+
+- Four automation drafts use supported GPT-5.6 models. Three current revision pointers (one enabled, two paused) and all five historical revisions also use GPT-5.6.
+- All six automation proposals use GPT-5.6 and are settled; none are pending.
+- All 19 invocations use GPT-5.6 and are terminal (16 succeeded, three canceled). No queued/running/waiting invocations require a drain at this snapshot.
+- Twelve nondeleted, nonarchived chats retain GPT-5.5 preferences (five none, six low, one medium). Their latest activity is August 26, 2026. No GPT-5.4 chat preferences were found. Preserve these records; existing read projections can show a supported default, while implicit execution of a retired preference rejects until an explicit supported selection is submitted. No bulk preference migration is required for this rollout.
+- The imported local `service/.env.production` sets `DEFAULT_MODEL=gpt-5.6-luna` and legacy `OPENAI_MODEL=gpt-5.1-codex`. Config gives DEFAULT_MODEL precedence, so the legacy value is inactive. Remove the obsolete fallback in a future environment cleanup; this audit does not establish Render's live configuration.
+
+The database audit concern is resolved with the documented treatment of older chat preferences. Counts are a point-in-time snapshot, not a lock on subsequent activity.
