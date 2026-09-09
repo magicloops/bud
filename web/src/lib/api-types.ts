@@ -82,6 +82,7 @@ export type ApiThread = {
   reasoning_effort?: ApiReasoningLevel | null
   effective_model?: string | null
   effective_reasoning_effort?: ApiReasoningLevel | null
+  model_warning?: string | null
   model_selection_source?: 'thread' | 'service_default' | null
 }
 
@@ -408,6 +409,8 @@ export type ApiAutomationDefinition = {
   instruction: string
   sources: { source_ids: string[] }
   bud_id: string
+  model_mode?: 'inherit' | 'explicit'
+  origin_thread_id?: string | null
   model: string
   reasoning_effort: ApiReasoningLevel
   target: { mode: 'new_thread' } | { mode: 'existing_thread'; thread_id: string }
@@ -416,7 +419,10 @@ export type ApiAutomationDefinition = {
   max_invocations_per_day: number
 }
 
+export type ApiAutomationModelResolution = { model: string; reasoning_effort: string; source: string; warning: string | null }
+
 export type ApiAutomationProposal = {
+  model_resolution?: ApiAutomationModelResolution | null
   review_operation?: 'create' | 'update'
   destination_thread_title?: string | null
   proposal_id: string

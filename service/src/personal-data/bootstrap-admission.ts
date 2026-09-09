@@ -1,3 +1,5 @@
+import { DataRequestError } from "./contracts.js";
+import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
@@ -72,20 +74,26 @@ export class BootstrapAdmission {
       const usage = await automationUsage(tx, owner, policy.rule.id);
       if (usage.ownerCount >= AUTOMATION_LIMITS.invocations_per_owner_day || usage.ruleCount >= definition.max_invocations_per_day)
         return wait("daily_work_limit");
+      let modelResolution: AutomationModelResolution;
+      try { modelResolution = (await automationModelResolver(tx, owner, [definition]))(definition); }
+      catch (error) {
+        if (error instanceof DataRequestError) return finish("failed", error.code);
+        throw error;
+      }
       let threadId: string;
       if (definition.target.mode === "existing_thread") threadId = definition.target.thread_id;
       else {
         const [thread] = await tx.insert(threads).values({ budId: definition.bud_id, title: definition.name,
-          modelId: definition.model, reasoningEffort: definition.reasoning_effort, createdByUserId: owner }).returning();
+          modelId: modelResolution.model, reasoningEffort: modelResolution.reasoning_effort, createdByUserId: owner }).returning();
         threadId = thread.threadId;
       }
       const admitted = await new InvocationRepository(this.database).admitInTransaction(tx, { owner, threadId, origin: "automation",
-        idempotencyKey: `automation-bootstrap:${group.bootstrapId}:${group.groupIndex}`, model: definition.model,
-        reasoningEffort: definition.reasoning_effort, latestStartAt: policy.request.latestStartAt,
+        idempotencyKey: `automation-bootstrap:${group.bootstrapId}:${group.groupIndex}`, model: modelResolution.model,
+        reasoningEffort: modelResolution.reasoning_effort, latestStartAt: policy.request.latestStartAt,
         text: `Automation: ${definition.name}\n\n${definition.instruction}\n\nExplicit processing of existing contacts; these are not new-contact notifications.\n` +
           selected.map(contact => `Contact ID: ${contact.contactId}; frozen revision ID: ${contact.revisionId}; observed at: ${contact.observedAt.toISOString()}`).join("\n") +
           "\nQuery available evidence, label uncertainty, and do not repeat completed actions during later enrichment.",
-        metadata: { automation_id: policy.rule.id, automation_revision: policy.request.revision,
+        metadata: { model_resolution: modelResolution, automation_id: policy.rule.id, automation_revision: policy.request.revision,
           bootstrap_id: group.bootstrapId, bootstrap_group_index: group.groupIndex,
           contact_revision_ids: selected.map(contact => contact.revisionId), grant_version: grant.version },
       });

@@ -13,6 +13,7 @@ const defaults: AutomationDefinition = {
 
 test("draft omissions retain the exact server-selected Bud/model and bounded policy", () => {
   const draft = resolveAgentAutomationDraft({ name: "New contact", instruction: "Write a note" }, defaults);
+  assert.equal(draft.model_mode, "inherit");
   assert.equal(draft.bud_id, defaults.bud_id);
   assert.equal(draft.model, defaults.model);
   assert.equal(draft.reasoning_effort, "high");
@@ -42,4 +43,12 @@ test("human decisions identify one immutable proposal version and cannot rebase 
   for (const extra of [{ definition: defaults }, { expected_version: -1 }, { decision: "skip" }, { user_id: "another-owner" }]) {
     assert.throws(() => parseAutomationProposalInput(automationProposalDecisionSchema, { ...decision, ...extra }));
   }
+});
+
+
+test("an explicit override uses its own reasoning default and cannot invent origin", () => {
+  const draft = resolveAgentAutomationDraft({ name: "N", instruction: "I", model: "gpt-6-astra" }, defaults);
+  assert.equal(draft.model_mode, "explicit");
+  assert.equal(draft.reasoning_effort, "medium");
+  assert.throws(() => resolveAgentAutomationDraft({ name: "N", instruction: "I", origin_thread_id: "12345678-1234-4123-8123-123456789012" }, defaults));
 });

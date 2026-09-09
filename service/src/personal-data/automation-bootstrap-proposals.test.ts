@@ -37,12 +37,12 @@ test("existing-contact proposals capture once, preserve decisions and roll back 
     await db.insert(s.threadTable).values({ threadId, budId, createdByUserId: owner });
     const [message] = await db.insert(s.messageTable).values({ threadId, clientId: randomUUID(), role: "user", content: "Review existing contacts", createdByUserId: owner }).returning();
     await db.insert(s.agentInvocationTable).values({ id: invocationId, turnId: randomUUID(), threadId, budId, inputMessageId: message.messageId,
-      origin: "human", idempotencyKey: "request", model: "gpt-5.4", reasoningEffort: "low", status: "running", reservesThread: true,
+      origin: "human", idempotencyKey: "request", model: "gpt-5.6-luna", reasoningEffort: "low", status: "running", reservesThread: true,
       workerId: "fixture", fence: 1, leaseExpiresAt: new Date(Date.now() + 3600000), createdByUserId: owner });
     await new DataGrants(db).update(owner, { version: 0, scopes: ["contacts.read"], history_days: 30 });
     const automations = new Automations(db);
     const rule = await automations.create(owner, { event_type: "contact.added", name: "Existing", instruction: "Read contacts",
-      sources: { source_ids: [] }, bud_id: budId, model: "gpt-5.4", reasoning_effort: "low", target: { mode: "new_thread" },
+      sources: { source_ids: [] }, bud_id: budId, model: "gpt-5.6-luna", reasoning_effort: "low", target: { mode: "new_thread" },
       data_access: { scopes: ["contacts.read"], history_days: 30 }, latest_start_seconds: 86400, max_invocations_per_day: 5 });
     await automations.activate(owner, rule.automation_id, { expected_version: 0, expected_grant_version: 1, acknowledge_standing_work: true });
     const repo = new AutomationBootstrapProposals(db);
@@ -135,7 +135,7 @@ test("existing-contact proposals capture once, preserve decisions and roll back 
     const callId = "parked-review", clientId = randomUUID(), providerId = randomUUID();
     await intent(callId);
     await db.insert(s.llmCallTable).values({ llmCallId: providerId, threadId, turnId: lease.turnId,
-      stepIndex: 0, provider: "openai", model: "gpt-5.4", requestMode: "openai_responses", createdByUserId: owner });
+      stepIndex: 0, provider: "openai", model: "gpt-5.6-luna", requestMode: "openai_responses", createdByUserId: owner });
     await db.insert(s.llmCallItemTable).values([
       { id: callId, name: BOOTSTRAP_PROPOSAL_TOOL, input: repeated },
       { id: "trailing", name: "terminal_run", input: { command: "echo deferred" } },

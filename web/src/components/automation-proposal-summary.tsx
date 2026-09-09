@@ -29,12 +29,14 @@ export function AutomationProposalSummary({ proposal }: { proposal: ApiAutomatio
         ? <p>Excludes contacts already scheduled for this revision.</p>
         : <p role="note" className="font-semibold">This may repeat previous actions. Approving explicitly allows repeat processing for this contact set.</p>}
     </> : <p>When a new contact is observed. Existing contacts and initial imports are not processed.</p>}
+    {proposal.model_resolution && <p className="text-sm">Currently: {proposal.model_resolution.model} · {proposal.model_resolution.reasoning_effort} reasoning</p>}
+    {proposal.model_resolution?.warning && <p className="text-sm text-amber-700">{proposal.model_resolution.warning}</p>}
     <dl className="space-y-2 text-sm">
-      <div><dt className="font-semibold">Runs on</dt><dd>{definition.bud_id} · {definition.model} · {definition.reasoning_effort} reasoning</dd></div>
+      <div><dt className="font-semibold">Runs on</dt><dd>{definition.bud_id} · {definition.model_mode === 'inherit' ? 'Follows conversation/default model and reasoning' : `${definition.model} · ${definition.reasoning_effort} reasoning`}</dd></div>
       <div><dt className="font-semibold">Conversation</dt><dd>{automationReviewDestination(proposal)}</dd></div>
       <div><dt className="font-semibold">Contact sources</dt><dd>{definition.sources.source_ids.length ? definition.sources.source_ids.join(', ') : 'All permitted contact sources'}</dd></div>
       <div><dt className="font-semibold">Data access</dt><dd>{definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : 'Location at collected precision').join(' and ')} · {definition.data_access.history_days} days of history</dd></div>
-      <div><dt className="font-semibold">Limits</dt><dd>Up to {definition.max_invocations_per_day} runs per 24 hours. Unstarted work expires after {definition.latest_start_seconds / 60} minutes. Waits for the selected Bud and model; no automatic fallback.</dd></div>
+      <div><dt className="font-semibold">Limits</dt><dd>Up to {definition.max_invocations_per_day} runs per 24 hours. Unstarted work expires after {definition.latest_start_seconds / 60} minutes. Waits for the selected Bud and model; retired cloud models use the current default. Offline local models do not switch to cloud.</dd></div>
     </dl>
     <p className="text-sm text-muted-foreground">Review expires {new Date(proposal.expires_at).toLocaleString()}.</p>
   </>

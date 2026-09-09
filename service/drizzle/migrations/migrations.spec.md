@@ -237,7 +237,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0037` currently)
+- Snapshot files for each migration (`0000` through `0038` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -394,3 +394,14 @@ Expands the automation state constraint to include terminal `deleted`; no rows,
 columns or history are removed. Generated metadata remains unedited. Reviewed SQL
 applied locally transactionally after canceling db:push's unrelated invocation
 constraint recreation prompt. Isolated-schema execution and metadata tests pass.
+
+### `0038_automation_model_inheritance.sql`
+
+Data-only development conversion of existing automation JSON definitions to
+inherited policy. Recovers origins from owner/Bud-matching proposal history,
+retains prior model/effort values, advances draft versions and marks pending
+old-policy reviews stale. Does not mutate admitted invocations or messages.
+Generated with `db:generate --custom --name automation_model_inheritance`;
+local SQL application and isolated replay/provenance tests pass. Deploy via the
+normal migration runner before using the updated service/web/mobile authoring.
+Coordinate the upgrade; old authoring code is not a rollback target.

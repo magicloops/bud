@@ -129,9 +129,10 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   await db.insert(s.budTable).values({ budId, name: "Fixture", os: "test", arch: "test", createdByUserId: owner });
   await db.insert(s.automationTable).values({ id: rule, draft: {}, createdByUserId: owner, updatedByUserId: owner });
   const ruleDefinition = { event_type: "contact.added", name: "Contacts", instruction: "First instruction",
-    sources: { source_ids: [] }, bud_id: budId, model: "gpt-5.4", reasoning_effort: "low",
+    sources: { source_ids: [] }, bud_id: budId, model_mode: "explicit", model: "gpt-5.6-luna", reasoning_effort: "low",
     target: { mode: "new_thread" }, data_access: { scopes: ["contacts.read"], history_days: 90 },
     latest_start_seconds: 86400, max_invocations_per_day: 1 };
+  await db.update(s.automationTable).set({ draft: ruleDefinition }).where(eq(s.automationTable.id, rule));
   const revision = { automationId: rule, revision: 1, definition: ruleDefinition, publicationBoundary: 0, grantVersion: 0,
     activatedByUserId: owner, createdByUserId: owner };
   await assert.rejects(db.insert(s.automationRevisionTable).values({ ...revision, createdByUserId: owner + "-other" }),
@@ -185,7 +186,7 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   await Promise.all([admission.admitNext(owner), new AutomationAdmission(db).admitNext(owner)]);
   const admitted = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.createdByUserId, owner));
   assert.equal(admitted.length, 1);
-  assert.equal(admitted[0].model, "gpt-5.4");
+  assert.equal(admitted[0].model, "gpt-5.6-luna");
   assert.equal(admitted[0].origin, "automation");
   const invocationRepository = new InvocationRepository(db);
   const automationRepository = new Automations(db);
@@ -375,7 +376,8 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   assert.equal(retriedSnapshot.member_count, 2, "later contacts do not mutate retry membership");
   assert.deepEqual(await db.select().from(s.automationBootstrapMemberTable).where(eq(s.automationBootstrapMemberTable.bootstrapId, snapshots[0].bootstrap_id)), membership);
   // Combined activation/snapshot is one commit, and retries do not reactivate.
-  const combinedRule = await automationRepository.create(owner, ruleDefinition);
+  const combinedRule = await automationRepository.create(owner, { ...ruleDefinition, model_mode: "inherit", origin_thread_id: lease.threadId });
+  await db.update(s.threadTable).set({ modelId: "gpt-6-astra", reasoningEffort: "medium" }).where(eq(s.threadTable.threadId, lease.threadId));
   const draftPreview = await bootstrap.preview(owner, combinedRule.automation_id,
     { ...previewInput, expected_version: 0, use_draft: true, max_contacts: 100 });
   assert.equal(draftPreview.member_count, 6);
@@ -460,7 +462,9 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   assert.equal(admittedGroup.status, "admitted");
   assert.ok(admittedGroups.some(group => group.outcomeCode === "daily_work_limit"), "live and bootstrap admissions share the rule budget");
   const [bootstrapInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, admittedGroup.invocationId!));
-  assert.equal(bootstrapInvocation.model, ruleDefinition.model);
+  assert.equal(bootstrapInvocation.model, "gpt-6-astra");
+  assert.equal(bootstrapInvocation.reasoningEffort, "medium");
+  await db.update(s.threadTable).set({ modelId: "gpt-5.6-terra", reasoningEffort: "high" }).where(eq(s.threadTable.threadId, lease.threadId));
   assert.equal(bootstrapInvocation.origin, "automation");
   const [bootstrapInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, bootstrapInvocation.inputMessageId));
   assert.equal(bootstrapInput.metadata?.bootstrap_id, combined[0].bootstrap_id);

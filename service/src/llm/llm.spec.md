@@ -419,3 +419,13 @@ dependency.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Saved model retirement fallback
+
+`resolveEffectiveModelSelection` resolves retired saved cloud preferences to the
+configured service default, preserving supported reasoning or using its default.
+It returns `fallbackFrom` / `reasoningAdjusted` for attribution without rewriting
+saved intent. Fresh unknown selections still fail; message admission explicitly
+allows known retired client submissions to fall back. Missing Bud-local models
+and provider availability failures never select cloud as a substitute. Already
+admitted invocation snapshots still use strict preflight. Tests cover each boundary.

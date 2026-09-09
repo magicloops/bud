@@ -43,7 +43,7 @@ test("resolveEffectiveModelSelection falls back to service default for invalid s
   });
 
   assert.equal(selection.model, "gpt-5.6-sol");
-  assert.equal(selection.reasoningEffort, "low");
+  assert.equal(selection.reasoningEffort, "medium");
   assert.equal(selection.source, "service_default");
   assert.equal(selection.storedModelValid, false);
 });
@@ -135,8 +135,25 @@ test("Astra validates its own reasoning levels and rejects none", () => {
     serviceDefaultModel: "gpt-5.6-luna", validateAvailability: false }), InvalidReasoningEffortError);
 });
 
-test("retired stored models remain readable but cannot silently execute using the default", () => {
+test("retired stored models fall back and retain requested attribution", () => {
   const input = { threadModel: "gpt-5.5", serviceDefaultModel: "gpt-5.6-luna" };
   assert.equal(resolveEffectiveModelSelection({ ...input, validateAvailability: false }).storedModelValid, false);
-  assert.throws(() => resolveEffectiveModelSelection(input), /has been retired/);
+  const selection = resolveEffectiveModelSelection({ ...input, validateAvailability: false });
+  assert.equal(selection.model, "gpt-5.6-luna");
+  assert.equal(selection.fallbackFrom, "gpt-5.5");
+});
+
+
+test("unavailable saved local models never fall back to cloud", () => {
+  assert.throws(() => resolveEffectiveModelSelection({ threadModel: "bud-local:owned:offline",
+    serviceDefaultModel: "gpt-5.6-luna", validateAvailability: false }), InvalidModelSelectionError);
+});
+
+test("stale client retirement fallback is explicit and unknown fresh IDs remain errors", () => {
+  const input = { serviceDefaultModel: "gpt-6-astra", validateAvailability: false, allowRetiredFallback: true };
+  const resolved = resolveEffectiveModelSelection({ ...input, requestedModel: "gpt-5.5", requestedReasoning: "none" });
+  assert.equal(resolved.model, "gpt-6-astra");
+  assert.equal(resolved.reasoningEffort, "medium");
+  assert.equal(resolved.reasoningAdjusted, true);
+  assert.throws(() => resolveEffectiveModelSelection({ ...input, requestedModel: "typo-model" }), InvalidModelSelectionError);
 });

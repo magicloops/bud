@@ -72,3 +72,7 @@ Read-only transaction against production, with a statement timeout and aggregate
 - The imported local `service/.env.production` sets `DEFAULT_MODEL=gpt-5.6-luna` and legacy `OPENAI_MODEL=gpt-5.1-codex`. Config gives DEFAULT_MODEL precedence, so the legacy value is inactive. Remove the obsolete fallback in a future environment cleanup; this audit does not establish Render's live configuration.
 
 The database audit concern is resolved with the documented treatment of older chat preferences. Counts are a point-in-time snapshot, not a lock on subsequent activity.
+
+## Follow-up selection policy
+
+[Automation model inheritance and retirement fallback](automation-model-inheritance-and-fallback.md) scopes the next change: inherited versus explicit selection, retirement fallback to the service default, and web/mobile warnings. Implemented in the working tree, it supersedes this document's retired-model failure policy on deployment. The catalog changes and validation above remain applicable; the follow-up migration is applied locally; coordinated deployment remains pending.

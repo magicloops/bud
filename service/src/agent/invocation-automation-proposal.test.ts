@@ -32,13 +32,13 @@ test("automation review parks atomically and resumes the same invocation with on
     const repo = new InvocationRepository(db), proposals = new AutomationProposals(db), rules = new Automations(db);
     await new DataGrants(db).update(owner, { version: 0, scopes: ["contacts.read"], history_days: 30 });
     const definition = { event_type: "contact.added", name: "Fixture", instruction: "Read evidence", sources: { source_ids: [] },
-      bud_id: bud, model: "gpt-5.4", reasoning_effort: "low", target: { mode: "new_thread" },
+      bud_id: bud, model: "gpt-5.6-luna", reasoning_effort: "low", target: { mode: "new_thread" },
       data_access: { scopes: ["contacts.read"], history_days: 30 }, latest_start_seconds: 86400, max_invocations_per_day: 5 };
     const setup = async () => {
       const thread = randomUUID();
       await db.insert(schema.threadTable).values({ threadId: thread, budId: bud, createdByUserId: owner });
       await repo.admit({ owner, threadId: thread, origin: "human", idempotencyKey: thread,
-        text: "Create automation", model: "gpt-5.4", reasoningEffort: "low" });
+        text: "Create automation", model: "gpt-5.6-luna", reasoningEffort: "low" });
       const lease = await repo.claim("fixture", owner); assert.ok(lease);
       await repo.start(lease);
       const rule = await rules.create(owner, definition);
@@ -46,7 +46,7 @@ test("automation review parks atomically and resumes the same invocation with on
       const callId = randomUUID(), clientId = randomUUID(), providerId = randomUUID();
       await repo.recordAction(lease, callId, AUTOMATION_PROPOSAL_TOOL);
       await db.insert(schema.llmCallTable).values({ llmCallId: providerId, threadId: thread, turnId: lease.turnId,
-        stepIndex: 0, provider: "openai", model: "gpt-5.4", requestMode: "openai_responses", createdByUserId: owner });
+        stepIndex: 0, provider: "openai", model: "gpt-5.6-luna", requestMode: "openai_responses", createdByUserId: owner });
       await db.insert(schema.llmCallItemTable).values([
         { id: callId, name: AUTOMATION_PROPOSAL_TOOL, input },
         { id: "later-" + callId, name: "terminal_send", input: { text: "echo reconsider" } },
@@ -66,8 +66,10 @@ test("automation review parks atomically and resumes the same invocation with on
     assert.deepEqual(drafts[0], drafts[1]);
     const draft = drafts[0].draft as Record<string, unknown>;
     assert.equal(draft.bud_id, bud);
-    assert.equal(draft.model, "gpt-5.4");
-    assert.equal(draft.reasoning_effort, "low");
+    assert.equal(draft.model_mode, "inherit");
+    assert.equal(draft.origin_thread_id, first.thread);
+    assert.equal(draft.model, "");
+    assert.equal(draft.reasoning_effort, "none");
     assert.deepEqual(draft.target, { mode: "existing_thread", thread_id: first.thread });
     assert.deepEqual(draft.data_access, { scopes: ["contacts.read"], history_days: 30 });
     assert.equal(drafts[0].active_revision, null);
@@ -89,8 +91,9 @@ test("automation review parks atomically and resumes the same invocation with on
       const input = { ...draftInput, target, model: null, reasoning_effort: null };
       const created = await management.mutate(context, "automations_create_draft", input);
       assert.deepEqual((created.draft as Record<string, unknown>).target, expected);
-      assert.equal((created.draft as Record<string, unknown>).model, "gpt-5.4");
-      assert.equal((created.draft as Record<string, unknown>).reasoning_effort, "low");
+      assert.equal((created.draft as Record<string, unknown>).model_mode, "inherit");
+      assert.equal((created.draft as Record<string, unknown>).origin_thread_id, first.thread);
+      assert.equal((created.draft as Record<string, unknown>).reasoning_effort, "none");
       assert.equal(created.active_revision, null);
       assert.deepEqual(await management.mutate(context, "automations_create_draft", input), created);
       await repo.completeAction(first.lease, callId, { message_id: "fixture" });
@@ -119,8 +122,8 @@ test("automation review parks atomically and resumes the same invocation with on
     await repo.recordAction(first.lease, "invalid-reasoning", "automations_create_draft");
     const beforeInvalid = (await rules.list(owner)).items.length;
     await assert.rejects(management.mutate({ ...managementContext, callId: "invalid-reasoning" },
-      "automations_create_draft", { ...draftInput, reasoning_effort: "minimal" }),
-      /model=gpt-5.4, reasoning_effort=minimal.*Omit model and reasoning_effort.*model=gpt-5.4, reasoning_effort=low/);
+      "automations_create_draft", { ...draftInput, model: "gpt-5.6-luna", reasoning_effort: "minimal" }),
+      /model=gpt-5.6-luna, reasoning_effort=minimal.*Omit model and reasoning_effort/);
     assert.equal((await rules.list(owner)).items.length, beforeInvalid);
     await repo.completeAction(first.lease, "invalid-reasoning", { validation_failed: true });
     await repo.recordAction(first.lease, "edit-draft", "automations_update_draft");

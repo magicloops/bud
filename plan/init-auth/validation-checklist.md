@@ -262,3 +262,13 @@ versioned human endpoints and their existing decision/cancellation actors.
 
 - [ ] Verify `/api/proxied-sites/resolve?endpoint_host=...` returns 401 without auth, 404 for another owner's or missing site, and metadata only for the owner (including another owned Bud).
 - [ ] Open historical proxy links on web/mobile without changing the current thread attachment; grant ownership and disabled/expired enforcement remain intact.
+
+## Automation model inheritance
+
+- [x] Local PostgreSQL: model source reads filter owner and Bud; foreign destinations fail and deleted new-thread origins use only the service default.
+- [x] Agent creation binds origin to the fenced human invocation; tool arguments cannot invent origin, and updates retain authoring provenance.
+- [x] Bootstrap admission follows the origin's latest model; later source changes do not alter its snapshot or bypass dispatch permissions.
+- [ ] Live two-account web/mobile check: model warnings/review details/history expose only owned source and invocation data; changing an automation target cannot access another user's thread.
+
+Existing owner/tenant stamping and authenticated viewer resolution are unchanged.
+Model projection reads add no grant or new management authority.

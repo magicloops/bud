@@ -4,7 +4,7 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   automationBootstrapTable as requests, automationBootstrapGroupTable as groups, automationBootstrapMemberTable as members,
   agentDataGrantTable as grants, dataDomainEventTable as events, contactRevisionTable as evidence,
   contactTable as contacts, contactSourceTable as sources, dataCollectionEpochTable as epochs,
-  dataInstallationTable as installations, agentInvocationTable as invocations } from "../db/schema.js";
+  dataInstallationTable as installations, agentInvocationTable as invocations, messageTable as messages } from "../db/schema.js";
 import { InvocationError, type Invocation } from "../agent/invocation-repository.js";
 import { automationDefinitionSchema, parseAutomationInput } from "./automation-contracts.js";
 import type { AgentDataCeiling } from "./agent-queries.js";
@@ -58,8 +58,14 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
   if (!policy) policy = await bootstrapPolicy(invocation, database);
   if (!policy || policy.state === "deleted") throw new InvocationError("automation_authority_lost");
   const definition = parseAutomationInput(automationDefinitionSchema, policy.definition);
-  if (definition.bud_id !== invocation.budId || definition.model !== invocation.model ||
-    definition.reasoning_effort !== invocation.reasoningEffort ||
+  const [input] = await database.select({ metadata: messages.metadata }).from(messages).where(and(
+    eq(messages.messageId, invocation.inputMessageId), eq(messages.threadId, invocation.threadId), eq(messages.createdByUserId, owner))).limit(1);
+  const snapshot = input?.metadata?.model_resolution as { model?: string; reasoning_effort?: string } | undefined;
+  // Pre-cutover invocations have no resolution metadata. Their persisted model
+  // remains frozen; never compare it with the newly inherited revision policy.
+  if (snapshot && (snapshot.model !== invocation.model || snapshot.reasoning_effort !== invocation.reasoningEffort))
+    throw new InvocationError("automation_target_changed");
+  if (definition.bud_id !== invocation.budId ||
     (definition.target.mode === "existing_thread" && definition.target.thread_id !== invocation.threadId)) {
     throw new InvocationError("automation_target_changed");
   }

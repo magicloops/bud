@@ -4,7 +4,7 @@ const id = { type: "string", minLength: 1, maxLength: 128 } as const;
 const version = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const;
 const definition: CanonicalTool["parameters"] = {
   type: "object", additionalProperties: false,
-  required: ["event_type", "name", "instruction", "sources", "bud_id", "model", "reasoning_effort", "target", "data_access", "latest_start_seconds", "max_invocations_per_day"],
+  required: ["event_type", "name", "instruction", "sources", "bud_id", "model_mode", "target", "data_access", "latest_start_seconds", "max_invocations_per_day"],
   properties: {
     event_type: { type: "string", enum: ["contact.added"] },
     name: { type: "string", minLength: 1, maxLength: 120 },
@@ -12,7 +12,8 @@ const definition: CanonicalTool["parameters"] = {
     sources: { type: "object", additionalProperties: false, required: ["source_ids"], properties: {
       source_ids: { type: "array", maxItems: 32, uniqueItems: true, items: id, description: "Empty means all permitted contact sources." },
     } },
-    bud_id: id, model: { type: "string", minLength: 1, maxLength: 256 },
+    model_mode: { type: "string", enum: ["inherit", "explicit"], description: "Inherit follows the conversation model on each new run. Explicit overrides it. Retired cloud models use the service default." },
+    bud_id: id, model: { type: "string", minLength: 0, maxLength: 256 },
     reasoning_effort: { type: "string", enum: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
     target: { anyOf: [
       { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { type: "string", enum: ["new_thread"] } } },
@@ -39,13 +40,13 @@ export const AUTOMATION_CANONICAL_TOOLS: CanonicalTool[] = [
   { name: "automations_history", description: "Read bounded automation delivery history and resulting conversation references." + guidance,
     parameters: { type: "object", additionalProperties: false, properties: { automation_id: id,
       limit: { type: "integer", minimum: 1, maximum: 100 }, cursor: { type: "string", maxLength: 2048 } }, required: ["automation_id"] } },
-  { name: "automations_create_draft", description: "Prepare a separate automation for a new workflow in this chat without enabling it. Multiple automations may independently receive the same contact event; a shared trigger does not make workflows duplicates. Do not consolidate another chat’s workflow merely to avoid duplicate research. Only name and instruction are required. Unless the user explicitly requests a model or reasoning override, omit both model and reasoning_effort (or use null) to inherit the current chat selection; do not guess either value. Omitted settings use this exact Bud/model/reasoning, this current conversation, all permitted contact sources, Contacts-only access with at most 30 days of currently granted history, a 24-hour start deadline and 10 runs/day. Omit target (or use null) to keep results in this conversation; do not guess its ID. Use target mode new_thread only when the user explicitly requests a new conversation per trigger; preserve explicitly chosen existing conversations too. State the saved destination before requesting review. Preserve explicit user choices. Initial contact import does not trigger the rule. Request activation separately for human review; you cannot grant data permission." + guidance,
+  { name: "automations_create_draft", description: "Prepare a separate automation for a new workflow in this chat without enabling it. Multiple automations may independently receive the same contact event; a shared trigger does not make workflows duplicates. Do not consolidate another chat’s workflow merely to avoid duplicate research. Only name and instruction are required. Unless the user explicitly requests a model or reasoning override, omit both model and reasoning_effort (or use null) to inherit the current chat selection; do not guess either value. Omitted model settings follow this conversation on future runs; new-thread targets follow the originating conversation. Other omitted settings use this Bud, this current conversation, all permitted contact sources, Contacts-only access with at most 30 days of currently granted history, a 24-hour start deadline and 10 runs/day. Omit target (or use null) to keep results in this conversation; do not guess its ID. Use target mode new_thread only when the user explicitly requests a new conversation per trigger; preserve explicitly chosen existing conversations too. State the saved destination before requesting review. Preserve explicit user choices. Initial contact import does not trigger the rule. Request activation separately for human review; you cannot grant data permission." + guidance,
     parameters: { ...definition, required: ["name", "instruction"], properties: {
       ...definition.properties,
       model: { type: "string", minLength: 1, maxLength: 256,
         description: "Omit or use null to inherit this chat's selected model. Set only when the user explicitly requests a different model; never guess an ID or copy another automation's model." },
       reasoning_effort: { ...definition.properties!.reasoning_effort as object,
-        description: "Omit or use null to inherit this chat's selected reasoning level. Set only for an explicit user override supported by the chosen model. Do not choose minimal/none just because the automation task seems simple." },
+        description: "Omit for inherited selection. With an explicit model, omission uses that model's default reasoning. Set only for an explicit user override supported by the chosen model. Do not choose minimal/none just because the automation task seems simple." },
     } } },
   { name: "automations_update_draft", description: "Save a complete replacement draft using its observed version. Active behavior remains unchanged until a new review is approved. Read the current rule first; do not silently overwrite conflicts. Edit a rule belonging to another conversation only when the user requests that cross-conversation change. Otherwise create a separate rule here. State that this replaces existing behavior and name its saved destination before review." + guidance,
     parameters: { type: "object", additionalProperties: false, properties: { automation_id: id, expected_version: version, definition }, required: ["automation_id", "expected_version", "definition"] } },

@@ -170,7 +170,7 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       reasoning_effort: "low",
       effective_model: "gpt-5.6-sol",
       effective_reasoning_effort: "low",
-      model_selection_source: "thread",
+      model_selection_source: "thread", model_warning: null,
       has_unseen_attention: true,
       last_attention_kind: "assistant_completed",
       has_terminal_session: true,
@@ -191,7 +191,7 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       reasoning_effort: null,
       effective_model: "gpt-5.6-luna",
       effective_reasoning_effort: "high",
-      model_selection_source: "service_default",
+      model_selection_source: "service_default", model_warning: null,
       has_unseen_attention: false,
       last_attention_kind: "assistant_completed",
       has_terminal_session: false,
@@ -295,7 +295,7 @@ test("PATCH /api/threads/:threadId/model-preference persists resolved thread mod
     reasoning_effort: "low",
     effective_model: "gpt-5.6-sol",
     effective_reasoning_effort: "low",
-    model_selection_source: "thread",
+    model_selection_source: "thread", model_warning: null,
   });
 });
 

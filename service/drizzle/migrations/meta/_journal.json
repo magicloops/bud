@@ -267,6 +267,13 @@
       "when": 1788902815481,
       "tag": "0037_huge_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788992897387,
+      "tag": "0038_automation_model_inheritance",
+      "breakpoints": true
     }
   ]
 }

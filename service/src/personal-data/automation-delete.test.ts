@@ -41,7 +41,7 @@ test("deletion is owner-bound, atomic, retryable and terminal while retaining hi
   await pool.query(await readFile(new URL("../../drizzle/migrations/0036_magical_ken_ellis.sql", import.meta.url), "utf8"));
   const owner = "delete-owner", other = "other-owner", now = new Date(), deadline = new Date(Date.now() + 86400000);
   const definition = { event_type: "contact.added", name: "Delete fixture", instruction: "Write a note.",
-    sources: { source_ids: [] }, bud_id: "bud", model: "gpt-5.4", reasoning_effort: "low",
+    sources: { source_ids: [] }, bud_id: "bud", model: "gpt-5.6-luna", reasoning_effort: "low",
     target: { mode: "new_thread" }, data_access: { scopes: ["contacts.read"], history_days: 30 },
     latest_start_seconds: 86400, max_invocations_per_day: 5 };
   await db.insert(s.dataOwnerStateTable).values([{ createdByUserId: owner }, { createdByUserId: other }]);

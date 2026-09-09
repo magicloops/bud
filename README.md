@@ -10,6 +10,20 @@ The repo has three runnable packages:
 
 Start with [AGENTS.md](./AGENTS.md) for repo rules and [bud.spec.md](./bud.spec.md) for architecture.
 
+## Development status
+
+Bud is in active development, before its stable public launch. We currently
+control the deployed service, clients, and daemon machines and can coordinate
+updates across them. APIs, model selections, configuration, and stored formats
+may change between releases; backward compatibility with older builds is not
+guaranteed. Early users should expect to update components together and follow
+any migration or restart instructions in the release notes.
+
+We favor straightforward changes and coordinated upgrades while developing the
+product. Compatibility support is added for concrete deployment needs. A hosted
+environment named “production” does not imply a stable public compatibility
+contract. Authentication, permissions, and data integrity remain requirements.
+
 ## Installing the Bud Daemon
 
 Supported platforms: macOS 13+ (arm64/x64) and Linux glibc 2.35+ (x64/arm64).

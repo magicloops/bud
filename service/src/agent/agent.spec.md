@@ -1229,3 +1229,13 @@ kind. See [phase 18](../../../plan/personal-data-ingestion-and-agent-triggers/ph
 ## OpenAI catalog retirement
 
 Invocation preflight rejects retired model snapshots before execution. The worker preserves model-selection errors as `invalid_model` or `invalid_reasoning_effort` outcome codes instead of generic `execution_failed`. Clients can explain recovery without silently changing an approved automation model. No daemon upgrade is required. See [refresh plan](../../../plan/openai-model-refresh.md).
+
+## Automation selection intent
+
+`automation-tools.ts` exposes `model_mode: inherit | explicit`. Create omits model
+and effort by default; complete updates retain the policy returned by get.
+Inherited policy follows the source conversation on each admission, including
+origin-thread inheritance for new-thread runs. Retired persisted cloud choices
+may fall back at admission; frozen invocation preflight remains strict.
+`invocation-automation-proposal.test.ts` covers inherited intent/provenance through
+agent creation, retries, editing and review continuation. No daemon change.

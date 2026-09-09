@@ -20,20 +20,21 @@ export const Route = createFileRoute('/automations')({
 })
 type Definition = {
   name: string; instruction: string; event_type: 'contact.added'; sources: { source_ids: string[] }
-  bud_id: string; model: string; reasoning_effort: ReasoningLevel
+  bud_id: string; model_mode?: 'inherit' | 'explicit'; origin_thread_id?: string | null; model: string; reasoning_effort: ReasoningLevel
   target: { mode: 'new_thread' } | { mode: 'existing_thread'; thread_id: string }
   data_access: { scopes: string[]; history_days: number }; latest_start_seconds: number; max_invocations_per_day: number
 }
-type Rule = { automation_id: string; version: number; state: string; draft: Definition; active_revision: number | null }
+type ModelResolution = { model: string; reasoning_effort: string; warning: string | null; source: string }
+type Rule = { model_resolution?: ModelResolution | null; draft_model_resolution?: ModelResolution | null; automation_id: string; version: number; state: string; draft: Definition; active_revision: number | null }
 type Detail = Rule & { active: { revision: number; definition: Definition } | null }
 type Bud = { bud_id: string; name: string }
 type Thread = { thread_id: string; title: string | null }
 type Source = { source_id: string; installation_id: string; collection_epoch: string; revoked: boolean }
-type Delivery = { delivery_id: string; status: string; outcome_code: string | null; invocation_id: string | null; created_at: string; invocation: { thread_id: string; bud_id: string; status: string; outcome_code: string | null } | null }
+type Delivery = { delivery_id: string; status: string; outcome_code: string | null; invocation_id: string | null; created_at: string; invocation: { thread_id: string; bud_id: string; status: string; outcome_code: string | null; model?: string; model_resolution?: ModelResolution | null } | null }
 const field = 'block w-full rounded border bg-background p-2'
 const button = 'rounded border px-3 py-2 disabled:opacity-50'
 const empty = (): Definition => ({ name: '', instruction: '', event_type: 'contact.added', sources: { source_ids: [] },
-  bud_id: '', model: '', reasoning_effort: 'none', target: { mode: 'new_thread' },
+  bud_id: '', model_mode: 'inherit', model: '', reasoning_effort: 'none', target: { mode: 'new_thread' },
   data_access: { scopes: ['contacts.read'], history_days: 30 }, latest_start_seconds: 86400, max_invocations_per_day: 10 })
 
 function AutomationsPage() {
@@ -93,7 +94,7 @@ function AutomationList() {
       : <AutomationReviews refresh={refresh} />}
     <div className="grid gap-6 md:grid-cols-[240px_1fr]"><nav aria-label="Automations">
       {loading ? <p>Loading…</p> : error ? <p>Inventory unavailable.</p> : rules.length === 0 ? <p>No automations yet.</p> : rules.map(rule => <button className="block w-full border-b py-3 text-left" key={rule.automation_id} onClick={() => setSelected(rule.automation_id)}>
-        <span className="block font-semibold">{rule.draft.name}</span><span className="text-sm text-muted-foreground">{rule.state} · Version {rule.version}</span>
+        <span className="block font-semibold">{rule.draft.name}</span><span className="text-sm text-muted-foreground">{rule.state} · Version {rule.version}</span>{rule.model_resolution && <span className="block text-xs text-muted-foreground">{rule.model_resolution.model}</span>}{rule.model_resolution?.warning && <span className="block text-xs text-amber-700">{rule.model_resolution.warning}</span>}
       </button>)}
     </nav>{selected && <AutomationEditor key={selected} id={selected} onSaved={rule => { if (rule.state === 'deleted') { void navigate({ to: '/automations', search: {} }) } else { setSelected(rule.automation_id) }; setRefresh(value => value + 1) }} />}</div>
   </div></main>
@@ -130,7 +131,9 @@ function AutomationReviews({ refresh }: { refresh: number }) {
 }
 
 function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) => void }) {
-  const [draft, setDraft] = useState<Definition>(empty)
+  const context = Route.useSearch()
+  const initialDraft = (): Definition => ({ ...empty(), bud_id: context.bud_id ?? '', origin_thread_id: context.thread_id ?? null, target: context.thread_id ? { mode: 'existing_thread', thread_id: context.thread_id } : { mode: 'new_thread' } })
+  const [draft, setDraft] = useState<Definition>(initialDraft)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [buds, setBuds] = useState<Bud[]>([])
   const [sources, setSources] = useState<Source[]>([])
@@ -158,7 +161,7 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       apiFetchJson<{ contact_sources: Source[]; contact_sources_truncated: boolean; features: { automation_activation?: boolean } }>('/api/data/status', { signal: controller.signal }),
       apiFetchJson<{ version: number }>('/api/data/agent-grant', { signal: controller.signal }),
       id === 'new' ? Promise.resolve(null) : apiFetchJson<Detail>(`/api/automations/${encodeURIComponent(id)}`, { signal: controller.signal })])
-      .then(([available, status, grant, rule]) => { if (!controller.signal.aborted) { setBuds(available); setSources(status.contact_sources ?? []); setSourceLimit(status.contact_sources_truncated); setActivationEnabled(status.features.automation_activation ?? false); setGrantVersion(grant.version); setAcknowledged(false); setDetail(rule); setDraft(rule?.draft ?? empty()) } })
+      .then(([available, status, grant, rule]) => { if (!controller.signal.aborted) { setBuds(available); setSources(status.contact_sources ?? []); setSourceLimit(status.contact_sources_truncated); setActivationEnabled(status.features.automation_activation ?? false); setGrantVersion(grant.version); setAcknowledged(false); setDetail(rule); setDraft(rule?.draft ?? initialDraft()) } })
       .catch(() => { if (!controller.signal.aborted) setMessage('Could not load this draft. Reload to try again.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
@@ -202,6 +205,8 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
   const selectedModel = models.find(model => model.id === draft.model)
   return <section className="space-y-4" aria-label="Automation editor">
     {message && <p role="status">{message}</p>}
+    {detail?.draft_model_resolution?.warning && <p className="text-amber-700" role="note">{detail.draft_model_resolution.warning}</p>}
+    <p className="text-sm text-muted-foreground">Retired cloud models use the current default. Offline local models wait for their Bud.</p>
     <button className={button} disabled={saving || Boolean(uncertainCreate.current)} onClick={() => setReload(value => value + 1)}>Reload saved version</button>
     {uncertainCreate.current && !saving && <button className={button} onClick={() => void mutate(false)}>Retry original save</button>}
     <form onSubmit={event => { event.preventDefault(); void mutate(false) }}><fieldset disabled={loading || saving || Boolean(uncertainCreate.current)} className="space-y-4">
@@ -209,9 +214,9 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       <label className="block">Name<input className={field} required maxLength={120} value={draft.name} onChange={event => patch({ name: event.target.value })} /></label>
       <label className="block">Instructions<textarea className={field} rows={5} required maxLength={20000} value={draft.instruction} onChange={event => patch({ instruction: event.target.value })} /></label>
       <p className="text-sm text-muted-foreground">Only newly observed contacts trigger live work. First imports and relinking do not trigger every contact.</p>
-      <label className="block">Bud<select className={field} required value={draft.bud_id} onChange={event => patch({ bud_id: event.target.value, model: '', reasoning_effort: 'none', target: { mode: 'new_thread' } })}><option value="">Choose a Bud</option>{buds.map(bud => <option key={bud.bud_id} value={bud.bud_id}>{bud.name}</option>)}</select></label>
-      <label className="block">Model<select className={field} required value={draft.model} onChange={event => patch({ model: event.target.value, reasoning_effort: models.find(model => model.id === event.target.value)?.reasoning.default_level ?? 'none' })}><option value="">Choose a model</option>{draft.model && !selectedModel && <option value={draft.model}>{draft.model} (currently unavailable)</option>}{models.map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select></label>
-      <label className="block">Reasoning<select className={field} value={draft.reasoning_effort} onChange={event => patch({ reasoning_effort: event.target.value as ReasoningLevel })}>{!selectedModel?.reasoning.levels.some(level => level.value === draft.reasoning_effort) && <option value={draft.reasoning_effort}>{draft.reasoning_effort}</option>}{selectedModel?.reasoning.levels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select></label>
+      <label className="block">Bud<select className={field} required value={draft.bud_id} onChange={event => patch({ bud_id: event.target.value, origin_thread_id: null, model_mode: 'inherit', model: '', reasoning_effort: 'none', target: { mode: 'new_thread' } })}><option value="">Choose a Bud</option>{buds.map(bud => <option key={bud.bud_id} value={bud.bud_id}>{bud.name}</option>)}</select></label>
+      <label className="block">Model<select className={field} value={draft.model_mode === 'explicit' ? draft.model : ''} onChange={event => patch({ model_mode: event.target.value ? 'explicit' : 'inherit', model: event.target.value, reasoning_effort: models.find(model => model.id === event.target.value)?.reasoning.default_level ?? 'none' })}><option value="">{draft.target.mode === 'existing_thread' || draft.origin_thread_id ? 'Use conversation model' : 'Use default model'}</option>{draft.model && !selectedModel && <option value={draft.model}>{draft.model} (currently unavailable)</option>}{models.map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select></label>
+      {draft.model_mode === 'explicit' && <label className="block">Reasoning<select className={field} value={draft.reasoning_effort} onChange={event => patch({ reasoning_effort: event.target.value as ReasoningLevel })}>{!selectedModel?.reasoning.levels.some(level => level.value === draft.reasoning_effort) && <option value={draft.reasoning_effort}>{draft.reasoning_effort}</option>}{selectedModel?.reasoning.levels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select></label>}
       <label className="block">Conversation<select className={field} value={draft.target.mode} onChange={event => patch({ target: event.target.value === 'new_thread' ? { mode: 'new_thread' } : { mode: 'existing_thread', thread_id: '' } })}><option value="new_thread">New conversation for each invocation</option><option value="existing_thread">Use an existing conversation</option></select></label>
       {draft.target.mode === 'existing_thread' && <label className="block">Existing conversation<select className={field} required value={draft.target.thread_id} onChange={event => patch({ target: { mode: 'existing_thread', thread_id: event.target.value } })}><option value="">Choose a conversation</option>{threads.map(thread => <option key={thread.thread_id} value={thread.thread_id}>{thread.title || 'Untitled conversation'}</option>)}</select></label>}
       <details className="space-y-3 rounded border p-3"><summary className="cursor-pointer">Advanced settings</summary>
@@ -226,7 +231,7 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
     {detail && <section className="space-y-3 rounded border p-4" aria-label="Activation review">
       <h3 className="font-semibold">Activate saved draft</h3>
       <p className="whitespace-pre-wrap">{detail.draft.instruction}</p>
-      <p>Bud: {buds.find(bud => bud.bud_id === detail.draft.bud_id)?.name ?? detail.draft.bud_id} · Model: {detail.draft.model} · Reasoning: {detail.draft.reasoning_effort}</p>
+      <p>Bud: {buds.find(bud => bud.bud_id === detail.draft.bud_id)?.name ?? detail.draft.bud_id} · Model: {detail.draft.model_mode === 'explicit' ? detail.draft.model : 'Inherited'} · Currently {detail.draft_model_resolution?.model ?? 'unavailable'}</p>
       <p>{detail.draft.target.mode === 'new_thread' ? 'New conversation per invocation' : `Existing conversation: ${threads.find(thread => thread.thread_id === (detail.draft.target as { thread_id: string }).thread_id)?.title ?? (detail.draft.target as { thread_id: string }).thread_id}`}</p>
       <p>{detail.draft.sources.source_ids.length ? `Selected contact sources: ${detail.draft.sources.source_ids.length} (shown above)` : 'All contact sources'}</p>
       <p>Data: {detail.draft.data_access.scopes.join(', ')} · History: {detail.draft.data_access.history_days} days</p>
@@ -237,7 +242,7 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       {!activationEnabled && <p>Activation is not available yet.</p>}
       <button className={button} disabled={saving || !activationEnabled || !acknowledged || JSON.stringify(draft) !== JSON.stringify(detail.draft)} onClick={() => void mutate(false, true)}>Activate automation</button>
     </section>}
-    {detail?.active && <details className="rounded border p-3"><summary>Active revision {detail.active.revision}</summary><p className="whitespace-pre-wrap py-2">{detail.active.definition.instruction}</p><p>{detail.active.definition.model} · {detail.active.definition.target.mode.replaceAll('_', ' ')}</p><p>Draft edits do not change this revision.</p></details>}
+    {detail?.active && <details className="rounded border p-3"><summary>Active revision {detail.active.revision}</summary><p className="whitespace-pre-wrap py-2">{detail.active.definition.instruction}</p><p>{detail.active.definition.model_mode === 'explicit' ? detail.active.definition.model : 'Inherited model'} · {detail.active.definition.target.mode.replaceAll('_', ' ')}</p><p>Draft edits do not change this revision.</p></details>}
     {detail && <section className="space-y-2 rounded border p-3"><h3 className="font-semibold">Pause automation</h3><label className="flex gap-2"><input type="checkbox" disabled={saving} checked={cancelPending} onChange={event => setCancelPending(event.target.checked)} />Also cancel queued work</label><label className="flex gap-2"><input type="checkbox" disabled={saving} checked={cancelActive} onChange={event => setCancelActive(event.target.checked)} />Request cancellation of active runs</label><p className="text-sm">Commands may already have run or still be running. Cancellation does not undo their effects.</p><button className={button} disabled={saving || loading} onClick={() => void mutate(true)}>Pause</button></section>}
     {detail && <BootstrapControls detail={detail} sources={sources} grantVersion={grantVersion} enabled={activationEnabled} busy={saving || loading} refreshRule={() => setReload(value => value + 1)} />}
     {id !== 'new' && <DeliveryHistory id={id} refresh={reload} />}
@@ -256,7 +261,7 @@ function DeliveryHistory({ id, refresh }: { id: string; refresh: number }) {
       .then(result => { if (!controller.signal.aborted) setPage(result) }).catch(() => { if (!controller.signal.aborted) setError(true) })
     return () => controller.abort()
   }, [id, cursor, refresh])
-  return <section className="space-y-2"><h3 className="font-semibold">Delivery history</h3>{error ? <p role="alert">Could not load history.</p> : !page ? <p>Loading…</p> : !page.items.length ? <p>No deliveries yet.</p> : page.items.map(delivery => <div className="border-b py-2" key={delivery.delivery_id}><p>{(delivery.invocation?.status ?? delivery.status).replaceAll('_', ' ')} · {new Date(delivery.created_at).toLocaleString()}</p>{(delivery.invocation?.outcome_code ?? delivery.outcome_code) && <p>{(delivery.invocation?.outcome_code ?? delivery.outcome_code)?.replaceAll('_', ' ')}</p>}{delivery.invocation && <Link className="underline" to="/$budId/$threadId" params={{ budId: delivery.invocation.bud_id, threadId: delivery.invocation.thread_id }}>Open conversation</Link>}</div>)}{page?.next_cursor && <button className={button} onClick={() => setCursor(page.next_cursor)}>Next page</button>}{cursor && <button className={button} onClick={() => setCursor(null)}>First page</button>}</section>
+  return <section className="space-y-2"><h3 className="font-semibold">Delivery history</h3>{error ? <p role="alert">Could not load history.</p> : !page ? <p>Loading…</p> : !page.items.length ? <p>No deliveries yet.</p> : page.items.map(delivery => <div className="border-b py-2" key={delivery.delivery_id}><p>{(delivery.invocation?.status ?? delivery.status).replaceAll('_', ' ')} · {new Date(delivery.created_at).toLocaleString()}</p>{(delivery.invocation?.outcome_code ?? delivery.outcome_code) && <p>{(delivery.invocation?.outcome_code ?? delivery.outcome_code)?.replaceAll('_', ' ')}</p>}{delivery.invocation?.model && <p className="text-sm">{delivery.invocation.model}</p>}{delivery.invocation?.model_resolution?.warning && <p className="text-amber-700">{delivery.invocation.model_resolution.warning}</p>}{delivery.invocation && <Link className="underline" to="/$budId/$threadId" params={{ budId: delivery.invocation.bud_id, threadId: delivery.invocation.thread_id }}>Open conversation</Link>}</div>)}{page?.next_cursor && <button className={button} onClick={() => setCursor(page.next_cursor)}>Next page</button>}{cursor && <button className={button} onClick={() => setCursor(null)}>First page</button>}</section>
 }
 
 type BootstrapReceipt = { bootstrap_id: string; revision: number; member_count: number; group_count: number; status: string; created_at: string }
@@ -339,7 +344,7 @@ function BootstrapControls({ detail, sources, grantVersion, enabled, busy, refre
       {preview?.identity === identity && definition && <div className="space-y-2">
         <p>{preview.value.member_count} contacts · {preview.value.group_count} invocations · Revision {preview.value.revision}. Counts may change before capture.</p>
         <p className="whitespace-pre-wrap">{definition.instruction}</p>
-        <p>Bud: {definition.bud_id} · Model: {definition.model} · Reasoning: {definition.reasoning_effort}</p>
+        <p>Bud: {definition.bud_id} · Model: {definition.model_mode === 'explicit' ? definition.model : 'Inherited'}</p>
         <p>{definition.target.mode === 'new_thread' ? 'New conversation per invocation' : `Existing conversation: ${definition.target.thread_id}`}</p>
         <p>{definition.data_access.scopes.join(', ')} · {definition.data_access.history_days} days of history · Maximum {definition.max_invocations_per_day} invocations per day · Unstarted work expires after {definition.latest_start_seconds} seconds</p>
         <label className="flex gap-2"><input type="checkbox" checked={ack} onChange={event => setAck(event.target.checked)} />Run these instructions for the selected existing contacts.</label>

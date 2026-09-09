@@ -7,6 +7,7 @@ import { automationBootstrapProposalTable as proposals, automationBootstrapPropo
   dataOwnerStateTable as owners, agentInvocationTable as invocations, agentInvocationActionTable as actions,
   threadTable as threads, budTable as buds, automationTable as rules, agentDataGrantTable as grants } from "../db/schema.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
+import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { Automations } from "./automations.js";
 import { canonicalJson, DataRequestError } from "./contracts.js";
 import { automationBootstrapReviewRequestSchema, frozenBootstrapReviewSchema, type FrozenBootstrapReview } from "./automation-bootstrap-review-contracts.js";
@@ -100,7 +101,7 @@ export class AutomationBootstrapProposals {
       return { kind: "proposal" as const, proposal: serializeBootstrapProposal(await this.reconcile(tx, existing)) };
     }
     const frozen = await new AutomationBootstrap(this.database).freezeReviewInTransaction(tx, context.owner, selection);
-    await new Automations(this.database).validateTargetsInTransaction(tx, context.owner, frozen.definition);
+    await new Automations(this.database).validateTargetsInTransaction(tx, context.owner, frozen.definition, true);
     if (!frozen.contact_revision_ids.length) return { kind: "no_work" as const, member_count: 0 as const, automation_id: selection.automation_id };
     const pending = await tx.select().from(proposals).where(and(eq(proposals.createdByUserId, context.owner), eq(proposals.status, "pending")))
       .orderBy(proposals.id).limit(limits.pending_per_owner);
@@ -121,7 +122,10 @@ export class AutomationBootstrapProposals {
   async get(owner: string, id: string) {
     return this.database.transaction(async tx => {
       await this.lockOwner(tx, owner);
-      return serializeBootstrapProposal(await this.reconcile(tx, await this.load(tx, owner, id)));
+      const result = serializeBootstrapProposal(await this.reconcile(tx, await this.load(tx, owner, id)));
+      let model_resolution: AutomationModelResolution | null = null;
+      try { model_resolution = (await automationModelResolver(tx, owner, [result.definition]))(result.definition); } catch { /* Unavailable targets remain reviewable. */ }
+      return { ...result, model_resolution };
     });
   }
   async list(owner: string, query: { limit?: number; cursor?: string; pending_only?: boolean } = {}) {
@@ -180,7 +184,7 @@ export class AutomationBootstrapProposals {
           !isDeepStrictEqual(stored.map(member => member.contactRevisionId), frozen.contact_revision_ids))
           throw new Error("bootstrap_proposal_integrity_failed");
         try {
-          await new Automations(this.database).validateTargetsInTransaction(tx, owner, frozen.definition);
+          await new Automations(this.database).validateTargetsInTransaction(tx, owner, frozen.definition, true);
           const receipt = await new AutomationBootstrap(this.database).captureReviewedInTransaction(tx, owner, frozen, `proposal:${id}`);
           bootstrapId = receipt.bootstrap_id;
         } catch (error) {

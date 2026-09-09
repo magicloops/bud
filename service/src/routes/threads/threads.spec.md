@@ -219,3 +219,14 @@ the same bounded, owner/thread/action-bound identity envelope and public bootstr
 proposal serializer. It is present in durable mode even when new proposal issuance
 is disabled, allowing recovery of existing work. Route tests verify authorization
 before reads, an empty runtime snapshot and removal after resolution.
+
+## Model preference intent and retirement
+
+Thread creation with no explicit selection leaves model/effort null. Normal
+message admission resolves stored preferences or the service default without
+writing the resolved fallback/default back into the thread. Explicit supported
+requests and model-preference PATCH remain deliberate preference writes.
+Known retired client submissions may fall back at message admission. Serialized
+threads add nullable `model_warning`; message selection metadata records
+`model_fallback_from` and `reasoning_adjusted` when applicable. All reads/writes
+retain the existing authenticated owner checks and owner stamping.

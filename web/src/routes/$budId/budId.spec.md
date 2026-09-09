@@ -349,3 +349,12 @@ Active rules are selected by the saved execution target, not their originating
 chat or edited draft. Data access explicitly describes the owner-wide grant.
 Owner/thread changes remount the modal and cancel reads; closing aborts reads. New-thread layout
 remains unchanged because these controls require a persisted conversation.
+
+## Preserving model selection intent
+
+New-thread sends include model/effort only after a deliberate picker change.
+Existing-thread sends otherwise omit those fields and let the service resolve
+the saved preference. Picker changes still PATCH preferences and may accompany
+send while persistence is in flight. Bootstrap/default/fallback display does not
+become an explicit preference write. Server `model_warning` appears in the chat
+and clears after a supported deliberate replacement.

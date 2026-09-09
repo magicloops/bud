@@ -427,3 +427,9 @@ an explicit empty array clears that review kind independently of activation.
 `ApiAutomationProposal` accepts additive optional `review_operation` (create/update)
 and nullable `destination_thread_title` for explicit replacement/destination review.
 Older service/snapshot payloads remain valid.
+
+Automation definitions add `model_mode` and nullable `origin_thread_id`.
+`ApiAutomationModelResolution` describes current model/reasoning/source/warning;
+proposal details optionally include it. `ApiThread.model_warning` carries the
+server's saved-model fallback explanation. These are owner-facing projections,
+not persisted warning flags or permission changes.

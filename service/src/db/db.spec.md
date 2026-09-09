@@ -472,3 +472,15 @@ serializes deletion with admission and review decisions. Applied reviewed SQL
 locally after canceling db:push's unrelated invocation constraint prompt.
 Deploy migration and all deletion-aware service workers before using Delete;
 older services are not safe rollback targets for deleted-rule mutations.
+
+## Automation model policy migration
+
+Migration `0038_automation_model_inheritance.sql` is a data-only JSON migration:
+adds inherited mode and owner/Bud-verified authoring origin to prior draft/revision
+definitions, advances draft versions, and stales pending legacy reviews. Original
+model/effort values and all admitted invocation/message attribution remain intact.
+No new columns or schema.ts change; db:push cannot apply this data migration.
+Generated custom migration metadata remains Drizzle-owned. Reviewed SQL applied
+locally in a transaction and validated with replay/provenance tests.
+New admission snapshots live in the input message's `metadata.model_resolution`
+and existing agent_invocation model/effort columns, avoiding duplicate storage.
