@@ -476,7 +476,10 @@ export type ApiPendingBootstrapRequest = Omit<ApiPendingAutomationRequest, 'prop
   proposal: ApiBootstrapProposal
 }
 
+export type ApiOutputActivity = { llm_call_id: string; state: "working" | "text" | "awaiting_completion" };
+
 export type ApiAgentState = {
+  output_activity?: ApiOutputActivity | null
   invocations?: ApiAgentInvocation[]
   pending_questions?: ApiPendingQuestion[]
   pending_automation_requests?: ApiPendingAutomationRequest[]

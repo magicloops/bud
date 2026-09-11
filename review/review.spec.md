@@ -14,6 +14,14 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `web-streaming-behavior.md`
+
+Review of web live work grouping, commentary visibility, completion disclosures and spinner suppression. Records current implementation gaps against the requested streaming experience and validation needs without changing application behavior.
+
+### `streaming-behavior-comparison.md`
+
+Cross-client comparison with the mobile repo's `review/mobile-streaming-behavior.md`. Proposes a shared presentation contract, lists decisions for review and defines event sequences for subsequent parity validation.
+
 ### `daemon-service-data-plane-web-proxy-review.md`
 
 Review of the current daemon-service data plane and durable web-proxy architecture. Documents the browser-to-service-to-daemon flow, proxy/session subcomponents, current WebSocket/H2 carrier behavior, future QUIC/HTTP3 expectations, and which gateway responsibilities can be split from the central service.

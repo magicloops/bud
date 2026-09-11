@@ -6,6 +6,7 @@ import type {
   ApiAgentCompactionFailedEvent,
   ApiAgentCompactionStartEvent,
   ApiAgentState,
+  ApiOutputActivity,
   ApiMessage,
 } from '@/lib/api-types'
 import {
@@ -114,6 +115,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onOutputActivity: (event: { turnId: string; llmCallId: string; state: ApiOutputActivity["state"] | null }) => void
   threadId: string | null
   initialStreamCursor: string | null
   onStatusChange: (
@@ -179,6 +181,7 @@ export function useAgentStream({
   onError,
   onToolCall,
   onToolResultMessage,
+  onOutputActivity,
   onAssistantMessageStart,
   onAssistantMessageDelta,
   onAssistantMessageDone,
@@ -207,6 +210,7 @@ export function useAgentStream({
     onError,
     onToolCall,
     onToolResultMessage,
+    onOutputActivity,
     onAssistantMessageStart,
     onAssistantMessageDelta,
     onAssistantMessageDone,
@@ -228,7 +232,8 @@ export function useAgentStream({
       onError,
       onToolCall,
       onToolResultMessage,
-      onAssistantMessageStart,
+      onOutputActivity,
+    onAssistantMessageStart,
       onAssistantMessageDelta,
       onAssistantMessageDone,
       onAssistantMessageEvent,
@@ -246,6 +251,7 @@ export function useAgentStream({
     onAssistantMessageDelta,
     onAssistantMessageDone,
     onAssistantMessageEvent,
+    onOutputActivity,
     onAssistantMessageStart,
     onReasoningDelta,
     onReasoningDone,
@@ -423,6 +429,21 @@ export function useAgentStream({
 
     source.addEventListener('heartbeat', () => {
       lastEventTimeRef.current = Date.now()
+    })
+
+    source.addEventListener('agent.output_activity', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
+      try {
+        const data = JSON.parse(evt.data)
+        if (typeof data.turn_id !== 'string' || typeof data.llm_call_id !== 'string' ||
+            ![null, 'working', 'text', 'awaiting_completion'].includes(data.state)) return
+        lastEventTimeRef.current = Date.now()
+        cursorRef.current = evt.lastEventId || cursorRef.current
+        callbacksRef.current.onOutputActivity({ turnId: data.turn_id, llmCallId: data.llm_call_id, state: data.state })
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse output activity', error)
+      }
     })
 
     source.addEventListener('agent.tool_call', (evt) => {

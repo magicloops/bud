@@ -443,7 +443,13 @@ Model invocation ownership extracted from `AgentService`.
   `config.agentMaxOutputTokens` and the selected model/provider capability,
   using product-model capabilities before provider-model fallback
 - optionally capture local model-context drift prompt/response snapshots, plus provider-rendered request snapshots when supported and enabled, when `AGENT_CONTEXT_DRIFT_DEBUG=true`
-- consume provider `invoke()` streams and emit draft assistant runtime events
+- consume provider `invoke()` streams and emit draft assistant start/delta runtime events
+- emit classified `agent.message_done` only when the agent loop calls
+  `completeAssistantDraft` after its checkpoint, tool extraction and no-tool final
+  validation, before ledger/transcript persistence; `segment_kind` is `intermediate`
+  or `final` and is retained in the runtime draft snapshot
+- keep successful turn `final` emission after durable persistence; classified
+  draft completion is not a successful save or turn-completion acknowledgement
 - consume visible provider reasoning deltas, emit draft reasoning runtime events, and return completed reasoning segments for transcript persistence
 - pass thread/Bud/owner invocation context into environment-scoped providers
   such as Bud-local ds4 while leaving cloud providers free to ignore it
@@ -451,6 +457,12 @@ Model invocation ownership extracted from `AgentService`.
 - keep text blocks before and between tool calls in canonical output order
 - expose all parsed tool calls through `extractToolCalls()` while retaining `extractToolCall()` as a first-call compatibility helper
 - throw structured `AgentModelResponseError` diagnostics when a completed response cannot be parsed into final text or a tool call
+
+### `assistant-completion.test.ts`
+
+Agent-loop tests for classified completion before persistence, matching snapshot
+and bounded replay, final versus tool-continuation decisions, cancellation,
+invalid/empty/truncated completion, and persistence failure after classification.
 
 ### `model-runner.test.ts`
 
@@ -822,7 +834,7 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 |-------|------|------|
 | `agent.message_start` | `{ turn_id, client_id, started_at }` | First visible assistant-text chunk for a turn |
 | `agent.message_delta` | `{ turn_id, client_id, delta }` | Incremental assistant-text append |
-| `agent.message_done` | `{ turn_id, client_id, text, started_at, finished_at, duration_ms, duration_source }` | Draft assistant text complete, before canonical persistence |
+| `agent.message_done` | `{ turn_id, client_id, text, segment_kind, started_at, finished_at, duration_ms, duration_source }` | Validated draft classification and text completion together, before canonical persistence |
 | `agent.reasoning_start` | `{ turn_id, client_id, llm_call_id, index, provider, provider_model, started_at }` | First visible provider reasoning text for one reasoning segment |
 | `agent.reasoning_delta` | `{ turn_id, client_id, delta }` | Incremental visible reasoning text append |
 | `agent.reasoning_done` | `{ turn_id, client_id, message_id, text, message }` | Reasoning segment persisted as a canonical non-model-visible transcript row |
@@ -1239,3 +1251,15 @@ origin-thread inheritance for new-thread runs. Retired persisted cloud choices
 may fall back at admission; frozen invocation preflight remains strict.
 `invocation-automation-proposal.test.ts` covers inherited intent/provenance through
 agent creation, retries, editing and review continuation. No daemon change.
+
+## Productive output transitions
+
+`model-runner.ts` derives runtime output activity from canonical text boundaries
+and tool/reasoning starts or deltas. It tracks only the productive text index
+and whether the response contains a tool. Unfinished drafts no longer imply
+ongoing text generation. Unknown text completion stays quiet until continuation
+is known; validated final classification stays quiet through persistence.
+Provider adapters and tool execution/approval boundaries are unchanged.
+`output-activity.test.ts` covers paused argument generation, live/snapshot/replay
+consistency, interleaving, local Chat Completions, final persistence, errors and
+stale-call cleanup. See [design](../../../design/assistant-output-activity.md).

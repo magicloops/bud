@@ -412,14 +412,7 @@ const ChatTimelineComponent = ({
         )
       })}
       <ThinkingIndicator
-        // A live work group's header already says "Working…"; the generic
-        // indicator only covers the pre-first-work gap and labeled states
-        // (compaction).
-        isVisible={
-          activityIndicatorVisible &&
-          (activityIndicatorLabel !== undefined ||
-            !timelineRows.some((row) => row.kind === 'work' && row.live))
-        }
+        isVisible={activityIndicatorVisible}
         label={activityIndicatorLabel}
       />
       </div>

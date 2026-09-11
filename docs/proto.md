@@ -649,7 +649,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `terminal_wait`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
 - `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration. Available snapshots additionally carry `breakdown` (an array of `{ kind, tokens, percent_of_estimated_input }` over `system_prompt`, `runtime_instructions`, `compaction_summary`, `user_messages`, `assistant_text`, `reasoning`, `tool_calls`, `tool_output`, `images`, `tool_schemas`, summing to `estimated_input_tokens`) and `compaction_count` (completed compactions for the thread, or `null` when the snapshot source did not count them). Both are additive; older clients may ignore them.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
-- `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming
+- `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming or awaiting persistence. Optional `segment_kind: "intermediate" | "final"` is present once text completion has been classified. Its presence means text is complete; it does not mean the turn is durably finished. Absence means classification is not yet known. The enclosing `phase` can remain `streaming_message` during this handoff; clients should use draft classification for text presentation.
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions` or `data_request_api_key`. Durable pending requests are recovered from the owner-scoped arrays described in §7.1, even when no in-memory tool waiter survives.
 - `phase` may be `waiting_for_terminal` while the agent is parked on `terminal.wait` (idle until the daemon reports the terminal settled / the command finished); clients should present it as waiting, not loading, keep the composer enabled (a follow-up message supersedes the wait), and keep cancel available
@@ -2131,7 +2131,10 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.message_delta`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "Cloning " }`
 - `agent.message_done`
-  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository...", "started_at": "2026-04-21T19:00:01.000Z", "finished_at": "2026-04-21T19:00:05.250Z", "duration_ms": 4250, "duration_source": "service_wall_clock" }`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository...", "segment_kind": "intermediate", "started_at": "2026-04-21T19:00:01.000Z", "finished_at": "2026-04-21T19:00:05.250Z", "duration_ms": 4250, "duration_source": "service_wall_clock" }`
+  - Emitted after the model call finishes, the execution checkpoint passes, and the agent loop validates its continuation/final decision, before ledger/transcript persistence. `segment_kind` is `intermediate` when tools follow, otherwise `final` for a validated answer. Completion and classification are one event, retaining the draft's `client_id`. No provider-specific advance phase prediction is required.
+  - Clients complete/classify the row atomically: intermediate text permits the next-action spinner; final text remains the answer without restarting that spinner. Keep turn success/persistence separate until `final`; errors or cancellation can still follow. Reconnects recover the same classification from `draft_assistant.segment_kind`.
+  - This is additive: old clients ignore the field and retain previous behavior. No daemon upgrade or schema migration is required.
 - `agent.reasoning_start`
   - starts a visible provider reasoning draft row
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "llm_call_id": "01LLM...", "index": 0, "provider": "ds4", "provider_model": "deepseek-v4-flash", "started_at": "2026-06-05T20:00:01.000Z" }`
@@ -2764,3 +2767,28 @@ approved history; it is not an unfiltered iOS payload. See
 ### Owner-authorized proxy link resolution
 
 `GET /api/proxied-sites/resolve?endpoint_host=<hostname>` uses the authenticated app/API viewer. Returns the existing serialized proxied-site shape with 200, 404 for unknown/foreign hosts, 401 without auth, 400 for malformed hostnames; successful responses are not cacheable. No network fetch or thread mutation occurs. Clients then POST the clicked absolute path (including optional query and fragment) to the existing viewer-grant endpoint. Grants are minted only for openable owned sites. Origin-changing paths are rejected. Site reuse is now owner/Bud/host/port based; historical hostname rows are preserved. No daemon protocol changes.
+
+### Agent output activity
+
+The authenticated thread agent snapshot includes `output_activity`, either null
+or `{ "llm_call_id": "…", "state": "working" }`. States are `working`, `text`,
+and `awaiting_completion`. The existing `turn_id` scopes the value.
+
+The same thread SSE stream emits `agent.output_activity`:
+
+```json
+{"turn_id":"…","llm_call_id":"…","state":"working"}
+```
+
+A null `state` clears that call. Each call begins with working. Emit transitions
+only; no token or argument payloads. Snapshot state/cursor updates precede event
+delivery, using existing bounded replay and resync. Old turn/call completions
+cannot clear a newer call. Text and awaiting-completion suppress the generic
+spinner; working permits it subject to existing wait/final eligibility. This
+event does not complete text, classify a final answer or authorize a tool.
+
+Existing authenticated-viewer thread authorization protects both snapshot and
+SSE attachment/replay. No new endpoint, DB rows or daemon messages are introduced.
+Service/web and rebuilt mobile are a coordinated update; older clients ignore
+the event and retain their previous visual behavior. See
+[design and provider coverage](../design/assistant-output-activity.md).

@@ -45,6 +45,8 @@ export type TimelineWorkRow = {
   /** Live only: the in-progress step (streaming reasoning draft or pending
    * tool). Null between steps (the model is thinking) and once the run ends. */
   currentItem: ApiMessage | null
+  /** A visible assistant boundary closes the tail activity segment. */
+  endsAtAssistant: boolean
   /** Live groups report 'ok'; it is meaningful only once the run ended. */
   status: WorkRowStatus
   /** Authoritative work duration; null while live or without trustworthy metadata. */
@@ -187,6 +189,7 @@ export const createTimelineProjector = () => {
       const last = accumulator.messages[accumulator.messages.length - 1]
       const currentItem = live && isInProgressWorkItem(last) ? last : null
 
+      const endsAtAssistant = nextBoundary?.role === 'assistant' && nextBoundary.content.trim().length > 0
       const previous = previousWorkRows.get(id)
       const sourcesUnchanged =
         previous !== undefined &&
@@ -197,7 +200,8 @@ export const createTimelineProjector = () => {
         sourcesUnchanged &&
         previous.live === live &&
         previous.status === status &&
-        previous.currentItem === currentItem
+        previous.currentItem === currentItem &&
+        previous.endsAtAssistant === endsAtAssistant
       ) {
         nextWorkRows.set(id, previous)
         rows.push(previous)
@@ -215,6 +219,7 @@ export const createTimelineProjector = () => {
         sourceClientIds: accumulator.messages.map(getMessageIdentity),
         live,
         currentItem,
+        endsAtAssistant,
         status,
         durationMs: live
           ? null

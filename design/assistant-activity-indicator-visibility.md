@@ -1,6 +1,7 @@
 # Design: Assistant Activity Indicator Visibility
 
-Status: Draft
+Status: historical. Draft-based suppression and the message-done timer are
+superseded by [assistant output activity](assistant-output-activity.md).
 
 Created: 2026-05-28
 

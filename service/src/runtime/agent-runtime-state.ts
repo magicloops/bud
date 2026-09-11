@@ -4,6 +4,9 @@ import type { ContextBudgetSnapshot } from "../agent/context-budget-state.js";
 import type { AgentEnvironmentSnapshot } from "../agent/environment.js";
 import type { SseEvent } from "./event-bus.js";
 
+export type AgentOutputActivityState = "working" | "text" | "awaiting_completion";
+export type AgentOutputActivity = { llm_call_id: string; state: AgentOutputActivityState };
+
 export type AgentRuntimePhase =
   | "idle"
   | "starting"
@@ -22,6 +25,8 @@ export type AgentPendingTool = {
 };
 
 export type AgentDraftAssistant = {
+  /** Present only after classified text completion, before persistence. */
+  segment_kind?: "intermediate" | "final";
   client_id: string;
   text: string;
   started_at: string;
@@ -48,6 +53,7 @@ export type AgentRuntimeLastError = {
 };
 
 export type AgentRuntimeSnapshot = {
+  output_activity: AgentOutputActivity | null;
   active: boolean;
   turn_id: string | null;
   phase: AgentRuntimePhase;
@@ -76,6 +82,7 @@ export type AgentStreamAttachment =
     };
 
 type InternalSnapshot = {
+  output_activity: AgentOutputActivity | null;
   active: boolean;
   turnId: string | null;
   phase: AgentRuntimePhase;
@@ -85,6 +92,7 @@ type InternalSnapshot = {
   draftAssistant:
     | {
         clientId: string;
+        segmentKind?: "intermediate" | "final";
         text: string;
         startedAt: Date;
         updatedAt: Date;
@@ -135,6 +143,32 @@ export class AgentRuntimeStateManager {
     this.bufferTtlMs = bufferTtlMs;
   }
 
+  setOutputActivity(
+    threadId: string, turnId: string, llmCallId: string,
+    state: AgentOutputActivityState | null, begin = false,
+  ): void {
+    const snapshot = this.ensureSnapshot(threadId);
+    if (!snapshot.active || snapshot.turnId !== turnId) return;
+    const current = snapshot.output_activity;
+    if (!begin && current?.llm_call_id !== llmCallId) return;
+    if (current?.llm_call_id === llmCallId && current.state === state) return;
+    this.emit(threadId, {
+      event: "agent.output_activity",
+      data: { turn_id: turnId, llm_call_id: llmCallId, state },
+    }, (cursor) => {
+      snapshot.output_activity = state ? { llm_call_id: llmCallId, state } : null;
+      snapshot.streamCursor = cursor;
+      snapshot.updatedAt = new Date();
+    });
+  }
+
+  clearOutputActivity(threadId: string): void {
+    const snapshot = this.ensureSnapshot(threadId);
+    if (snapshot.turnId && snapshot.output_activity) {
+      this.setOutputActivity(threadId, snapshot.turnId, snapshot.output_activity.llm_call_id, null);
+    }
+  }
+
   getSnapshot(threadId: string): AgentRuntimeSnapshot {
     const snapshot = this.ensureSnapshot(threadId);
     this.ensureCursorAvailable(threadId, snapshot);
@@ -149,6 +183,7 @@ export class AgentRuntimeStateManager {
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
+        snapshot.output_activity = null;
         snapshot.active = true;
         snapshot.turnId = turnId;
         snapshot.phase = "starting";
@@ -165,6 +200,7 @@ export class AgentRuntimeStateManager {
   }
 
   markThinking(threadId: string, cursor?: string): AgentRuntimeSnapshot {
+    this.clearOutputActivity(threadId);
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -180,6 +216,7 @@ export class AgentRuntimeStateManager {
     pendingTool: AgentPendingTool,
     cursor: string,
   ): AgentRuntimeSnapshot {
+    this.clearOutputActivity(threadId);
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -196,6 +233,7 @@ export class AgentRuntimeStateManager {
     pendingTool: AgentPendingTool,
     cursor: string,
   ): AgentRuntimeSnapshot {
+    this.clearOutputActivity(threadId);
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -218,6 +256,7 @@ export class AgentRuntimeStateManager {
     pendingTool: AgentPendingTool,
     cursor: string,
   ): AgentRuntimeSnapshot {
+    this.clearOutputActivity(threadId);
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -235,6 +274,7 @@ export class AgentRuntimeStateManager {
     text: string,
     cursor: string,
     startedAt?: Date,
+    segmentKind?: "intermediate" | "final",
   ): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
@@ -246,6 +286,7 @@ export class AgentRuntimeStateManager {
         snapshot.pendingTool = null;
         snapshot.draftAssistant = {
           clientId,
+          ...(segmentKind ? { segmentKind } : {}),
           text,
           startedAt: currentDraft?.startedAt ?? startedAt ?? new Date(),
           updatedAt: new Date(),
@@ -388,6 +429,7 @@ export class AgentRuntimeStateManager {
   }
 
   finishTurn(threadId: string): AgentRuntimeSnapshot {
+    this.clearOutputActivity(threadId);
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -405,12 +447,13 @@ export class AgentRuntimeStateManager {
     );
   }
 
-  emit(threadId: string, event: Omit<SseEvent, "id">): string {
+  emit(threadId: string, event: Omit<SseEvent, "id">, beforePublish?: (cursor: string) => void): string {
     const emittedEvent: SseEvent = {
       ...event,
       id: this.nextCursor(),
     };
 
+    beforePublish?.(emittedEvent.id!);
     this.appendBuffer(threadId, {
       cursor: emittedEvent.id!,
       event: emittedEvent,
@@ -583,6 +626,7 @@ export class AgentRuntimeStateManager {
 
     const cursor = this.pushCheckpoint(threadId);
     const snapshot: InternalSnapshot = {
+      output_activity: null,
       active: false,
       turnId: null,
       phase: "idle",
@@ -607,7 +651,11 @@ export class AgentRuntimeStateManager {
   ): AgentRuntimeSnapshot {
     const snapshot = this.ensureSnapshot(threadId);
     updater(snapshot);
-    snapshot.streamCursor = cursor ?? this.pushCheckpoint(threadId);
+    // A handoff can emit an activity-clear after the caller's event. Never
+    // move the snapshot behind that newer event's cursor.
+    snapshot.streamCursor = cursor
+      ? (cursor > snapshot.streamCursor ? cursor : snapshot.streamCursor)
+      : this.pushCheckpoint(threadId);
     snapshot.updatedAt = new Date();
     return this.serializeSnapshot(snapshot);
   }
@@ -668,6 +716,7 @@ export class AgentRuntimeStateManager {
 
   private serializeSnapshot(snapshot: InternalSnapshot): AgentRuntimeSnapshot {
     return {
+      output_activity: snapshot.output_activity,
       active: snapshot.active,
       turn_id: snapshot.turnId,
       phase: snapshot.phase,
@@ -677,6 +726,8 @@ export class AgentRuntimeStateManager {
       draft_assistant: snapshot.draftAssistant
         ? {
             client_id: snapshot.draftAssistant.clientId,
+            ...(snapshot.draftAssistant.segmentKind
+              ? { segment_kind: snapshot.draftAssistant.segmentKind } : {}),
             text: snapshot.draftAssistant.text,
             started_at: snapshot.draftAssistant.startedAt.toISOString(),
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),

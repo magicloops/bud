@@ -92,7 +92,7 @@ Message list with auto-scroll and full-height message rendering.
 - Projects messages through `createTimelineProjector()` (features/threads/agent-work-projection): reasoning, non-question tool calls, and intermediate assistant commentary render as one `AgentWorkGroup` row per turn; user/system/final-assistant/question rows and `role: "compaction"` marker rows stay top-level (a mid-turn compaction splits that turn's work into two groups around the cut)
 - Work-group and per-item expansion state is ephemeral component state keyed by stable projection ids (turn ULIDs — globally unique, never persisted)
 - The bottom-follow `scrollSyncKey` derives from VISIBLE structure only: a collapsed group's hidden detail growth does not trigger auto-scroll; a live group's current step does
-- The generic thinking indicator is suppressed while a live work group is on screen (its header already says "Working…"); labeled states (compaction) and the pre-first-work gap keep it
+- The route owns footer visibility, including gaps while a live work group exists; assistant text streaming suppresses it and existing wait/compaction states retain their presentation.
 - Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
 - "Stick to bottom" behavior with manual scroll override
 - Older history loads automatically while scrolling up: a sentinel above the first row is observed (`IntersectionObserver`, root = the scroll container, 600px top margin so the fetch starts before the user hits the top); the observer is re-created after each load so a still-visible sentinel (short page, tall viewport) keeps loading until the pane overflows. Shows "Loading older messages…" while fetching; after a failed fetch auto-loading pauses and a retry control appears; nothing renders once there is no older history
@@ -151,27 +151,27 @@ custom widths.
 
 ### `agent-work-group.tsx`
 
-One turn's agent work as a disclosure row (design/web-agent-work-collapse.md,
-Option B — progressive collapse).
+One turn's presentation under the [streaming plan](../../../../plan/web-streaming-experience.md).
 
 **Props**: `row: TimelineWorkRow`, `expanded`, `onToggle(rowId)`,
-`expandedItems: ReadonlySet<client_id>`, `onToggleItem(clientId)`.
+`expandedItems` (activity-segment keys), `onToggleItem(key)`.
 
-**Behavior**:
-- Live: header `Working… · <elapsed> · <current step>` (1s ticker mounted
-  only while live; step label from the pending tool / streaming reasoning);
-  only the current step renders beneath the header — finished steps are
-  already folded in. Expanding while live shows the full inline history.
-- Done: header `Worked for <duration>` (`lib/agent-work-duration`) or
-  `Worked`, plus a tool/reasoning count summary; `failed`/`canceled`/
-  `no_final` render as badges on the collapsed row.
-- Expanded body: chronological sections — intermediate assistant commentary
-  as separators, activity items as compact one-line headers (kind label,
-  first-line/arg summary, per-item duration chip) with per-item detail
-  expansion mounting the existing role/tool renderers lazily. Collapsed
-  content is unmounted (deliberate find-in-page stance).
-- `aria-expanded`/`aria-controls` on both disclosure levels;
-  `motion-reduce:transition-none` on chevrons.
+- Live commentary stays visible with no Working header. Consecutive tools/reasoning
+  form segments; preceding segments collapse at visible assistant text boundaries.
+  The current segment shows useful bodies, including multiple unfinished tools.
+- Done: existing Worked duration/count/outcome header. Opening shows commentary
+  and segment disclosures; without commentary it reveals useful bodies directly.
+- Opening an earlier live segment preserves the user's inspection choice at final
+  collapse. Existing identity and session-owned disclosure state remain.
+- Useful bodies reuse role/tool renderers within bounded scroll containers. Raw
+  and large-output controls remain. Closed segments unmount their contents.
+- Disclosure buttons retain aria-expanded/controls and reduced-motion chevrons.
+
+### `agent-work-group.test.tsx`
+
+Node render tests cover live commentary, current/prior activity, parallel active
+counts, completed disclosures, no/empty commentary, assistant boundaries and the
+actual timeline footer. A test-only loader handles CSS and Vite environment reads.
 
 ### `thinking-indicator.tsx`
 
@@ -581,3 +581,10 @@ Header bar with workspace title and view toggle.
 ---
 
 *Referenced by: [../components.spec.md](../components.spec.md)*
+
+## Progress delay
+
+`ThinkingIndicator` applies a cancellable 150 ms entry grace when ordinary work
+becomes eligible. Text/final transitions hide it immediately; compaction's
+explicit label bypasses the grace. This is presentation delay, not an inference
+that text has finished. See [output activity](../../../../design/assistant-output-activity.md).

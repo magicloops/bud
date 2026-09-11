@@ -1,5 +1,5 @@
 import { resolveToolPayload } from './tool-payload'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo } from 'react'
 import { Brain, ChevronRight, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getRoleContentRenderer, getToolContentRenderer } from '@/components/message-renderers'
@@ -7,20 +7,10 @@ import { formatWorkDuration } from '@/lib/agent-work-duration'
 import { getMessageTiming, getToolName } from '@/lib/agent-message-metadata'
 import type { ApiMessage } from '@/lib/api-types'
 import type { TimelineWorkRow, TimelineWorkSection } from '@/features/threads/agent-work-projection'
+import { isDraftReasoningMessage, isPendingToolMessage } from '@/features/threads/thread-message-state'
 import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
 
-/**
- * One turn's agent work (design/web-agent-work-collapse.md, Option B).
- *
- * Live: header reads `Working… · <elapsed> · <current step>`; only the
- * current step renders beneath it — finished steps are already folded in.
- * Done: header reads `Worked for <duration>` (or `Worked`), collapsed by
- * default, failure/cancellation visible as badges. Expanding (allowed while
- * live too) shows the full chronological history: intermediate assistant
- * commentary as separators, activity items as compact headers with
- * per-item detail expansion. Collapsed content is unmounted, not hidden.
- */
-
+/** Live commentary stays visible; activity segments fold at text boundaries. */
 type AgentWorkGroupProps = {
   row: TimelineWorkRow
   expanded: boolean
@@ -37,48 +27,67 @@ const AgentWorkGroupComponent = ({
   onToggleItem,
 }: AgentWorkGroupProps) => {
   const bodyId = `${row.id}:body`
-  const showCurrentItem = row.live && !expanded && row.currentItem !== null
-
+  const segments: TimelineWorkSection[][] = []
+  for (const section of row.sections) {
+    if (section.kind === 'intermediate' && !section.message.content.trim()) continue
+    const last = segments.at(-1)
+    if (section.kind === 'activity' && last?.[0].kind === 'activity') last.push(section)
+    else segments.push([section])
+  }
+  const hasCommentary = segments.some((segment) => segment[0].kind === 'intermediate')
   return (
-    // Full-bleed row like the message rows: content sits in the shared
-    // centered column, behind a transparent rail for text alignment.
     <section className="text-sm transition-colors hover:bg-secondary/40">
       <div className={TRANSCRIPT_COLUMN_CLASSES}>
         <div className="border-l-[3px] border-transparent">
-      <button
-        type="button"
-        onClick={() => onToggle(row.id)}
-        aria-expanded={expanded}
-        aria-controls={bodyId}
-        className="flex w-full items-center gap-2 px-4 py-1.5 text-left"
-      >
-        <ChevronRight
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
-            expanded && 'rotate-90',
+          {!row.live && (
+            <button type="button" onClick={() => onToggle(row.id)}
+              aria-expanded={expanded} aria-controls={bodyId}
+              className="flex w-full items-center gap-2 px-4 py-1.5 text-left">
+              <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', expanded && 'rotate-90')} />
+              <SummaryHeaderLabel row={row} />
+            </button>
           )}
-        />
-        {row.live ? <LiveHeaderLabel row={row} /> : <SummaryHeaderLabel row={row} />}
-      </button>
-      {showCurrentItem && row.currentItem && (
-        <div className="px-4 py-1.5 pl-9">
-          <WorkItemDetail message={row.currentItem} isStreaming />
-        </div>
-      )}
-      {expanded && (
-        <div id={bodyId} className="space-y-1.5 px-4 py-1.5 pl-9">
-          {row.sections.map((section) => (
-            <WorkSectionRow
-              key={section.message.client_id}
-              section={section}
-              live={row.live}
-              isCurrent={section.message === row.currentItem}
-              expanded={expandedItems.has(section.message.client_id)}
-              onToggleItem={onToggleItem}
-            />
-          ))}
-        </div>
-      )}
+          {(row.live || expanded) && (
+            <div id={bodyId} className="space-y-2 px-4 py-1.5">
+              {segments.map((segment, index) => {
+                const first = segment[0]
+                if (first.kind === 'intermediate') {
+                  return <WorkSectionRow key={first.message.client_id} section={first} live={row.live} isCurrent={false} />
+                }
+                const id = `activity:${first.message.client_id}`
+                const activeCount = row.live ? segment.filter(({ message }) =>
+                  isPendingToolMessage(message) || isDraftReasoningMessage(message)).length : 0
+                const direct = row.live
+                  ? index === segments.length - 1 && !row.endsAtAssistant
+                  : !hasCommentary
+                const open = direct || expandedItems.has(id)
+                return (
+                  <div key={id}>
+                    {!direct && (
+                      <button type="button" onClick={() => {
+                        if (row.live && !expanded && !expandedItems.has(id)) onToggle(row.id)
+                        onToggleItem(id)
+                      }}
+                        aria-expanded={open} aria-controls={`${id}:body`}
+                        className="flex w-full items-center gap-2 py-1.5 text-left text-xs text-muted-foreground">
+                        <ChevronRight className={cn('h-3 w-3 transition-transform motion-reduce:transition-none', open && 'rotate-90')} />
+                        <SectionCounts sections={segment} />
+                        {activeCount > 0 && <span>{activeCount} running</span>}
+                      </button>
+                    )}
+                    {open && (
+                      <div id={`${id}:body`} className="space-y-2">
+                        {segment.map((section) => (
+                          <WorkSectionRow key={section.message.client_id} section={section} live={row.live}
+                            isCurrent={row.live && (isPendingToolMessage(section.message) || isDraftReasoningMessage(section.message))} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
     </section>
@@ -87,36 +96,6 @@ const AgentWorkGroupComponent = ({
 
 export const AgentWorkGroup = memo(AgentWorkGroupComponent)
 AgentWorkGroup.displayName = 'AgentWorkGroup'
-
-const LiveHeaderLabel = ({ row }: { row: TimelineWorkRow }) => {
-  const startedAtMs = useMemo(() => {
-    const first = row.sections[0]?.message
-    if (!first) {
-      return null
-    }
-    const metadataStart =
-      typeof first.metadata?.started_at === 'string' ? Date.parse(first.metadata.started_at) : NaN
-    const parsed = Number.isFinite(metadataStart) ? metadataStart : Date.parse(first.created_at)
-    return Number.isFinite(parsed) ? parsed : null
-  }, [row.sections])
-  const [nowMs, setNowMs] = useState(() => Date.now())
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1000)
-    return () => window.clearInterval(interval)
-  }, [])
-
-  const elapsedLabel = startedAtMs !== null ? formatWorkDuration(Math.max(0, nowMs - startedAtMs)) : null
-  const stepLabel = row.currentItem ? describeCurrentStep(row.currentItem) : 'Thinking…'
-
-  return (
-    <span className="flex min-w-0 flex-1 items-baseline gap-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-      <span className="font-semibold">Working…</span>
-      {elapsedLabel && <span>{elapsedLabel}</span>}
-      <span className="truncate normal-case">{stepLabel}</span>
-    </span>
-  )
-}
 
 const SummaryHeaderLabel = ({ row }: { row: TimelineWorkRow }) => (
   <span className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] tracking-wide text-muted-foreground">
@@ -147,64 +126,24 @@ type WorkSectionRowProps = {
   section: TimelineWorkSection
   live: boolean
   isCurrent: boolean
-  expanded: boolean
-  onToggleItem: (clientId: string) => void
 }
 
-const WorkSectionRow = memo(function WorkSectionRow({
-  section,
-  live,
-  isCurrent,
-  expanded,
-  onToggleItem,
-}: WorkSectionRowProps) {
+const WorkSectionRow = memo(function WorkSectionRow({ section, live, isCurrent }: WorkSectionRowProps) {
   const { message } = section
-
   if (section.kind === 'intermediate') {
-    // Assistant commentary separates activity segments (mobile parity).
     const RoleContentRenderer = getRoleContentRenderer('assistant')
-    return (
-      <div className="border-l-2 border-border/50 pl-2 text-[13px] text-muted-foreground">
-        {RoleContentRenderer ? <RoleContentRenderer content={message.content} /> : <p>{message.content}</p>}
-      </div>
-    )
+    return <div className="py-1">{RoleContentRenderer ? <RoleContentRenderer content={message.content} /> : <p>{message.content}</p>}</div>
   }
-
-  const detailId = `${message.client_id}:detail`
-  const showDetail = expanded || (live && isCurrent)
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => onToggleItem(message.client_id)}
-        aria-expanded={showDetail}
-        aria-controls={detailId}
-        className="flex w-full items-center gap-2 text-left"
-      >
-        <ChevronRight
-          className={cn(
-            'h-3 w-3 shrink-0 text-muted-foreground/70 transition-transform motion-reduce:transition-none',
-            showDetail && 'rotate-90',
-          )}
-        />
-        <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[12px]">
-          <span
-            className={cn(
-              'shrink-0 font-mono text-[10px] uppercase tracking-wide',
-              message.role === 'reasoning' ? 'italic text-muted-foreground' : 'text-muted-foreground',
-            )}
-          >
-            {itemKindLabel(message)}
-          </span>
-          <span className="truncate text-muted-foreground">{itemSummary(message)}</span>
-          <ItemStatusChip message={message} live={live} isCurrent={isCurrent} />
-        </span>
-      </button>
-      {showDetail && (
-        <div id={detailId} className="mt-1 pl-5">
-          <WorkItemDetail message={message} isStreaming={live && isCurrent} />
-        </div>
-      )}
+      <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
+        <span className="font-mono">{itemKindLabel(message)}</span>
+        <span className="truncate">{itemSummary(message)}</span>
+        <ItemStatusChip message={message} live={live} isCurrent={isCurrent} />
+      </div>
+      <div className="mt-1 max-h-96 overflow-auto">
+        <WorkItemDetail message={message} isStreaming={live && isCurrent} />
+      </div>
     </div>
   )
 })
@@ -255,17 +194,6 @@ const WorkItemDetail = ({ message, isStreaming = false }: { message: ApiMessage;
     return <RoleContentRenderer content={message.content} isStreaming={isStreaming} />
   }
   return <p>{message.content}</p>
-}
-
-const describeCurrentStep = (message: ApiMessage): string => {
-  if (message.role === 'tool') {
-    const tool = getToolName(message)
-    return tool ? `Running ${tool}` : 'Running a tool'
-  }
-  if (message.role === 'reasoning') {
-    return 'Thinking…'
-  }
-  return 'Working…'
 }
 
 const itemKindLabel = (message: ApiMessage): string => {

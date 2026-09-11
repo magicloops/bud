@@ -691,6 +691,12 @@ export class AgentService {
               ),
             }
           : response;
+        const finalDirective = toolCalls.length === 0
+          ? this.modelRunner.parseFinalResponse(responseForReplay)
+          : null;
+        controller.signal.throwIfAborted();
+        this.modelRunner.completeAssistantDraft(threadId, turnId, modelResult,
+          finalDirective ? "final" : "intermediate");
         const visibleText = collectVisibleText(responseForReplay.content);
         let assistantMessageId: string | null = null;
 
@@ -1056,7 +1062,7 @@ export class AgentService {
           continue;
         }
 
-	        const directive = this.modelRunner.parseFinalResponse(responseForReplay);
+	        const directive = finalDirective!;
 	        const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
 	        const pathContext = currentSessionId
 	          ? await this.getPathContextForSession(currentSessionId)

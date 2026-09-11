@@ -29,10 +29,18 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
     Math.floor(Math.random() * THINKING_WORDS.length)
   )
   const [isExpanded, setIsExpanded] = useState(false)
+  const [graceElapsed, setGraceElapsed] = useState(false)
+  const visible = isVisible && (Boolean(label) || graceElapsed)
+  useEffect(() => {
+    setGraceElapsed(false)
+    if (!isVisible) return
+    const timer = window.setTimeout(() => setGraceElapsed(true), 150)
+    return () => window.clearTimeout(timer)
+  }, [isVisible])
 
   // Enter-only height animation. Hidden state still unmounts immediately.
   useEffect(() => {
-    if (!isVisible) {
+    if (!visible) {
       setIsExpanded(false)
       return
     }
@@ -40,25 +48,25 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
     setIsExpanded(false)
     const frame = window.requestAnimationFrame(() => setIsExpanded(true))
     return () => window.cancelAnimationFrame(frame)
-  }, [isVisible])
+  }, [visible])
 
   // Word cycling - only while visible and not showing a specific activity label
   useEffect(() => {
-    if (!isVisible || label) return
+    if (!visible || label) return
     const interval = setInterval(() => {
       setWordIndex((prev) => (prev + 1) % THINKING_WORDS.length)
     }, 2000)
     return () => clearInterval(interval)
-  }, [isVisible, label])
+  }, [visible, label])
 
   // Reset to random word when becoming visible
   useEffect(() => {
-    if (isVisible && !label) {
+    if (visible && !label) {
       setWordIndex(Math.floor(Math.random() * THINKING_WORDS.length))
     }
-  }, [isVisible, label])
+  }, [visible, label])
 
-  if (!isVisible) return null
+  if (!visible) return null
 
   return (
     <div

@@ -31,7 +31,10 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `stream_cursor`
 - `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args are exactly the model-facing args — `terminal.send` uses `raw_text` or `key`, `terminal.wait` takes no args — there is no `wait_for` decoration)
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
-- `draft_assistant` (`client_id`, `text`, `started_at`, `updated_at`)
+- `draft_assistant` (`client_id`, `text`, `started_at`, `updated_at`, optional `segment_kind`)
+  - `segment_kind: intermediate | final` is present after classified text completion
+    and before persistence clears the draft; absent while streaming/unclassified.
+    The enclosing active/phase fields do not imply durable completion.
 - `draft_reasoning` (array of visible in-flight reasoning segments with `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`)
 - `environment` (client-safe current Bud mode/status and tool availability while a turn is active; route responses refresh current environment for idle and active reads)
 - `context_budget` (latest active context budget decision while a turn is running; cleared on new/final idle transitions)
@@ -276,3 +279,13 @@ Internal terminal-runtime ownership helpers extracted from the old monolithic ma
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Model output activity
+
+`output_activity` is a nullable `{ llm_call_id, state }` snapshot value, with
+`working | text | awaiting_completion` states. `setOutputActivity` publishes
+`agent.output_activity` only on transitions, updating the snapshot and cursor
+before listeners run. Turn/call guards reject obsolete completions. Lifecycle
+handoffs clear it; clearing a draft alone preserves final-answer suppression.
+Snapshot updates cannot roll their cursor behind a handoff's clear event.
+See [design](../../../design/assistant-output-activity.md).

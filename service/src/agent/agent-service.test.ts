@@ -692,6 +692,9 @@ test("final no-tool response records exactly one LLM call", async (t) => {
     extractToolCalls() {
       return [];
     },
+    completeAssistantDraft(_threadId: string, _turnId: string, _result: unknown, kind: string) {
+      assert.ok(kind === "final" || kind === "intermediate");
+    },
     parseFinalResponse() {
       return {
         message: "Done.",
@@ -913,6 +916,9 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
             },
           ]
         : [];
+    },
+    completeAssistantDraft(_threadId: string, _turnId: string, _result: unknown, kind: string) {
+      assert.ok(kind === "final" || kind === "intermediate");
     },
     parseFinalResponse() {
       return {
