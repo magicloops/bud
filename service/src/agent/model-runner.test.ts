@@ -32,6 +32,7 @@ function createRuntime() {
       events.push({ threadId, event: event.event, data: event.data });
       return `cursor_${events.length}`;
     },
+    setOutputActivity() {},
     setDraftAssistant() {
       // noop
     },
@@ -475,6 +476,8 @@ test("invokeModel emits and returns visible reasoning segments", async (t) => {
     { llmCallId: "llm-call-1" },
   );
 
+  assert.equal(runtime.events.some(event => event.event === "agent.message_done"), false);
+  runner.completeAssistantDraft("thread_test", "turn_test", result, "final");
   assert.equal(result.reasoningSegments.length, 1);
   assert.equal(result.reasoningSegments[0]?.text, "Check terminal state.");
   assert.equal(result.reasoningSegments[0]?.llmCallId, "llm-call-1");
@@ -499,6 +502,7 @@ test("invokeModel emits and returns visible reasoning segments", async (t) => {
   assert.equal(typeof messageDone?.data.finished_at, "string");
   assert.equal(typeof messageDone?.data.duration_ms, "number");
   assert.equal(messageDone?.data.duration_source, "service_wall_clock");
+  assert.equal(messageDone?.data.segment_kind, "final");
   assert.ok(result.assistantTiming);
   assert.equal(result.assistantTiming.startedAt.toISOString(), messageStart?.data.started_at);
   assert.equal(result.assistantTiming.durationMs, messageDone?.data.duration_ms);

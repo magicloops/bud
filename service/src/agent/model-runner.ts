@@ -42,6 +42,7 @@ import {
 } from "./model-context-drift-recorder.js";
 
 type StreamedModelResponse = {
+  llmCallId?: string;
   response: CanonicalResponse;
   assistantClientId: string | null;
   provider: CanonicalProviderId;
@@ -226,6 +227,11 @@ export class AgentModelRunner {
     let assistantStartedAt: Date | null = null;
     let assistantTiming: AgentMessageTiming | null = null;
     const liveLlmCallId = streamContext?.llmCallId ?? ulid();
+    let productiveTextIndex: number | null = null;
+    let hasTool = false;
+    const activity = (state: "working" | "text" | "awaiting_completion") =>
+      this.runtime.setOutputActivity(threadId, turnId, liveLlmCallId, state);
+    this.runtime.setOutputActivity(threadId, turnId, liveLlmCallId, "working", true);
 
     const ensureAssistantClientId = () => {
       assistantClientId ??= generateMessageClientId();
@@ -345,119 +351,136 @@ export class AgentModelRunner {
       );
     };
 
-    for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
-      switch (event.type) {
-        case "message_start":
-          responseId = event.id;
-          break;
-        case "message_done":
-          stopReason = event.stop_reason;
-          usage = event.usage;
-          providerData = event.providerData;
-          break;
-        case "content_start":
-          if (event.content_type === "text") {
-            if (event.assistantPhase) {
-              textPhases.set(event.index, event.assistantPhase);
+    try {
+      for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
+        // Only productive boundaries change activity. Tail metadata for older
+        // blocks must not steal activity from newer text.
+        if (event.type === "tool_use_start" ||
+            (event.type === "tool_use_delta" && event.delta.length > 0)) {
+          hasTool = true;
+          productiveTextIndex = null;
+          activity("working");
+        } else if (event.type === "reasoning_start" ||
+                   (event.type === "reasoning_delta" && event.delta.length > 0)) {
+          productiveTextIndex = null;
+          activity("working");
+        }
+        switch (event.type) {
+          case "content_done":
+            if (productiveTextIndex === event.index) {
+              activity(hasTool || textBlocks.get(event.index)?.assistantPhase === "commentary"
+                ? "working" : "awaiting_completion");
+              productiveTextIndex = null;
             }
-            if (!seenTextIndexes.has(event.index)) {
-              pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
+            break;
+          case "message_start":
+            responseId = event.id;
+            break;
+          case "message_done":
+            stopReason = event.stop_reason;
+            usage = event.usage;
+            providerData = event.providerData;
+            break;
+          case "content_start":
+            if (event.content_type === "text") {
+              if (event.assistantPhase) {
+                textPhases.set(event.index, event.assistantPhase);
+              }
+              if (!seenTextIndexes.has(event.index)) {
+                pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
+                seenTextIndexes.add(event.index);
+                textBlockCount += 1;
+              }
+            } else if (event.content_type === "reasoning") {
+              reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
+            }
+            break;
+          case "text_delta": {
+            let prefix = pendingTextPrefixes.get(event.index);
+            if (prefix === undefined && !seenTextIndexes.has(event.index)) {
+              prefix = textBlockCount > 0 ? "\n" : "";
               seenTextIndexes.add(event.index);
               textBlockCount += 1;
             }
-          } else if (event.content_type === "reasoning") {
-            reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
-          }
-          break;
-        case "text_delta": {
-          let prefix = pendingTextPrefixes.get(event.index);
-          if (prefix === undefined && !seenTextIndexes.has(event.index)) {
-            prefix = textBlockCount > 0 ? "\n" : "";
-            seenTextIndexes.add(event.index);
-            textBlockCount += 1;
-          }
-          if (prefix !== undefined) {
-            pendingTextPrefixes.delete(event.index);
-            emitAssistantDraftDelta(prefix);
-          }
-          const current = textBlocks.get(event.index);
-          const assistantPhase = current?.assistantPhase ?? event.assistantPhase ?? textPhases.get(event.index);
-          textBlocks.set(event.index, {
-            text: `${current?.text ?? ""}${event.delta}`,
-            ...(assistantPhase ? { assistantPhase } : {}),
-          });
-          emitAssistantDraftDelta(event.delta);
-          break;
-        }
-        case "tool_use_done":
-          toolCallsByIndex.set(event.index, {
-            id: event.id,
-            name: event.name,
-            input: event.input,
-          });
-          break;
-        case "reasoning_start":
-          reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
-          break;
-        case "reasoning_delta":
-          emitReasoningDelta(event.index, event.delta);
-          break;
-        case "reasoning_done":
-          reasoningBlocks.set(event.index, event.block);
-          if (event.block.type === "reasoning" && event.block.text.trim().length > 0) {
-            const draft = ensureReasoningDraft(event.index);
-            const finalText = event.block.text;
-            if (finalText.startsWith(draft.text) && finalText.length > draft.text.length) {
-              emitReasoningDelta(event.index, finalText.slice(draft.text.length));
-            } else {
-              draft.text = finalText;
-              this.runtime.setDraftReasoning(
-                threadId,
-                {
-                  turnId,
-                  clientId: draft.clientId,
-                  text: draft.text,
-                  llmCallId: draft.llmCallId,
-                  index: draft.index,
-                  provider: draft.provider,
-                  providerModel: draft.providerModel,
-                  startedAt: draft.startedAt,
-                },
-                this.runtime.getSnapshot(threadId).stream_cursor,
-              );
+            if (prefix !== undefined) {
+              pendingTextPrefixes.delete(event.index);
+              emitAssistantDraftDelta(prefix);
             }
-            reasoningSegments.set(event.index, {
-              ...draft,
-              text: finalText,
-              block: event.block,
-              finishedAt: new Date(),
+            const current = textBlocks.get(event.index);
+            const assistantPhase = current?.assistantPhase ?? event.assistantPhase ?? textPhases.get(event.index);
+            textBlocks.set(event.index, {
+              text: `${current?.text ?? ""}${event.delta}`,
+              ...(assistantPhase ? { assistantPhase } : {}),
             });
+            if (event.delta.length > 0 && textBlocks.get(event.index)?.text.trim()) {
+              productiveTextIndex = event.index;
+              activity("text");
+            }
+            emitAssistantDraftDelta(event.delta);
+            break;
           }
-          break;
-        case "reasoning_redacted":
-          reasoningBlocks.set(event.index, event.block);
-          break;
-        case "error":
-          throw event.error;
+          case "tool_use_done":
+            hasTool = true;
+            toolCallsByIndex.set(event.index, {
+              id: event.id,
+              name: event.name,
+              input: event.input,
+            });
+            break;
+          case "reasoning_start":
+            reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
+            break;
+          case "reasoning_delta":
+            emitReasoningDelta(event.index, event.delta);
+            break;
+          case "reasoning_done":
+            reasoningBlocks.set(event.index, event.block);
+            if (event.block.type === "reasoning" && event.block.text.trim().length > 0) {
+              const draft = ensureReasoningDraft(event.index);
+              const finalText = event.block.text;
+              if (finalText.startsWith(draft.text) && finalText.length > draft.text.length) {
+                emitReasoningDelta(event.index, finalText.slice(draft.text.length));
+              } else {
+                draft.text = finalText;
+                this.runtime.setDraftReasoning(
+                  threadId,
+                  {
+                    turnId,
+                    clientId: draft.clientId,
+                    text: draft.text,
+                    llmCallId: draft.llmCallId,
+                    index: draft.index,
+                    provider: draft.provider,
+                    providerModel: draft.providerModel,
+                    startedAt: draft.startedAt,
+                  },
+                  this.runtime.getSnapshot(threadId).stream_cursor,
+                );
+              }
+              reasoningSegments.set(event.index, {
+                ...draft,
+                text: finalText,
+                block: event.block,
+                finishedAt: new Date(),
+              });
+            }
+            break;
+          case "reasoning_redacted":
+            reasoningBlocks.set(event.index, event.block);
+            break;
+          case "error":
+            throw event.error;
+        }
       }
+
+    } catch (error) {
+      this.runtime.setOutputActivity(threadId, turnId, liveLlmCallId, null);
+      throw error;
     }
 
     if (hasDraftText) {
-      const clientId = ensureAssistantClientId();
       const finishedAt = new Date();
-      const timing = buildAgentMessageTiming(assistantStartedAt ?? finishedAt, finishedAt);
-      assistantTiming = timing;
-      const serializedTiming = serializeAgentMessageTiming(timing);
-      const cursor = this.runtime.emit(threadId, {
-        event: "agent.message_done",
-        data: {
-          turn_id: turnId,
-          client_id: clientId,
-          text: draftText,
-          ...serializedTiming,
-        },
-      });
-      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor, timing.startedAt);
+      assistantTiming = buildAgentMessageTiming(assistantStartedAt ?? finishedAt, finishedAt);
     }
 
     const orderedIndexes = Array.from(
@@ -521,6 +544,7 @@ export class AgentModelRunner {
 
     return {
       response,
+      llmCallId: liveLlmCallId,
       assistantClientId,
       provider: providerName,
       providerModel,
@@ -531,12 +555,50 @@ export class AgentModelRunner {
     };
   }
 
+  // The loop calls this only after validating its continuation/final decision.
+  // Completion classifies the draft; it does not promise durable turn success.
+  completeAssistantDraft(
+    threadId: string,
+    turnId: string,
+    result: Pick<StreamedModelResponse, "response" | "assistantClientId" | "assistantTiming" | "llmCallId">,
+    segmentKind: "intermediate" | "final",
+  ): void {
+    if (result.llmCallId) {
+      this.runtime.setOutputActivity(threadId, turnId, result.llmCallId,
+        segmentKind === "final" ? "awaiting_completion" : "working");
+    }
+    if (!result.assistantClientId || !result.assistantTiming) return;
+    const text = result.response.content
+      .filter((block): block is Extract<CanonicalContentBlock, { type: "text" }> => block.type === "text")
+      .map((block) => block.text).join("\n");
+    const cursor = this.runtime.emit(threadId, {
+      event: "agent.message_done",
+      data: {
+        turn_id: turnId,
+        client_id: result.assistantClientId,
+        text,
+        segment_kind: segmentKind,
+        ...serializeAgentMessageTiming(result.assistantTiming),
+      },
+    });
+    this.runtime.setDraftAssistant(threadId, result.assistantClientId, text, cursor,
+      result.assistantTiming.startedAt, segmentKind);
+  }
+
   parseFinalResponse(response: CanonicalResponse): AgentFinalDirective {
     if (response.stopReason === "max_tokens") {
       throw new AgentModelResponseError(
         "model response incomplete: max_tokens reached",
         response,
         "MODEL_MAX_TOKENS",
+      );
+    }
+
+    if (response.stopReason !== "end_turn" && response.stopReason !== "stop_sequence") {
+      throw new AgentModelResponseError(
+        "model response did not finish with a final answer",
+        response,
+        "MODEL_INVALID_COMPLETION",
       );
     }
 

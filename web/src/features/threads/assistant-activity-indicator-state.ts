@@ -1,99 +1,46 @@
-import type { ApiAgentState, ApiMessage } from '../../lib/api-types'
+import type { ApiAgentState, ApiMessage, ApiOutputActivity } from '../../lib/api-types'
 
-export const ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS = 250
-
-export type AssistantActivityStatus =
-  | 'idle'
-  | 'dispatching'
-  | 'streaming'
-  | 'waiting_for_user'
-  | 'waiting_for_terminal'
-
+export type AssistantActivityStatus = 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal'
 export type AssistantActivityGateState = {
   suppressIndicator: boolean
   activeTurnId: string | null
-  pendingUnsuppressTurnId: string | null
+  llmCallId: string | null
+  final: boolean
 }
-
 export type AssistantActivityGateEvent =
-  | {
-      type: 'bootstrap'
-      agentState: Pick<ApiAgentState, 'active' | 'turn_id' | 'draft_assistant'>
-    }
-  | {
-      type: 'assistant_message_start' | 'assistant_message_delta' | 'assistant_message_done'
-      turnId: string
-    }
-  | {
-      type: 'assistant_message_persisted'
-      turnId: string
-      message?: Pick<ApiMessage, 'role' | 'metadata'> | null
-    }
-  | {
-      type: 'message_done_timer'
-      turnId: string
-    }
-  | {
-      type: 'final'
-    }
+  | { type: 'output_activity'; turnId: string; llmCallId: string; state: ApiOutputActivity['state'] | null }
+  | { type: 'assistant_message_persisted'; turnId: string; message?: Pick<ApiMessage, 'role' | 'metadata'> | null }
+  | { type: 'final'; turnId?: string }
 
 export const createIdleAssistantActivityGate = (): AssistantActivityGateState => ({
-  suppressIndicator: false,
-  activeTurnId: null,
-  pendingUnsuppressTurnId: null,
+  suppressIndicator: false, activeTurnId: null, llmCallId: null, final: false,
 })
-
 export const createAssistantActivityGateFromAgentState = (
-  agentState: Pick<ApiAgentState, 'active' | 'turn_id' | 'draft_assistant'>,
-): AssistantActivityGateState => {
-  const hasDraftAssistant = Boolean(agentState.active && agentState.draft_assistant)
-  return {
-    suppressIndicator: hasDraftAssistant,
-    activeTurnId: hasDraftAssistant ? agentState.turn_id : null,
-    pendingUnsuppressTurnId: null,
-  }
-}
-
-export function reduceAssistantActivityGate(
-  state: AssistantActivityGateState,
-  event: AssistantActivityGateEvent,
-): AssistantActivityGateState {
+  snapshot: Pick<ApiAgentState, 'active' | 'turn_id' | 'output_activity'>,
+): AssistantActivityGateState => ({
+  suppressIndicator: snapshot.active && (snapshot.output_activity?.state === 'text' || snapshot.output_activity?.state === 'awaiting_completion'),
+  activeTurnId: snapshot.active ? snapshot.turn_id : null,
+  llmCallId: snapshot.active ? snapshot.output_activity?.llm_call_id ?? null : null,
+  final: false,
+})
+export function reduceAssistantActivityGate(state: AssistantActivityGateState, event: AssistantActivityGateEvent): AssistantActivityGateState {
   switch (event.type) {
-    case 'bootstrap':
-      return createAssistantActivityGateFromAgentState(event.agentState)
-    case 'assistant_message_start':
-    case 'assistant_message_delta':
+    case 'output_activity':
+      if (state.final && state.activeTurnId === event.turnId) return state
+      if (event.state === null && (state.activeTurnId !== event.turnId || state.llmCallId !== event.llmCallId)) return state
+      // New model calls begin with working; a late text/clear cannot begin one.
+      if (event.state !== 'working' && event.state !== null && state.llmCallId !== event.llmCallId) return state
       return {
-        suppressIndicator: true,
-        activeTurnId: event.turnId,
-        pendingUnsuppressTurnId: null,
-      }
-    case 'assistant_message_done':
-      return {
-        suppressIndicator: true,
-        activeTurnId: event.turnId,
-        pendingUnsuppressTurnId: event.turnId,
+        suppressIndicator: event.state === 'text' || event.state === 'awaiting_completion',
+        activeTurnId: event.turnId, llmCallId: event.state === null ? null : event.llmCallId, final: false,
       }
     case 'assistant_message_persisted':
-      if (!isFinalAssistantMessage(event.message)) {
-        return state
-      }
-      return {
-        suppressIndicator: true,
-        activeTurnId: event.turnId,
-        pendingUnsuppressTurnId: null,
-      }
-    case 'message_done_timer':
-      if (state.pendingUnsuppressTurnId !== event.turnId) {
-        return state
-      }
-      return {
-        suppressIndicator: false,
-        activeTurnId: state.activeTurnId === event.turnId ? event.turnId : state.activeTurnId,
-        pendingUnsuppressTurnId: null,
-      }
+      if (state.activeTurnId !== event.turnId || !isFinalAssistantMessage(event.message)) return state
+      return { ...state, suppressIndicator: true, final: true }
     case 'final':
-      return createIdleAssistantActivityGate()
+      if (!event.turnId) return createIdleAssistantActivityGate()
+      if (state.activeTurnId && state.activeTurnId !== event.turnId) return state
+      return { suppressIndicator: true, activeTurnId: event.turnId, llmCallId: null, final: true }
   }
 }
 
@@ -109,9 +56,7 @@ export function isFinalAssistantMessage(message?: Pick<ApiMessage, 'role' | 'met
 }
 
 export function deriveAssistantActivityIndicatorVisible(args: {
-  status: AssistantActivityStatus
-  activeCompaction: boolean
-  gate: AssistantActivityGateState
+  status: AssistantActivityStatus; activeCompaction: boolean; gate: AssistantActivityGateState
 }): boolean {
-  return args.activeCompaction || (args.status === 'streaming' && !args.gate.suppressIndicator)
+  return args.activeCompaction || ((args.status === 'streaming' || args.status === 'dispatching') && !args.gate.suppressIndicator)
 }

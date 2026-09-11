@@ -1,202 +1,55 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import type { ApiAgentState, ApiMessage } from '../../lib/api-types.ts'
-import {
-  createAssistantActivityGateFromAgentState,
-  createIdleAssistantActivityGate,
-  deriveAssistantActivityIndicatorVisible,
-  isFinalAssistantMessage,
-  reduceAssistantActivityGate,
-} from './assistant-activity-indicator-state.ts'
+import { createAssistantActivityGateFromAgentState, createIdleAssistantActivityGate, deriveAssistantActivityIndicatorVisible, reduceAssistantActivityGate } from './assistant-activity-indicator-state.ts'
 
-const buildAgentState = (overrides: Partial<ApiAgentState> = {}): ApiAgentState => ({
-  active: false,
-  turn_id: null,
-  phase: 'idle',
-  can_cancel: false,
-  stream_cursor: 'cursor-0',
-  pending_tool: null,
-  draft_assistant: null,
-  updated_at: '2026-05-28T10:00:00.000Z',
-  ...overrides,
+const update = (state: ReturnType<typeof createIdleAssistantActivityGate>, activity: 'working' | 'text' | 'awaiting_completion' | null, turnId = 'T', llmCallId = 'L') =>
+  reduceAssistantActivityGate(state, { type: 'output_activity', turnId, llmCallId, state: activity })
+
+test('commentary remains unfinished while tool assembly restores progress', () => {
+  let state = update(createIdleAssistantActivityGate(), 'working')
+  assert.equal(state.suppressIndicator, false)
+  state = update(state, 'text')
+  assert.equal(state.suppressIndicator, true)
+  state = update(state, 'awaiting_completion')
+  assert.equal(state.suppressIndicator, true)
+  state = update(state, 'working')
+  assert.equal(deriveAssistantActivityIndicatorVisible({ status: 'streaming', activeCompaction: false, gate: state }), true)
+  state = update(state, 'text')
+  assert.equal(state.suppressIndicator, true)
 })
 
-const buildAssistantMessage = (metadata?: Record<string, unknown>): ApiMessage => ({
-  message_id: 'message-1',
-  client_id: 'client-1',
-  role: 'assistant',
-  display_role: 'Bud Agent',
-  content: 'Done.',
-  created_at: '2026-05-28T10:00:01.000Z',
-  metadata,
+test('snapshot restores actual activity instead of inferring it from draft presence', () => {
+  for (const activity of ['working', 'text', 'awaiting_completion'] as const) {
+    const state = createAssistantActivityGateFromAgentState({ active: true, turn_id: 'T', output_activity: { llm_call_id: 'L', state: activity } })
+    assert.equal(state.suppressIndicator, activity !== 'working')
+    assert.equal(update(state, 'working').suppressIndicator, false)
+  }
+  assert.equal(createAssistantActivityGateFromAgentState({ active: false, turn_id: null, output_activity: { llm_call_id: 'L', state: 'text' } }).suppressIndicator, false)
 })
 
-test('bootstrap suppresses the indicator only when a draft assistant exists', () => {
-  assert.deepEqual(
-    createAssistantActivityGateFromAgentState(buildAgentState({
-      active: true,
-      turn_id: 'turn-1',
-      draft_assistant: {
-        client_id: 'assistant-client',
-        text: 'streaming text',
-        updated_at: '2026-05-28T10:00:01.000Z',
-      },
-    })),
-    {
-      suppressIndicator: true,
-      activeTurnId: 'turn-1',
-      pendingUnsuppressTurnId: null,
-    },
-  )
-
-  assert.deepEqual(
-    createAssistantActivityGateFromAgentState(buildAgentState({
-      active: true,
-      turn_id: 'turn-1',
-      draft_assistant: null,
-    })),
-    {
-      suppressIndicator: false,
-      activeTurnId: null,
-      pendingUnsuppressTurnId: null,
-    },
-  )
+test('old call clears and old turn finals do not affect current text', () => {
+  let state = update(createIdleAssistantActivityGate(), 'working', 'new', 'new-call')
+  state = update(state, 'text', 'new', 'new-call')
+  assert.deepEqual(update(state, null, 'old', 'old-call'), state)
+  assert.deepEqual(update(state, null, 'new', 'old-call'), state)
+  assert.deepEqual(update(state, 'text', 'new', 'old-call'), state)
+  assert.deepEqual(reduceAssistantActivityGate(state, { type: 'final', turnId: 'old' }), state)
 })
 
-test('assistant message start and delta suppress the indicator', () => {
-  const started = reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-    type: 'assistant_message_start',
-    turnId: 'turn-1',
-  })
-  const delta = reduceAssistantActivityGate(started, {
-    type: 'assistant_message_delta',
-    turnId: 'turn-1',
-  })
-
-  assert.deepEqual(delta, {
-    suppressIndicator: true,
-    activeTurnId: 'turn-1',
-    pendingUnsuppressTurnId: null,
-  })
-  assert.equal(
-    deriveAssistantActivityIndicatorVisible({
-      status: 'streaming',
-      activeCompaction: false,
-      gate: delta,
-    }),
-    false,
-  )
+test('final persistence and runtime clear never flash; next turn can begin', () => {
+  let state = update(createIdleAssistantActivityGate(), 'working')
+  state = update(state, 'awaiting_completion')
+  state = reduceAssistantActivityGate(state, { type: 'assistant_message_persisted', turnId: 'T', message: { role: 'assistant', metadata: { segment_kind: 'final' } } })
+  assert.equal(update(state, null).suppressIndicator, true)
+  state = reduceAssistantActivityGate(state, { type: 'final', turnId: 'T' })
+  assert.equal(update(state, 'working').suppressIndicator, true)
+  assert.equal(update(state, 'working', 'new', 'new-call').suppressIndicator, false)
 })
 
-test('message_done schedules the gate to clear and the timer event reveals the indicator', () => {
-  const done = reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-    type: 'assistant_message_done',
-    turnId: 'turn-1',
-  })
-  assert.deepEqual(done, {
-    suppressIndicator: true,
-    activeTurnId: 'turn-1',
-    pendingUnsuppressTurnId: 'turn-1',
-  })
-
-  const elapsed = reduceAssistantActivityGate(done, {
-    type: 'message_done_timer',
-    turnId: 'turn-1',
-  })
-  assert.deepEqual(elapsed, {
-    suppressIndicator: false,
-    activeTurnId: 'turn-1',
-    pendingUnsuppressTurnId: null,
-  })
-  assert.equal(
-    deriveAssistantActivityIndicatorVisible({
-      status: 'streaming',
-      activeCompaction: false,
-      gate: elapsed,
-    }),
-    true,
-  )
-})
-
-test('stale message_done timers do not clear a newer streaming turn', () => {
-  const state = reduceAssistantActivityGate(
-    reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-      type: 'assistant_message_done',
-      turnId: 'turn-1',
-    }),
-    {
-      type: 'assistant_message_start',
-      turnId: 'turn-2',
-    },
-  )
-
-  assert.deepEqual(
-    reduceAssistantActivityGate(state, {
-      type: 'message_done_timer',
-      turnId: 'turn-1',
-    }),
-    state,
-  )
-})
-
-test('final assistant messages keep the indicator suppressed until final event', () => {
-  const done = reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-    type: 'assistant_message_done',
-    turnId: 'turn-1',
-  })
-  const persistedFinal = reduceAssistantActivityGate(done, {
-    type: 'assistant_message_persisted',
-    turnId: 'turn-1',
-    message: buildAssistantMessage({
-      segment_kind: 'final',
-      assistant_phase: 'final_answer',
-    }),
-  })
-
-  assert.deepEqual(persistedFinal, {
-    suppressIndicator: true,
-    activeTurnId: 'turn-1',
-    pendingUnsuppressTurnId: null,
-  })
-  assert.equal(isFinalAssistantMessage(buildAssistantMessage({ segment_kind: 'final' })), true)
-  assert.equal(isFinalAssistantMessage(buildAssistantMessage({ assistant_phase: 'final_answer' })), true)
-  assert.equal(isFinalAssistantMessage(buildAssistantMessage({ segment_kind: 'intermediate' })), false)
-})
-
-test('intermediate assistant messages leave the scheduled reveal in place', () => {
-  const done = reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-    type: 'assistant_message_done',
-    turnId: 'turn-1',
-  })
-  const persistedIntermediate = reduceAssistantActivityGate(done, {
-    type: 'assistant_message_persisted',
-    turnId: 'turn-1',
-    message: buildAssistantMessage({
-      segment_kind: 'intermediate',
-      assistant_phase: 'commentary',
-      followed_by_tool_call: true,
-    }),
-  })
-
-  assert.deepEqual(persistedIntermediate, done)
-})
-
-test('final resets the gate and compaction overrides normal visibility', () => {
-  const suppressed = reduceAssistantActivityGate(createIdleAssistantActivityGate(), {
-    type: 'assistant_message_start',
-    turnId: 'turn-1',
-  })
-
-  assert.deepEqual(
-    reduceAssistantActivityGate(suppressed, { type: 'final' }),
-    createIdleAssistantActivityGate(),
-  )
-  assert.equal(
-    deriveAssistantActivityIndicatorVisible({
-      status: 'streaming',
-      activeCompaction: true,
-      gate: suppressed,
-    }),
-    true,
-  )
+test('empty output, pending sends, waits, idle and compaction keep existing eligibility', () => {
+  const state = createIdleAssistantActivityGate()
+  for (const status of ['dispatching', 'streaming', 'waiting_for_user', 'waiting_for_terminal', 'idle'] as const) {
+    assert.equal(deriveAssistantActivityIndicatorVisible({ status, activeCompaction: false, gate: state }), status === 'dispatching' || status === 'streaming')
+  }
+  assert.equal(deriveAssistantActivityIndicatorVisible({ status: 'streaming', activeCompaction: true, gate: update(update(state, 'working'), 'text') }), true)
 })

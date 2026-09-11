@@ -433,3 +433,9 @@ Automation definitions add `model_mode` and nullable `origin_thread_id`.
 proposal details optionally include it. `ApiThread.model_warning` carries the
 server's saved-model fallback explanation. These are owner-facing projections,
 not persisted warning flags or permission changes.
+
+## Agent activity DTO
+
+`api-types.ts` exports `ApiOutputActivity` and exposes `ApiAgentState.output_activity`
+for runtime spinner suppression. The activity is independent of draft lifecycle;
+see [contract](../../../design/assistant-output-activity.md).

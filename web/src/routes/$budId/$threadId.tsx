@@ -33,10 +33,8 @@ import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads
 import { invocationSummary, invocationAllowsLiveActivity, invocationRevision } from '@/features/threads/invocation-state'
 import { submitQuestionResponseFlow, type QuestionResponseContinuation } from '@/features/threads/question-response-submit'
 import {
-  ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS,
   createAssistantActivityGateFromAgentState,
   deriveAssistantActivityIndicatorVisible,
-  isFinalAssistantMessage,
   reduceAssistantActivityGate,
 } from '@/features/threads/assistant-activity-indicator-state'
 import {
@@ -201,7 +199,7 @@ function ThreadView() {
   const persistModelSelectionSeqRef = useRef(0)
   const explicitSelectionThreadRef = useRef<string | null>(null)
   useEffect(() => { explicitSelectionThreadRef.current = null }, [threadId])
-  const assistantMessageDoneTimerRef = useRef<number | null>(null)
+  const outputActivityRevision = useRef(0)
   const cancelAgentTurnRequestedRef = useRef(false)
   const cancelAgentTurnInFlightRef = useRef(false)
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
@@ -210,16 +208,9 @@ function ThreadView() {
   const handleFeatureError = useCallback((message: string) => {
     setError(message)
   }, [])
-  const clearAssistantMessageDoneTimer = useCallback(() => {
-    if (assistantMessageDoneTimerRef.current !== null) {
-      window.clearTimeout(assistantMessageDoneTimerRef.current)
-      assistantMessageDoneTimerRef.current = null
-    }
-  }, [])
   const resetAssistantActivityGate = useCallback((agentState: ApiAgentState) => {
-    clearAssistantMessageDoneTimer()
     setAssistantActivityGate(createAssistantActivityGateFromAgentState(agentState))
-  }, [clearAssistantMessageDoneTimer])
+  }, [])
   const applyAgentStateError = useCallback((agentState: ApiAgentState) => {
     setError(getAgentStateRuntimeErrorMessage(agentState))
   }, [])
@@ -305,11 +296,6 @@ function ThreadView() {
   const webViewHttpTransportUnavailable =
     webView.transport?.available === false || webViewActiveSite?.transport?.available === false
 
-  useEffect(() => {
-    return () => {
-      clearAssistantMessageDoneTimer()
-    }
-  }, [clearAssistantMessageDoneTimer])
 
   // Update messages when loader data changes
   useEffect(() => {
@@ -390,9 +376,11 @@ function ThreadView() {
 
   const refreshAgentState = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
+    const activityRevision = outputActivityRevision.current
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
+    if (activityRevision !== outputActivityRevision.current) return nextAgentState
     setDurableState(nextAgentState)
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
@@ -406,6 +394,7 @@ function ThreadView() {
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
+    const activityRevision = outputActivityRevision.current
     // Read the transcript after state: completion/answer rows committed before
     // this snapshot must not be missed by an earlier parallel message query.
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
@@ -414,6 +403,7 @@ function ThreadView() {
     )
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
+    if (activityRevision !== outputActivityRevision.current) return nextAgentState
     setDurableState(nextAgentState)
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
@@ -568,76 +558,27 @@ function ThreadView() {
     }
   }, [applyToolResultMessage, refreshThreadWebView])
 
-  const scheduleAssistantActivityReturn = useCallback((turnId: string) => {
-    clearAssistantMessageDoneTimer()
-    assistantMessageDoneTimerRef.current = window.setTimeout(() => {
-      assistantMessageDoneTimerRef.current = null
-      setAssistantActivityGate((current) =>
-        reduceAssistantActivityGate(current, {
-          type: 'message_done_timer',
-          turnId,
-        }),
-      )
-    }, ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS)
-  }, [clearAssistantMessageDoneTimer])
-
-  const handleAssistantMessageStart = useCallback((event: Parameters<typeof applyAssistantMessageStart>[0]) => {
-    clearAssistantMessageDoneTimer()
-    setAssistantActivityGate((current) =>
-      reduceAssistantActivityGate(current, {
-        type: 'assistant_message_start',
-        turnId: event.turnId,
-      }),
-    )
-    applyAssistantMessageStart(event)
-  }, [applyAssistantMessageStart, clearAssistantMessageDoneTimer])
-
-  const handleAssistantMessageDelta = useCallback((event: Parameters<typeof applyAssistantMessageDelta>[0]) => {
-    clearAssistantMessageDoneTimer()
-    setAssistantActivityGate((current) =>
-      reduceAssistantActivityGate(current, {
-        type: 'assistant_message_delta',
-        turnId: event.turnId,
-      }),
-    )
-    applyAssistantMessageDelta(event)
-  }, [applyAssistantMessageDelta, clearAssistantMessageDoneTimer])
-
-  const handleAssistantMessageDone = useCallback((event: Parameters<typeof applyAssistantMessageDone>[0]) => {
-    setAssistantActivityGate((current) =>
-      reduceAssistantActivityGate(current, {
-        type: 'assistant_message_done',
-        turnId: event.turnId,
-      }),
-    )
-    applyAssistantMessageDone(event)
-    scheduleAssistantActivityReturn(event.turnId)
-  }, [applyAssistantMessageDone, scheduleAssistantActivityReturn])
-
+  const handleAssistantMessageStart = applyAssistantMessageStart
+  const handleAssistantMessageDelta = applyAssistantMessageDelta
+  const handleAssistantMessageDone = applyAssistantMessageDone
   const handleAssistantMessageEvent = useCallback((event: Parameters<typeof applyAssistantMessageEvent>[0]) => {
-    if (isFinalAssistantMessage(event.message)) {
-      clearAssistantMessageDoneTimer()
-    }
-    setAssistantActivityGate((current) =>
-      reduceAssistantActivityGate(current, {
-        type: 'assistant_message_persisted',
-        turnId: event.turnId,
-        message: event.message,
-      }),
-    )
+    outputActivityRevision.current += 1
+    setAssistantActivityGate((current) => reduceAssistantActivityGate(current, {
+      type: 'assistant_message_persisted', turnId: event.turnId, message: event.message,
+    }))
     applyAssistantMessageEvent(event)
-  }, [applyAssistantMessageEvent, clearAssistantMessageDoneTimer])
+  }, [applyAssistantMessageEvent])
 
   const handleFinalizeTurn = useCallback((
     turnId: string,
     finalStatus: 'succeeded' | 'failed' | 'canceled',
   ) => {
-    clearAssistantMessageDoneTimer()
     setAssistantActivityGate((current) =>
       reduceAssistantActivityGate(current, {
-        type: 'final',
+        type: 'final', turnId,
       }),
     )
+    outputActivityRevision.current += 1
     setTurnOutcomes((current) => {
       const next = new Map(current)
       next.set(turnId, finalStatus)
@@ -650,7 +591,6 @@ function ThreadView() {
       console.warn('[context-budget] failed to refresh after final event', error)
     })
   }, [
-    clearAssistantMessageDoneTimer,
     finalizeTurn,
     refreshAgentState,
     threadId,
@@ -735,6 +675,14 @@ function ThreadView() {
     onAssistantMessageStart: (event) => {
       noteLiveTurn(event.turnId)
       handleAssistantMessageStart(event)
+    },
+    onOutputActivity: (event) => {
+      outputActivityRevision.current += 1
+      setAssistantActivityGate((current) => reduceAssistantActivityGate(current, { type: 'output_activity', ...event }))
+      if (event.state === 'working') {
+        noteLiveTurn(event.turnId)
+        setStatus('streaming')
+      }
     },
     onAssistantMessageDelta: handleAssistantMessageDelta,
     onAssistantMessageDone: handleAssistantMessageDone,
@@ -975,7 +923,6 @@ function ThreadView() {
     setError(null)
     cancelAgentTurnRequestedRef.current = false
     setStatus('dispatching')
-    clearAssistantMessageDoneTimer()
     setAssistantActivityGate((current) =>
       reduceAssistantActivityGate(current, {
         type: 'final',
@@ -1046,7 +993,6 @@ function ThreadView() {
   }, [
     addOptimisticUserMessage,
     budId,
-    clearAssistantMessageDoneTimer,
     ensureAgentStreamConnected,
     performCancelAgentTurn,
     reasoningEffort,
@@ -1058,7 +1004,7 @@ function ThreadView() {
     threadId,
   ])
 
-  const activityIndicatorVisible = (!durableState.invocations || invocationAllowsLiveActivity(durableState)) && deriveAssistantActivityIndicatorVisible({
+  const activityIndicatorVisible = (status === 'dispatching' || !durableState.invocations || invocationAllowsLiveActivity(durableState)) && deriveAssistantActivityIndicatorVisible({
     status,
     activeCompaction: activeCompaction !== null,
     gate: assistantActivityGate,

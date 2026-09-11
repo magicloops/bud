@@ -103,6 +103,7 @@ top-level and flushing the group.
 - `status`: session-local `final`-event outcomes (failed/canceled), else
   presence of a canonical final assistant row for the turn (`no_final`
   otherwise); legacy groups use the immediately following boundary row
+- `endsAtAssistant`: following visible assistant text closes the live activity segment without ending the work group; included in row memoization
 - `durationMs` via `lib/agent-work-duration` (null while live)
 - `createTimelineProjector()` reuses previous row OBJECTS when a row's
   inputs are unchanged so memoized React rows skip re-rendering during
@@ -184,10 +185,10 @@ Pure state helpers for the existing-thread route's timeline activity footer.
 
 **Responsibilities**:
 - seed the client-side activity gate from `/agent/state.draft_assistant` during initial load and stream resync
-- suppress the generic thinking indicator while `agent.message_start` / `agent.message_delta` are actively filling a draft assistant row
+- suppress the generic thinking indicator on nonempty assistant text deltas; empty starts/bootstrap drafts retain progress
 - keep suppression through `agent.message_done`, then allow the route-owned delay timer to reveal the indicator again if the turn continues
 - detect final persisted assistant rows from existing metadata such as `segment_kind: "final"` or `assistant_phase: "final_answer"` so final answers do not flash the generic indicator before `final`
-- derive the final activity-indicator visibility from the current workbench status, active compaction override, and client-side suppression gate without requiring new backend events
+- include dispatching and streaming in progress eligibility; derive final visibility from the current workbench status, active compaction override, and client-side suppression gate without requiring new backend events
 
 **Exports**:
 - `ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS`
@@ -636,3 +637,13 @@ settled results collapse into work. `thread-message-state.test.ts` covers recove
 deduplication, settlement precedence and empty-array cleanup.
 
 A failed invocation with `outcome_code: invalid_model` displays an actionable model-unavailable message: choose a supported model and update/review any affected automation. Other failure labels remain generic.
+
+## Output activity replaces draft-based spinner suppression
+
+`assistant-activity-indicator-state.ts` consumes service `output_activity` from
+snapshots and `agent.output_activity` through `use-agent-stream.ts`. Text and
+awaiting-completion suppress progress; working permits it despite an unfinished
+draft. The previous message-done suppression timer is removed. Final/wait and
+compaction precedence remain; no provider logic or inactivity timer is added.
+The gate tests cover snapshots, transitions, stale clears/finals and new turns.
+See [design](../../../../design/assistant-output-activity.md).

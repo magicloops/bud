@@ -354,3 +354,20 @@ model, with explicit picker overrides. Origin is carried from authorized chat
 context. List rows show active resolution and amber warnings; editing/review uses
 the separate draft resolution. History shows the frozen invocation model/warning.
 Changing unrelated settings preserves selection mode; changing Bud clears origin.
+
+## Streaming presentation update — September 9, 2026
+
+The existing thread route ignores empty assistant deltas for progress suppression
+while still reconciling them into message state. Dispatching a new send can show
+progress despite the prior invocation's terminal status. Existing owner-scoped
+loader, stream authorization and reset/timer cleanup paths remain the boundary;
+no new route, persistence or authorization behavior is introduced.
+
+## Activity snapshot reconciliation
+
+The thread route drives spinner suppression from service output activity, not
+message start/done handlers. Working transitions can begin an automated live turn
+without a local send. An activity revision invalidates snapshot/bootstrap fetches
+started before a newer live transition or final, preventing older phase and
+activity values from overwriting the stream. Existing thread ownership and SSE
+authorization are unchanged. See [design](../../../design/assistant-output-activity.md).
