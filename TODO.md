@@ -127,6 +127,10 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Future / Long-Term
 
+- **Revisit public web tool naming**
+  - Assess whether our Firecrawl-backed custom `web_search` / `web_read` names cause model confusion with OpenAI's hosted Responses API `web_search`; this is a hypothesis, not an observed failure.
+  - Compare the current names with `web.search` / `web.read`, provider-compatible underscore names, and Codex's `web.run` namespace approach. Verify period/namespace support across our provider adapters before choosing names.
+  - Use [reference/WEB_SEARCH_ARCHITECTURE.md](./reference/WEB_SEARCH_ARCHITECTURE.md) as context. If renamed, cover tool registration, dispatch, transcript replay, prompts, and web/mobile labels together. No naming or behavior changes now.
 - **Mobile logout + account switching**
   - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
 - **First-class multi-viewer terminal**

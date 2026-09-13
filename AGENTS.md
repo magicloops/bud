@@ -208,6 +208,11 @@ review, in `git log` on the branch, and in the PR page (PR #99 accumulated
 When the user does ask to commit, prefer one commit per coherent change
 with a message that describes the settled result, not the path taken.
 
+Every PR description must include lines added and deleted, plus the net change,
+excluding Markdown files (including `.md` and `.mdx`). Calculate these counts
+from the full PR diff against its base, and refresh them when updating the PR.
+For example: `Code changes excluding Markdown: +165 / -2 lines (net +163).`
+
 ---
 
 ## 4) Core Contracts (Do Not Break)
