@@ -209,9 +209,9 @@ When the user does ask to commit, prefer one commit per coherent change
 with a message that describes the settled result, not the path taken.
 
 Every PR description must report code lines added, deleted, and net change.
-Count application code, executable developer tooling, and test code; exclude
-Markdown/docs, configuration, package manifests, lockfiles, generated artifacts,
-fixtures/snapshots, and other non-code files. Classify by purpose rather than
+Count application code and executable developer tooling; exclude test code and
+test helpers, Markdown/docs, configuration, package manifests, lockfiles,
+generated artifacts, fixtures/snapshots, and other non-code files. Classify by purpose rather than
 extension (a TypeScript configuration file is still config).
 
 Calculate counts from the full PR diff against its base and refresh them when
