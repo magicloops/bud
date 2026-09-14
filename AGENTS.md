@@ -208,24 +208,15 @@ review, in `git log` on the branch, and in the PR page (PR #99 accumulated
 When the user does ask to commit, prefer one commit per coherent change
 with a message that describes the settled result, not the path taken.
 
-Every PR description must report lines added, deleted, and net change separately
-for these mutually exclusive categories:
-
-- **Code**: application code and executable developer tooling, excluding tests.
-- **Tests**: test code, test helpers, fixtures, and snapshots.
-- **Config**: configuration files, package manifests, lockfiles, and build/deploy settings.
-- **Markdown**: documentation files (`.md` and `.mdx`).
+Every PR description must report code lines added, deleted, and net change.
+Count application code, executable developer tooling, and test code; exclude
+Markdown/docs, configuration, package manifests, lockfiles, generated artifacts,
+fixtures/snapshots, and other non-code files. Classify by purpose rather than
+extension (a TypeScript configuration file is still config).
 
 Calculate counts from the full PR diff against its base and refresh them when
-updating the PR. Classify Markdown first; classify other files by purpose rather
-than extension (a JSON fixture is Tests, while a package manifest is Config).
-Count each file once, explain ambiguous classifications when material, and list
-binary or other uncountable files separately. Include a total row so the categories
-reconcile to the full textual diff.
-
-Example: `Code: +165 / -2 (net +163); Tests: +80 / -10 (net +70);
-Config: +6 / -1 (net +5); Markdown: +30 / -5 (net +25);
-Total: +281 / -18 (net +263).`
+updating the PR. Label the result as code-only; separate non-code totals are not
+required. For example: `Code changes: +165 / -2 lines (net +163).`
 
 ---
 
