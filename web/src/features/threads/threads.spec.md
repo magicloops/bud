@@ -16,7 +16,7 @@ Message/transcript ownership for the existing-thread route.
 
 **Responsibilities**:
 - bootstrap transcript state from loader-provided `{ messages, page }` plus `/agent/state` overlays
-- preserve prepended-scroll position when older history loads
+- notify the timeline viewport owner before older history is published; it preserves the visible anchor
 - fetch older transcript pages through `before=<cursor>`; `loadOlderMessages` is re-entrancy-safe (in-flight ref, since the timeline's scroll sentinel can fire again before state re-renders) and exposes `olderMessagesLoadFailed` so the timeline pauses auto-loading after a failure and shows a retry
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
@@ -25,7 +25,7 @@ Message/transcript ownership for the existing-thread route.
 - reconcile canonical assistant/tool messages from the agent stream
 - reconcile live reasoning draft rows with persisted `role: "reasoning"` messages from the agent stream
 - keep visible assistant draft text in the timeline when a tool call arrives, so text streamed before or between tool calls is not removed while waiting for the persisted assistant row
-- clear per-turn synthetic rows when a turn finishes or fails
+- settle nonempty per-turn synthetic evidence on final without inventing final-answer classification; remove only empty placeholders
 
 **Exports**:
 - `THREAD_MESSAGE_PAGE_LIMIT`
@@ -53,8 +53,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - per-turn finalization cleanup rules
 - `upsertMessage` preserves object identity for untouched rows, returns the
   same array for identical re-upserts, and skips the chronological re-sort
-  when an in-place update cannot change order (unchanged `created_at` +
-  `message_id`) — the streaming hot path memoized consumers depend on
+  when an in-place update cannot change order (unchanged `created_at`) — the streaming hot path memoized consumers depend on
 
 **Exports**:
 - `applyAgentStateOverlay(...)`
@@ -77,37 +76,28 @@ Node-runner coverage for transcript reconciliation rules.
 - live `agent.reasoning_*` events reconcile draft reasoning rows into persisted `reasoning` messages
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
-- failed/canceled turn finalization clears draft reasoning rows
+- failed/canceled turn finalization retains nonempty reasoning evidence with its outcome
 - persisted commentary assistant rows survive draft replacement and successful turn finalization
 - upsert identity preservation and sort-skip on in-place streaming deltas
 
 ### `agent-work-projection.ts`
 
-Agent-work timeline projection (design/web-agent-work-collapse.md, Option B):
-pure presentation grouping of one turn's reasoning, non-question tool calls,
-and intermediate assistant commentary into `TimelineWorkRow`s, with
-user/system/final-assistant/`ask_user_questions`/unknown rows staying
-top-level and flushing the group.
+Agent-work projection under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
+Raw messages remain canonical; presentation collects contiguous work by turn while
+preserving user, final, question, pending approval and compaction boundaries.
 
-**Responsibilities**:
-- group identity `agent-work:<turn_id>` (stable across streaming,
-  draft→canonical reconciliation, and page-split prepend merges); legacy
-  rows without `turn_id` group by contiguity under
-  `agent-work:legacy:<first client_id>`; a boundary interleaved mid-turn
-  produces suffixed segment ids (`:2`, …)
-- `live` from the caller's `liveTurnId` (`agentState.active ? turn_id :
-  null`, cleared by `final`) — no per-item heuristics, no between-tool
-  flicker
-- `currentItem`: the in-progress step (pending tool / draft reasoning) of a
-  live group; null between steps and once the run ends
-- `status`: session-local `final`-event outcomes (failed/canceled), else
-  presence of a canonical final assistant row for the turn (`no_final`
-  otherwise); legacy groups use the immediately following boundary row
-- `endsAtAssistant`: following visible assistant text closes the live activity segment without ending the work group; included in row memoization
-- `durationMs` via `lib/agent-work-duration` (null while live)
-- `createTimelineProjector()` reuses previous row OBJECTS when a row's
-  inputs are unchanged so memoized React rows skip re-rendering during
-  unrelated streams
+- `live` identifies active execution; `canFold` independently requires a nonempty
+  explicitly final assistant message whose streaming has completed. Idle is not final.
+- Stable group IDs reuse surviving source members, with source-derived suffixes
+  for boundaries. Activity `sectionId` survives prepends and canonical receipts;
+  splits never reuse one ID for two sections.
+- Consecutive activity sections carry ordered messages, so late results update
+  their own item without becoming the latest introduced title.
+- `status` retains failed/canceled/no-final outcomes. `durationMs` uses the existing
+  authoritative duration helper after completed final classification.
+- `createTimelineProjector` reuses unchanged rows; `workSegments` caches per-row
+  segmentation weakly. Removed rows are not retained by a global transcript cache.
+- Retired `currentItem` and `endsAtAssistant` fields are removed.
 
 ### `agent-work-projection.test.ts`
 
@@ -647,3 +637,52 @@ draft. The previous message-done suppression timer is removed. Final/wait and
 compaction precedence remain; no provider logic or inactivity timer is added.
 The gate tests cover snapshots, transitions, stale clears/finals and new turns.
 See [design](../../../../design/assistant-output-activity.md).
+
+## Web parity reconciliation contract (September 13, 2026)
+
+The hook publishes from a synchronous message ref, so several stream callbacks in
+one tick cannot read an effect-delayed collection. Initial overlays are computed
+once. Every latest-page application shares `mergeLatestBootstrapState`; omission
+is not deletion. Loaded canonical history and older-page exhaustion/cursor survive
+bounded latest refreshes. Live/optimistic mutations are protected by client ID;
+initial assistant/reasoning drafts are protected too. Pending permission overlays
+remain governed by canonical request snapshots rather than sticky protection.
+
+Matching canonical acknowledgements can settle protected rows; otherwise local
+content wins until the visit ends. The API has no per-message revision contract,
+so this does not resolve arbitrary cross-client edits. Explicit local removal IDs
+block stale resurrection, and a deliberate retry can reuse an ID. Canonical
+assistant/reasoning/tool receipt upserts in place instead of deleting a turn's
+other drafts; synthetic-to-canonical receipt preserves its original timestamp.
+
+Older requests capture selection identity and cursor, fencing responses, errors
+and finally cleanup across A → B → A or unmount. Duplicate-only pages may advance
+the cursor, while a repeated cursor ends automatic pagination. Before publication,
+a local `bud:before-history-prepend` event on the scroll element delegates anchor
+placement to `use-transcript-viewport`; the hook no longer writes scroll offsets.
+
+`use-agent-stream` passes existing `message_done.segment_kind`/`assistant_phase`
+through without waiting for `agent.message` persistence. Active-source checks fence
+obsolete events; `onStreamEvent` lets the route invalidate in-flight snapshots on
+transcript activity. No SSE shape or backend behavior is changed. Mounted hook
+race coverage lives in `components/workbench/streaming-parity.test.tsx`.
+
+Spinner snapshot precedence: `getStatusFromAgentState` applies durable recovery,
+finished/offline/review and pending-input rules when accepting a snapshot. The
+route then derives progress only from that UI status plus the output-activity gate.
+It must not recheck the older durable snapshot during render after a fresh SSE
+working event has advanced status. Tests cover dispatching → working with an idle
+snapshot, text/completion suppression and recovered terminal/wait states. Web ThinkingIndicator reserves space immediately and reveals ordinary progress
+after a 500 ms visual grace, independently of execution eligibility.
+
+Startup progress also covers durable pending/leased/running admission before the
+process-local runtime becomes active: `getStatusFromAgentState` returns dispatching,
+not idle. This keeps the immediate post-send refresh from removing the response
+slot. Blocked, waiting, retry and terminal invocations do not receive this fallback.
+Regression tests cover optimistic send → admission → working → text and all
+inactive waiting/terminal outcomes.
+
+Spinner reveal now bypasses the startup grace once accepted normalized output
+activity has started. Text/wait/final eligibility still wins; without a signal,
+the 500 ms fallback reveals progress in the immediately reserved row. See
+[working-signal debug note](/debug/web-spinner-working-signal.md).

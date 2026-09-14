@@ -9,8 +9,6 @@ import {
   mergeLatestBootstrapState,
   mergeOlderMessages,
   reconcileMessagePersistence,
-  removeDraftAssistantMessageForTurn,
-  removeDraftReasoningMessage,
   upsertDraftAssistantMessage,
   upsertDraftReasoningMessage,
   upsertMessage,
@@ -45,6 +43,8 @@ type ApplyAssistantDeltaArgs = ApplyAssistantDraftArgs & {
 }
 
 type ApplyAssistantDoneArgs = ApplyAssistantDraftArgs & {
+  segmentKind?: 'intermediate' | 'final'
+  assistantPhase?: string
   text: string
 }
 
@@ -87,8 +87,8 @@ export function useThreadMessages({
   onError,
   shouldAbortForUnauthorized,
 }: UseThreadMessagesArgs) {
-  const [messages, setMessages] = useState<ApiMessage[]>(
-    applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
+  const [messages, publishMessages] = useState<ApiMessage[]>(
+    () => applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
   )
   const [messagePage, setMessagePage] = useState<ApiMessagePage['page']>(initialMessagePage.page)
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
@@ -99,63 +99,84 @@ export function useThreadMessages({
   // the isLoadingOlderMessages state has re-rendered into the callback.
   const olderLoadInFlightRef = useRef(false)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
-  const pendingPrependAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
-    null,
-  )
-  const messagesRef = useRef<ApiMessage[]>(
-    applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
-  )
+  const messagesRef = useRef<ApiMessage[]>(messages)
   const messagePageRef = useRef<ApiMessagePage['page']>(initialMessagePage.page)
 
-  useEffect(() => {
-    setMessages(applyAgentStateOverlay(initialMessagePage.messages, initialAgentState))
-    setMessagePage(initialMessagePage.page)
-    setIsLoadingOlderMessages(false)
-    setOlderMessagesLoadFailed(false)
-    olderLoadInFlightRef.current = false
-    pendingPrependAdjustmentRef.current = null
-  }, [initialAgentState, initialMessagePage])
-
-  useEffect(() => {
-    const pendingAdjustment = pendingPrependAdjustmentRef.current
-    const node = chatScrollRef.current
-    if (!pendingAdjustment || !node) {
-      return
+  const protectedIds = useRef(new Set<string>())
+  const protectionInitialized = useRef(false)
+  if (!protectionInitialized.current) {
+    for (const message of messages) {
+      if (message.metadata?.draft === true && message.role !== 'tool') protectedIds.current.add(message.client_id)
     }
-
-    requestAnimationFrame(() => {
-      const currentNode = chatScrollRef.current
-      const currentAdjustment = pendingPrependAdjustmentRef.current
-      if (!currentNode || !currentAdjustment) {
-        return
+    protectionInitialized.current = true
+  }
+  const removedIds = useRef(new Set<string>())
+  const selection = useRef({ threadId })
+  const publish = useCallback((next: ApiMessage[]) => {
+    messagesRef.current = next
+    publishMessages(next)
+  }, [])
+  const setMessages = useCallback((update: (previous: ApiMessage[]) => ApiMessage[]) => {
+    const previous = messagesRef.current
+    const next = update(previous)
+    const old = new Map(previous.map(message => [message.client_id, message]))
+    const ids = new Set(next.map(message => message.client_id))
+    for (const message of next) {
+      if (old.get(message.client_id) !== message) {
+        protectedIds.current.add(message.client_id)
+        removedIds.current.delete(message.client_id)
       }
-      const delta = currentNode.scrollHeight - currentAdjustment.scrollHeight
-      currentNode.scrollTop = currentAdjustment.scrollTop + delta
-      pendingPrependAdjustmentRef.current = null
-    })
-  }, [messages])
+    }
+    for (const message of previous) if (!ids.has(message.client_id)) {
+      protectedIds.current.delete(message.client_id)
+      removedIds.current.add(message.client_id)
+    }
+    publish(next)
+  }, [publish])
 
   useEffect(() => {
-    messagesRef.current = messages
-    messagePageRef.current = messagePage
-  }, [messagePage, messages])
+    const changedThread = selection.current.threadId !== threadId
+    if (changedThread) {
+      selection.current = { threadId }
+      protectedIds.current.clear()
+      removedIds.current.clear()
+      olderLoadInFlightRef.current = false
+      setIsLoadingOlderMessages(false)
+      setOlderMessagesLoadFailed(false)
+    }
+    const next = changedThread
+      ? { messages: applyAgentStateOverlay(initialMessagePage.messages, initialAgentState), page: initialMessagePage.page }
+      : mergeLatestBootstrapState(messagesRef.current, messagePageRef.current, initialMessagePage, initialAgentState, protectedIds.current, removedIds.current)
+    if (changedThread) for (const message of next.messages) {
+      if (message.metadata?.draft === true && message.role !== 'tool') protectedIds.current.add(message.client_id)
+    }
+    publish(next.messages)
+    messagePageRef.current = next.page
+    setMessagePage(next.page)
+  }, [threadId, initialAgentState, initialMessagePage, publish])
+
+  useEffect(() => () => { selection.current = { threadId: null } }, [])
 
   const mergeLatestBootstrap = useCallback((nextPage: ApiMessagePage, nextAgentState: ApiAgentState) => {
-    pendingPrependAdjustmentRef.current = null
 
     const nextState = mergeLatestBootstrapState(
       messagesRef.current,
       messagePageRef.current,
       nextPage,
       nextAgentState,
+      protectedIds.current, removedIds.current,
     )
-    setMessages(nextState.messages)
+    publish(nextState.messages)
+    messagePageRef.current = nextState.page
     setMessagePage(nextState.page)
-  }, [])
+  }, [publish])
 
   const applyAgentState = useCallback((nextAgentState: ApiAgentState) => {
-    setMessages((prev) => applyAgentStateOverlay(prev, nextAgentState))
-  }, [])
+    const next = mergeLatestBootstrapState(messagesRef.current, messagePageRef.current,
+      { messages: messagesRef.current.filter(message => !protectedIds.current.has(message.client_id)), page: messagePageRef.current },
+      nextAgentState, protectedIds.current, removedIds.current)
+    publish(next.messages)
+  }, [publish])
 
   const loadOlderMessages = useCallback(async () => {
     if (
@@ -168,11 +189,8 @@ export function useThreadMessages({
       return
     }
 
-    const node = chatScrollRef.current
-    pendingPrependAdjustmentRef.current = node
-      ? { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop }
-      : null
-
+    const scope = selection.current
+    const requestedCursor = messagePage.before_cursor
     olderLoadInFlightRef.current = true
     setIsLoadingOlderMessages(true)
     setOlderMessagesLoadFailed(false)
@@ -181,8 +199,8 @@ export function useThreadMessages({
       const resp = await apiFetch(
         `/api/threads/${threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}&before=${encodeURIComponent(messagePage.before_cursor)}`,
       )
+      if (selection.current !== scope) return
       if (shouldAbortForUnauthorized(resp)) {
-        pendingPrependAdjustmentRef.current = null
         setIsLoadingOlderMessages(false)
         return
       }
@@ -192,22 +210,30 @@ export function useThreadMessages({
       }
 
       const data = (await resp.json()) as ApiMessagePage
-      setMessages((prev) => mergeOlderMessages(prev, data.messages))
-      setMessagePage((prev) => ({
-        ...prev,
-        returned: prev.returned + data.messages.length,
-        has_more_before: data.page.has_more_before,
+      if (selection.current !== scope) return
+      chatScrollRef.current?.dispatchEvent(new Event('bud:before-history-prepend'))
+      publish(mergeOlderMessages(messagesRef.current, data.messages.filter(message => !removedIds.current.has(message.client_id))))
+      const previousPage = messagePageRef.current
+      const nextPage = {
+        ...previousPage,
+        returned: previousPage.returned + data.messages.length,
+        has_more_before: data.page.has_more_before && data.page.before_cursor !== requestedCursor,
         before_cursor: data.page.before_cursor,
-      }))
+      }
+      messagePageRef.current = nextPage
+      setMessagePage(nextPage)
     } catch (error) {
-      pendingPrependAdjustmentRef.current = null
+      if (selection.current !== scope) return
       setOlderMessagesLoadFailed(true)
       onError(error instanceof Error ? error.message : 'Failed to load older messages')
     } finally {
-      olderLoadInFlightRef.current = false
-      setIsLoadingOlderMessages(false)
+      if (selection.current === scope) {
+        olderLoadInFlightRef.current = false
+        setIsLoadingOlderMessages(false)
+      }
     }
   }, [
+    publish,
     isLoadingOlderMessages,
     messagePage.before_cursor,
     messagePage.has_more_before,
@@ -232,11 +258,11 @@ export function useThreadMessages({
 
     setMessages((prev) => upsertMessage(prev, optimisticMessage))
     return optimisticId
-  }, [])
+  }, [setMessages])
 
   const removeMessage = useCallback((clientId: string) => {
     setMessages((prev) => prev.filter((message) => message.client_id !== clientId))
-  }, [])
+  }, [setMessages])
 
   const reconcilePersistedUserMessage = useCallback(
     (
@@ -249,7 +275,7 @@ export function useThreadMessages({
         reconcileMessagePersistence(prev, currentClientId, nextMessageId, nextClientId, nextMessage),
       )
     },
-    [],
+    [setMessages],
   )
 
   const applyToolCall = useCallback(({ turnId, clientId, callId, name, args, startedAt }: ApplyToolCallArgs) => {
@@ -259,11 +285,11 @@ export function useThreadMessages({
         buildPendingToolMessageFromToolCall({ turnId, clientId, callId, name, args, startedAt }),
       ),
     )
-  }, [])
+  }, [setMessages])
 
   const applyToolResultMessage = useCallback((message: ApiMessage) => {
     setMessages((prev) => upsertMessage(prev, message))
-  }, [])
+  }, [setMessages])
 
   const applyAssistantMessageStart = useCallback(({ turnId, clientId }: ApplyAssistantDraftArgs) => {
     setMessages((prev) =>
@@ -281,7 +307,7 @@ export function useThreadMessages({
         },
       })),
     )
-  }, [])
+  }, [setMessages])
 
   const applyAssistantMessageDelta = useCallback(
     ({ turnId, clientId, delta }: ApplyAssistantDeltaArgs) => {
@@ -301,11 +327,11 @@ export function useThreadMessages({
         })),
       )
     },
-    [],
+    [setMessages],
   )
 
   const applyAssistantMessageDone = useCallback(
-    ({ turnId, clientId, text }: ApplyAssistantDoneArgs) => {
+    ({ turnId, clientId, text, segmentKind, assistantPhase }: ApplyAssistantDoneArgs) => {
       setMessages((prev) =>
         upsertDraftAssistantMessage(prev, clientId, (current) => ({
           message_id: clientId,
@@ -317,36 +343,38 @@ export function useThreadMessages({
           metadata: {
             ...(current?.metadata ?? {}),
             turn_id: turnId,
-            draft: true,
+            draft: !segmentKind && assistantPhase !== 'final_answer',
+            ...(segmentKind ? { segment_kind: segmentKind } : {}),
+            ...(assistantPhase ? { assistant_phase: assistantPhase } : {}),
           },
         })),
       )
     },
-    [],
+    [setMessages],
   )
 
   const applyAssistantMessageEvent = useCallback(
     ({ turnId, clientId, messageId, text, message }: ApplyAssistantMessageArgs) => {
       if (message) {
         setMessages((prev) =>
-          upsertMessage(removeDraftAssistantMessageForTurn(prev, turnId), message),
+          upsertMessage(prev, message),
         )
         return
       }
 
       setMessages((prev) =>
-        upsertMessage(removeDraftAssistantMessageForTurn(prev, turnId), {
+        upsertMessage(prev, {
           message_id: messageId,
           client_id: clientId,
           role: 'assistant',
           display_role: 'Bud Agent',
           content: text,
           created_at: new Date().toISOString(),
-          metadata: {},
+          metadata: { turn_id: turnId },
         }),
       )
     },
-    [],
+    [setMessages],
   )
 
   const applyReasoningStart = useCallback(({
@@ -380,7 +408,7 @@ export function useThreadMessages({
         },
       })),
     )
-  }, [])
+  }, [setMessages])
 
   const applyReasoningDelta = useCallback(({ turnId, clientId, delta }: ApplyReasoningDeltaArgs) => {
     setMessages((prev) =>
@@ -400,9 +428,10 @@ export function useThreadMessages({
         },
       })),
     )
-  }, [])
+  }, [setMessages])
 
   const applyReasoningDone = useCallback(({
+    turnId,
     clientId,
     messageId,
     text,
@@ -410,13 +439,13 @@ export function useThreadMessages({
   }: ApplyReasoningDoneArgs) => {
     if (message) {
       setMessages((prev) =>
-        upsertMessage(removeDraftReasoningMessage(prev, clientId), message),
+        upsertMessage(prev, message),
       )
       return
     }
 
     setMessages((prev) =>
-      upsertMessage(removeDraftReasoningMessage(prev, clientId), {
+      upsertMessage(prev, {
         message_id: messageId,
         client_id: clientId,
         role: 'reasoning',
@@ -426,14 +455,15 @@ export function useThreadMessages({
         metadata: {
           artifact_kind: 'reasoning',
           model_visible: false,
+          turn_id: turnId,
         },
       }),
     )
-  }, [])
+  }, [setMessages])
 
   const finalizeTurn = useCallback((turnId: string, status: 'succeeded' | 'failed' | 'canceled') => {
     setMessages((prev) => finalizeTurnMessages(prev, turnId, status))
-  }, [])
+  }, [setMessages])
 
   return {
     messages,

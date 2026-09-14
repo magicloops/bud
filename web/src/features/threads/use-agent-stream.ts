@@ -51,6 +51,8 @@ type AgentMessageDeltaEvent = {
 }
 
 type AgentMessageDoneEvent = {
+  segment_kind?: 'intermediate' | 'final'
+  assistant_phase?: string
   turn_id: string
   client_id: string
   text: string
@@ -115,6 +117,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onStreamEvent: () => void
   onOutputActivity: (event: { turnId: string; llmCallId: string; state: ApiOutputActivity["state"] | null }) => void
   threadId: string | null
   initialStreamCursor: string | null
@@ -141,6 +144,8 @@ type UseAgentStreamArgs = {
     finishedAt?: string
     durationMs?: number
     durationSource?: string
+    segmentKind?: 'intermediate' | 'final'
+    assistantPhase?: string
   }) => void
   onAssistantMessageEvent: (event: {
     turnId: string
@@ -178,6 +183,7 @@ export function useAgentStream({
   threadId,
   initialStreamCursor,
   onStatusChange,
+  onStreamEvent,
   onError,
   onToolCall,
   onToolResultMessage,
@@ -207,6 +213,7 @@ export function useAgentStream({
   const threadIdRef = useRef<string | null>(null)
   const callbacksRef = useRef({
     onStatusChange,
+    onStreamEvent,
     onError,
     onToolCall,
     onToolResultMessage,
@@ -229,6 +236,7 @@ export function useAgentStream({
   useEffect(() => {
     callbacksRef.current = {
       onStatusChange,
+    onStreamEvent,
       onError,
       onToolCall,
       onToolResultMessage,
@@ -262,6 +270,7 @@ export function useAgentStream({
     onError,
     onFinalizeTurn,
     onStatusChange,
+    onStreamEvent,
     onThreadTitle,
     onToolCall,
     onToolResultMessage,
@@ -403,6 +412,7 @@ export function useAgentStream({
     }
 
     source.addEventListener('open', () => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       if (heartbeatCheckInterval) {
         clearInterval(heartbeatCheckInterval)
         heartbeatCheckInterval = null
@@ -428,6 +438,7 @@ export function useAgentStream({
     })
 
     source.addEventListener('heartbeat', () => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       lastEventTimeRef.current = Date.now()
     })
 
@@ -447,6 +458,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.tool_call', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -472,6 +485,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.tool_result', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -485,6 +500,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.message_start', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -501,6 +518,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.message_delta', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -517,6 +536,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.message_done', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -529,6 +550,8 @@ export function useAgentStream({
           finishedAt: data.finished_at,
           durationMs: data.duration_ms,
           durationSource: data.duration_source,
+          segmentKind: data.segment_kind,
+          assistantPhase: data.assistant_phase,
         })
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.message_done', error)
@@ -536,6 +559,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.message', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -553,6 +578,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.reasoning_start', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -573,6 +600,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.reasoning_delta', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -589,6 +618,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.reasoning_done', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -606,6 +637,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.compaction_start', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -618,6 +651,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.compaction_done', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -630,6 +665,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.compaction_failed', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       callbacksRef.current.onStatusChange('streaming')
@@ -642,6 +679,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('thread.title', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
@@ -657,6 +696,7 @@ export function useAgentStream({
         return
       }
 
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       lastEventTimeRef.current = Date.now()
       suppressErrorReconnect = true
 
@@ -676,6 +716,8 @@ export function useAgentStream({
     })
 
     source.addEventListener('final', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      callbacksRef.current.onStreamEvent()
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
       let finalEvent: AgentFinalEvent | null = null

@@ -12,6 +12,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useCallback, useRef, useEffect, type CSSProperties, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { ChatPaneResizeHandle, useChatPaneWidth } from '@/components/workbench/chat-pane-resize'
+import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
@@ -41,6 +42,7 @@ function NewThreadView() {
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
 
   const [messageText, setMessageText] = useState('')
+  const [optimisticMessage, setOptimisticMessage] = useState<ChatMessage | null>(null)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
@@ -150,6 +152,8 @@ function NewThreadView() {
     setStatus('dispatching')
     setMessageText('')
     const clientId = generateMessageClientId()
+    setOptimisticMessage({ message_id: clientId, client_id: clientId, role: 'user', display_role: 'User',
+      content: trimmedMessage, created_at: new Date().toISOString(), metadata: { optimistic: true } })
 
     try {
       // Create thread
@@ -187,6 +191,8 @@ function NewThreadView() {
       // Navigate to the new thread
       navigate({ to: '/$budId/$threadId', params: { budId, threadId: thread_id } })
     } catch (err) {
+      setOptimisticMessage(null)
+      setMessageText(trimmedMessage)
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to create thread')
     }
@@ -217,12 +223,13 @@ function NewThreadView() {
             } as CSSProperties
           }
         >
+          {optimisticMessage ? <ChatTimeline messages={[optimisticMessage]} activityIndicatorVisible={status === 'dispatching'} /> :
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">Start a new conversation</p>
               <p className="mt-1 text-sm">Send a message to create a thread and terminal session</p>
             </div>
-          </div>
+          </div>}
           {viewMode !== 'none' && (
             <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
           )}

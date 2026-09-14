@@ -6,8 +6,6 @@ import {
   buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
-  removeDraftAssistantMessageForTurn,
-  removeDraftReasoningMessage,
   reconcileMessagePersistence,
   upsertDraftReasoningMessage,
   upsertMessage,
@@ -385,7 +383,7 @@ test('mergeLatestBootstrapState preserves older canonical history and earlier pa
   assert.equal(merged.page.returned, 3)
 })
 
-test('finalizeTurnMessages removes pending tool rows and only drops draft assistant text on failed turns', () => {
+test('finalizeTurnMessages retains visible interrupted evidence without inventing final classification', () => {
   const pendingTool = buildMessage({
     client_id: 'tool-1',
     role: 'tool',
@@ -422,14 +420,14 @@ test('finalizeTurnMessages removes pending tool rows and only drops draft assist
     'succeeded',
   )
 
-  assert.deepEqual(failedTurnMessages.map((message) => message.client_id), ['assistant-1'])
+  assert.deepEqual(failedTurnMessages.map((message) => message.client_id), ['tool-1', 'draft-1', 'assistant-1'])
   assert.deepEqual(
     succeededTurnMessages.map((message) => message.client_id),
-    ['draft-1', 'assistant-1'],
+    ['tool-1', 'draft-1', 'assistant-1'],
   )
 })
 
-test('reasoning draft rows reconcile to persisted messages and clear on final', () => {
+test('reasoning draft rows reconcile in place and retain evidence on final', () => {
   const draftReasoning = buildMessage({
     client_id: 'reasoning-client',
     message_id: 'reasoning-client',
@@ -459,7 +457,7 @@ test('reasoning draft rows reconcile to persisted messages and clear on final', 
   })
 
   const reconciled = upsertMessage(
-    removeDraftReasoningMessage([draftReasoning], 'reasoning-client'),
+    [draftReasoning],
     persistedReasoning,
   )
   assert.deepEqual(reconciled.map((message) => message.client_id), ['reasoning-client'])
@@ -471,7 +469,9 @@ test('reasoning draft rows reconcile to persisted messages and clear on final', 
     client_id: 'reasoning-live',
     message_id: 'reasoning-live',
   }))
-  assert.deepEqual(finalizeTurnMessages(liveDraft, 'turn-1', 'succeeded'), [])
+  const ended = finalizeTurnMessages(liveDraft, 'turn-1', 'succeeded')
+  assert.equal(ended[0].content, 'thinking...')
+  assert.equal(ended[0].metadata?.draft, false)
 })
 
 test('persisted commentary assistant rows survive draft cleanup and turn finalization', () => {
@@ -526,7 +526,7 @@ test('persisted commentary assistant rows survive draft cleanup and turn finaliz
   })
 
   const withPersistedCommentary = upsertMessage(
-    removeDraftAssistantMessageForTurn([draftAssistant], 'turn-1'),
+    [draftAssistant],
     commentaryAssistant,
   )
   const finalized = finalizeTurnMessages(
@@ -537,12 +537,12 @@ test('persisted commentary assistant rows survive draft cleanup and turn finaliz
 
   assert.deepEqual(
     finalized.map((message) => message.client_id),
-    ['assistant-commentary-client', 'assistant-final-client'],
+    ['assistant-commentary-client', 'tool-1', 'assistant-final-client'],
   )
   assert.equal(finalized[0]?.content, 'I will inspect the terminal first.')
   assert.equal(finalized[0]?.metadata?.assistant_phase, 'commentary')
   assert.equal(finalized[0]?.metadata?.segment_kind, 'intermediate')
-  assert.equal(finalized[1]?.metadata?.assistant_phase, 'final_answer')
+  assert.equal(finalized[2]?.metadata?.assistant_phase, 'final_answer')
 })
 
 test('upsertMessage preserves untouched object identity and skips the re-sort on in-place deltas', () => {
@@ -594,4 +594,43 @@ test('durable app permissions recover once and canonical results win over older 
   assert.deepEqual(applyAgentStateOverlay([canonical], state), [canonical])
   assert.deepEqual(applyAgentStateOverlay(recovered, buildAgentState({ pending_data_requests: [],
     pending_tool: { client_id: request.client_id!, name: 'data_request_api_key', args: {} } })), [])
+})
+
+
+test('bounded and empty refreshes retain streamed completion and loaded coverage', () => {
+  const loaded = Array.from({ length: 105 }, (_, index) => buildMessage({ client_id: `m${index}`, content: `history ${index}` }))
+  const live = buildMessage({ client_id: 'live', role: 'assistant', content: 'Complete answer', metadata: { segment_kind: 'final' } })
+  const page: ApiMessagePage['page'] = { limit: 100, returned: 106, has_more_before: true, has_more_after: false, before_cursor: 'oldest', after_cursor: null }
+  for (const incoming of [[], loaded.slice(5), [{ ...live, content: 'Complete' }]]) {
+    const result = mergeLatestBootstrapState([...loaded, live], page, { messages: incoming, page: { ...page, before_cursor: 'latest' } }, buildAgentState(), new Set(['live']))
+    assert.equal(result.messages.length, 106)
+    assert.equal(result.messages.find(message => message.client_id === 'live')?.content, 'Complete answer')
+    assert.equal(result.page.before_cursor, 'oldest')
+  }
+})
+
+test('canonical acknowledgement settles a live draft and explicit removal cannot resurrect', () => {
+  const draft = buildMessage({ client_id: 'draft', role: 'assistant', content: 'Hello', metadata: { draft: true } })
+  const canonical = { ...draft, message_id: 'persisted', content: 'Hello world', metadata: { segment_kind: 'final' } }
+  const page: ApiMessagePage['page'] = { limit: 100, returned: 1, has_more_before: false, has_more_after: false, before_cursor: null, after_cursor: null }
+  const result = mergeLatestBootstrapState([draft], page, { messages: [canonical], page }, buildAgentState(), new Set(['draft']))
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].message_id, 'persisted')
+  assert.equal(result.messages[0].metadata?.segment_kind, 'final')
+  assert.deepEqual(mergeLatestBootstrapState([], page, { messages: [canonical], page }, buildAgentState(), new Set(), new Set(['draft'])).messages, [])
+})
+
+test('canonical assistant acknowledgement cannot move a text row behind a later tool', () => {
+  const draft = buildMessage({ client_id: 'a', role: 'assistant', content: 'hello', metadata: { draft: true } })
+  const tool = buildMessage({ client_id: 't', role: 'tool', created_at: '2026-04-21T10:00:01.000Z' })
+  const result = upsertMessage([draft, tool], { ...draft, message_id: 'canonical', created_at: '2026-04-21T10:00:02.000Z', metadata: { segment_kind: 'intermediate' } })
+  assert.deepEqual(result.map(message => message.client_id), ['a', 't'])
+})
+
+test('canonical receipt cannot reorder equal-time rows on a later insert', () => {
+  const first = buildMessage({ client_id: 'a', message_id: 'a', role: 'assistant', content: 'First', metadata: { draft: true } })
+  const second = buildMessage({ client_id: 'b', message_id: 'b', role: 'tool', content: 'Second' })
+  const settled = upsertMessage([first, second], { ...first, message_id: 'z', metadata: { segment_kind: 'intermediate' } })
+  const next = upsertMessage(settled, buildMessage({ client_id: 'c', message_id: 'c' }))
+  assert.deepEqual(next.map(message => message.client_id), ['a', 'b', 'c'])
 })

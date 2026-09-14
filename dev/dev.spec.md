@@ -10,6 +10,20 @@ the default HTTP quickstart depend on extra local services.
 
 ## Files
 
+### `local-dev.mjs` / `local-dev.test.mjs`
+
+Explicit root launchers: `pnpm dev` for HTTP localhost:5173, `pnpm dev:https`
+for HTTPS localhost:3443, and `pnpm dev:ngrok` for BUD_DEV_NGROK_URL. Reads
+optional ignored `dev/.env.local` without replacing shell settings. Presets override
+old app/auth/audience env values; service secrets remain in service/.env.
+HTTPS modes reuse local-https.mjs, while HTTP starts only service and web.
+Ngrok validates/reuses an existing matching tunnel via its localhost inspector,
+or starts a managed tunnel. Independent ngrok/cloudflared processes are preserved.
+Occupied application ports fail before spawning; child process groups shut down
+on launcher exit. Pure tests cover preset isolation, URL validation and preview
+settings. Cloudflare previews remain independently configurable through the existing
+BUD_DEV_PROXY_* overrides. Node's loadEnvFile is used (supported by the repo runtime).
+
 ### `local-https.mjs`
 
 Repo-root local HTTPS bootstrap used by `pnpm dev:https*` scripts.

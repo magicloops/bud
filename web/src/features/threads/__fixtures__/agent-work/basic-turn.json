@@ -11,7 +11,7 @@
   ],
   "expected": [
     { "kind": "message", "client_id": "u1" },
-    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": 4000, "current_item_client_id": null, "sections": [
+    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": 4000, "sections": [
       { "kind": "activity", "client_id": "r1" },
       { "kind": "activity", "client_id": "t1" }
     ] },

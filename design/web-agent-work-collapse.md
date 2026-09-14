@@ -1,5 +1,8 @@
 # Design: Web Agent-Work Collapse
 
+> Historical design: presentation/scroll behavior is superseded by [web/mobile streaming parity](../plan/web-mobile-streaming-parity.md) (September 13, 2026). Current implementation uses collapsed activity sections, explicit completed-final folding and one viewport owner. The original discussion below is retained as history.
+
+
 **Status:** Accepted — Option B (progressive collapse), live divergence from
 mobile confirmed (web is a different interface with different expectations).
 Scoped in [`plan/web-agent-work-collapse.md`](../plan/web-agent-work-collapse.md).

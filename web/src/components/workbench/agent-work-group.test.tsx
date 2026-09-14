@@ -22,7 +22,8 @@ const tool = message('tool', 'tool', 'tool result', { tool: 'test_tool' })
 const reasoning = message('reason', 'reasoning', 'Current reasoning', { draft: true })
 const commentary = message('comment', 'assistant', 'Visible update', { segment_kind: 'intermediate' })
 function render(messages: ApiMessage[], live = true, expanded = false, expandedItems = new Set<string>()) {
-  const row = projectTimeline({ messages, liveTurnId: live ? 'T' : null })[0] as TimelineWorkRow
+  const final = message('final', 'assistant', 'Answer', { segment_kind: 'final' })
+  const row = projectTimeline({ messages: live ? messages : [...messages, final], liveTurnId: live ? 'T' : null })[0] as TimelineWorkRow
   return renderToStaticMarkup(createElement(AgentWorkGroup, {
     row, expanded, expandedItems, onToggle: () => {}, onToggleItem: () => {},
   }))
@@ -41,14 +42,14 @@ test('completed work collapses, then opens commentary and segment summaries', ()
   const opened = render([tool, commentary], false, true)
   assert.match(opened, /Visible update/)
   assert.doesNotMatch(opened, /tool result/)
-  assert.match(render([tool, commentary], false, true, new Set(['activity:tool'])), /tool result/)
+  assert.match(render([tool, commentary], false, true, new Set(['activity:tool', 'item:tool'])), /tool result/)
 })
 
-test('no-commentary work reveals useful content on the first expansion', () => {
+test('no-commentary work reveals compact rows without mounting full details', () => {
   const html = render([tool, reasoning], false, true)
-  assert.match(html, /tool result/)
+  assert.doesNotMatch(html, /tool result|data-work-detail/)
   assert.match(html, /Current reasoning/)
-  assert.equal((html.match(/<button/g) ?? []).length, 1)
+  assert.equal((html.match(/<button/g) ?? []).length, 3)
 })
 
 test('an external streaming assistant closes the live activity segment without collapsing all work', () => {
@@ -67,20 +68,75 @@ test('parallel unfinished tools remain discoverable after commentary', () => {
 
 test('empty commentary does not add an activity disclosure', () => {
   const html = render([tool, { ...commentary, content: ' ' }, reasoning])
-  assert.match(html, /tool result/)
-  assert.doesNotMatch(html, /<button/)
+  assert.doesNotMatch(html, /tool result|data-work-detail/)
+  assert.equal((html.match(/data-activity-section=/g) ?? []).length, 1)
 })
 
 const { ChatTimeline } = await import('./chat-timeline')
 const { AuthSessionContext } = await import('@/contexts/auth-session-context')
-test('timeline keeps commentary visible while progress waits for its client-side grace period', () => {
+test('timeline reserves eligible progress immediately without showing the spinner during grace', () => {
   for (const visible of [true, false]) {
     const html = renderToStaticMarkup(createElement(AuthSessionContext.Provider, {
       value: { currentUser: null, isAuthenticated: true, setCurrentUser: () => {} },
     }, createElement(ChatTimeline, {
       messages: [tool, commentary], liveTurnId: 'T', activityIndicatorVisible: visible,
     })))
+    assert.equal(html.includes('data-response-slot'), visible)
     assert.equal(html.includes('lucide-loader-circle'), false)
     assert.match(html, /Visible update/)
+  }
+})
+
+
+test('fifty live calls mount one collapsed header and zero details', () => {
+  const calls = Array.from({ length: 50 }, (_, index) => message(`t${index}`, 'tool', 'SECRET LARGE RESULT', { tool: 'test_tool' }))
+  const html = render(calls)
+  assert.equal((html.match(/data-activity-section=/g) ?? []).length, 1)
+  assert.equal((html.match(/<button/g) ?? []).length, 1)
+  assert.match(html, /50 activities/)
+  assert.doesNotMatch(html, /SECRET LARGE RESULT|data-work-detail/)
+})
+
+test('inactive work without final remains inspectable without an outer fold', () => {
+  const row = projectTimeline({ messages: [tool, commentary], liveTurnId: null })[0] as TimelineWorkRow
+  const html = renderToStaticMarkup(createElement(AgentWorkGroup, { row, expanded: false, expandedItems: new Set(), onToggle: () => {}, onToggleItem: () => {} }))
+  assert.match(html, /Visible update/)
+  assert.doesNotMatch(html, /Worked/)
+})
+
+test('spinner reserves space, reveals on working or 500 ms, and cancels hidden fallback', async (t) => {
+  const { act, create } = await import('react-test-renderer')
+  const { ThinkingIndicator } = await import('./thinking-indicator')
+  const previousWindow = globalThis.window
+  const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const previousAct = actGlobal.IS_REACT_ACT_ENVIRONMENT
+  actGlobal.IS_REACT_ACT_ENVIRONMENT = true
+  globalThis.window = globalThis as unknown as Window & typeof globalThis
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  let root: ReturnType<typeof create> | undefined
+  try {
+    await act(() => { root = create(createElement(ThinkingIndicator, { isVisible: true })) })
+    const statuses = () => root!.root.findAllByProps({ role: 'status' }).length
+    assert.equal(root!.root.findAllByProps({ 'data-response-slot': true }).length, 1)
+    assert.equal(statuses(), 0)
+    await act(() => t.mock.timers.tick(499))
+    assert.equal(statuses(), 0)
+    await act(() => t.mock.timers.tick(1))
+    assert.equal(statuses(), 1)
+    await act(() => root!.update(createElement(ThinkingIndicator, { isVisible: false })))
+    await act(() => root!.update(createElement(ThinkingIndicator, { isVisible: true })))
+    assert.equal(statuses(), 0)
+    await act(() => root!.update(createElement(ThinkingIndicator, { isVisible: true, workStarted: true })))
+    assert.equal(statuses(), 1)
+    await act(() => root!.update(createElement(ThinkingIndicator, { isVisible: false, workStarted: true })))
+    await act(() => t.mock.timers.tick(500))
+    assert.equal(statuses(), 0)
+    await act(() => root!.update(createElement(ThinkingIndicator, { isVisible: true, workStarted: true })))
+    assert.equal(statuses(), 1)
+  } finally {
+    await act(() => root?.unmount())
+    t.mock.timers.reset()
+    globalThis.window = previousWindow
+    actGlobal.IS_REACT_ACT_ENVIRONMENT = previousAct
   }
 })

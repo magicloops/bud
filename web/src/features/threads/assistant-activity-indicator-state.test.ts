@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAssistantActivityGateFromAgentState, createIdleAssistantActivityGate, deriveAssistantActivityIndicatorVisible, reduceAssistantActivityGate } from './assistant-activity-indicator-state.ts'
+import type { ApiAgentState } from '../../lib/api-types.ts'
+import { getStatusFromAgentState, createAssistantActivityGateFromAgentState, createIdleAssistantActivityGate, deriveAssistantActivityIndicatorVisible, reduceAssistantActivityGate } from './assistant-activity-indicator-state.ts'
 
 const update = (state: ReturnType<typeof createIdleAssistantActivityGate>, activity: 'working' | 'text' | 'awaiting_completion' | null, turnId = 'T', llmCallId = 'L') =>
   reduceAssistantActivityGate(state, { type: 'output_activity', turnId, llmCallId, state: activity })
@@ -52,4 +53,98 @@ test('empty output, pending sends, waits, idle and compaction keep existing elig
     assert.equal(deriveAssistantActivityIndicatorVisible({ status, activeCompaction: false, gate: state }), status === 'dispatching' || status === 'streaming')
   }
   assert.equal(deriveAssistantActivityIndicatorVisible({ status: 'streaming', activeCompaction: true, gate: update(update(state, 'working'), 'text') }), true)
+})
+
+const snapshot = (overrides: Partial<ApiAgentState> = {}): ApiAgentState => ({
+  active: false, turn_id: null, phase: 'idle', pending_tool: null,
+  draft_assistant: null, can_cancel: false, stream_cursor: null, updated_at: '',
+  invocations: [], ...overrides,
+})
+
+test('fresh working status remains eligible despite the last snapshot being idle', () => {
+  const idle = snapshot()
+  let status = getStatusFromAgentState(idle)
+  let gate = createAssistantActivityGateFromAgentState(idle)
+  const visible = () => deriveAssistantActivityIndicatorVisible({ status, gate, activeCompaction: false })
+  assert.equal(visible(), false)
+  status = 'dispatching'
+  assert.equal(visible(), true)
+  // The next SSE working event does not mutate the last fetched snapshot.
+  gate = update(gate, 'working')
+  status = 'streaming'
+  assert.equal(idle.active, false)
+  assert.equal(visible(), true)
+  gate = update(gate, 'text')
+  assert.equal(visible(), false)
+  gate = update(gate, 'awaiting_completion')
+  assert.equal(visible(), false)
+  gate = update(gate, 'working')
+  assert.equal(visible(), true)
+  status = 'waiting_for_user'
+  assert.equal(visible(), false)
+  status = 'waiting_for_terminal'
+  assert.equal(visible(), false)
+  gate = reduceAssistantActivityGate(gate, { type: 'final', turnId: 'T' })
+  status = 'streaming'
+  assert.equal(visible(), false)
+})
+
+test('accepted recovery snapshots still suppress inactive, waiting and finished invocations', () => {
+  for (const invocationStatus of ['waiting_for_bud', 'waiting_for_model', 'needs_review', 'failed', 'succeeded', 'canceled', 'expired'] as const) {
+    const recovered = snapshot({ active: true, turn_id: 'T', phase: 'thinking',
+      invocations: [{ turn_id: 'T', status: invocationStatus } as NonNullable<ApiAgentState['invocations']>[number]] })
+    assert.equal(getStatusFromAgentState(recovered), 'idle')
+  }
+  assert.equal(getStatusFromAgentState(snapshot({ active: true, turn_id: 'T', phase: 'waiting_for_user' })), 'waiting_for_user')
+  assert.equal(getStatusFromAgentState(snapshot({ active: true, turn_id: 'T', phase: 'waiting_for_terminal' })), 'waiting_for_terminal')
+  assert.equal(getStatusFromAgentState(snapshot({ active: true, turn_id: 'T', phase: 'thinking' })), 'streaming')
+})
+
+
+test('post-send admission stays visible until runtime starts, then text suppresses it', () => {
+  let status: ReturnType<typeof getStatusFromAgentState> = 'dispatching'
+  let gate = createIdleAssistantActivityGate()
+  const visible = () => deriveAssistantActivityIndicatorVisible({ status, gate, activeCompaction: false })
+  assert.equal(visible(), true)
+  for (const invocationStatus of ['pending', 'leased', 'running'] as const) {
+    const admitted = snapshot({ invocations: [{
+      invocation_id: 'new', turn_id: 'T', status: invocationStatus, reserves_thread: true,
+    } as NonNullable<ApiAgentState['invocations']>[number]] })
+    status = getStatusFromAgentState(admitted)
+    gate = createAssistantActivityGateFromAgentState(admitted)
+    assert.equal(status, 'dispatching')
+    assert.equal(visible(), true)
+  }
+  gate = update(gate, 'working')
+  status = 'streaming'
+  assert.equal(visible(), true)
+  gate = update(gate, 'text')
+  assert.equal(visible(), false)
+})
+
+test('inactive admitted waits and terminal outcomes do not hold startup progress open', () => {
+  for (const invocationStatus of ['waiting_for_bud', 'waiting_for_model', 'waiting_for_user', 'retry_wait', 'needs_review', 'failed', 'succeeded', 'canceled', 'expired'] as const) {
+    const ended = snapshot({ invocations: [{
+      invocation_id: 'new', turn_id: 'T', status: invocationStatus, reserves_thread: true,
+    } as NonNullable<ApiAgentState['invocations']>[number]] })
+    assert.equal(deriveAssistantActivityIndicatorVisible({
+      status: getStatusFromAgentState(ended), gate: createAssistantActivityGateFromAgentState(ended), activeCompaction: false,
+    }), false)
+  }
+})
+
+test('working signal bypasses grace through tool gaps and resets on a new send', () => {
+  let gate = createIdleAssistantActivityGate()
+  assert.equal(gate.workStarted, false)
+  gate = update(gate, 'working')
+  assert.equal(gate.workStarted, true)
+  gate = update(gate, 'text')
+  assert.equal(gate.suppressIndicator, true)
+  gate = update(gate, null)
+  assert.equal(gate.workStarted, true)
+  assert.equal(gate.suppressIndicator, false)
+  gate = reduceAssistantActivityGate(gate, { type: 'final' })
+  assert.equal(gate.workStarted, false)
+  assert.equal(createAssistantActivityGateFromAgentState(snapshot()).workStarted, false)
+  assert.equal(createAssistantActivityGateFromAgentState(snapshot({ active: true, turn_id: 'T', output_activity: { llm_call_id: 'L', state: 'working' } })).workStarted, true)
 })

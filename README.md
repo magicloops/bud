@@ -185,6 +185,40 @@ Database note:
 - local development uses `pnpm db:push`
 - deployed/prototype environments should use checked-in migrations, not `db:push`
 
+## Local development launchers
+
+Run from the repo root (stop the current launcher with Ctrl+C before switching):
+
+| Command | Browser / OAuth origin | Starts |
+| --- | --- | --- |
+| `pnpm dev` | `http://localhost:5173` | Service + Vite; direct API traffic to :3000 |
+| `pnpm dev:https` | `https://localhost:3443` | Service + Vite + Caddy |
+| `pnpm dev:ngrok` | Your configured ngrok HTTPS URL | HTTPS stack + new or reused ngrok tunnel |
+
+These commands override origin/auth/audience settings without rewriting
+`service/.env` secrets. HTTPS still needs the one-time setup below. Existing
+package-local `pnpm dev` commands remain available. The Bud daemon is separate.
+OAuth providers must allow `/api/auth/callback/google` and
+`/api/auth/callback/github` under the selected origin; launchers do not change
+provider registrations or mobile OAuth provisioning.
+
+Optional machine settings go in gitignored `dev/.env.local` (shell values win):
+
+```dotenv
+BUD_DEV_NGROK_URL=https://your-domain.ngrok.app
+# Optional independent Cloudflare preview domain; requires its running tunnel:
+BUD_DEV_PROXY_BASE_DOMAIN=bud.systems
+BUD_DEV_PROXY_PUBLIC_PORT=
+```
+
+Without preview overrides, HTTPS uses `*.bud-show.test:3443`. Ngrok requires
+its CLI to be installed/authenticated when starting a new tunnel. A matching
+existing tunnel on its default localhost:4040 inspector is reused and left
+running when the launcher exits. Independently running Cloudflare tunnels are
+also left alone. App ports already in use cause a clear error, not port drift.
+To inspect a preset without starting anything: `pnpm dev:https --print-env`
+(or `pnpm dev --print-env`, `pnpm dev:ngrok --print-env`).
+
 ## Local Run Order
 
 - Terminal 1: `cd service && pnpm dev`
@@ -285,9 +319,8 @@ Provision the local iOS OAuth client for the HTTPS profile with:
 pnpm dev:https:provision-ios
 ```
 
-Open `https://localhost:3443`. To switch back to the default HTTP flow, stop
-`pnpm dev:https` and restore the default env values from the `.env.example`
-files.
+Open `https://localhost:3443`. To switch back to HTTP, stop
+`pnpm dev:https` and run `pnpm dev` at the repo root; no env-file edits are needed.
 If Caddy returns a 502 for `/`, confirm the Vite web dev server is running at
 `http://localhost:5173`; the HTTPS front door proxies app routes to that
 server.

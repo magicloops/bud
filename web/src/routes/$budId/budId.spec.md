@@ -48,7 +48,7 @@ New thread creation view - allows users to start a new conversation.
 
 **Features**:
 - Empty terminal display with placeholder message
-- Message composer for initial message
+- Message composer for initial message; optimistic text and reserved progress render through ChatTimeline before creation/send completes, clearing on failure
 - Reuses `WorkspaceShell` so the top bar / split panes / composer frame stay aligned with the existing-thread route
 - Loads `/api/models?bud_id=<route bud id>` through the shared
   `useAvailableModels(budId)` hook using the normalized snake_case catalog
@@ -226,7 +226,7 @@ status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
-transcriptMode: 'chat' | 'model'  // session-only, reset on thread switch; 'model' swaps ChatTimeline for ModelContextView (what the model sees)
+transcriptMode: 'chat' | 'model'  // session-only, reset on thread switch; 'model' hides the mounted ChatTimeline while showing ModelContextView, preserving inspection/disclosure
 terminalMenuOpen: boolean
 
 // Feature-hook state exposed to the route
@@ -358,3 +358,29 @@ the saved preference. Picker changes still PATCH preferences and may accompany
 send while persistence is in flight. Bootstrap/default/fallback display does not
 become an explicit preference write. Server `model_warning` appears in the chat
 and clears after a supported deliberate replacement.
+
+## Web streaming parity (September 13, 2026)
+
+Thread content is keyed by thread ID. State/bootstrap refreshes capture the current
+visit, request sequence and stream revision; obsolete responses cannot rewind
+streamed activity. `message_done` classification reaches message state immediately,
+and explicit nonempty final completion suppresses progress before persistence.
+Same-thread loader refresh does not reset live lifecycle state after stream activity.
+Send responses are fenced by visit as well. Existing authenticated owner-scoped
+REST/SSE boundaries remain unchanged; no new endpoints or owner stamping.
+
+Both new and existing sends render immediate response space with spinner grace.
+Existing chat remains mounted when model view is selected so inspection survives;
+zero-size geometry does not resume follow. Route passes `responseActive` separately
+from spinner visibility to the shared timeline. See the parity plan for outstanding
+browser layout, focus and performance validation.
+
+Spinner eligibility no longer applies a second invocation-state check over live
+status. Snapshot mapping is centralized in the tested `getStatusFromAgentState`
+helper; fresh stream activity can advance it without waiting for a DB refresh.
+Explicit stream waits/final and accepted recovery snapshots continue to suppress
+progress. See [debug note](../../../../debug/web-spinner-stale-snapshot.md).
+
+Post-send durable admission (`pending`/`leased`/`running` with inactive runtime)
+keeps dispatching progress visible through worker startup. Accepted blocked/waiting
+or terminal states still clear it; no cosmetic timer masks the transition.
