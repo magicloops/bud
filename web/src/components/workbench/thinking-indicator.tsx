@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
 
 const THINKING_WORDS = [
   'Thinking',
@@ -17,38 +16,26 @@ const THINKING_WORDS = [
   'Combobulating'
 ]
 
-export const THINKING_INDICATOR_ENTER_DURATION_MS = 200
 
 type ThinkingIndicatorProps = {
   isVisible: boolean
   label?: string
+  workStarted?: boolean
 }
 
-export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) {
+export function ThinkingIndicator({ isVisible, label, workStarted = false }: ThinkingIndicatorProps) {
   const [wordIndex, setWordIndex] = useState(() =>
     Math.floor(Math.random() * THINKING_WORDS.length)
   )
-  const [isExpanded, setIsExpanded] = useState(false)
   const [graceElapsed, setGraceElapsed] = useState(false)
-  const visible = isVisible && (Boolean(label) || graceElapsed)
+  const visible = isVisible && (workStarted || Boolean(label) || graceElapsed)
+
   useEffect(() => {
     setGraceElapsed(false)
     if (!isVisible) return
-    const timer = window.setTimeout(() => setGraceElapsed(true), 150)
+    const timer = window.setTimeout(() => setGraceElapsed(true), 500)
     return () => window.clearTimeout(timer)
   }, [isVisible])
-
-  // Enter-only height animation. Hidden state still unmounts immediately.
-  useEffect(() => {
-    if (!visible) {
-      setIsExpanded(false)
-      return
-    }
-
-    setIsExpanded(false)
-    const frame = window.requestAnimationFrame(() => setIsExpanded(true))
-    return () => window.cancelAnimationFrame(frame)
-  }, [visible])
 
   // Word cycling - only while visible and not showing a specific activity label
   useEffect(() => {
@@ -66,19 +53,15 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
     }
   }, [visible, label])
 
-  if (!visible) return null
+  if (!isVisible) return null
 
   return (
-    <div
-      className={cn(
-        'overflow-hidden transition-[max-height] duration-200 ease-out',
-        isExpanded ? 'max-h-10' : 'max-h-0'
-      )}
-      style={{ backgroundColor: 'var(--background)' }}
-    >
-      <div className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-muted-foreground">
-        <LoaderCircle className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
-        <span className="animate-pulse">{label ?? `${THINKING_WORDS[wordIndex]}...`}</span>
+    <div className="border-l-[3px] border-transparent px-4 py-2.5 text-sm leading-relaxed" data-response-slot>
+      <div className="relative min-h-[1lh]">
+        {visible && <div role="status" className="absolute inset-0 flex items-center gap-2 text-muted-foreground">
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+          <span>{label ?? `${THINKING_WORDS[wordIndex]}...`}</span>
+        </div>}
       </div>
     </div>
   )

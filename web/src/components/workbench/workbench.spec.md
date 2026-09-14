@@ -91,9 +91,9 @@ Message list with auto-scroll and full-height message rendering.
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
 - Projects messages through `createTimelineProjector()` (features/threads/agent-work-projection): reasoning, non-question tool calls, and intermediate assistant commentary render as one `AgentWorkGroup` row per turn; user/system/final-assistant/question rows and `role: "compaction"` marker rows stay top-level (a mid-turn compaction splits that turn's work into two groups around the cut)
 - Work-group and per-item expansion state is ephemeral component state keyed by stable projection ids (turn ULIDs — globally unique, never persisted)
-- The bottom-follow `scrollSyncKey` derives from VISIBLE structure only: a collapsed group's hidden detail growth does not trigger auto-scroll; a live group's current step does
+- Visible DOM geometry drives the single viewport owner; the old `scrollSyncKey` and competing scroll writers are removed.
 - The route owns footer visibility, including gaps while a live work group exists; assistant text streaming suppresses it and existing wait/compaction states retain their presentation.
-- Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
+- Follow visible content growth only while follow intent remains active; manual disclosure cancels pending follow before mutation.
 - "Stick to bottom" behavior with manual scroll override
 - Older history loads automatically while scrolling up: a sentinel above the first row is observed (`IntersectionObserver`, root = the scroll container, 600px top margin so the fetch starts before the user hits the top); the observer is re-created after each load so a still-visible sentinel (short page, tall viewport) keeps loading until the pane overflows. Shows "Loading older messages…" while fetching; after a failed fetch auto-loading pauses and a retry control appears; nothing renders once there is no older history
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
@@ -102,7 +102,7 @@ Message list with auto-scroll and full-height message rendering.
 - Per-message copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
 - Messages render at their natural height without the former 500px clamp or expand/collapse row controls
 - Role-based avatar colors and styling
-- Reasoning rows render visibly by default with muted Markdown treatment and no assistant file-open actions
+- Reasoning renders in collapsed activity sections by default; expanded details use muted Markdown with no assistant file-open actions.
 - Tool content renderers for specialized display
 - Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
@@ -151,47 +151,67 @@ custom widths.
 
 ### `agent-work-group.tsx`
 
-One turn's presentation under the [streaming plan](../../../../plan/web-streaming-experience.md).
+One turn's presentation under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
 
-**Props**: `row: TimelineWorkRow`, `expanded`, `onToggle(rowId)`,
-`expandedItems` (activity-segment keys), `onToggleItem(key)`.
-
-- Live commentary stays visible with no Working header. Consecutive tools/reasoning
-  form segments; preceding segments collapse at visible assistant text boundaries.
-  The current segment shows useful bodies, including multiple unfinished tools.
-- Done: existing Worked duration/count/outcome header. Opening shows commentary
-  and segment disclosures; without commentary it reveals useful bodies directly.
-- Opening an earlier live segment preserves the user's inspection choice at final
-  collapse. Existing identity and session-owned disclosure state remain.
-- Useful bodies reuse role/tool renderers within bounded scroll containers. Raw
-  and large-output controls remain. Closed segments unmount their contents.
-- Disclosure buttons retain aria-expanded/controls and reduced-motion chevrons.
+- `ActivitySection` renders one initially collapsed header: newest introduced
+  tool/reasoning summary, Cpu/Wrench icon, unique count and running/failure counts.
+  Opening shows compact item rows; full existing tool/Markdown details mount only
+  after opening an item. Hidden large payloads are not eagerly formatted.
+- Commentary remains at the timeline root with stable message keys through
+  streaming and intermediate classification. Explicit completed final folds prior
+  work into a closed `AgentWorkGroup`; final Markdown retains its host identity.
+- Expanded Worked for bodies have 8px top padding below the disclosure button.
+- The full-width Worked for section uses the message hover background (`secondary/40`)
+  and retains that background across its header and contents while expanded.
+- Inner disclosure choices survive the final fold. Reopening no-commentary work
+  shows compact items directly. Inactive work without final remains unfolded.
+- Memoized sections compare message references and only their own expansion bits;
+  weak summary/segment caches avoid reparsing unchanged content. Disclosure IDs
+  are pruned when membership disappears and reset on thread remount.
+- Buttons expose aria-expanded/controls. Focus lost by final consolidation moves
+  to the work disclosure with preventScroll. Browser accessibility validation is pending.
 
 ### `agent-work-group.test.tsx`
 
-Node render tests cover live commentary, current/prior activity, parallel active
-counts, completed disclosures, no/empty commentary, assistant boundaries and the
-actual timeline footer. A test-only loader handles CSS and Vite environment reads.
+Server-render tests cover collapsed live sections, 50-call/zero-detail mounting,
+parallel active counts, completed disclosures, no/empty commentary, semantic
+boundaries and the timeline footer.
+
+### `streaming-parity.test.tsx`
+
+Mounted React tests use dev-only `react-test-renderer` to verify commentary/final
+host identity, disclosure persistence, same-tick message updates, stale removal,
+A → B → A older-response fencing, and viewport policy with simulated DOM geometry.
+These tests do not measure actual layout, painting, accessibility or frame timing.
+
+### `use-transcript-viewport.ts`
+
+Single owner of transcript scroll intent, offset reads and offset writes. Raw
+measurements remain in refs/closures; only Jump to latest threshold transitions
+publish React state. At most one cancellable animation-frame follow is queued,
+and it rechecks follow, user gesture, selection and nonzero viewport on execution.
+Manual inspection precedes disclosures. Passive resize/near-bottom clamping cannot
+resume following; deliberate scroll-to-bottom, Jump or a new send can. Resize
+observes visible content (including asynchronous Markdown layout), ignores hidden
+zero-size geometry, and invalidates the handoff floor on width changes.
+Older-page publication captures a visible element before mutation and compensates
+only its remaining displacement, avoiding double compensation with native anchoring.
 
 ### `thinking-indicator.tsx`
 
-Thinking indicator shown when agent is working.
+Reserves a typography-relative response row immediately while progress is eligible;
+the spinner appears after a 500 ms visual grace if work is still eligible.
+Explicit activity labels (such as compaction) bypass the grace.
+The old entrance-height animation, 40px cap and dedicated follow loop are removed.
+The assistant body also has a one-line minimum. Timeline handoff measures the
+previous response-region height as a temporary floor while natural text consumes
+it, clearing on termination/waits, width change, disclosure or final folding.
+`responseActive` is execution eligibility independent of spinner visibility.
 
-**Props**:
-- `isVisible` - Controls visibility and unmounts immediately when hidden
-- optional `label` - Overrides the rotating word while a specific activity, such as context compaction, is active
-
-**Features**:
-- Cycles through 12 playful words every 2 seconds: "Thinking", "Pondering", "Combobulating", etc.
-- Shows caller-provided activity text such as `Compacting context...` without cycling the generic word list
-- Random starting word on each appearance
-- Enter-only height animation expands from 0 to the compact open state over 200ms
-- Instant unmount on hide so assistant draft text never overlaps a fading indicator
-- Compact 40px open-state height cap with a small `animate-spin` spinner
-- Text with `animate-pulse`
-
-**Usage**: Rendered by `ChatTimeline` as a non-transcript footer row after the latest message so scroll-to-bottom includes the indicator. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
-The existing-thread route also suppresses the generic indicator while assistant draft text is actively streaming, then lets it return after a short post-`message_done` delay if the turn continues.
+Existing normalized output activity controls eligibility: working permits progress,
+text/awaiting_completion suppress it, and waits/final override it. No provider or
+inactivity inference. Word rotation remains; spinner rotation respects reduced motion.
+Browser geometry and performance acceptance remain pending; see the plan/debug note.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |
@@ -582,9 +602,19 @@ Header bar with workspace title and view toggle.
 
 *Referenced by: [../components.spec.md](../components.spec.md)*
 
-## Progress delay
+## Web progress grace
 
-`ThinkingIndicator` applies a cancellable 150 ms entry grace when ordinary work
-becomes eligible. Text/final transitions hide it immediately; compaction's
-explicit label bypasses the grace. This is presentation delay, not an inference
-that text has finished. See [output activity](../../../../design/assistant-output-activity.md).
+`ThinkingIndicator` reserves its response row immediately when ordinary work becomes
+eligible, revealing the spinner after 500 ms without changing row geometry.
+Text/final transitions hide it immediately and cancel the timer; normalized output
+activity determines eligibility independently of the visual grace. See [output activity](../../../../design/assistant-output-activity.md).
+
+Spinner reveal now bypasses the startup grace once accepted normalized output
+activity has started. Text/wait/final eligibility still wins; without a signal,
+the 500 ms fallback reveals progress in the immediately reserved row. See
+[working-signal debug note](/debug/web-spinner-working-signal.md).
+
+Assistant draft and commentary rows omit the entire Bud/timestamp header, including
+persisted intermediate commentary, without reserving empty header space. Completed
+final responses retain their normal header. The spinner likewise has no invisible
+header, matching the one-line streaming body reservation.

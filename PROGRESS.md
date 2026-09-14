@@ -2,6 +2,15 @@
 
 _Last updated: 2025-12-07_
 
+## Web streaming parity — September 13, 2026
+
+Implementation on `feat/web-streaming-parity`: stable collapsed activity sections,
+explicit final-answer consolidation, immediate response reservation with spinner
+grace, inspection-aware viewport ownership and conservative history refreshes.
+Automated validation and remaining browser/performance acceptance are recorded in
+[the plan](plan/web-mobile-streaming-parity.md) and [debug note](debug/web-streaming-parity.md).
+No deployment, commit or PR is implied; historical terminal progress follows.
+
 ## What's implemented (recent)
 
 ### Activity-Based Readiness Detection (2025-12-07)

@@ -29,10 +29,7 @@ export const sortMessagesChronologically = (messages: ApiMessage[]) =>
     if (timeDelta !== 0) {
       return timeDelta
     }
-    const messageIdDelta = left.message_id.localeCompare(right.message_id)
-    if (messageIdDelta !== 0) {
-      return messageIdDelta
-    }
+    // Canonical message_id changes at persistence; only stable identity breaks ties.
     return getMessageIdentity(left).localeCompare(getMessageIdentity(right))
   })
 
@@ -48,12 +45,15 @@ export const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
     return existing
   }
   const nextMessages = [...existing]
+  if (current.role !== 'user' && current.message_id === current.client_id && next.message_id !== current.message_id) {
+    next = { ...next, created_at: current.created_at }
+  }
   nextMessages[index] = next
   // Streaming deltas replace a row in place without touching its sort keys
   // (`created_at`, `message_id`) — order cannot change, so skip the
   // re-sort (and its per-comparison Date parsing) on the hot path.
   // Untouched elements keep their object identity either way.
-  if (current.created_at === next.created_at && current.message_id === next.message_id) {
+  if (current.created_at === next.created_at) {
     return nextMessages
   }
   return sortMessagesChronologically(nextMessages)
@@ -61,7 +61,12 @@ export const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
 
 export const mergeOlderMessages = (existing: ApiMessage[], older: ApiMessage[]) => {
   const existingIds = new Set(existing.map(getMessageIdentity))
-  const uniqueOlder = older.filter((message) => !existingIds.has(getMessageIdentity(message)))
+  const uniqueOlder = older.filter((message) => {
+    const id = getMessageIdentity(message)
+    if (existingIds.has(id)) return false
+    existingIds.add(id)
+    return true
+  })
   return [...uniqueOlder, ...existing]
 }
 
@@ -107,16 +112,6 @@ export const reconcileMessagePersistence = (
   return sortMessagesChronologically(nextMessages)
 }
 
-export const removePendingToolMessagesForTurn = (existing: ApiMessage[], turnId: string) =>
-  existing.filter((message) => {
-    if (!isPendingToolMessage(message)) {
-      return true
-    }
-
-    const metadata = message.metadata ?? {}
-    return metadata.turn_id !== turnId
-  })
-
 export const upsertDraftAssistantMessage = (
   existing: ApiMessage[],
   clientId: string,
@@ -126,16 +121,6 @@ export const upsertDraftAssistantMessage = (
   return upsertMessage(existing, updater(current))
 }
 
-export const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnId: string) =>
-  existing.filter((message) => {
-    if (!isDraftAssistantMessage(message)) {
-      return true
-    }
-
-    const metadata = message.metadata ?? {}
-    return metadata.turn_id !== turnId
-  })
-
 export const upsertDraftReasoningMessage = (
   existing: ApiMessage[],
   clientId: string,
@@ -144,19 +129,6 @@ export const upsertDraftReasoningMessage = (
   const current = existing.find((message) => getMessageIdentity(message) === clientId) ?? null
   return upsertMessage(existing, updater(current))
 }
-
-export const removeDraftReasoningMessage = (existing: ApiMessage[], clientId: string) =>
-  existing.filter((message) => !isDraftReasoningMessage(message) || getMessageIdentity(message) !== clientId)
-
-export const removeDraftReasoningMessagesForTurn = (existing: ApiMessage[], turnId: string) =>
-  existing.filter((message) => {
-    if (!isDraftReasoningMessage(message)) {
-      return true
-    }
-
-    const metadata = message.metadata ?? {}
-    return metadata.turn_id !== turnId
-  })
 
 export type PendingToolCallMessageInput = {
   turnId: string
@@ -342,41 +314,53 @@ export const mergeLatestBootstrapState = (
   currentPage: ApiMessagePage['page'],
   nextPage: ApiMessagePage,
   nextAgentState: ApiAgentState,
+  protectedIds: ReadonlySet<string> = new Set(),
+  removedIds: ReadonlySet<string> = new Set(),
 ) => {
-  const latestIds = new Set(nextPage.messages.map(getMessageIdentity))
+  const incoming = nextPage.messages.filter(message => !removedIds.has(message.client_id))
+  const incomingById = new Map(incoming.map(message => [message.client_id, message]))
+  const latestIds = new Set(incomingById.keys())
   const preservedOlderMessages = currentMessages.filter(
     (message) => !isSyntheticMessage(message) && !latestIds.has(getMessageIdentity(message)),
   )
 
   const canonicalMessages = sortMessagesChronologically([
     ...preservedOlderMessages,
-    ...nextPage.messages,
+    ...incoming,
   ])
 
+  let reconciled = applyAgentStateOverlay(canonicalMessages, nextAgentState)
+  for (const current of currentMessages) {
+    if (protectedIds.has(current.client_id) && !removedIds.has(current.client_id)) {
+      const canonical = incomingById.get(current.client_id)
+      const acknowledged = canonical && !isSyntheticMessage(canonical) && (
+        canonical.content === current.content || isPendingToolMessage(current) ||
+        ((isDraftAssistantMessage(current) || isDraftReasoningMessage(current)) && canonical.content.startsWith(current.content)))
+      reconciled = upsertMessage(reconciled, acknowledged ? { ...canonical, created_at: current.created_at } : current)
+    }
+  }
+  reconciled = reconciled.filter(message => !removedIds.has(message.client_id))
   return {
-    messages: applyAgentStateOverlay(canonicalMessages, nextAgentState),
+    messages: reconciled,
     page: {
       ...nextPage.page,
       returned: preservedOlderMessages.length + nextPage.messages.length,
       has_more_before:
-        preservedOlderMessages.length > 0
+        currentMessages.length > 0
           ? currentPage.has_more_before
           : nextPage.page.has_more_before,
       before_cursor:
-        preservedOlderMessages.length > 0 ? currentPage.before_cursor : nextPage.page.before_cursor,
+        currentMessages.length > 0 ? currentPage.before_cursor : nextPage.page.before_cursor,
     },
   }
 }
 
 export const finalizeTurnMessages = (
-  messages: ApiMessage[],
-  turnId: string,
-  status: 'succeeded' | 'failed' | 'canceled',
-) => {
-  const withoutPendingTools = removePendingToolMessagesForTurn(messages, turnId)
-  const withoutDraftReasoning = removeDraftReasoningMessagesForTurn(withoutPendingTools, turnId)
-  if (status === 'failed' || status === 'canceled') {
-    return removeDraftAssistantMessageForTurn(withoutDraftReasoning, turnId)
-  }
-  return withoutDraftReasoning
-}
+  messages: ApiMessage[], turnId: string, status: 'succeeded' | 'failed' | 'canceled',
+) => messages.flatMap(message => {
+  if (message.metadata?.turn_id !== turnId || !isAgentSyntheticMessage(message)) return [message]
+  if (!message.content.trim()) return []
+  // An ended run is not a final answer. Retain visible evidence with honest status.
+  return [{ ...message, metadata: { ...message.metadata, draft: false, pending: false,
+    ...(status === 'succeeded' ? {} : { outcome: status }) } }]
+})

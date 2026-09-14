@@ -8,7 +8,7 @@
     { "message_id": "m-u2", "client_id": "u2", "role": "user", "display_role": "You", "content": "actually, stop", "created_at": "2026-08-30T10:00:02.000Z" }
   ],
   "expected": [
-    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "no_final", "duration_ms": null, "current_item_client_id": null, "sections": [
+    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "no_final", "duration_ms": null, "sections": [
       { "kind": "activity", "client_id": "t1" }
     ] },
     { "kind": "message", "client_id": "u2" }

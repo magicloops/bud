@@ -1,6 +1,6 @@
 import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
-import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
@@ -8,7 +8,6 @@ import { automationAttribution } from './automation-attribution'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import {
   ThinkingIndicator,
-  THINKING_INDICATOR_ENTER_DURATION_MS,
 } from '@/components/workbench/thinking-indicator'
 import type {
   ApiAskUserQuestionsRequest,
@@ -24,9 +23,11 @@ import {
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 import { useAuthSession } from '@/contexts/auth-session-context'
+import { isFinalAssistantMessage } from '@/features/threads/assistant-activity-indicator-state'
 import { formatRelativeTimestamp } from '@/lib/relative-time.ts'
 import { TRANSCRIPT_COLUMN_CLASSES } from '@/components/workbench/transcript-layout'
-import { AgentWorkGroup } from '@/components/workbench/agent-work-group'
+import { useTranscriptViewport } from './use-transcript-viewport'
+import { AgentWorkGroup, ActivitySection } from '@/components/workbench/agent-work-group'
 import { getRoleContentRenderer as getRoleRenderer } from '@/components/message-renderers'
 import {
   formatCompactTokens,
@@ -35,6 +36,7 @@ import {
 } from '@/features/threads/compaction-row-state'
 import {
   createTimelineProjector,
+  workSegments,
   type TimelineRow,
   type TurnOutcome,
 } from '@/features/threads/agent-work-projection'
@@ -84,7 +86,9 @@ type ChatTimelineProps = {
   liveTurnId?: string | null
   /** Session-local `final`-event outcomes for failed/canceled badges. */
   turnOutcomes?: ReadonlyMap<string, TurnOutcome>
+  responseActive?: boolean
   activityIndicatorVisible?: boolean
+  activityIndicatorWorkStarted?: boolean
   activityIndicatorLabel?: string
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
@@ -106,6 +110,8 @@ const ChatTimelineComponent = ({
   liveTurnId = null,
   turnOutcomes,
   activityIndicatorVisible = false,
+  activityIndicatorWorkStarted = false,
+  responseActive = activityIndicatorVisible,
   activityIndicatorLabel,
   hasOlderMessages = false,
   isLoadingOlderMessages = false,
@@ -118,7 +124,6 @@ const ChatTimelineComponent = ({
 }: ChatTimelineProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const olderSentinelRef = useRef<HTMLDivElement | null>(null)
-  const shouldStickRef = useRef(true)
   const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
   const { currentUser } = useAuthSession()
   // User rows label with the viewer's first name, falling back to their
@@ -159,6 +164,30 @@ const ChatTimelineComponent = ({
   // collisions; never persisted).
   const [expandedWork, setExpandedWork] = useState<ReadonlySet<string>>(new Set())
   const [expandedItems, setExpandedItems] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    const validWork = new Set<string>()
+    const validItems = new Set<string>()
+    for (const row of timelineRows) if (row.kind === 'work') {
+      validWork.add(row.id)
+      for (const section of row.sections) {
+        validItems.add(`item:${section.message.client_id}`)
+        if (section.sectionId) validItems.add(section.sectionId)
+      }
+    }
+    const prune = (current: ReadonlySet<string>, valid: Set<string>) =>
+      [...current].every(id => valid.has(id)) ? current : new Set([...current].filter(id => valid.has(id)))
+    setExpandedWork(current => prune(current, validWork))
+    setExpandedItems(current => prune(current, validItems))
+  }, [timelineRows])
+  const focusedWork = useRef<{ element: HTMLElement; owner: string } | null>(null)
+  useLayoutEffect(() => {
+    const focused = focusedWork.current
+    if (focused && !focused.element.isConnected) {
+      const button = document.getElementById(`${focused.owner}:toggle`)
+      button?.focus({ preventScroll: true })
+      focusedWork.current = null
+    }
+  }, [timelineRows])
   const toggleWorkRow = useCallback((rowId: string) => {
     setExpandedWork((current) => {
       const next = new Set(current)
@@ -202,29 +231,32 @@ const ChatTimelineComponent = ({
     return items
   }, [notices, timelineRows])
 
-  // Bottom-follow reacts to VISIBLE structure only: hidden detail growth
-  // inside a collapsed group must not read as a new row.
-  const scrollSyncKey = useMemo(() => {
-    const lastItem = timelineItems.at(-1)
-    let lastKey = ''
-    if (lastItem?.type === 'notice') {
-      lastKey = lastItem.notice.notice_id
-    } else if (lastItem?.type === 'row') {
-      const row = lastItem.row
-      if (row.kind === 'message') {
-        lastKey = `${row.message.client_id}:${row.message.content.length}`
-      } else if (row.live) {
-        const current = row.currentItem
-        lastKey = `${row.id}:${row.sections.length}:${current?.client_id ?? '-'}:${current?.content.length ?? 0}`
-      } else {
-        lastKey = row.id
-      }
+  const optimisticSend = [...messages].reverse().find(message => message.role === 'user' && message.metadata?.optimistic === true)?.client_id ?? null
+  const { inspect: inspectViewport, jump, showJump } = useTranscriptViewport(scrollRef, optimisticSend)
+  const handoff = useRef<{ height: number; width: number; folds: number } | null>(null)
+  const foldCount = timelineRows.filter(row => row.kind === 'work' && row.canFold).length
+  const inspect = useCallback(() => {
+    handoff.current = null
+    const content = scrollRef.current?.firstElementChild as HTMLElement | null
+    if (content) content.style.minHeight = ''
+    inspectViewport()
+  }, [inspectViewport])
+  // Keep the former response line only until natural content consumes its space.
+  // This is a layout floor, not a second spinner-sized sibling or a render gate.
+  useLayoutEffect(() => {
+    const node = scrollRef.current
+    const content = node?.firstElementChild as HTMLElement | null
+    if (!node || !content || !node.clientHeight) return
+    if (activityIndicatorVisible) {
+      content.style.minHeight = ''
+      handoff.current = { height: content.getBoundingClientRect().height, width: node.clientWidth, folds: foldCount }
+    } else if (responseActive && handoff.current?.width === node.clientWidth && handoff.current.folds === foldCount) {
+      content.style.minHeight = `${handoff.current.height}px`
+    } else {
+      content.style.minHeight = ''
+      handoff.current = null
     }
-    const activityKey = activityIndicatorVisible
-      ? `activity:${activityIndicatorLabel ?? 'default'}`
-      : 'activity:hidden'
-    return `${timelineItems.length}:${lastKey}:${activityKey}`
-  }, [activityIndicatorLabel, activityIndicatorVisible, timelineItems])
+  }, [activityIndicatorVisible, responseActive, foldCount, messages])
 
   const ensureJsonViewLoaded = useCallback(() => {
     if (JsonView) {
@@ -272,86 +304,17 @@ const ChatTimelineComponent = ({
     return () => observer.disconnect()
   }, [hasOlderMessages, isLoadingOlderMessages, olderMessagesLoadFailed, onLoadOlderMessages])
 
-  useEffect(() => {
-    const node = scrollRef.current
-    if (!node) return
-    const handler = () => {
-      const { scrollTop, scrollHeight, clientHeight } = node
-      const atBottom = scrollHeight - (scrollTop + clientHeight) < 48
-      shouldStickRef.current = atBottom
-    }
-    node.addEventListener('scroll', handler, { passive: true })
-    return () => {
-      node.removeEventListener('scroll', handler)
-    }
-  }, [])
-
-  useEffect(() => {
-    const node = scrollRef.current
-    if (!node) return
-    if (!shouldStickRef.current) {
-      return
-    }
-    const syncScroll = () => {
-      node.scrollTop = node.scrollHeight
-    }
-    requestAnimationFrame(() => {
-      requestAnimationFrame(syncScroll)
-    })
-  }, [scrollSyncKey])
-
-  // Geometry changes must not break bottom-follow: opening/closing the
-  // viewer or dragging the divider narrows the pane (content reflows
-  // taller), and the composer growing shrinks the container. A resize
-  // doesn't move scrollTop, so the stick flag is still trustworthy —
-  // re-pin to the bottom whenever the container or its content resizes
-  // while stuck.
-  useEffect(() => {
-    const node = scrollRef.current
-    if (!node || typeof ResizeObserver === 'undefined') {
-      return
-    }
-    const observer = new ResizeObserver(() => {
-      if (shouldStickRef.current) {
-        node.scrollTop = node.scrollHeight
-      }
-    })
-    observer.observe(node)
-    if (node.firstElementChild) {
-      observer.observe(node.firstElementChild)
-    }
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    const node = scrollRef.current
-    if (!node || !activityIndicatorVisible || !shouldStickRef.current) {
-      return
-    }
-
-    let frameId: number | null = null
-    const start = window.performance.now()
-    const followIndicatorGrowth = (timestamp: number) => {
-      if (!shouldStickRef.current) {
-        return
-      }
-
-      node.scrollTop = node.scrollHeight
-      if (timestamp - start <= THINKING_INDICATOR_ENTER_DURATION_MS) {
-        frameId = window.requestAnimationFrame(followIndicatorGrowth)
-      }
-    }
-
-    frameId = window.requestAnimationFrame(followIndicatorGrowth)
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId)
-      }
-    }
-  }, [activityIndicatorVisible])
-
   return (
-    <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div ref={setScrollNode} className="@container min-h-0 flex-1 overflow-y-auto bg-background"
+      onClickCapture={event => {
+        if ((event.target as Element).closest('button[aria-expanded], summary')) inspect()
+      }}
+      onFocusCapture={event => {
+        const element = event.target as HTMLElement
+        const owner = element.closest<HTMLElement>('[data-work-owner]')?.dataset.workOwner
+        focusedWork.current = owner ? { element, owner } : null
+      }}>
       {/* Rows are full-bleed (hover highlights span the pane); each row
           constrains its own content via TRANSCRIPT_COLUMN_CLASSES. */}
       <div className="py-2">
@@ -382,11 +345,22 @@ const ChatTimelineComponent = ({
       {timelineItems.length === 0 && (
         <p className="px-4 py-3 text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
-      {timelineItems.map((item) => {
+      {timelineItems.flatMap((item) => {
         if (item.type === 'notice') {
           return <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
         }
         if (item.row.kind === 'work') {
+          if (!item.row.canFold) {
+            const work = item.row
+            return workSegments(work).map(segment => segment[0].kind === 'intermediate'
+              ? <ChatTimelineMessage key={segment[0].message.client_id} message={segment[0].message}
+                  userName={userName} JsonView={JsonView} ensureJsonViewLoaded={ensureJsonViewLoaded} workOwner={work.id} />
+              : <div data-work-owner={work.id} key={segment[0].sectionId ?? `activity:${segment[0].message.client_id}`} className={TRANSCRIPT_COLUMN_CLASSES}>
+                  <div className="border-l-[3px] border-transparent px-4 py-1.5">
+                    <ActivitySection sections={segment} live={work.live} expandedItems={expandedItems} onToggleItem={toggleWorkItem} />
+                  </div>
+                </div>)
+          }
           return (
             <AgentWorkGroup
               key={item.row.id}
@@ -411,11 +385,14 @@ const ChatTimelineComponent = ({
           />
         )
       })}
-      <ThinkingIndicator
+      <div className={TRANSCRIPT_COLUMN_CLASSES}><ThinkingIndicator
         isVisible={activityIndicatorVisible}
+        workStarted={activityIndicatorWorkStarted}
         label={activityIndicatorLabel}
-      />
+      /></div>
       </div>
+    </div>
+    {showJump && <button type="button" onClick={jump} className="absolute bottom-3 right-4 rounded-full border bg-background px-3 py-1.5 text-xs shadow-sm">Jump to latest</button>}
     </div>
   )
 }
@@ -447,6 +424,7 @@ const capitalize = (label: string): string =>
   label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label
 
 type ChatTimelineMessageProps = {
+  workOwner?: string
   message: ChatMessage
   userName: string | null
   JsonView: JsonViewComponent | null
@@ -460,6 +438,7 @@ type ChatTimelineMessageProps = {
 }
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
+  workOwner,
   message,
   userName,
   JsonView,
@@ -478,13 +457,16 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const isSystem = message.role === 'system'
   const isAssistant = message.role === 'assistant' && !isTool
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
+  // Drafts and commentary render without message-header chrome.
+  const hideAssistantHeader = isAssistant && (isDraftAssistant || Boolean(workOwner) ||
+    message.metadata?.segment_kind === 'intermediate' || message.metadata?.assistant_phase === 'commentary')
   const payload = isTool ? resolveToolPayload(message) : null
   const toolName = (payload?.tool as string | undefined) ?? (message.display_role || 'Tool')
   const pendingQuestionRequest =
     isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
   const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
-  const assistantFileSource: OpenFileSource | null = isAssistant
+  const assistantFileSource: OpenFileSource | null = isAssistant && isFinalAssistantMessage(message)
     ? {
         kind: 'assistant_message',
         ...(isDraftAssistant ? {} : { message_id: message.message_id }),
@@ -577,6 +559,8 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     )
   }
 
+  if (isAssistant && !message.content.trim()) return null
+
   const contentNode = pendingQuestionRequest && onSubmitQuestionResponse ? (
     <QuestionRequestCard
       request={pendingQuestionRequest}
@@ -589,6 +573,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       <button
         type="button"
         onClick={handleTogglePayload}
+        aria-expanded={isPayloadExpanded}
         className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
       >
         {isPayloadExpanded ? 'Hide payload' : 'Show payload'}
@@ -642,6 +627,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 
   return (
     <article
+      data-work-owner={workOwner}
       className={cn(
         // Full-bleed row: the hover highlight (thread-list background) runs
         // edge to edge; content sits in the shared centered column.
@@ -670,7 +656,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
             {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
 
-          <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+          {!hideAssistantHeader && <div className="mb-0.5 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
             <span>
               {isTool
                 ? `Tool • ${toolName}`
@@ -681,8 +667,8 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
                     : capitalize(message.display_role || message.role)}
             </span>
             <MessageTimestamp createdAt={message.created_at} />
-          </div>
-          <div>{contentNode}</div>
+          </div>}
+          <div className={isAssistant ? 'min-h-[1lh]' : undefined}>{contentNode}</div>
         </div>
       </div>
     </article>

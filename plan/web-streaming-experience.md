@@ -1,5 +1,8 @@
 # Plan: Web streaming experience
 
+> Historical design: presentation/scroll behavior is superseded by [web/mobile streaming parity](web-mobile-streaming-parity.md) (September 13, 2026). Current implementation uses collapsed activity sections, explicit completed-final folding and one viewport owner. The original discussion below is retained as history.
+
+
 Status: implemented; automated validation passed, interactive validation pending.
 
 ## Context

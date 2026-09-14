@@ -33,6 +33,7 @@ import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads
 import { invocationSummary, invocationAllowsLiveActivity, invocationRevision } from '@/features/threads/invocation-state'
 import { submitQuestionResponseFlow, type QuestionResponseContinuation } from '@/features/threads/question-response-submit'
 import {
+  getStatusFromAgentState,
   createAssistantActivityGateFromAgentState,
   deriveAssistantActivityIndicatorVisible,
   reduceAssistantActivityGate,
@@ -98,6 +99,11 @@ export const Route = createFileRoute('/$budId/$threadId')({
 })
 
 function ThreadView() {
+  const { threadId } = Route.useParams()
+  return <ThreadViewContent key={threadId} />
+}
+
+function ThreadViewContent() {
   const { budId, threadId } = Route.useParams()
   const {
     messagePage: initialMessagePage,
@@ -200,6 +206,7 @@ function ThreadView() {
   const explicitSelectionThreadRef = useRef<string | null>(null)
   useEffect(() => { explicitSelectionThreadRef.current = null }, [threadId])
   const outputActivityRevision = useRef(0)
+  const refreshSequence = useRef(0)
   const cancelAgentTurnRequestedRef = useRef(false)
   const cancelAgentTurnInFlightRef = useRef(false)
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
@@ -297,8 +304,9 @@ function ThreadView() {
     webView.transport?.available === false || webViewActiveSite?.transport?.available === false
 
 
-  // Update messages when loader data changes
+  // A mounted thread owns live state; loader refreshes must not rewind it.
   useEffect(() => {
+    if (outputActivityRevision.current > 0) return
     setDurableState(initialAgentState)
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
@@ -377,10 +385,11 @@ function ThreadView() {
   const refreshAgentState = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
     const activityRevision = outputActivityRevision.current
+    const sequence = ++refreshSequence.current
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
-    if (activityRevision !== outputActivityRevision.current) return nextAgentState
+    if (activityRevision !== outputActivityRevision.current || sequence !== refreshSequence.current) return nextAgentState
     setDurableState(nextAgentState)
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
@@ -395,6 +404,7 @@ function ThreadView() {
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
     const activityRevision = outputActivityRevision.current
+    const sequence = ++refreshSequence.current
     // Read the transcript after state: completion/answer rows committed before
     // this snapshot must not be missed by an earlier parallel message query.
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
@@ -403,7 +413,7 @@ function ThreadView() {
     )
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
-    if (activityRevision !== outputActivityRevision.current) return nextAgentState
+    if (activityRevision !== outputActivityRevision.current || sequence !== refreshSequence.current) return nextAgentState
     setDurableState(nextAgentState)
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
@@ -560,7 +570,15 @@ function ThreadView() {
 
   const handleAssistantMessageStart = applyAssistantMessageStart
   const handleAssistantMessageDelta = applyAssistantMessageDelta
-  const handleAssistantMessageDone = applyAssistantMessageDone
+  const handleAssistantMessageDone = useCallback((event: Parameters<typeof applyAssistantMessageDone>[0]) => {
+    applyAssistantMessageDone(event)
+    if (event.text.trim() && (event.segmentKind === 'final' || event.assistantPhase === 'final_answer')) {
+      setAssistantActivityGate(current => reduceAssistantActivityGate(current, {
+        type: 'assistant_message_persisted', turnId: event.turnId,
+        message: { role: 'assistant', metadata: { segment_kind: 'final' } },
+      }))
+    }
+  }, [applyAssistantMessageDone])
   const handleAssistantMessageEvent = useCallback((event: Parameters<typeof applyAssistantMessageEvent>[0]) => {
     outputActivityRevision.current += 1
     setAssistantActivityGate((current) => reduceAssistantActivityGate(current, {
@@ -655,6 +673,7 @@ function ThreadView() {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
   } = useAgentStream({
+    onStreamEvent: () => { outputActivityRevision.current += 1 },
     threadId,
     initialStreamCursor: initialAgentState.stream_cursor,
     onStatusChange: setStatus,
@@ -920,6 +939,8 @@ function ThreadView() {
       return
     }
 
+    const sendScope = currentThreadRef.current
+    outputActivityRevision.current += 1
     setError(null)
     cancelAgentTurnRequestedRef.current = false
     setStatus('dispatching')
@@ -943,6 +964,7 @@ function ThreadView() {
           reasoning_effort: explicitSelectionThreadRef.current === threadId && selectedModel ? reasoningEffort : undefined
         })
       })
+      if (currentThreadRef.current !== sendScope) return
       if (shouldAbortForUnauthorized(messageResp)) {
         removeMessage(optimisticId)
         setStatus('idle')
@@ -959,6 +981,7 @@ function ThreadView() {
         message: persistedMessage,
         agent,
       } = await messageResp.json() as ApiCreateMessageResponse
+      if (currentThreadRef.current !== sendScope) return
       if (agent?.stream_cursor) {
         agentStreamCursorSetterRef.current(agent.stream_cursor)
       }
@@ -985,6 +1008,7 @@ function ThreadView() {
       if (isAuthRedirectPending()) {
         return
       }
+      if (currentThreadRef.current !== sendScope) return
       cancelAgentTurnRequestedRef.current = false
       removeMessage(optimisticId)
       setStatus('idle')
@@ -1004,7 +1028,9 @@ function ThreadView() {
     threadId,
   ])
 
-  const activityIndicatorVisible = (status === 'dispatching' || !durableState.invocations || invocationAllowsLiveActivity(durableState)) && deriveAssistantActivityIndicatorVisible({
+  // Status already incorporates accepted snapshots and newer stream events.
+  // Rechecking durableState here would let an old idle snapshot hide live work.
+  const activityIndicatorVisible = deriveAssistantActivityIndicatorVisible({
     status,
     activeCompaction: activeCompaction !== null,
     gate: assistantActivityGate,
@@ -1055,20 +1081,24 @@ function ThreadView() {
               {reviewError && <p role="alert">{reviewError}</p>}
             </form>
           )}
-          {transcriptMode === 'model' ? (
+          {transcriptMode === 'model' && (
             <ModelContextView
               threadId={threadId}
               // Refetch when a turn ends or a compaction lands.
               refreshKey={`${liveTurnId === null ? 'idle' : 'active'}:${contextCompactionNotices.length}`}
               modelLabel={models.find((model) => model.id === contextBudget?.model)?.display_name ?? null}
             />
-          ) : (
+          )}
+          <div className={transcriptMode === 'model' ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
           <ChatTimeline
+            key={threadId}
+            responseActive={status === 'dispatching' || status === 'streaming'}
             messages={messages}
             notices={contextCompactionNotices}
             liveTurnId={liveTurnId}
             turnOutcomes={turnOutcomes}
             activityIndicatorVisible={activityIndicatorVisible}
+            activityIndicatorWorkStarted={assistantActivityGate.workStarted}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
             hasOlderMessages={messagePage.has_more_before}
             isLoadingOlderMessages={isLoadingOlderMessages}
@@ -1079,7 +1109,7 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
-          )}
+          </div>
           {viewMode !== 'none' && (
             <ChatPaneResizeHandle paneRef={chatPaneRef} onFractionChange={setChatPaneFraction} />
           )}
@@ -1187,18 +1217,4 @@ function ThreadView() {
       )}
     />
   )
-}
-
-function getStatusFromAgentState(agentState: ApiAgentState): WorkbenchStatus {
-  if (agentState.pending_questions?.length || agentState.pending_data_requests?.length || agentState.pending_automation_requests?.length || agentState.pending_bootstrap_requests?.length) return 'waiting_for_user'
-  if (!invocationAllowsLiveActivity(agentState)) {
-    return 'idle'
-  }
-  if (agentState.phase === 'waiting_for_user' || agentState.pending_tool?.name === 'ask_user_questions') {
-    return 'waiting_for_user'
-  }
-  if (agentState.phase === 'waiting_for_terminal' || agentState.pending_tool?.name === 'terminal.wait') {
-    return 'waiting_for_terminal'
-  }
-  return 'streaming'
 }

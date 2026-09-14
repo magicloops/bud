@@ -28,7 +28,6 @@ type Fixture = {
         live: boolean
         status: string
         duration_ms: number | null
-        current_item_client_id: string | null
         sections: Array<{ kind: string; client_id: string }>
       }
   >
@@ -50,7 +49,6 @@ const serializeRows = (rows: TimelineRow[]): Fixture['expected'] =>
           live: row.live,
           status: row.status,
           duration_ms: row.durationMs,
-          current_item_client_id: row.currentItem?.client_id ?? null,
           sections: row.sections.map((section) => ({
             kind: section.kind,
             client_id: section.message.client_id,
@@ -100,7 +98,7 @@ test('projector reuses row objects when inputs are unchanged', () => {
   assert.equal(third[0], first[0])
   assert.notEqual(third[1], first[1])
   assert.equal(third[1].kind, 'work')
-  assert.equal(third[1].kind === 'work' ? third[1].currentItem?.client_id : null, 'r1')
+  assert.equal(third[1].kind === 'work' ? third[1].sections.at(-1)?.message.client_id : null, 'r1')
 })
 
 test('draft→canonical reconciliation keeps the group id and section identity', () => {
@@ -132,7 +130,7 @@ test('draft→canonical reconciliation keeps the group id and section identity',
     assert.equal(done[0].id, 'agent-work:T1')
     assert.deepEqual(done[0].sourceClientIds, ['r1'])
     assert.equal(done[0].live, false)
-    assert.equal(done[0].currentItem, null)
+    assert.equal(done[0].canFold, false)
   }
 })
 
@@ -174,4 +172,49 @@ test('a compaction row stays top-level and splits the turn\'s work around the cu
     rows.map((row) => (row.kind === 'message' ? `message:${row.message.client_id}` : `work:${row.sourceClientIds.join(',')}`)),
     ['work:t1', 'message:cmp1', 'work:t2'],
   )
+})
+
+
+test('fold eligibility requires explicit nonempty completed final even before runtime final', () => {
+  const work = buildMessage({ client_id: 'tool' })
+  for (const metadata of [{}, { draft: true, segment_kind: 'final' }, { segment_kind: 'intermediate' }]) {
+    const rows = projectTimeline({ messages: [work, buildMessage({ client_id: 'answer', role: 'assistant', content: 'Answer', metadata: { turn_id: 'T1', ...metadata } })], liveTurnId: null })
+    assert.equal(rows[0].kind === 'work' && rows[0].canFold, false)
+  }
+  const final = buildMessage({ client_id: 'answer', role: 'assistant', content: 'Answer', metadata: { turn_id: 'T1', segment_kind: 'final' } })
+  const rows = projectTimeline({ messages: [work, final], liveTurnId: 'T1' })
+  assert.equal(rows[0].kind === 'work' && rows[0].canFold, true)
+  const empty = projectTimeline({ messages: [work, { ...final, content: ' ' }], liveTurnId: null })
+  assert.equal(empty[0].kind === 'work' && empty[0].canFold, false)
+})
+
+test('prepending across a boundary preserves the existing group and activity IDs', () => {
+  const project = createTimelineProjector()
+  const later = buildMessage({ client_id: 'later' })
+  const first = project({ messages: [later], liveTurnId: 'T1' })[0]
+  assert.equal(first.kind, 'work')
+  const earlier = buildMessage({ client_id: 'earlier' })
+  const boundary = buildMessage({ client_id: 'boundary', role: 'compaction', content: 'Summary' })
+  const rows = project({ messages: [earlier, boundary, later], liveTurnId: 'T1' })
+  const last = rows[2]
+  assert.equal(last.kind, 'work')
+  if (first.kind === 'work' && last.kind === 'work') {
+    assert.equal(last.id, first.id)
+    assert.equal(last.sections[0].sectionId, first.sections[0].sectionId)
+    assert.notEqual(rows[0].kind === 'work' && rows[0].id, last.id)
+  }
+})
+
+test('late intermediate classification splits activity without duplicate section IDs', () => {
+  const project = createTimelineProjector()
+  const first = buildMessage({ client_id: 'first' })
+  const last = buildMessage({ client_id: 'last' })
+  project({ messages: [first, last], liveTurnId: 'T1' })
+  const commentary = buildMessage({ client_id: 'commentary', role: 'assistant', content: 'Next step', metadata: { turn_id: 'T1', segment_kind: 'intermediate' } })
+  const row = project({ messages: [first, commentary, last], liveTurnId: 'T1' })[0]
+  assert.equal(row.kind, 'work')
+  if (row.kind === 'work') {
+    assert.equal(row.sections[0].sectionId, 'activity:first')
+    assert.equal(row.sections[2].sectionId, 'activity:last')
+  }
 })

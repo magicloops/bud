@@ -63,7 +63,11 @@ file-open/link affordances are gated on the `fileActions` prop, which only
 final assistant rows receive — reasoning rows, intermediate assistant
 commentary, and everything rendered inside a work group never get it, so
 grouping cannot widen action semantics (mobile-parity boundary). Work-group
-rows expose no copy button; per-message copy stays on top-level rows only.
+rows expose no copy button; per-message copy stays on top-level rows only. Live
+commentary is a stable top-level Markdown host until final consolidation. Activity
+details mount only on item expansion. Final classification changes streaming props,
+not the final message key or renderer type; typography minimum height is owned by
+the chat layout, not the shared Markdown renderer.
 
 ## Subfolders
 

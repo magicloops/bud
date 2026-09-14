@@ -10,11 +10,11 @@
     { "message_id": "m-a1", "client_id": "a1", "role": "assistant", "display_role": "Bud Agent", "content": "done", "created_at": "2026-08-30T10:00:04.000Z", "metadata": { "turn_id": "T1", "segment_kind": "final" } }
   ],
   "expected": [
-    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": null, "current_item_client_id": null, "sections": [
+    { "kind": "work", "id": "agent-work:T1", "live": false, "status": "ok", "duration_ms": null, "sections": [
       { "kind": "activity", "client_id": "t1" }
     ] },
     { "kind": "message", "client_id": "q1" },
-    { "kind": "work", "id": "agent-work:T1:2", "live": false, "status": "ok", "duration_ms": null, "current_item_client_id": null, "sections": [
+    { "kind": "work", "id": "agent-work:T1:t2", "live": false, "status": "ok", "duration_ms": null, "sections": [
       { "kind": "activity", "client_id": "t2" }
     ] },
     { "kind": "message", "client_id": "a1" }

@@ -1,3 +1,4 @@
+import { isFinalAssistantMessage } from './assistant-activity-indicator-state.ts'
 import type { ApiMessage } from '../../lib/api-types'
 import {
   getToolName,
@@ -7,7 +8,6 @@ import {
 import { computeAgentWorkDurationMs } from '../../lib/agent-work-duration.ts'
 import {
   getMessageIdentity,
-  isDraftReasoningMessage,
   isPendingToolMessage,
 } from './thread-message-state.ts'
 
@@ -29,6 +29,7 @@ const QUESTION_TOOL = 'ask_user_questions'
 export type TimelineWorkSection = {
   /** `intermediate`: assistant commentary separating activity; `activity`: reasoning/tool. */
   kind: 'intermediate' | 'activity'
+  sectionId?: string
   message: ApiMessage
 }
 
@@ -42,11 +43,8 @@ export type TimelineWorkRow = {
   sourceClientIds: string[]
   /** True while this turn is the thread's active run. */
   live: boolean
-  /** Live only: the in-progress step (streaming reasoning draft or pending
-   * tool). Null between steps (the model is thinking) and once the run ends. */
-  currentItem: ApiMessage | null
-  /** A visible assistant boundary closes the tail activity segment. */
-  endsAtAssistant: boolean
+  /** Presentation completion is independent of execution activity. */
+  canFold: boolean
   /** Live groups report 'ok'; it is meaningful only once the run ended. */
   status: WorkRowStatus
   /** Authoritative work duration; null while live or without trustworthy metadata. */
@@ -89,12 +87,8 @@ const isWorkMessage = (message: ApiMessage): boolean => {
 }
 
 const isCanonicalFinalAssistant = (message: ApiMessage): boolean =>
-  message.role === 'assistant' &&
-  message.metadata?.draft !== true &&
-  !isIntermediateAssistantMessage(message)
-
-const isInProgressWorkItem = (message: ApiMessage): boolean =>
-  isPendingToolMessage(message) || isDraftReasoningMessage(message)
+  isFinalAssistantMessage(message) &&
+  message.metadata?.draft !== true && message.content.trim().length > 0
 
 type GroupAccumulator = {
   turnId: string | null
@@ -134,7 +128,14 @@ export const createTimelineProjector = () => {
     const rows: TimelineRow[] = []
     const nextWorkRows = new Map<string, TimelineWorkRow>()
     const nextMessageRows = new Map<string, TimelineMessageRow>()
-    const usedIds = new Map<string, number>()
+    const usedIds = new Set<string>()
+    const usedSectionIds = new Set<string>()
+    const previousBySource = new Map<string, TimelineWorkRow>()
+    const previousActivityIds = new Map<string, string>()
+    for (const row of previousWorkRows.values()) for (const section of row.sections) {
+      previousBySource.set(section.message.client_id, row)
+      if (section.sectionId) previousActivityIds.set(section.message.client_id, section.sectionId)
+    }
     let group: GroupAccumulator | null = null
 
     const messageRow = (message: ApiMessage): TimelineMessageRow => {
@@ -178,18 +179,21 @@ export const createTimelineProjector = () => {
       const base = accumulator.turnId
         ? `agent-work:${accumulator.turnId}`
         : `agent-work:legacy:${getMessageIdentity(accumulator.messages[0])}`
-      // A boundary interleaved mid-turn (e.g. a superseding user message)
-      // splits the turn into suffixed segments; the first keeps the base id.
-      const seen = usedIds.get(base) ?? 0
-      usedIds.set(base, seen + 1)
-      const id = seen === 0 ? base : `${base}:${seen + 1}`
+      const overlaps = new Map<TimelineWorkRow, number>()
+      for (const message of accumulator.messages) {
+        const previous = previousBySource.get(message.client_id)
+        if (previous && !usedIds.has(previous.id)) overlaps.set(previous, (overlaps.get(previous) ?? 0) + 1)
+      }
+      const match = [...overlaps].sort((a, b) => b[1] - a[1])[0]?.[0]
+      const id = match?.id ?? (!usedIds.has(base) && !previousWorkRows.has(base)
+        ? base : `${base}:${accumulator.messages[0].client_id}`)
+      usedIds.add(id)
 
       const live = accumulator.turnId !== null && accumulator.turnId === liveTurnId
       const status = resolveStatus(accumulator, live, nextBoundary)
-      const last = accumulator.messages[accumulator.messages.length - 1]
-      const currentItem = live && isInProgressWorkItem(last) ? last : null
-
-      const endsAtAssistant = nextBoundary?.role === 'assistant' && nextBoundary.content.trim().length > 0
+      const canFold = accumulator.turnId !== null
+        ? finalTurnIds.has(accumulator.turnId)
+        : Boolean(nextBoundary && isCanonicalFinalAssistant(nextBoundary))
       const previous = previousWorkRows.get(id)
       const sourcesUnchanged =
         previous !== undefined &&
@@ -199,29 +203,39 @@ export const createTimelineProjector = () => {
         previous &&
         sourcesUnchanged &&
         previous.live === live &&
-        previous.status === status &&
-        previous.currentItem === currentItem &&
-        previous.endsAtAssistant === endsAtAssistant
+        previous.canFold === canFold &&
+        previous.status === status
       ) {
+        for (const section of previous.sections) if (section.sectionId) usedSectionIds.add(section.sectionId)
         nextWorkRows.set(id, previous)
         rows.push(previous)
         return
       }
 
+      const sections: TimelineWorkSection[] = accumulator.messages.map(message => ({
+        kind: isIntermediateAssistantMessage(message) ? 'intermediate' : 'activity', message,
+      }))
+      for (let index = 0; index < sections.length;) {
+        if (sections[index].kind !== 'activity') { index += 1; continue }
+        let end = index + 1
+        while (end < sections.length && sections[end].kind === 'activity') end += 1
+        const segment = sections.slice(index, end)
+        const sectionId = segment.map(section => previousActivityIds.get(section.message.client_id)).find(id => id && !usedSectionIds.has(id))
+          ?? `activity:${sections[index].message.client_id}`
+        usedSectionIds.add(sectionId)
+        for (const section of segment) section.sectionId = sectionId
+        index = end
+      }
       const row: TimelineWorkRow = {
         kind: 'work',
         id,
         turnId: accumulator.turnId,
-        sections: accumulator.messages.map((message) => ({
-          kind: isIntermediateAssistantMessage(message) ? 'intermediate' : 'activity',
-          message,
-        })),
+        sections,
         sourceClientIds: accumulator.messages.map(getMessageIdentity),
         live,
-        currentItem,
-        endsAtAssistant,
+        canFold,
         status,
-        durationMs: live
+        durationMs: live && !canFold
           ? null
           : sourcesUnchanged && previous && !previous.live
             ? previous.durationMs
@@ -232,6 +246,7 @@ export const createTimelineProjector = () => {
     }
 
     for (const message of messages) {
+      if (message.role === 'assistant' && !message.content.trim()) continue
       if (isWorkMessage(message)) {
         const turnId = getTurnId(message)
         if (group && sameGroup(group, turnId)) {
@@ -251,4 +266,20 @@ export const createTimelineProjector = () => {
     previousMessageRows = nextMessageRows
     return rows
   }
+}
+
+const segmentCache = new WeakMap<TimelineWorkRow, TimelineWorkSection[][]>()
+
+export function workSegments(row: TimelineWorkRow): TimelineWorkSection[][] {
+  const cached = segmentCache.get(row)
+  if (cached) return cached
+  const segments: TimelineWorkSection[][] = []
+  for (const section of row.sections) {
+    if (section.kind === 'intermediate' && !section.message.content.trim()) continue
+    const last = segments.at(-1)
+    if (section.kind === 'activity' && last?.[0].kind === 'activity') last.push(section)
+    else segments.push([section])
+  }
+  segmentCache.set(row, segments)
+  return segments
 }

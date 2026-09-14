@@ -54,7 +54,7 @@ web/
 | `build` | `tsc -b && vite build` | Type check & production build |
 | `lint` | `eslint .` | Run ESLint |
 | `test` | `node --experimental-strip-types --test 'src/**/*.test.ts'` | Run the current pure-helper web test suite without extra browser test dependencies |
-| `test:render` | `tsx --tsconfig tsconfig.app.json --test 'src/**/*.test.tsx'` | Server-rendered React content checks using the app JSX configuration |
+| `test:render` | `tsx --tsconfig tsconfig.app.json --test 'src/**/*.test.tsx'` | Server-rendered content and mounted React hook/component checks using the app JSX configuration |
 | `test:watch` | `node --watch --experimental-strip-types --test 'src/**/*.test.ts'` | Re-run the current pure-helper suite while editing |
 | `preview` | `vite preview` | Preview production build |
 
@@ -147,7 +147,7 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 ### Chat Interface
 
 - Message timeline with role-based rendering
-- Agent-work collapse (design/web-agent-work-collapse.md): each turn's reasoning, tool calls, and intermediate commentary render as one expandable group — live groups show `Working… · elapsed · current step` with only the current step visible; completed groups collapse to `Worked for <duration>` with failure badges
+- Streaming parity (plan/web-mobile-streaming-parity.md): commentary interleaves collapsed activity sections; only completed explicit final answers consolidate preceding work into Worked for. Manual inspection suspends automatic bottom-follow.
 - Stable `client_id`-first message identity across optimistic sends, `/agent/state` bootstrap, agent SSE, and canonical transcript rows
 - Tool call visualization (terminal.run, etc.)
 - Streamdown-backed Markdown for streaming and persisted messages, with code, Mermaid, and math rendering
@@ -223,6 +223,7 @@ weight, the chrome stays quiet.
 | `@tanstack/router-plugin` | Route generation |
 | `@tailwindcss/vite` | Tailwind integration |
 | `tsx` | TypeScript loader for focused Node test commands |
+| `react-test-renderer`, `@types/react-test-renderer` | Dev-only mounted React identity/hook regressions; no browser geometry or production dependency |
 
 ---
 
