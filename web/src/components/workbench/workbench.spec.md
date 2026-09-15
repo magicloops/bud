@@ -618,3 +618,14 @@ Assistant draft and commentary rows omit the entire Bud/timestamp header, includ
 persisted intermediate commentary, without reserving empty header space. Completed
 final responses retain their normal header. The spinner likewise has no invisible
 header, matching the one-line streaming body reservation.
+
+## Bud-owned Browser pane
+
+`ViewMode` includes `browser`; `WorkspaceShell.browserAvailable` exposes a Globe
+Browser tab alongside Web (proxied apps), Terminal and File. Existing split and
+narrow peer-pane layout is reused. Browser selection is visit-local, not persisted.
+The existing-thread route hosts `features/browser/BrowserViewer` in the right
+pane; browser lifecycle/media belongs to that feature, not terminal or chat state.
+Hiding Browser unmounts it to release private input/media while terminal and app
+preview retain their existing mounted behavior. New-thread creation does not show
+Browser until an owned session exists in the resulting conversation.

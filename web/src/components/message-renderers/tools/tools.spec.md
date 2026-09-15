@@ -8,6 +8,15 @@ Provides components for rendering tool-specific UI within chat messages. When th
 
 ## Files
 
+### `browser-handoff.tsx`
+
+Inline `browser_request_handoff` reason and Open browser link. Only a strict
+first-party `/browser/browser_<ULID>` path is accepted; no arbitrary external
+viewer URL or secret input is rendered. Pending handoffs stay visible outside
+collapsed work. Normal clicks use the workbench Browser pane context; modifier
+clicks or missing context retain the standalone link. Rendering history never
+opens a viewer. Completed results use the existing summary/payload behavior.
+
 ### `web-retrieval.tsx`
 
 Concise `web_search`/`web_read` result summaries and source links inside the

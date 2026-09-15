@@ -168,6 +168,10 @@ The section switcher forms the header without a duplicate title; an icon closes
 the dialog, automation rows separate names from status, and the footer holds
 management and refresh actions. The dialog retains an accessible name.
 
+Browser discovery now belongs to `features/browser/pane.tsx` and the workbench
+Browser tab, separate from this data/automation modal. Remote frames never enter
+chat state.
+
 ## Subfolders
 
 ### `ui/` → [ui/ui.spec.md](./ui/ui.spec.md)

@@ -892,3 +892,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 ---
 
 *Last updated: 2026-06-10*
+
+## Bud-owned browser (Phases 1–2)
+
+Normal agent chats can use browser_open, browser_observe, browser_act and browser_close through the service browser broker and the selected daemon. Each thread owns an isolated ephemeral Chrome for Testing session with durable service identity and fenced WS/gRPC commands. This is separate from localhost app previews. Phase 2 adds browser_request_handoff, durable agent parking/return, private user takeover and a standalone authenticated web viewer with a separate bounded media WebSocket relay. Native mobile/workbench integration remains Phase 3. See [setup](./plan/bud-owned-browser/phase-1-agent-browser.md), [Phase-2 acceptance](./plan/bud-owned-browser/phase-2-private-handoff.md), [service broker](./service/src/browser/browser.spec.md), and [daemon runtime](./bud/src/browser/browser.spec.md).

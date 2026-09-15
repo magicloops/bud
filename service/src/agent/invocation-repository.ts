@@ -1,3 +1,4 @@
+import { browserHandoffTable as browserHandoff, browserSessionTable as browserSession } from "../db/schema.js";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
@@ -64,6 +65,21 @@ export class InvocationRepository {
         eq(inv.createdByUserId, question.createdByUserId)))
       .where(and(eq(question.createdByUserId, owner), eq(question.threadId, threadId), eq(question.status, "pending"),
         eq(inv.reservesThread, true))).orderBy(asc(question.createdAt)).limit(20);
+  }
+
+  async pendingBrowserHandoffForThread(owner: string, threadId: string) {
+    const [row] = await this.database.select({handoff:browserHandoff,turnId:inv.turnId})
+      .from(browserHandoff).innerJoin(inv,and(eq(inv.id,browserHandoff.invocationId),
+        eq(inv.createdByUserId,browserHandoff.createdByUserId)))
+      .innerJoin(action,and(eq(action.invocationId,inv.id),eq(action.callId,browserHandoff.callId),
+        eq(action.status,"waiting_for_user"),sql`${action.evidence}->>'browser_handoff_id'=${browserHandoff.id}`))
+      .where(and(eq(browserHandoff.threadId,threadId),eq(browserHandoff.createdByUserId,owner),
+        eq(browserHandoff.status,"pending"),eq(inv.status,"waiting_for_user"),isNull(inv.cancelRequestedAt)))
+      .limit(1);
+    if(!row?.handoff.clientId || !row.handoff.callId)return null;
+    return {turn_id:row.turnId,pending_tool:{client_id:row.handoff.clientId,call_id:row.handoff.callId,
+      name:"browser_request_handoff",started_at:row.handoff.createdAt.toISOString(),
+      args:{reason:row.handoff.reason,handoff_id:row.handoff.id,viewer_path:`/browser/${row.handoff.sessionId}`}}};
   }
 
   async pendingDataRequestsForThread(owner: string, threadId: string) {
@@ -195,6 +211,13 @@ export class InvocationRepository {
                 and a.kind = ${BOOTSTRAP_PROPOSAL_TOOL} and p.status <> 'pending'
                 and p.invocation_id = ${inv.id} and p.call_id = a.call_id
                 and p.thread_id = ${inv.threadId} and p.created_by_user_id = ${inv.createdByUserId}
+            ) or exists (
+              select 1 from agent_invocation_action a join browser_handoff h
+                on h.id=a.evidence->>'browser_handoff_id'
+              join browser_session s on s.id=h.session_id and s.created_by_user_id=h.created_by_user_id
+              where a.invocation_id=agent_invocation.id and a.status='waiting_for_user'
+                and h.status='returned' and s.control_state='agent' and s.closed_at is null
+                and h.invocation_id=${inv.id} and h.created_by_user_id=${inv.createdByUserId}
             ))))`,
           sql`${inv.nextAttemptAt} <= clock_timestamp()`,
           isNull(inv.cancelRequestedAt), isNull(threadTable.deletedAt),
@@ -217,6 +240,7 @@ export class InvocationRepository {
         .from(inv).where(eq(inv.id, candidate.id));
       const current = selected?.invocation;
       if (!current || current.cancelRequestedAt || !["pending", "retry_wait", "waiting_for_bud", "waiting_for_model", "waiting_for_user"].includes(current.status)) return null;
+      // Private browser authority is enforced at browser dispatch, not chat claim.
       const [active] = await tx.select({ id: inv.id }).from(inv).where(and(eq(inv.threadId, current.threadId),
         sql`${inv.id} <> ${current.id}`,
         eq(inv.reservesThread, true))).limit(1);
@@ -350,6 +374,8 @@ export class InvocationRepository {
       const current = await this.lockedLease(tx, lease, ["leased", "running"], true);
       const [pending] = await tx.select({ id: action.id }).from(action)
         .where(and(eq(action.invocationId, lease.id), sql`${action.status} in ('intent','waiting_for_user')`)).limit(1);
+      if(!pending || current.cancelRequestedAt)await tx.update(browserHandoff).set({status:"canceled",resolvedAt:sql`clock_timestamp()`})
+        .where(and(eq(browserHandoff.invocationId,lease.id),eq(browserHandoff.status,"pending")));
       await tx.update(inv).set({ status: current.cancelRequestedAt ? "canceled" : pending ? "needs_review" : status,
         reservesThread: !current.cancelRequestedAt && (Boolean(pending) || status === "needs_review"),
         outcomeCode: current.cancelRequestedAt ? "user_canceled" : pending ? "unresolved_action_intent" : outcomeCode,
@@ -370,6 +396,9 @@ export class InvocationRepository {
       // can be released. Fenced lease recovery also honors this explicit decision;
       // neither path claims that already dispatched terminal commands stopped.
       const running = row.status === "running";
+      await tx.update(browserHandoff).set({ status: "canceled", resolvedAt: sql`clock_timestamp()` })
+        .where(and(eq(browserHandoff.invocationId, row.id), eq(browserHandoff.createdByUserId, owner),
+          eq(browserHandoff.status, "pending")));
       {
         await tx.update(question).set({ status: "canceled", updatedAt: sql`clock_timestamp()` })
           .where(and(eq(question.threadId, row.threadId), eq(question.turnId, row.turnId),
@@ -388,6 +417,45 @@ export class InvocationRepository {
         updatedAt: sql`clock_timestamp()`,
       }).where(eq(inv.id, row.id)).returning();
       return updated;
+  }
+
+  async parkBrowserHandoff(lease: InvocationLease, callId: string, handoffId: string) {
+    return this.database.transaction(async tx => {
+      const row = await this.lockedLease(tx, lease, ["running"]);
+      const [handoff] = await tx.select().from(browserHandoff)
+        .innerJoin(browserSession, eq(browserSession.id,browserHandoff.sessionId))
+        .where(and(eq(browserHandoff.id,handoffId),eq(browserHandoff.invocationId,row.id),
+          eq(browserHandoff.callId,callId),eq(browserHandoff.createdByUserId,row.createdByUserId),
+          eq(browserHandoff.status,"pending"),eq(browserSession.controlState,"paused"))).limit(1);
+      if (!handoff) throw new InvocationError("browser_handoff_not_available");
+      const [intent] = await tx.update(action).set({status:"waiting_for_user",fence:lease.fence+1,
+        evidence:{browser_handoff_id:handoffId}}).where(and(eq(action.invocationId,row.id),
+          eq(action.callId,callId),eq(action.fence,lease.fence),eq(action.status,"intent"))).returning();
+      if (!intent) throw new InvocationError("browser_handoff_action_not_pending");
+      await tx.update(inv).set({status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
+        fence:sql`${inv.fence}+1`,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
+    });
+  }
+
+  async parkUserBrowserHandoff(lease:InvocationLease,nextCall?:{callId:string;tool:string}) {
+    return this.database.transaction(async tx=>{
+      const row=await this.lockedLease(tx,lease,["running"]);
+      const [handoff]=await tx.select({handoff:browserHandoff}).from(browserHandoff)
+        .innerJoin(browserSession,eq(browserSession.id,browserHandoff.sessionId))
+        .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.createdByUserId,row.createdByUserId),
+          eq(browserHandoff.kind,"user"),eq(browserHandoff.status,"pending"),isNull(browserHandoff.callId),
+          sql`${browserSession.controlState}<>'agent'`)).limit(1);
+      if(!handoff)return null;
+      const callId=nextCall?.callId??`browser-user-${handoff.handoff.id}`;
+      await tx.insert(action).values({id:ulid(),invocationId:row.id,callId,kind:nextCall?.tool??"browser_user_handoff",
+        status:"waiting_for_user",fence:lease.fence+1,createdByUserId:row.createdByUserId,
+        evidence:{browser_handoff_id:handoff.handoff.id}});
+      await tx.update(browserHandoff).set({callId}).where(eq(browserHandoff.id,handoff.handoff.id));
+      await tx.update(inv).set({status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
+        fence:sql`${inv.fence}+1`,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
+      return {handoff_id:handoff.handoff.id,viewer_path:`/browser/${handoff.handoff.sessionId}`,
+        client_id:handoff.handoff.clientId!,call_id:callId};
+    });
   }
 
   async parkQuestion(lease: InvocationLease, callId: string, questionRequestId: string) {
@@ -486,6 +554,9 @@ export class InvocationRepository {
       if (row.status !== "needs_review" || row.updatedAt.toISOString() !== expectedUpdatedAt) {
         throw new InvocationError("invocation_review_conflict");
       }
+      await tx.update(browserHandoff).set({ status: "canceled", resolvedAt: sql`clock_timestamp()` })
+        .where(and(eq(browserHandoff.invocationId, row.id), eq(browserHandoff.createdByUserId, owner),
+          eq(browserHandoff.status, "pending")));
       await tx.insert(action).values({ id: ulid(), invocationId: row.id, callId: "owner-review-" + ulid(),
         kind: "owner_review", status: "completed", fence: row.fence,
         evidence: { decision: "abandon", acknowledged_possible_effects: true, prior_outcome_code: row.outcomeCode },
@@ -515,7 +586,32 @@ export class InvocationRepository {
       const messages: (typeof messageTable.$inferSelect)[] = [];
       for (const pending of waiting) {
         let answer: { payload: Record<string, unknown>; clientId: string; createdAt: Date; answeredAt: Date; evidence: Record<string, unknown> };
-        if (pending.kind === BOOTSTRAP_PROPOSAL_TOOL) {
+        if (typeof pending.evidence?.browser_handoff_id === "string") {
+          const [handoff] = await tx.select().from(browserHandoff).where(and(
+            eq(browserHandoff.id,pending.evidence.browser_handoff_id),eq(browserHandoff.invocationId,current.id),
+            eq(browserHandoff.createdByUserId,current.createdByUserId),eq(browserHandoff.status,"returned")));
+          if (!handoff || !handoff.clientId || !handoff.resolvedAt) throw new InvocationError("browser_handoff_return_missing");
+          if(pending.kind==="browser_user_handoff") {
+            // No provider tool was pending at this boundary. Do not invent a
+            // tool result in provider history just to represent user control.
+            const [message] = await tx.insert(messageTable).values({
+              clientId: handoff.clientId, threadId: current.threadId,
+              role: "system", displayRole: "Browser",
+              content: "The user returned browser control. Observe the current page before acting; do not repeat completed actions.",
+              createdByUserId: current.createdByUserId,
+              metadata: { turn_id: current.turnId, invocation_id: current.id, continuation: true,
+                browser_handoff_id: handoff.id },
+            }).returning();
+            messages.push(message);
+            await tx.update(action).set({status:"completed",completedAt:sql`clock_timestamp()`,
+              evidence:{browser_handoff_id:handoff.id,continuation_restored:true}}).where(eq(action.id,pending.id));
+            continue;
+          }
+          answer = {clientId:handoff.clientId,createdAt:handoff.createdAt,answeredAt:handoff.resolvedAt,
+            evidence:{browser_handoff_id:handoff.id,continuation_restored:true},
+            payload:{tool:"browser_request_handoff",call_id:pending.callId,kind:"browser",ok:true,
+              handoff_id:handoff.id,summary:"The user returned browser control. Observe the current page before acting; do not repeat completed actions."}};
+        } else if (pending.kind === BOOTSTRAP_PROPOSAL_TOOL) {
           const proposalId = pending.evidence?.bootstrap_proposal_id;
           const clientId = pending.evidence?.tool_client_id;
           if (typeof proposalId !== "string" || typeof clientId !== "string") throw new InvocationError("bootstrap_proposal_reference_missing");
@@ -600,7 +696,8 @@ export class InvocationRepository {
               .where(and(eq(action.invocationId, current.id), eq(action.callId, block.id))).limit(1);
             if (dispatched) throw new InvocationError("continuation_action_ambiguous");
           }
-          const payload = isQuestion ? answer.payload : deferredToolResult(block, (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation" : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question");
+          const userTakeover=pending.evidence?.browser_handoff_id && pending.kind!=="browser_request_handoff";
+          const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block, pending.evidence?.browser_handoff_id ? "browser" : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation" : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question");
           const content = JSON.stringify(payload);
           const finishedAt = isQuestion ? answer.answeredAt : new Date();
           const startedAt = isQuestion ? answer.createdAt : finishedAt;
@@ -650,6 +747,9 @@ export class InvocationRepository {
       for (const row of rows) {
         const [continuation] = await tx.select({ id: action.id }).from(action)
           .where(and(eq(action.invocationId, row.id), eq(action.status, "waiting_for_user"))).limit(1);
+        if(row.cancelRequestedAt || row.status==='running')await tx.update(browserHandoff)
+          .set({status:'canceled',resolvedAt:sql`clock_timestamp()`})
+          .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,'pending')));
         await tx.update(inv).set({ reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation)),
           status: row.cancelRequestedAt ? "canceled" : row.status === "leased" ? "retry_wait" : "needs_review",
           outcomeCode: row.cancelRequestedAt ? "user_canceled" : row.status === "leased" ? "preflight_lease_expired" : "execution_lease_expired",

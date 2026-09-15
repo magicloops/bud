@@ -126,6 +126,14 @@ async fn build_doctor_report(args: &BudArgs) -> DoctorReport {
     checks.push(check_shell(default_shell()).await);
     checks.push(check_service_manager());
     checks.push(check_supervision_directives());
+    let browser = crate::browser::BrowserManager::configured().await;
+    checks.push(if browser.capability()["available"] == true {
+        check_ok("browser", "Chrome for Testing launched, answered CDP, and closed; ephemeral profile mode".into())
+    } else {
+        check_warning("browser", "Optional managed browser is unavailable".into(), vec![
+            "Set BUD_BROWSER_EXECUTABLE to a Chrome for Testing executable in the daemon environment, then restart Bud. No personal profile or automatic download is used.".into(),
+        ])
+    });
     DoctorReport::new(checks)
 }
 

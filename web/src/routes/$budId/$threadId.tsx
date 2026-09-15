@@ -1,3 +1,6 @@
+import { BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
+import { BrowserViewer } from '@/features/browser/viewer'
+import { useAuthSession } from '@/contexts/auth-session-context'
 import { ChatDataContext } from '@/components/chat-data-context'
 /**
  * Thread View - workspace for an existing thread
@@ -100,7 +103,8 @@ export const Route = createFileRoute('/$budId/$threadId')({
 
 function ThreadView() {
   const { threadId } = Route.useParams()
-  return <ThreadViewContent key={threadId} />
+  const { currentUser } = useAuthSession()
+  return <ThreadViewContent key={`${currentUser?.user.id}:${threadId}`} />
 }
 
 function ThreadViewContent() {
@@ -178,6 +182,8 @@ function ThreadViewContent() {
       readStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null),
     ),
   )
+  const revealBrowser = useCallback(() => setViewMode('browser'), [])
+  const browserPane = useBrowserPane(threadId, initialMessagePage.messages, initialAgentState, revealBrowser)
   const handleViewChange = useCallback((view: ViewMode) => {
     // Clicking the already-active viewer tab collapses the viewer: chat
     // fills the workspace on desktop; on mobile it returns to the chat view.
@@ -557,6 +563,9 @@ function ThreadViewContent() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
+    if (message.role === 'tool') {
+      try { browserPane.notice(JSON.parse(message.content)) } catch { /* Not a browser result. */ }
+    }
     if (message.metadata?.tool === 'ask_user_questions') {
       setQuestionSubmitError(null)
       setStatus((current) => (current === 'dispatching' ? current : 'streaming'))
@@ -566,7 +575,7 @@ function ThreadViewContent() {
       setViewMode('web')
       void refreshThreadWebView()
     }
-  }, [applyToolResultMessage, refreshThreadWebView])
+  }, [applyToolResultMessage, refreshThreadWebView, browserPane.notice])
 
   const handleAssistantMessageStart = applyAssistantMessageStart
   const handleAssistantMessageDelta = applyAssistantMessageDelta
@@ -679,6 +688,7 @@ function ThreadViewContent() {
     onStatusChange: setStatus,
     onError: setError,
     onToolCall: (event) => {
+      if (event.name === 'browser_request_handoff' && event.args) browserPane.notice(event.args)
       if (event.name === 'data_request_api_key' || event.name === 'automations_request_activation' ||
         (event.name === 'automations_request_existing_contacts' && event.args?.kind === 'existing_contacts' && event.args?.status === 'pending')) {
         setStatus('waiting_for_user')
@@ -784,7 +794,7 @@ function ThreadViewContent() {
   } = useTerminalSession({
     budId,
     threadId,
-    viewMode,
+    viewMode: viewMode === 'browser' ? 'file' : viewMode,
     threadPanelOpen,
     onError: handleFeatureError,
     shouldAbortForUnauthorized,
@@ -1037,9 +1047,11 @@ function ThreadViewContent() {
   })
 
   return (
+    <BrowserPaneContext.Provider value={browserPane.open}>
     <WorkspaceShell
       title={currentThread.title ?? 'Untitled thread'}
       view={viewMode}
+      browserAvailable={Boolean(browserPane.sessionId)}
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
@@ -1067,6 +1079,13 @@ function ThreadViewContent() {
           {durableSummary && ['retry_wait', 'waiting_for_bud', 'waiting_for_model', 'needs_review', 'failed', 'expired'].includes(durableSummary.invocation.status) && (
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-sm" role="status">
               <span>{durableSummary.label}</span>
+            </div>
+          )}
+          {browserPane.pausedSessionId && (
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-sm" role="status">
+              <p><span className="font-medium">Browser actions paused.</span> You can keep chatting. Return browser control before Bud can browse again.</p>
+              <button type="button" className="shrink-0 text-primary underline underline-offset-4"
+                onClick={() => browserPane.open(browserPane.pausedSessionId!)}>Open browser controls</button>
             </div>
           )}
           {initialThread.model_warning && explicitSelectionThreadRef.current !== threadId && <p role="status" className="px-4 py-2 text-sm text-amber-700">{initialThread.model_warning}</p>}
@@ -1175,6 +1194,13 @@ function ThreadViewContent() {
             onFocusTerminal={focusTerminal}
             onInterruptTerminal={sendTerminalCtrlC}
           />
+          {viewMode === 'browser' && (
+            <div className="absolute inset-0 z-20 flex min-h-0 bg-background">
+              {browserPane.sessionId ? (
+                <BrowserViewer key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
+              ) : <p className="p-4 text-sm text-muted-foreground">No active browser. Ask your Bud to open a page.</p>}
+            </div>
+          )}
           {viewMode === 'file' && (
             <div className="absolute inset-0 z-20 flex">
               <FileViewerPane
@@ -1205,7 +1231,7 @@ function ThreadViewContent() {
           contextBudget={contextBudget}
           onViewModelContext={() => setTranscriptMode('model')}
           alignToPaneRef={chatPaneRef}
-          autoFocusKey={`${threadId}:${viewMode}`}
+          autoFocusKey={threadId}
         />
       )}
       debugPanel={(
@@ -1216,5 +1242,6 @@ function ThreadViewContent() {
         />
       )}
     />
+    </BrowserPaneContext.Provider>
   )
 }

@@ -64,6 +64,8 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, string> = {
   proxy_ws_message: "proxyWsMessage",
   proxy_ws_close: "proxyWsClose",
   proxy_ws_error: "proxyWsError",
+  browser_command: "browserCommand",
+  browser_result: "browserResult",
 };
 
 const FRAME_TYPE_BY_TYPED_PAYLOAD_FIELD = new Map(

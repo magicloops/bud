@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { receiveBrowserResult } from "../browser/transport.js";
 import { resolveConnectedBudName } from "../bud-name.js";
 import { registerBudLocalModelsFromCapabilities } from "../llm/local-llm-capabilities.js";
 import { createHmac, randomBytes } from "node:crypto";
@@ -180,6 +181,11 @@ export class BudConnection {
     }
 
     switch (envelope.data.type) {
+      case "browser_result": {
+        const tracker = this.getCurrentTracker();
+        if (tracker) receiveBrowserResult(tracker, parsed);
+        break;
+      }
       case "hello":
         await this.handleHello(parsed);
         break;
@@ -839,6 +845,7 @@ export class BudConnection {
     const tracker: SessionTracker = {
       budId,
       sessionId,
+      browserCapability: hello.capabilities.browser,
       deviceSessionId: deviceSession.deviceSessionId,
       transportSessionId: transportSession.transportSessionId,
       drainState: "active",

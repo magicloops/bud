@@ -40,6 +40,7 @@ const CapabilitiesSchema = z
     terminal_backends: z.array(z.string()).optional(),
     proxy: z.record(z.unknown()).optional(),
     files: z.record(z.unknown()).optional(),
+    browser: z.record(z.unknown()).optional(),
     llm: z.record(z.unknown()).optional()
   })
   .transform((capabilities) => ({
@@ -52,6 +53,7 @@ const CapabilitiesSchema = z
     ...(capabilities.bud_envelope ? { bud_envelope: capabilities.bud_envelope } : {}),
     ...(capabilities.proxy ? { proxy: capabilities.proxy } : {}),
     ...(capabilities.files ? { files: capabilities.files } : {}),
+    ...(capabilities.browser ? { browser: capabilities.browser } : {}),
     ...(capabilities.llm ? { llm: capabilities.llm } : {}),
   }));
 

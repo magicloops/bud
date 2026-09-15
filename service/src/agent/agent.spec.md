@@ -1263,3 +1263,52 @@ Provider adapters and tool execution/approval boundaries are unchanged.
 `output-activity.test.ts` covers paused argument generation, live/snapshot/replay
 consistency, interleaving, local Chat Completions, final persistence, errors and
 stale-call cleanup. See [design](../../../design/assistant-output-activity.md).
+
+## Bud-owned browser integration
+
+- `browser-tools.ts`: canonical browser schemas with strict action-specific
+  validation, nullable optional normalization and static correction guidance.
+- `browser-tool-executor.ts`: matching owner/thread/Bud SQL authorization before
+  and after execution, abort handling and narrow backend boundary.
+- `browser-tools.test.ts`: catalog/parser/replay/provider encoding, ordinary
+  agent-loop pairing, unsupported handoff without parking, plus opt-in prototype
+  handoff fixtures. `browser-ownership.test.ts` tests the real ownership SQL.
+
+`server.ts` injects the production `BrowserBroker`. `invocation-worker.ts` supplies
+its existing invocation ID/fence/worker through execution hooks; `AgentService`
+passes that identity and each tool call ID to the browser executor. Only capable
+online Buds receive open/observe/act/close. `browser_request_handoff` additionally
+requires the daemon's `handoff` capability and durable execution hooks. A stale
+handoff call on an unsupported Bud gets a paired unsupported result without waiting.
+
+The default prompt distinguishes external live browsing from localhost previews
+and explains daemon upgrade/runtime configuration when browser tools are absent.
+Unknown outcomes prohibit automatic replay. Browser records and tool transcripts
+inherit invocation ownership. Semantic observations use ordinary canonical tool
+results across providers; provider image serialization remains deferred.
+Phase 2 implements real durable parking and a standalone authenticated web viewer.
+See [browser broker](../browser/browser.spec.md) and
+[Phase 1](../../../plan/bud-owned-browser/phase-1-agent-browser.md).
+
+`parkBrowserHandoff` retains the waiting invocation but releases both its worker
+lease and thread reservation, allowing follow-up chat. `parkUserBrowserHandoff` handles takeover before a provider
+request or the next tool dispatch; in-flight work is accounted for before parking.
+Claim serializes chat invocations independently of browser control. Browser
+prepare and post-dispatch evidence checks reject private/paused access, including
+close and boot replacement. Explicit return makes the waiting original invocation
+eligible again, serialized with any intervening chat; no browser action is replayed. Continuation writes each remaining provider tool result once;
+undispatched calls are marked `not_executed_due_to_browser_handoff`. A takeover at
+a boundary with no tool inserts a system context note to observe the current page,
+without inventing a provider call/result. Cancel/abandon/expired-running recovery
+closes pending handoffs, never authorizing replay of uncertain mutations.
+
+`emitBrowserHandoff` uses existing `agent.tool_call` and waiting-user runtime state.
+The authorized agent-state route recovers the prompt from durable handoff/action
+rows after restart; stale process-local browser prompts are removed. Media/input
+stay outside model context and transcripts. Tests are in `browser/continuation.test.ts`
+and `browser/control.test.ts`; actual signed-in flow acceptance is tracked in
+[Phase 2](../../../plan/bud-owned-browser/phase-2-private-handoff.md).
+
+See [private-control chat](../../../plan/bud-owned-browser/private-control-chat.md).
+Browser rejections explain how to return control; the model can answer normally
+without a retry loop. Handoff catalog availability excludes private/paused sessions.

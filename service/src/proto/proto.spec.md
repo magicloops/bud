@@ -61,3 +61,7 @@ Conformance coverage against [../../../proto/fixtures/legacy-terminal-ensure.jso
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Browser envelope slots
+
+`wire.ts` encodes browser_command/browser_result as tags 190/191 with bounded JSON bridge payloads. `wire.test.ts` uses unassigned tag 192 for unknown-payload rejection. Existing terminal field encodings are unchanged.

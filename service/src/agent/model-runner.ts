@@ -1,3 +1,4 @@
+import { isBrowserToolName } from "./browser-tools.js";
 import { isAutomationToolName, parseAutomationToolInput } from "../personal-data/automation-tool-contracts.js";
 import { ulid } from "ulid";
 import type { FastifyBaseLogger } from "fastify";
@@ -640,6 +641,10 @@ export class AgentModelRunner {
 
   private extractToolCallDirective(toolCall: CanonicalToolCall): AgentToolCallDirective | null {
     const args = toolCall.input;
+    // Preserve invalid calls as directives so execution can return a paired
+    // validation error, rather than silently dropping a provider call ID.
+    if (isBrowserToolName(toolCall.name)) return { type: "tool_call", tool: toolCall.name,
+      callId: toolCall.id, args };
     if (isAutomationToolName(toolCall.name)) return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
       args: parseAutomationToolInput(toolCall.name, args) };
 

@@ -169,6 +169,13 @@ export const buildPendingToolMessageFromToolCall = ({
 }
 
 export const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  const browserWait = agentState.pending_tool?.name === 'browser_request_handoff' && agentState.turn_id &&
+    agentState.invocations?.some(invocation=>invocation.turn_id===agentState.turn_id && invocation.status==='waiting_for_user')
+  if(browserWait && agentState.pending_tool && agentState.turn_id) {
+    const tool=agentState.pending_tool
+    return buildPendingToolMessageFromToolCall({turnId:agentState.turn_id,clientId:tool.client_id,
+      callId:tool.call_id,name:tool.name,args:tool.args,startedAt:tool.started_at})
+  }
   if (agentState.pending_data_requests !== undefined && agentState.pending_tool?.name === 'data_request_api_key') return null
   if (agentState.pending_questions !== undefined && agentState.pending_tool?.name === 'ask_user_questions') return null
   if (agentState.pending_bootstrap_requests !== undefined && agentState.pending_tool?.name === 'automations_request_existing_contacts') return null

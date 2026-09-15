@@ -1840,3 +1840,58 @@ export const webRetrievalArtifactTable = pgTable("web_retrieval_artifact", {
   threadFk: foreignKey({ name: "web_retrieval_artifact_thread_fk", columns: [t.threadId, t.budId, t.createdByUserId], foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }).onDelete("cascade"),
   sizeCheck: check("web_retrieval_artifact_size_check", sql`${t.byteLength} between 0 and 524288`),
 }));
+
+// Browser lifecycle is independent of terminals and app-preview proxies. Keep
+// cleanup intent until the daemon confirms close (including offline deletion).
+export const browserSessionTable = pgTable("browser_session", {
+  id: text("id").primaryKey(), threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  generation: text("generation").notNull(), bootId: text("boot_id").notNull(),
+  profileMode: text("profile_mode").notNull().default("ephemeral"),
+  state: text("state").notNull().default("opening"),
+  desiredState: text("desired_state").notNull().default("open"),
+  controlState: text("control_state").notNull().default("agent"),
+  privateContent: boolean("private_content").notNull().default(false),
+  revision: integer("revision").notNull().default(0),
+  controlRequestId: text("control_request_id"),
+  controlEpoch: integer("control_epoch").notNull().default(1),
+  sequence: integer("sequence").notNull().default(0),
+  invocationId: text("invocation_id"), invocationFence: integer("invocation_fence"),
+  pendingUntil: timestamp("pending_until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+}, t => ({
+  ownerKey: unique("browser_session_context_key").on(t.id, t.threadId, t.budId, t.createdByUserId),
+  controlCheck: check("browser_session_control_check", sql`${t.controlState} in ('agent','paused','human_private','resume_pending') and ${t.revision} >= 0`),
+  activeThread: uniqueIndex("browser_session_active_thread_idx").on(t.threadId).where(sql`${t.closedAt} is null`),
+  ownerIdx: index("browser_session_owner_idx").on(t.createdByUserId, t.budId),
+  cleanupIdx: index("browser_session_cleanup_idx").on(t.budId, t.desiredState, t.closedAt),
+  threadFk: foreignKey({ name: "browser_session_thread_owner_fk", columns: [t.threadId, t.budId, t.createdByUserId],
+    foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }),
+  stateCheck: check("browser_session_state_check", sql`${t.state} in ('opening','ready','interrupted','closed') and ${t.desiredState} in ('open','closed') and ${t.profileMode} = 'ephemeral'`),
+  countersCheck: check("browser_session_counters_check", sql`${t.controlEpoch} > 0 and ${t.sequence} >= 0`),
+}));
+
+// No input, frames or credentials are stored in durable handoff records.
+export const browserHandoffTable = pgTable("browser_handoff", {
+  id: text("id").primaryKey(), sessionId: text("session_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  invocationId: text("invocation_id"), callId: text("call_id"), clientId: uuid("client_id"),
+  reason: text("reason").notNull(), kind: text("kind").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  returnedByUserId: text("returned_by_user_id"),
+  createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", {withTimezone:true}),
+}, t => ({
+  pendingSession: uniqueIndex("browser_handoff_pending_session_idx").on(t.sessionId).where(sql`${t.status} = 'pending'`),
+  callKey: unique("browser_handoff_call_key").on(t.invocationId,t.callId),
+  ownerIdx: index("browser_handoff_owner_idx").on(t.createdByUserId,t.threadId,t.status),
+  sessionFk: foreignKey({name:"browser_handoff_session_owner_fk", columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
+    foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
+  invocationFk: foreignKey({name:"browser_handoff_invocation_owner_fk",columns:[t.invocationId,t.threadId,t.budId,t.createdByUserId],
+    foreignColumns:[agentInvocationTable.id,agentInvocationTable.threadId,agentInvocationTable.budId,agentInvocationTable.createdByUserId]}),
+  statusCheck: check("browser_handoff_status_check",sql`${t.status} in ('pending','returned','canceled') and ${t.kind} in ('agent','user')`),
+  actorCheck: check("browser_handoff_actor_check",sql`${t.returnedByUserId} is null or ${t.returnedByUserId} = ${t.createdByUserId}`),
+}));

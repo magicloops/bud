@@ -9,7 +9,7 @@ const row = (id: string, tool: string, pending: boolean): ApiMessage => ({
   metadata: { tool, turn_id: 'turn', pending },
 })
 
-const approvalTools = ['automations_request_activation', 'automations_request_existing_contacts', 'data_request_api_key']
+const approvalTools = ['automations_request_activation', 'automations_request_existing_contacts', 'data_request_api_key', 'browser_request_handoff']
 
 test('pending approval reviews stay visible between collapsed work groups', () => {
   for (const tool of approvalTools) {

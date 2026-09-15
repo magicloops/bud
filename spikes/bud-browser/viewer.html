@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bud browser experiment</title><link rel="stylesheet" href="/api/browser-spike/viewer.css"></head>
+<body><header><strong>Browser experiment</strong><span id="status">Connecting…</span></header>
+<main><canvas id="page" aria-label="Remote browser page"></canvas>
+<section><button id="takeover">Take control</button><button id="return" disabled>Return to agent</button>
+<select id="targets" aria-label="Browser tab"></select><button id="observe" disabled>Inspect page</button>
+<label>Address <input id="url" type="url" autocomplete="off"></label><button id="navigate" disabled>Go</button>
+<label>Page element <select id="elements"></select></label><button id="focus" disabled>Focus field</button><button id="click" disabled>Click element</button>
+<label>Private text <input id="text" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button id="insert" disabled>Insert text</button>
+<p>This prototype uses semantic element selection. Page-coordinate taps, arbitrary rich editors and native browser dialogs are not implemented. Returning explicitly allows the agent to observe the page again.</p>
+</section></main><script type="module" src="/api/browser-spike/viewer.js"></script></body></html>

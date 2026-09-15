@@ -225,7 +225,7 @@ web/file view. No storage.
 status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
-viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
+viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'browser' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
 transcriptMode: 'chat' | 'model'  // session-only, reset on thread switch; 'model' hides the mounted ChatTimeline while showing ModelContextView, preserving inspection/disclosure
 terminalMenuOpen: boolean
 
@@ -361,7 +361,7 @@ and clears after a supported deliberate replacement.
 
 ## Web streaming parity (September 13, 2026)
 
-Thread content is keyed by thread ID. State/bootstrap refreshes capture the current
+Thread content is keyed by authenticated owner and thread ID. State/bootstrap refreshes capture the current
 visit, request sequence and stream revision; obsolete responses cannot rewind
 streamed activity. `message_done` classification reaches message state immediately,
 and explicit nonempty final completion suppresses progress before persistence.
@@ -384,3 +384,21 @@ progress. See [debug note](../../../../debug/web-spinner-stale-snapshot.md).
 Post-send durable admission (`pending`/`leased`/`running` with inactive runtime)
 keeps dispatching progress visible through worker startup. Accepted blocked/waiting
 or terminal states still clear it; no cosmetic timer masks the transition.
+
+## Browser pane integration
+
+`useBrowserPane` owns one bounded inventory poll and visit-local reveal identities.
+Canonical successful browser_open results and committed handoff tool events reveal
+Browser once. Existing history and first inventory are baselines; repeated events
+never override dismissal. Explicit inline links use the same open context. The
+shared viewer uses the right split pane (narrow layouts: a peer view); its identity
+survives resize/polling. Composer autofocus is keyed to thread, not viewer mode,
+so automatic reveals do not steal focus. Terminal receives its existing hidden
+file-overlay mode while Browser is selected. Dismissal releases viewer control
+without closing the remote browser or resuming the agent. New-thread layout needs
+no discovery until creation navigates into the existing-thread route.
+
+The browser inventory supplies a chat notice when browser actions are paused,
+with Open browser controls to reach the existing explicit return flow. It does
+not disable the composer or imply all agent work is paused. New threads have no
+browser session, so their layout remains unchanged.

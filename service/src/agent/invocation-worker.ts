@@ -5,7 +5,7 @@ import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycl
 import { AutomationManagement } from "../personal-data/automation-management.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 
-type Repository = Pick<InvocationRepository, "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction" | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal" | "prepareQuestionContinuation" | "finish">;
+type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff">> & Pick<InvocationRepository, "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction" | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal" | "prepareQuestionContinuation" | "finish">;
 export type InvocationPreflight = "ready" | "waiting_for_bud" | "waiting_for_model" | "retry_wait";
 export interface InvocationExecutor {
   preflight(invocation: Invocation): Promise<InvocationPreflight>;
@@ -102,10 +102,28 @@ export class InvocationWorker {
       await this.repository.start(invocation);
       await this.repository.prepareQuestionContinuation(invocation);
       const hooks: AgentExecutionHooks = {
+        invocation: { id: invocation.id, fence: invocation.fence, workerId: invocation.workerId! },
         checkpoint: renew,
+        parkUserBrowserHandoff: async nextCall=>{
+          if(!this.repository.parkUserBrowserHandoff)return null;
+          await renew();
+          ended=true;if(heartbeat)clearTimeout(heartbeat);
+          const result=await this.repository.parkUserBrowserHandoff(invocation,nextCall);
+          if(result)parked=true;
+          else {ended=false;scheduleHeartbeat();}
+          return result;
+        },
         beforeTool: async directive => {
           await renew();
           await this.repository.recordAction(invocation, directive.callId, directive.tool);
+        },
+        parkBrowserHandoff: async (callId, handoffId) => {
+          await renew();
+          ended = true;
+          if (heartbeat) clearTimeout(heartbeat);
+          if (!this.repository.parkBrowserHandoff) throw new Error("browser_handoff_unavailable");
+          await this.repository.parkBrowserHandoff(invocation,callId,handoffId);
+          parked = true;
         },
         parkQuestion: async (directive, questionRequestId) => {
           await renew();

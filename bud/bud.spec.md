@@ -245,3 +245,18 @@ after `mkcert -install`.
 ---
 
 *Parent spec: [../bud.spec.md](../bud.spec.md)*
+
+## Managed browser capability (Phases 1–2)
+
+The daemon can launch isolated ephemeral Chrome for Testing browsers for ordinary
+agent chats. Configure `BUD_BROWSER_EXECUTABLE` with the full executable path,
+run `bud doctor`, then restart the daemon. The probe must succeed before browser
+availability is advertised. Two concurrent thread sessions are supported; terminal
+holders remain independent. Private handoff fences agent access while the owner
+uses the web viewer; bounded screenshots travel over a separate media WebSocket,
+and private input never enters the agent transcript. Losing the viewer or its
+control lease leaves the browser paused until an explicit return of control.
+Profile persistence and mobile viewer support remain later phases. See
+[browser runtime](./src/browser/browser.spec.md),
+[setup/validation](../plan/bud-owned-browser/phase-1-agent-browser.md), and
+[private handoff](../plan/bud-owned-browser/phase-2-private-handoff.md).

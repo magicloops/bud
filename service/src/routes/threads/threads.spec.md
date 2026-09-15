@@ -68,6 +68,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - passes through `draft_assistant.started_at` so refreshes can recover active assistant draft timing from service timestamps
 - passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
+- reconstructs a pending `browser_request_handoff` in the existing `pending_tool` shape from the owned durable handoff and waiting invocation, including its turn identity; stale browser prompts are removed after resolution even when process-local runtime state is empty or outdated
 - `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; they omit replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot and (additive) `message`, the persisted `role: "compaction"` transcript row for the checkpoint.
 - `/agent/stream` emits `agent.reasoning_start`, `agent.reasoning_delta`, and `agent.reasoning_done` for visible provider reasoning, with `agent.reasoning_done.message` carrying the persisted `role: "reasoning"` row
 - `/agent/stream` failed `final` events carry sanitized `error`, `error_code`, and `retryable` fields rather than raw provider or daemon transport messages
@@ -230,3 +231,8 @@ Known retired client submissions may fall back at message admission. Serialized
 threads add nullable `model_warning`; message selection metadata records
 `model_fallback_from` and `reasoning_adjusted` when applicable. All reads/writes
 retain the existing authenticated owner checks and owner stamping.
+
+Browser handoff recovery does not overwrite a different running or completed
+turn's runtime identity. Stop can also cancel a non-reserving browser handoff when
+no active/queued run takes priority. Browser inventory remains the separate source
+for the paused-browser notice; private control no longer prevents chat admission.

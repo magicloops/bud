@@ -90,3 +90,7 @@ Focused unit coverage for gRPC tracker finalization during service shutdown.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Browser control
+
+`control-gateway.ts` retains authenticated browser capability and forwards results with the exact tracker. `envelope-codec.ts` maps browser command/result to their shared typed envelope payloads. No browser traffic uses the data stream in Phase 1.
