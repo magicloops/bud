@@ -123,6 +123,29 @@ Exit: real-device login/intervention/resume works through hosted service and edg
 existing app preview, mobile Back behavior, thread streaming/scrolling and terminal
 input remain correct. Provide user-facing limitations for unsupported interactions.
 
+## Phase 3d — agent observations and semantic targeting
+
+Scoped in [phase-3d-agent-observations-and-targeting.md](phase-3d-agent-observations-and-targeting.md).
+Deliver requested structured text snapshots and exact semantic actions, then
+provider-visible on-demand screenshots and visible DOM. Agent observations are
+independent of continuous human viewer media. Retain five tools; a REPL is deferred.
+This phase owns the provider image serialization/ledger/replay gate previously
+listed as a deferral. It can proceed independently of the iOS viewer. Implemented locally; normal-agent
+text/visual acceptance and comparative performance measurement remain pending.
+See the phase document for setup, limits and validation status.
+
+## Phase 3e — inline browser waits and continuation cleanup
+
+See [phase-3e-inline-browser-waits.md](phase-3e-inline-browser-waits.md).
+Replace private-control tool rejection with durable invocation waiting and an
+inline Return to agent action. Reuse existing authority and continuation machinery;
+address multiple waiting turns, atomic parking/return races and truthful deferred
+tool results before extending the UI. After return, observe and reconsider rather
+than replay stale actions. Includes a focused technical-debt review and explicit
+cleanup boundaries. Implemented locally; user testing confirmed waiting, inline
+return and continuation. Compact action styling is user-validated. Broader restart,
+concurrency and hosted acceptance remain in the phase validation checklist.
+
 ## Phase 4 — release validation and cleanup
 
 - Run the matrix below; record measured performance and revise tuning defaults.

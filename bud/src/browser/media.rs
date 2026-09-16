@@ -53,7 +53,11 @@ pub(super) fn start(
             let mut next_capture = tokio::time::Instant::now();
             loop {
                 phase = "receive_demand";
-                let message = tokio::time::timeout(Duration::from_secs(10), socket.next()).await?;
+                let message = tokio::select! {
+                    biased;
+                    _ = connection.changed() => anyhow::bail!("browser_media_revoked"),
+                    message = tokio::time::timeout(Duration::from_secs(10), socket.next()) => message?,
+                };
                 let Some(Ok(Message::Text(text))) = message else {
                     anyhow::bail!("browser_media_closed");
                 };
@@ -159,9 +163,14 @@ pub(super) fn start(
             Ok::<(), anyhow::Error>(())
         };
         // Do not print the error itself: transport/CDP errors may contain private data.
-        let reason = tokio::select! {
-            _ = connection.changed() => "connection_changed",
-            _ = run => "media_ended",
+        // A control disconnect revokes delivery immediately, but must not drop
+        // an in-flight CDP read: cancellation poisons the shared Chrome channel.
+        // Drain bounded capture calls, then let authorize_delivery discard them.
+        let _ = run.await;
+        let reason = if current_connection.borrow().as_deref() != Some(&device) {
+            "connection_changed"
+        } else {
+            "media_ended"
         };
         let mut authority = slot.authority.lock().unwrap();
         let paused_control = controller

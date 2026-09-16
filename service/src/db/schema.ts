@@ -1885,13 +1885,14 @@ export const browserHandoffTable = pgTable("browser_handoff", {
   createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", {withTimezone:true}),
 }, t => ({
-  pendingSession: uniqueIndex("browser_handoff_pending_session_idx").on(t.sessionId).where(sql`${t.status} = 'pending'`),
+  pendingInvocation: uniqueIndex("browser_handoff_pending_invocation_idx").on(t.invocationId).where(sql`${t.status} = 'pending'`),
+  sessionStatus: index("browser_handoff_session_status_idx").on(t.sessionId,t.status),
   callKey: unique("browser_handoff_call_key").on(t.invocationId,t.callId),
   ownerIdx: index("browser_handoff_owner_idx").on(t.createdByUserId,t.threadId,t.status),
   sessionFk: foreignKey({name:"browser_handoff_session_owner_fk", columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
     foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
   invocationFk: foreignKey({name:"browser_handoff_invocation_owner_fk",columns:[t.invocationId,t.threadId,t.budId,t.createdByUserId],
     foreignColumns:[agentInvocationTable.id,agentInvocationTable.threadId,agentInvocationTable.budId,agentInvocationTable.createdByUserId]}),
-  statusCheck: check("browser_handoff_status_check",sql`${t.status} in ('pending','returned','canceled') and ${t.kind} in ('agent','user')`),
+  statusCheck: check("browser_handoff_status_check",sql`${t.status} in ('pending','returned','canceled') and ${t.kind} in ('agent','user','return_control')`),
   actorCheck: check("browser_handoff_actor_check",sql`${t.returnedByUserId} is null or ${t.returnedByUserId} = ${t.createdByUserId}`),
 }));

@@ -1,3 +1,4 @@
+import { registerAgentCaptures } from "./agent-capture.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { WebSocketServer } from "ws";
@@ -107,6 +108,7 @@ export async function registerBrowserRoutes(
   control: BrowserControl,
   media: BrowserMedia,
 ) {
+  await registerAgentCaptures(server);
   const diagnostic = (fields: Record<string, string | number | boolean>) =>
     server.log.info({ component: "browser_lifecycle", ...fields }, "Browser lifecycle");
   control.onDiagnostic = diagnostic;
@@ -200,8 +202,10 @@ export async function registerBrowserRoutes(
       if (!actor) return;
       const id = sessionId(request);
       const session = await control.repository.get(actor.userId, id);
+      const { viewer_id } = z.object({ viewer_id: z.string().uuid().optional() }).parse(request.query);
       return {
         ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
+        ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
         can_take_control: control.runtimeStatus(session) === "available" && !(await control.repository.hasRunningInvocation(
           actor.userId,
@@ -211,7 +215,7 @@ export async function registerBrowserRoutes(
     });
     routes.post(
       "/api/browser/sessions/:session_id/control",
-      { bodyLimit: 2048 },
+      { bodyLimit: 4096 },
       async (request, reply) => {
         const actor = await viewer(request, reply);
         if (!actor) return;
@@ -219,12 +223,14 @@ export async function registerBrowserRoutes(
           .object({
             ...bodyBase,
             revision: z.number().int().nonnegative(),
+            recovery_ticket: z.string().min(1).max(2048).optional(),
             operation: z.enum([
               "acquire",
               "renew",
               "release",
               "return",
               "close",
+              "recover",
             ]),
           })
           .strict()
@@ -235,7 +241,9 @@ export async function registerBrowserRoutes(
           identity(actor, body.viewer_id),
         ] as const;
         const result =
-          body.operation === "close"
+          body.operation === "recover"
+            ? await control.recoverViewer(...args, body.recovery_ticket ?? "")
+            : body.operation === "close"
             ? await control.close(
                 actor.userId,
                 sessionId(request),
@@ -248,7 +256,8 @@ export async function registerBrowserRoutes(
                 : body.operation === "release"
                   ? await control.release(...args)
                   : await control.returnToAgent(...args, body.revision);
-        return publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result));
+        return { ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
+          recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)) };
       },
     );
     routes.post("/api/browser/sessions/:session_id/viewport", { bodyLimit: 2048 }, async (request, reply) => {

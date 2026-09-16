@@ -6,6 +6,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { config } from "../config.js";
 import * as schema from "../db/schema.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
+import { BrowserRepository } from "./repository.js";
+import { BrowserToolWait } from "../agent/browser-tool-executor.js";
 import { BrowserControlRepository } from "./control-repository.js";
 
 test(
@@ -56,8 +58,10 @@ test(
       "cancel",
       "user-tool",
       "user-idle",
+      "return-control",
     ]) {
-      const userTakeover = provider.startsWith("user-");
+      const returnControl = provider === "return-control";
+      const userTakeover = provider.startsWith("user-") || returnControl;
       const idle = provider === "user-idle";
       const thread = randomUUID();
       await database
@@ -126,7 +130,15 @@ test(
             createdByUserId: "alice",
           })),
         );
-      const handoff = userTakeover
+      if (returnControl) {
+        await pool.query("update browser_session set control_state='human_private',private_content=true where id=$1",[sessionId]);
+        await repo.recordAction(lease,callId,"browser_observe");
+        await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
+          turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
+          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"observe"}),BrowserToolWait);
+        assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
+      }
+      const handoff = returnControl ? null : userTakeover
         ? await controls.requestUser("alice", sessionId)
         : await controls.requestAgent({
             ownerUserId: "alice",
@@ -159,7 +171,8 @@ test(
         { action: "control", operation: "pause" },
         "paused",
       );
-      if (userTakeover)
+      if (returnControl) { /* Already atomically parked at admission. */ }
+      else if (userTakeover)
         assert.ok(
           await repo.parkUserBrowserHandoff(
             lease,
@@ -188,6 +201,17 @@ test(
       if (provider === "openai") {
         paused = await controls.prepare("alice", sessionId, "boot", paused.session.revision,
           "acquire", { action: "control", operation: "acquire" }, "human_private");
+      }
+      if (returnControl) {
+        await repo.admit({owner:"alice",threadId:thread,origin:"human",idempotencyKey:`${thread}-second`,text:"Browse too",model:"fixture",reasoningEffort:"none"});
+        const second=await repo.claim("second","alice"); assert.ok(second); await repo.start(second);
+        await repo.recordAction(second,"second-call","browser_act");
+        await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
+          turnId:second.turnId,invocation:{id:second.id,fence:second.fence,workerId:second.workerId!},
+          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"click"}),BrowserToolWait);
+        assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,2);
+        await repo.requestCancel("alice",second.id);
+        assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,1);
       }
       // Private browser work must not reserve the entire conversation. A newer
       // chat can execute, while the original handoff remains durably parked.

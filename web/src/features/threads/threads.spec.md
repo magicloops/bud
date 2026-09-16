@@ -698,3 +698,11 @@ Spinner reveal now bypasses the startup grace once accepted normalized output
 activity has started. Text/wait/final eligibility still wins; without a signal,
 the 500 ms fallback reveals progress in the immediately reserved row. See
 [working-signal debug note](/debug/web-spinner-working-signal.md).
+
+## Browser wait recovery
+
+`thread-message-state.ts` overlays every `pending_browser_waits` entry independently
+of the latest turn, keyed by original client ID. Canonical tool results win; empty
+inventory removes synthetic waits. Pending return-control rows stay outside work
+folds; resolved results regroup normally. Existing tool-call events mark waiting
+for user when `args.wait_kind=return_control`. No additional polling is introduced.

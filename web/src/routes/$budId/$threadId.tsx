@@ -1,5 +1,5 @@
-import { BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
-import { BrowserViewer } from '@/features/browser/viewer'
+import { BrowserWaitActionsContext, BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
+import { BrowserViewer, type BrowserReturnAction } from '@/features/browser/viewer'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { ChatDataContext } from '@/components/chat-data-context'
 /**
@@ -184,6 +184,8 @@ function ThreadViewContent() {
   )
   const revealBrowser = useCallback(() => setViewMode('browser'), [])
   const browserPane = useBrowserPane(threadId, initialMessagePage.messages, initialAgentState, revealBrowser)
+  const [browserControlError, setBrowserControlError] = useState<{sessionId: string; message: string} | null>(null)
+  const [browserReturnAction, setBrowserReturnAction] = useState<BrowserReturnAction | null>(null)
   const handleViewChange = useCallback((view: ViewMode) => {
     // Clicking the already-active viewer tab collapses the viewer: chat
     // fills the workspace on desktop; on mobile it returns to the chat view.
@@ -1048,9 +1050,14 @@ function ThreadViewContent() {
 
   return (
     <BrowserPaneContext.Provider value={browserPane.open}>
+    <BrowserWaitActionsContext.Provider value={{ visibleSessionId: viewMode === 'browser' ? browserPane.sessionId : null, returnAction: browserReturnAction, error: browserControlError, stop: async (invocationId) => {
+      await apiFetchJson(`/api/threads/${threadId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invocation_id: invocationId }) })
+      await refreshAgentBootstrap(threadId)
+    } }}>
     <WorkspaceShell
       title={currentThread.title ?? 'Untitled thread'}
       view={viewMode}
+      webAvailable={Boolean(webViewActiveSite)}
       browserAvailable={Boolean(browserPane.sessionId)}
       onViewChange={handleViewChange}
       isMobile={isMobile}
@@ -1079,13 +1086,6 @@ function ThreadViewContent() {
           {durableSummary && ['retry_wait', 'waiting_for_bud', 'waiting_for_model', 'needs_review', 'failed', 'expired'].includes(durableSummary.invocation.status) && (
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-sm" role="status">
               <span>{durableSummary.label}</span>
-            </div>
-          )}
-          {browserPane.pausedSessionId && (
-            <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-sm" role="status">
-              <p><span className="font-medium">Browser actions paused.</span> You can keep chatting. Return browser control before Bud can browse again.</p>
-              <button type="button" className="shrink-0 text-primary underline underline-offset-4"
-                onClick={() => browserPane.open(browserPane.pausedSessionId!)}>Open browser controls</button>
             </div>
           )}
           {initialThread.model_warning && explicitSelectionThreadRef.current !== threadId && <p role="status" className="px-4 py-2 text-sm text-amber-700">{initialThread.model_warning}</p>}
@@ -1197,7 +1197,7 @@ function ThreadViewContent() {
           {viewMode === 'browser' && (
             <div className="absolute inset-0 z-20 flex min-h-0 bg-background">
               {browserPane.sessionId ? (
-                <BrowserViewer key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
+                <BrowserViewer key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onReturnActionChange={setBrowserReturnAction} onControlErrorChange={setBrowserControlError} onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
               ) : <p className="p-4 text-sm text-muted-foreground">No active browser. Ask your Bud to open a page.</p>}
             </div>
           )}
@@ -1242,6 +1242,7 @@ function ThreadViewContent() {
         />
       )}
     />
+    </BrowserWaitActionsContext.Provider>
     </BrowserPaneContext.Provider>
   )
 }

@@ -108,10 +108,7 @@ function fixture() {
     viewportResize: true,
     current: () => true,
   } as BrowserCarrier;
-  const control = new BrowserControl(
-    repository,
-    () => carrier,
-    async (_carrier, request) => {
+  const dispatch = async (_carrier: BrowserCarrier, request: BrowserCommand): Promise<BrowserBackendResult> => {
       requests.push(request);
       if (request.command.action === "fit_viewport" && fitReply) return fitReply;
       if (request.command.operation === "renew" && renewalReply) return renewalReply;
@@ -127,10 +124,11 @@ function fixture() {
         outcome: "completed",
         data: { control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
       };
-    },
-  );
+    };
+  const control = new BrowserControl(repository, () => carrier, dispatch);
   return {
     control,
+    restart: () => new BrowserControl(repository, () => carrier, dispatch),
     set fitReply(value: BrowserBackendResult) { fitReply = value; },
     set inputReply(value: Promise<BrowserBackendResult>) { inputReply = value; },
     set renewalReply(value: Promise<BrowserBackendResult>) { renewalReply = value; },
@@ -376,4 +374,51 @@ test("runtime status distinguishes restart from a temporary disconnect without m
   assert.equal(f.control.runtimeStatus(f.session), "daemon_restarted");
   assert.deepEqual(f.session, before);
   assert.equal(f.control.runtimeStatus({ ...f.session, state: "interrupted" }), "ended");
+});
+
+test('persisted private state does not imply live control after service restart', async () => {
+  const f = fixture();
+  await f.control.acquire('alice', 'browser', 'auth-session:viewer', 1);
+  assert.equal(f.control.ownsControl('alice', 'browser', 'auth-session:viewer'), true);
+  assert.equal(f.control.ownsControl('alice', 'browser', 'other-session:viewer'), false);
+  assert.equal(f.control.ownsControl('bob', 'browser', 'auth-session:viewer'), false);
+  const restarted = new BrowserControl(f.control.repository);
+  assert.equal(f.session.control_state, 'human_private');
+  assert.equal(restarted.ownsControl('alice', 'browser', 'auth-session:viewer'), false);
+  await assert.rejects(restarted.returnToAgent('alice', 'browser', 'auth-session:viewer', f.session.revision), /expired/);
+  assert.equal(f.returned, 0);
+  f.carrier.current = () => false;
+  assert.equal(f.control.ownsControl('alice', 'browser', 'auth-session:viewer'), false);
+});
+
+test('signed viewer recovery survives coordinator restart, fences old tickets and never returns the agent', async () => {
+  const f = fixture();
+  const acquired = await f.control.acquire('alice', 'browser', 'auth:viewer', 1);
+  const ticket = f.control.recoveryTicket(acquired, 'auth:viewer')!;
+  assert.ok(ticket);
+  assert.equal(f.control.recoveryTicket(acquired, 'auth:other'), undefined);
+  const restarted = f.restart();
+  await assert.rejects(restarted.recoverViewer('bob', 'browser', 'auth:viewer', ticket), /not_found/);
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'other-auth:viewer', ticket), /recovery_invalid/);
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:other', ticket), /recovery_invalid/);
+  const recovered = await restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket);
+  assert.equal(recovered.private_content, true);
+  assert.equal(recovered.control_state, 'human_private');
+  assert.ok(recovered.control_epoch > acquired.control_epoch);
+  assert.equal(f.returned, 0);
+  const requests = f.requests.length;
+  // The first response can be lost; retry returns the existing lease only.
+  await restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket);
+  assert.equal(f.requests.length, requests);
+  const freshTicket = restarted.recoveryTicket(recovered, 'auth:viewer')!;
+  assert.notEqual(freshTicket, ticket);
+  await restarted.release('alice', 'browser', 'auth:viewer');
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket), /recovery_invalid/);
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', freshTicket), /recovery_invalid/);
+  const another = await restarted.acquire('alice', 'browser', 'auth:other', f.session.revision);
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', freshTicket), /controller_exists/);
+  const anotherTicket = restarted.recoveryTicket(another, 'auth:other')!;
+  await restarted.returnToAgent('alice', 'browser', 'auth:other', another.revision);
+  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:other', anotherTicket), /recovery_invalid/);
+  assert.equal(f.returned, 1);
 });

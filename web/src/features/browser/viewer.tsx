@@ -21,6 +21,8 @@ type Session = {
   can_capture_hidpi?: boolean;
   can_navigate_history?: boolean;
   can_take_control?: boolean;
+  owns_control?: boolean;
+  recovery_ticket?: string;
   handoff?: { reason: string } | null;
 };
 const button =
@@ -42,13 +44,28 @@ const controlErrors: Record<string, string> = {
   browser_not_found: "This browser session is no longer available. Return to the conversation.",
 };
 
-export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sessionId: string; embedded?: boolean; onDismiss?: () => void }) {
+export type BrowserReturnAction = {
+  sessionId: string;
+  disabled: boolean;
+  returning: boolean;
+  run: () => void;
+};
+
+export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { sessionId: string; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState("");
+  useEffect(() => {
+    onControlErrorChange?.(error ? {sessionId, message:error} : null);
+    return () => onControlErrorChange?.(null);
+  }, [error,sessionId,onControlErrorChange]);
   const [missing, setMissing] = useState(false);
   const [owns, setOwns] = useState(false);
   const [takeoverPending, setTakeoverPending] = useState(false);
   const [working, setWorking] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const recoveryTicket = useRef<string | null>(null);
+  const recoveryPending = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const [fit, setFit] = useState(true);
@@ -58,6 +75,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
   const frameReady = useRef<((frame: BrowserFrame) => void) | null>(null);
   const ownsRef = useRef(false);
   const changingControl = useRef(false);
+  const controlVersion = useRef(0);
   const failurePriority = useRef(0);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -82,19 +100,22 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     focus.current = null;
     if (typing.current) typing.current.value = "";
   }, []);
-  const failPrivate = useCallback((message: string, priority: number) => {
+  const failPrivate = useCallback((message: string, priority: number, recover = false) => {
     if (!mounted.current) return;
     if (priority > failurePriority.current) {
       failurePriority.current = priority;
       setError(message);
     }
     const wasOwner = ownsRef.current;
+    if (!recover) recoveryTicket.current = null;
+    recoveryPending.current = recover && !!recoveryTicket.current;
+    setRecovering(recoveryPending.current);
     ownsRef.current = false;
     setOwns(false);
     resetInput();
     media.current?.close();
     // Release is a privacy fence, never a return or replay of page input.
-    if (wasOwner && sessionRef.current)
+    if (wasOwner && sessionRef.current && !recoveryPending.current)
       void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ operation: "release", revision: sessionRef.current.revision, viewer_id: viewerId.current }) }).catch(() => {});
   }, [base, resetInput]);
@@ -102,6 +123,8 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     mounted.current = true;
     return () => {
       mounted.current = false;
+      recoveryTicket.current = null;
+      recoveryPending.current = false;
       resetInput();
     };
   }, [resetInput]);
@@ -110,7 +133,8 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     let timer: ReturnType<typeof setTimeout>;
     const read = async () => {
       try {
-        const data = await apiFetchJson<Session>(base, {
+        const version = controlVersion.current;
+        const data = await apiFetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {
           signal: abort.signal,
         });
         if (!abort.signal.aborted) {
@@ -118,6 +142,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
           setSession((previous) =>
             previous && previous.revision > data.revision ? previous : data,
           );
+          if (version === controlVersion.current && !changingControl.current && ownsRef.current &&
+              data.owns_control === false && data.revision >= (sessionRef.current?.revision ?? 0))
+            failPrivate("Browser control was lost. Take control again to reconnect; the agent remains paused.", 1, true);
+          if (recoveryPending.current && !changingControl.current && !ownsRef.current && data.runtime_status === "available")
+            void latestControl.current("recover");
         }
       } catch (failure) {
         if (!abort.signal.aborted && isApiError(failure) && failure.message === "browser_not_found") {
@@ -134,19 +163,28 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
       abort.abort();
       clearTimeout(timer);
     };
-  }, [base]);
+  }, [base, failPrivate]);
   const control = useCallback(
-    async (operation: "acquire" | "return" | "release" | "renew" | "close") => {
+    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover") => {
       if (!session) return;
+      if (changingControl.current) return;
+      if (operation === "recover" && !recoveryTicket.current) return;
+      if (operation !== "recover" && operation !== "renew") {
+        recoveryTicket.current = null;
+        recoveryPending.current = false;
+        setRecovering(false);
+      }
       if (operation === "renew") {
         if (renewing.current || !ownsRef.current) return;
         renewing.current = true;
       }
       if (operation !== "renew" && mounted.current) {
+        controlVersion.current++;
         changingControl.current = true;
         failurePriority.current = 0;
         setError("");
         setWorking(true);
+        setReturning(operation === "return");
         resetInput();
       }
       try {
@@ -157,15 +195,17 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
             operation,
             revision: session.revision,
             viewer_id: viewerId.current,
+            ...(operation === "recover" ? { recovery_ticket: recoveryTicket.current } : {}),
           }),
         });
         if (!mounted.current) {
-          if (operation === "acquire" && data.control_state === "human_private")
+          if ((operation === "acquire" || operation === "recover") && data.control_state === "human_private")
             void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ operation: "release", revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
           return;
         }
         if (operation === "renew" && !ownsRef.current) return;
+        if (data.recovery_ticket) recoveryTicket.current = data.recovery_ticket;
         setSession(previous => previous && previous.revision > data.revision ? previous : ({
           ...data,
           handoff: data.handoff === undefined ? previous?.handoff : data.handoff,
@@ -173,15 +213,26 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
         if (!failurePriority.current) setError("");
         if (operation !== "renew") {
           const acquired =
-            operation === "acquire" && data.control_state === "human_private";
+            (operation === "acquire" || operation === "recover") && data.control_state === "human_private";
           ownsRef.current = acquired;
           setOwns(acquired);
+          recoveryPending.current = false;
+          setRecovering(false);
           setTakeoverPending(operation === "acquire" && !acquired);
           setMediaVersion((v) => v + 1);
         }
       } catch (failure) {
         if (!mounted.current || (operation === "renew" && !ownsRef.current)) return;
         const code = isApiError(failure) ? failure.message : "";
+        if ((operation === "renew" || operation === "recover") && recoveryTicket.current &&
+            (!code || ["browser_control_expired", "browser_control_uncertain", "browser_unavailable",
+              "browser_handoff_unavailable", "browser_stale_connection", "browser_busy", "browser_agent_still_running"].includes(code))) {
+          failPrivate("Reconnecting your private browser view…", 1, true);
+          return;
+        }
+        recoveryTicket.current = null;
+        recoveryPending.current = false;
+        setRecovering(false);
         setError(
           controlErrors[code]
             ? `${controlErrors[code]} (${code}; ${operation})`
@@ -194,11 +245,17 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
         media.current?.close();
       } finally {
         if (operation === "renew") renewing.current = false;
-        if (operation !== "renew") changingControl.current = false;
-        if (mounted.current && operation !== "renew") setWorking(false);
+        if (operation !== "renew") {
+          controlVersion.current++;
+          changingControl.current = false;
+        }
+        if (mounted.current && operation !== "renew") {
+          setWorking(false);
+          setReturning(false);
+        }
       }
     },
-    [base, session, resetInput],
+    [base, session, resetInput, failPrivate],
   );
   const latestControl = useRef(control);
   useEffect(() => {
@@ -218,7 +275,22 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
   }, []);
   const ended = missing || session?.runtime_status === "daemon_restarted" || session?.runtime_status === "ended" || session?.state === "closing" || session?.state === "interrupted";
   useEffect(() => {
+    onReturnActionChange?.(owns && !ended ? {
+      sessionId,
+      disabled: working || resizing,
+      returning,
+      run: () => {
+        if (ownsRef.current && !resizeBlocked.current && !changingControl.current)
+          void latestControl.current("return");
+      },
+    } : null);
+    return () => onReturnActionChange?.(null);
+  }, [onReturnActionChange, owns, ended, sessionId, working, resizing, returning]);
+  useEffect(() => {
     if (!ended) return;
+    recoveryTicket.current = null;
+    recoveryPending.current = false;
+    setRecovering(false);
     ownsRef.current = false;
     setOwns(false);
     setTakeoverPending(false);
@@ -234,6 +306,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     setConnected(false);
     resetInput();
     if (!canView || !canvas.current) return;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const url = new URL(buildAbsoluteApiUrl(`${base}/media`));
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const client = new BrowserCanvas(
@@ -246,8 +319,14 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
         if (state === "connected" && client.frame) frameReady.current?.(client.frame);
         if (state !== "connected") {
           resetInput();
+          setTargets([]);
+          setSelectedTarget("");
           if (ownsRef.current && !changingControl.current)
-            failPrivate("Browser view was lost. Private control is paused; take control again to reconnect.", 1);
+            failPrivate("Browser view was lost. Private control is paused; take control again to reconnect.", 1, true);
+          else if (!ownsRef.current && !changingControl.current)
+            retry = setTimeout(() => {
+              if (mounted.current && media.current === client) setMediaVersion(v => v + 1);
+            }, 3000);
         }
         if (list) {
           setTargets((previous) =>
@@ -260,6 +339,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     );
     media.current = client;
     return () => {
+      clearTimeout(retry);
       if (media.current === client) media.current = null;
       client.close();
     };
@@ -438,11 +518,17 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss }: { sess
     <main className={`group/browser-pane relative min-h-0 min-w-0 w-full overflow-hidden bg-background text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
       <div ref={surface} className="absolute inset-0 overflow-hidden bg-secondary">
         {!connected && (
-          <p className="absolute inset-0 p-4 text-sm">
-            {owns
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-sm">
+          <p>
+            {recovering ? "Reconnecting your private browser view…" : owns
               ? "Connecting to browser…"
-              : "Browser view is paused or unavailable."}
+              : session?.can_view ? "Reconnecting to browser…" : "Browser control is paused. Take control to reconnect."}
           </p>
+          {!owns && !recovering && session?.runtime_status !== "disconnected" && session && !session.can_view && (
+            <button type="button" className={button} disabled={working || takeoverPending}
+              onClick={() => void control("acquire")}>Take control</button>
+          )}
+          </div>
         )}
         <canvas
           ref={canvas}

@@ -2903,7 +2903,7 @@ say requested; observe confirms the page. This is a bounded semantic surface,
 not full DOM inspection or screenshot/JavaScript access.
 
 Limits: 24 KiB command input, 128 KiB result, 128 pending service requests,
-two active daemon sessions, 100 AX entries, 256-byte names, 64-byte roles,
+two active daemon sessions, 256 AX entries (64 KiB serialized element budget), 256-byte names, 64-byte roles,
 2048-byte URLs and 8192-byte committed text. Whole CDP messages are capped at
 24 MiB (local PNG capture before bounded downscaling). CDP interruption poisons the connection; close/open is explicit recovery.
 Normal disconnect preserves live browsers, but outstanding commands are never
@@ -3121,3 +3121,93 @@ Closed/interrupted rows report ended. can_view and can_take_control are false
 when runtime is unavailable. No boot IDs or authority tokens are exposed. A 404
 remains non-disclosing and cannot prove restart. Old clients ignore the additive
 field; updated web hides ineffective reconnect/page controls for ended browsers.
+
+### Browser viewer control reconciliation
+
+The owner-authorized `GET /api/browser/sessions/:session_id` accepts optional
+`viewer_id` (UUID). When supplied, the response includes `owns_control: boolean`,
+resolved against the current service controller lease and authenticated session
+plus viewer identity. This is not an authority grant; clients never acquire or
+resume automatically from it. Omitted query fields preserve the existing response;
+clients tolerate older services omitting the field. No daemon message changes.
+After service restart, persisted private state remains private but this boolean
+is false until explicit acquisition succeeds.
+
+### Browser private viewer recovery
+
+Successful private acquire/renew/recover replies may include `recovery_ticket`.
+`POST /api/browser/sessions/:session_id/control` adds operation `recover` with
+`recovery_ticket` (max 2048 characters), existing `viewer_id`, and `revision`
+(recovery checks the signed epoch against current state instead of relying on
+the possibly pre-restart revision). Control body limit is 4096 bytes. Existing
+operations are unchanged; old clients ignore the extra response property and
+new clients only recover after receiving a ticket. Daemon messages are unchanged.
+
+The service signs a ten-minute, domain-separated proof bound to owner, current
+authentication-session/viewer identity, browser ID/generation/daemon boot and
+control epoch using a key derived from BETTER_AUTH_SECRET. Login, Origin and
+owner checks remain mandatory. No ticket is accepted in a URL or returned in
+normal metadata/inventory. Recovery preserves private_content, uses acknowledged
+pause/acquire to establish a fresh private lease, and never invokes agent return.
+Explicit release/return/other takeover invalidates old epochs. A duplicate proof
+for the still-live recovered controller returns that lease without redispatch.
+Expired, mismatched or tampered proofs return browser_recovery_invalid.
+
+
+## Browser semantic observations and agent captures (Phase 3d)
+
+Additive `capabilities.browser.semantic_observations` gates `command.action:
+"inspect"` in the existing browser_command envelope. `operation` is snapshot,
+visible_dom, page_info, click, focus, fill or scroll. Optional snake_case fields:
+target_id, continuation, scope, observation_id, reference, locator:{role,name},
+text, delta_y. The service validates operation-specific combinations; locators
+match exactly. All existing owner/invocation/generation/epoch/sequence fences apply.
+
+Results carry `data.observation` with target_id, document_id, observation_id,
+structured nodes (depth/role/name/text/reference and optional box), rendered text,
+truncated, continuation, expires_in_ms, coverage, limitations and viewport
+(width/height/scroll_x/scroll_y). Page info returns title/url/document only; action
+results acknowledge action_applied or scroll_requested. A new observation replaces
+old references. Continuation is bounded to one 60-second snapshot and checks the
+current document; navigation/authority changes invalidate it.
+
+Additive `agent_capture` gates `command.action:"capture"` with optional target_id,
+endpoint and one-use ticket. This is service-generated, never model-supplied.
+The daemon captures one viewport and POSTs bounded JSON image bytes to
+`/api/browser/captures`, using `Authorization: Bearer <ticket>` and no redirects.
+Ticket binds live carrier, owner, thread, call, session/generation, invocation and
+epoch and expires with the request. Capture authorization is rechecked before
+storage and evidence delivery. No viewer/controller grant is needed or borrowed.
+
+Control result contains only `data.image_artifact:{id,mime_type,expires_at,path}`
+and target_id/document_id. Path is an authenticated thread image resource:
+`/api/threads/:thread_id/browser-images/:image_id`. Cookie or mobile bearer resolves
+the acting viewer, then existing thread/Bud owner checks run before file access.
+Anonymous=401, foreign/deleted/unavailable=404, Cache-Control:no-store. No image
+bytes enter ordinary SSE, tool JSON, ledger or control messages. Service hydrates
+actual provider image content immediately before a vision-capable model call.
+
+Images: 1.4M base64 characters, seven-day TTL, 128 files per service instance,
+eight most recent images per provider request. Storage uses a configured persistent
+private filesystem directory; no DB/wire-version migration. Restart with lost
+storage returns unavailable for old references. Never recapture for replay.
+
+Mixed versions: new service + old daemon retains default plain observe and rejects
+explicit new representations/actions before dispatch; old service + new daemon
+receives the old elements shape adapted from the same semantic helper. Unknown
+optional capability fields are ignored by older services. No new enum is sent
+without advertisement; full effect requires daemon rebuild/helper installation.
+
+## Durable browser waiting metadata (Phase 3e)
+
+No daemon wire changes. `agent.tool_call` may repeat the original call/client ID
+with `args.wait_kind: "return_control"`, `handoff_id`, `invocation_id`, `session_id`
+and first-party `viewer_path`. This means undispatched durable waiting, not a tool
+result. Authorized `/api/threads/:threadId/agent/state` adds `pending_browser_waits`:
+`[{turn_id, invocation_id, pending_tool:{client_id,call_id,name,args,started_at}}]`.
+It contains at most 50 owner/thread-scoped waits; existing handoffs use kind
+`agent`/`user`. No private content or control credentials appear here.
+Explicit acknowledged viewer return wakes eligible invocations; original calls
+receive truthful deferred results before fresh model work. `/api/threads/:threadId/cancel`
+accepts optional JSON `{invocation_id}` to stop only that owned thread invocation.
+Old clients retain viewer links; new clients tolerate absent collection metadata.

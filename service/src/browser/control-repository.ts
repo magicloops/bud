@@ -101,8 +101,8 @@ export class BrowserControlRepository {
       if (!session) throw new BrowserError("browser_not_found");
       const existing = (
         await client.query(
-          "select id from browser_handoff where session_id=$1 and status='pending'",
-          [id],
+          "select id from browser_handoff where session_id=$1 and invocation_id=$2 and status='pending'",
+          [id, invocation?.id ?? null],
         )
       ).rows[0];
       const created = Boolean(invocation && !existing);

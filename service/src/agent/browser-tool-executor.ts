@@ -12,7 +12,14 @@ export type BrowserAgentContext = {
   signal: AbortSignal;
   invocation?: { id: string; fence: number; workerId: string };
   callId?: string;
+  waitClientId?: string;
 };
+/** Internal control flow: emitted only after an atomic, pre-dispatch durable park. */
+export class BrowserToolWait extends Error {
+  constructor(readonly handoff: { handoff_id: string; viewer_path: string; wait_kind: "return_control"; invocation_id: string; session_id: string }) {
+    super("browser_waiting_for_control");
+  }
+}
 export type BrowserHandoffContext = BrowserAgentContext & {
   directive: Extract<AgentToolCallDirective, { tool: BrowserToolName }>;
   clientId: string;
@@ -83,13 +90,16 @@ export class BrowserToolExecutor {
     } else try {
       args = parseBrowserInput(directive.tool, directive.args);
       result = await this.backend.execute({ ...context, callId: directive.callId }, directive.tool, args);
-    } catch {
+    } catch (error) {
+      if (error instanceof BrowserToolWait) throw error;
       context.signal.throwIfAborted();
       // Dispatch may already have happened. Do not claim safe rejection/retry.
       result = { ok: false, outcome: "unknown", error: "browser_outcome_unknown" };
     }
     await this.check(context);
-    const summary = result.ok ? "Browser operation completed." : result.outcome === "unknown"
+    const summary = result.ok ? (directive.tool === "browser_observe"
+      ? args.mode === "screenshot" ? "Captured browser screenshot." : args.mode === "visible_dom" ? "Read visible browser elements." : args.mode === "page_info" ? "Read browser page information." : "Read browser snapshot."
+      : "Browser operation completed.") : result.outcome === "unknown"
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"
         ? "Browser actions are paused while the user has private control. Ask the user to choose Return to agent in the browser controls. You can continue chatting and using non-browser tools; do not bypass the pause through terminal or another browser."

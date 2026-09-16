@@ -439,3 +439,8 @@ not persisted warning flags or permission changes.
 `api-types.ts` exports `ApiOutputActivity` and exposes `ApiAgentState.output_activity`
 for runtime spinner suppression. The activity is independent of draft lifecycle;
 see [contract](../../../design/assistant-output-activity.md).
+
+## Browser waiting metadata
+
+`ApiAgentState.pending_browser_waits` is an optional collection of turn/invocation
+identity plus the original pending-tool envelope. Older services may omit it.

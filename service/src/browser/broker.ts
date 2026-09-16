@@ -1,3 +1,5 @@
+import { beginAgentCapture } from "./agent-capture.js";
+import { providerRegistry } from "../llm/index.js";
 import type {
   BrowserAgentBackend,
   BrowserAgentContext,
@@ -7,6 +9,7 @@ import type { BrowserToolName } from "../agent/browser-tools.js";
 import { BrowserRepository, BrowserError } from "./repository.js";
 import { browserCarrier, dispatchBrowser } from "./transport.js";
 import { BrowserControl } from "./control.js";
+import { BrowserToolWait } from "../agent/browser-tool-executor.js";
 import type { BrowserHandoffContext } from "../agent/browser-tool-executor.js";
 
 export class BrowserBroker implements BrowserAgentBackend {
@@ -36,19 +39,41 @@ export class BrowserBroker implements BrowserAgentBackend {
     const carrier = browserCarrier(context.budId);
     if (!carrier)
       return { ok: false, outcome: "rejected", error: "browser_unavailable" };
-    const command =
+    const capture = tool === "browser_observe" && args.mode === "screenshot";
+    if (capture) {
+      if (!carrier.agentCapture)
+        return { ok:false, outcome:"rejected", error:"browser_image_unsupported" };
+      const model = await this.repository.modelForCapture(context);
+      let vision = false;
+      try { vision = Boolean(model && providerRegistry.getProviderForModel(model).getModelCapabilities(model).supportsVision); }
+      catch { /* Unavailable provider cannot receive an image. */ }
+      if (!vision) return { ok:false, outcome:"rejected", error:"browser_image_unsupported" };
+    }
+    const extended = tool === "browser_observe" && Object.keys(args).some(k => k !== "target_id") ||
+      tool === "browser_act" && (args.locator || ["fill", "scroll"].includes(String(args.action)));
+    if (extended && !carrier.semanticObservations)
+      return { ok: false, outcome: "rejected", error: "browser_representation_unsupported" };
+    const command = carrier.semanticObservations && (tool === "browser_observe" || extended)
+      ? { ...args, action: "inspect", operation: tool === "browser_observe" ? args.mode ?? "snapshot" : args.action }
+      :
       tool === "browser_act"
         ? args
         : { action: tool.replace("browser_", ""), ...args };
+    delete command.mode;
     let request;
     try {
-      request = await this.repository.prepare(context, carrier.bootId, command);
+      request = await this.repository.prepare(carrier.handoff ? context : { ...context, waitClientId: undefined }, carrier.bootId, command);
     } catch (error) {
+      if (error instanceof BrowserToolWait) throw error;
       if (error instanceof BrowserError)
         return { ok: false, outcome: "rejected", error: error.code };
       throw error;
     }
-    const result = await dispatchBrowser(carrier, request, context.signal);
+    const transfer = capture ? beginAgentCapture(request, carrier, context.callId!, context.budId, args.target_id as string | undefined) : null;
+    let result: BrowserBackendResult;
+    try {
+      result = await dispatchBrowser(carrier, transfer ? { ...request, command:transfer.command } : request, context.signal);
+    } finally { transfer?.dispose(); }
     await this.repository.complete(request, result);
     if (
       tool !== "browser_close" &&

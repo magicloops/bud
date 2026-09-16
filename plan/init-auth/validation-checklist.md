@@ -373,3 +373,34 @@ existing session sequence updates remain owner-authorized. No global read added.
 - [ ] Browser runtime_status is returned only after existing session/thread/Bud
   owner checks; anonymous/foreign session reads remain 401/404. Confirmed restart
   clears stale private UI; missing session never reveals another owner's state.
+
+### Browser viewer recovery
+
+- [ ] Recovery POST still requires a live cookie session, allowed Origin and owned
+  browser/thread/Bud before ticket validation or dispatch; foreign IDs return 404.
+- [ ] Another viewer UUID or login session cannot use a captured recovery proof.
+- [ ] Expiry, signature tampering, daemon boot/generation change, explicit release,
+  return and takeover invalidate proofs; no private pixels reach other viewers.
+- [ ] Same mounted viewer recovers through service restart without resuming agent
+  work or replaying input; duplicate recovery does not duplicate transitions.
+- [ ] Tickets do not appear in URLs, logs, transcripts or agent tool payloads.
+
+
+### Browser agent screenshots (Phase 3d)
+
+- [x] Upload fixture rejects consumed/disposed tickets, disconnected carriers,
+  revoked evidence, wrong target, malformed image and oversized request bodies.
+- [x] Immutable artifact lookup binds owner/thread/tool call; provider hydration
+  performs fresh owner authorization and does not hydrate for text-only models.
+- [ ] Real cookie and mobile bearer GET: anonymous 401, other owner/deleted
+  thread/Bud 404, sign-out/account switch during image fetch, no-store response.
+- [ ] Live takeover during capture/upload prevents late evidence reaching the
+  model; no image or upload ticket in SSE, transcript or operational logs.
+
+Artifacts stamp owner, thread, Bud, call, session/generation/epoch and document
+from the service-authorized request. No database table or global viewer read.
+
+
+- [ ] Phase 3e manual: anonymous wait state/cancel returns 401; foreign thread or
+  invocation returns 404; two owner waits recover without leaking browser content;
+  only the controlling viewer can return, and stopping an old wait preserves chat.

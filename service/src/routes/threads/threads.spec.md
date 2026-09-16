@@ -236,3 +236,11 @@ Browser handoff recovery does not overwrite a different running or completed
 turn's runtime identity. Stop can also cancel a non-reserving browser handoff when
 no active/queued run takes priority. Browser inventory remains the separate source
 for the paused-browser notice; private control no longer prevents chat admission.
+
+## Inline browser waits
+
+Authorized `/agent/state` adds `pending_browser_waits` with original turn,
+invocation and pending-tool identity (bounded 50, owner/thread SQL scoped).
+`POST /cancel` optionally accepts `{invocation_id}`; the ID is re-resolved by
+owner/thread. Missing/foreign IDs return 404. Canceling an older waiting invocation
+does not stop a different active runtime turn. Existing bodyless cancel is unchanged.

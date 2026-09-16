@@ -432,3 +432,11 @@ private visibility across paused states/service restart. Generated metadata and
 SQL accompany the migration. Reviewed/applied locally and tested with 0039/0040.
 Deploy all browser migrations before starting the updated service. No production
 migration or deployment has been performed for Phase 2.
+
+## 0042_foamy_invisible_woman.sql
+
+Allows `return_control` handoffs, one pending wait per invocation and multiple
+pending invocations per session, with a session/status index. No row deletion or
+backfill. Apply before the updated service. Rollback to session-wide uniqueness
+requires resolving multiple pending waits first; mixed old/new service workers
+against this schema are not supported by the single-instance deployment contract.

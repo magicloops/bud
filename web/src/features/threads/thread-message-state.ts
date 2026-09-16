@@ -169,6 +169,7 @@ export const buildPendingToolMessageFromToolCall = ({
 }
 
 export const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (agentState.pending_browser_waits !== undefined && (agentState.pending_tool?.name === 'browser_request_handoff' || agentState.pending_tool?.args?.wait_kind === 'return_control')) return null
   const browserWait = agentState.pending_tool?.name === 'browser_request_handoff' && agentState.turn_id &&
     agentState.invocations?.some(invocation=>invocation.turn_id===agentState.turn_id && invocation.status==='waiting_for_user')
   if(browserWait && agentState.pending_tool && agentState.turn_id) {
@@ -253,6 +254,15 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
   const pendingToolMessage = buildPendingToolMessageFromState(agentState)
   if (pendingToolMessage && !nextMessages.some((message) => message.client_id === pendingToolMessage.client_id)) {
     nextMessages = upsertMessage(nextMessages, pendingToolMessage)
+  }
+
+  for (const wait of agentState.pending_browser_waits ?? []) {
+    const tool = wait.pending_tool
+    if (nextMessages.some(message => message.client_id === tool.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: wait.turn_id, clientId: tool.client_id, callId: tool.call_id,
+      name: tool.name, args: tool.args, startedAt: tool.started_at,
+    }))
   }
 
   // Persisted questions survive process restarts without an active runtime.

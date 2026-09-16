@@ -19,6 +19,9 @@ control connection. It launches no service-local Chrome and imports no spike cod
   cancellation, unavailable peers and no replay after uncertain sends.
 - `control-repository.ts`: owner-scoped inventory, handoff records, revision/epoch
   transitions, private-content persistence, explicit return and offline close.
+- `recovery-ticket.ts` / `.test.ts`: domain-separated HMAC proofs of prior private
+  control, bound to auth-session/viewer and browser generation/epoch, expiring in
+  ten minutes. Stable service secret allows restart recovery without a DB change.
 - `control.ts`: one-controller lease coordination, acknowledged pause/acquire/
   return, user takeover requests, heartbeat and failure recovery. Bounded failure
   diagnostics distinguish controller lookup failure from daemon rejection.
@@ -147,9 +150,10 @@ clears queued input/focus; old daemons receive no new input variant.
 Private/paused control no longer excludes the thread from invocation claiming.
 Browser handoff waits release their thread reservation, preserving the original
 continuation and serialized execution on return. Inventory handoff recovery uses
-invocation status rather than reservation. Browser prepare rejects all agent
-operations, including close and new-boot replacement, before touching private
-session identity. Only browser access is blocked; ordinary chat remains available.
+invocation status rather than reservation. Browser prepare parks eligible undispatched agent operations on same-boot private
+sessions, including close; unsupported/non-durable callers receive a rejection. A confirmed different
+authenticated daemon boot retires the destroyed ephemeral session first; explicit
+open can create a fresh identity without returning or exposing the old private session. Only browser access is blocked; ordinary chat remains available.
 See [plan](../../../plan/bud-owned-browser/private-control-chat.md).
 
 
@@ -175,3 +179,66 @@ stale private/media/page controls on confirmed end, explains lost ephemeral
 pages, and retains explicit close with its stop-run semantics. Missing-session
 404 shows generic unavailable recovery; no automatic browser recreation or
 private resume. Temporary disconnects retain reconnect. No DB/wire migration.
+
+## Service restart recovery
+
+Session metadata accepts optional `viewer_id` and returns `owns_control` after
+owner authorization, checking the current auth-session/viewer lease rather than
+persisted private state. Old clients may omit it; new clients tolerate its absence.
+The viewer drops lost private authority without reacquiring or returning to agent,
+and rejects pre-transition ownership snapshots. Disconnected passive media retries
+every three seconds while viewing remains authorized; private and ended sessions
+stop retries. Recovery controls appear on the empty canvas.
+
+## Previously authorized viewer restoration
+
+Successful private acquire/renew/recover responses include `recovery_ticket`. The
+Origin-checked control POST accepts `recover` plus that proof, still requiring a
+live login and owner-scoped session lookup. It establishes a fresh acknowledged
+private lease for the same viewer only, never a return to agent. Existing live
+controllers cannot be displaced; duplicate recovery of a still-live restored lease
+returns its state without redispatch. Explicit release/return/takeover advances
+epoch and invalidates old proofs. See [recovery plan](../../../plan/bud-owned-browser/viewer-recovery.md).
+
+## Phase 3d agent observations
+
+`broker.ts` lowers requested observations and semantic actions to `inspect` only
+with `semantic_observations`; old peers retain plain observe or receive explicit
+unsupported. `agent_capture` and model vision support gate screenshot requests.
+
+`agent-capture.ts` issues one-use, request-deadline upload tickets bound to the
+live carrier/invocation/session/epoch/owner. POST `/api/browser/captures` accepts
+at most 1.42 MB; authorization is rechecked before storage. GET
+`/api/threads/:thread_id/browser-images/:image_id` uses normal cookie/bearer viewer
+resolution and owned thread/Bud lookup (anonymous 401, foreign 404), no-store.
+
+`image-artifacts.ts` stores immutable, owner/thread/call-bound images in private
+files, seven-day TTL, 128-image capacity, 1.4M base64 chars each. Configure
+`BUD_BROWSER_ARTIFACT_DIR` on persistent service storage for deployment survival;
+the development default is `.bud-data/browser-images`. No schema migration.
+Expired files are cleaned during writes; expired/missing references never recapture.
+Single service instance owns write serialization, matching the browser relay.
+
+Before provider invocation, authenticated hydration appends actual canonical image
+blocks alongside paired tool results, limited to eight newest screenshots. JSON,
+SSE, diagnostic request recording and the ledger keep references, not bytes.
+`agent-capture.test.ts`, `image-artifacts.test.ts` and `broker.test.ts` cover tickets,
+revocation/size limits, replay/owner scope, provider serialization and mixed peers.
+
+Definitively rejected semantic lookups (missing/ambiguous/stale/oversized) leave
+the session ready for another observation. Unknown execution outcomes and broken
+runtimes retain interrupted behavior; no automatic mutation retry.
+
+## Durable return-control waits (Phase 3e)
+
+With a capable handoff carrier and durable execution hook, private-session admission
+atomically parks the original invocation/action and creates a `return_control`
+handoff before any daemon command. Lock order is thread → invocation → action →
+session; acknowledged return locks pending invocations before the session. Return
+therefore includes a committed wait or admission observes returned authority.
+`BrowserToolWait` is internal control flow, never a completed provider result.
+Unknown post-dispatch outcomes retain normal error handling and never park/replay.
+Multiple invocations may wait on one browser; explicit return resolves all eligible
+waits. Cleanup also inspects sessions with pending waits for confirmed boot changes;
+disconnection alone preserves them. Continuation tests cover original identities,
+multiple waits, targeted cancellation and same-thread follow-up availability.

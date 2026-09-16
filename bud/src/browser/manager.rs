@@ -19,6 +19,22 @@ pub enum Action {
     Observe {
         target_id: Option<String>,
     },
+    Capture {
+        target_id: Option<String>,
+        endpoint: String,
+        ticket: String,
+    },
+    Inspect {
+        target_id: Option<String>,
+        operation: String,
+        continuation: Option<String>,
+        scope: Option<String>,
+        observation_id: Option<String>,
+        reference: Option<String>,
+        locator: Option<Locator>,
+        text: Option<String>,
+        delta_y: Option<i32>,
+    },
     Navigate {
         url: String,
         target_id: Option<String>,
@@ -62,6 +78,13 @@ pub enum Action {
     },
     Close,
     Cancel,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Locator {
+    pub role: String,
+    pub name: String,
 }
 
 /// Authority is supplied by the service, never by model arguments.
@@ -168,7 +191,7 @@ impl BrowserManager {
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
             "managed":true, "profile_mode":"ephemeral", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
-            "max_sessions":2})
+            "semantic_observations":true, "agent_capture":true, "max_sessions":2})
     }
 
     pub fn connect(&self, device_session_id: String) {
@@ -500,6 +523,36 @@ impl BrowserManager {
         if result.is_err() && control.is_some() {
             slot.authority.lock().unwrap().pause();
         }
+        let result = if let (
+            Action::Capture {
+                endpoint, ticket, ..
+            },
+            Ok(data),
+        ) = (&request.command, &result)
+        {
+            // Image bytes never ride the shared control writer. Recheck the fence
+            // before upload and after the service acknowledges the artifact.
+            if request.expires_at_ms <= crate::util::now_millis() as u64
+                || cancellation.borrow().as_deref() == Some(&request.request_id)
+            {
+                return Reply::error(&request, "browser_canceled", true);
+            }
+            let uploaded = super::capture::upload(endpoint, ticket, data).await;
+            if request.expires_at_ms <= crate::util::now_millis() as u64
+                || cancellation.borrow().as_deref() == Some(&request.request_id)
+                || connection.borrow().as_deref() != Some(&request.device_session_id)
+                || !slot
+                    .authority
+                    .lock()
+                    .unwrap()
+                    .agent_allowed(request.control_epoch)
+            {
+                return Reply::error(&request, "browser_private_or_paused", true);
+            }
+            uploaded
+        } else {
+            result
+        };
         match result {
             Ok(data) => Reply {
                 request_id: request.request_id,
@@ -512,6 +565,10 @@ impl BrowserManager {
             },
             Err(error) => {
                 const REJECTED: &[&str] = &[
+                    "browser_locator_ambiguous",
+                    "browser_locator_not_found",
+                    "browser_observation_limit",
+                    "browser_invalid_arguments",
                     "browser_no_previous_page",
                     "browser_stale_reference",
                     "browser_stale_focus",
@@ -547,6 +604,11 @@ async fn perform(
             .browser
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
+        // A lease acknowledgement must not imply that a permanently interrupted
+        // Chrome channel can produce frames. Pause/close remain available.
+        if matches!(control, ControlCommand::Acquire { .. }) && browser.interrupted() {
+            anyhow::bail!("browser_interrupted");
+        }
         if !matches!(control, ControlCommand::Renew { .. }) {
             browser.invalidate_references();
         }
@@ -583,7 +645,10 @@ async fn perform(
     }
     let targets = browser.targets().await?;
     let requested = match action {
-        Action::Navigate { target_id, .. } | Action::Observe { target_id } => target_id.as_ref(),
+        Action::Navigate { target_id, .. }
+        | Action::Observe { target_id }
+        | Action::Inspect { target_id, .. }
+        | Action::Capture { target_id, .. } => target_id.as_ref(),
         Action::ResizeViewport { target_id, .. } | Action::FitViewport { target_id, .. } => {
             Some(target_id)
         }
@@ -611,6 +676,23 @@ async fn perform(
                 json!({"state":"ready", "profile_mode":"ephemeral", "target_id":target,
                 "navigation_requested":url.is_some(), "targets":browser.targets().await?}),
             )
+        }
+        Action::Capture { .. } => browser.capture_scaled(&target, Some(1.0)).await,
+        Action::Inspect {
+            operation,
+            continuation,
+            scope,
+            observation_id,
+            reference,
+            locator,
+            text,
+            delta_y,
+            ..
+        } => {
+            let data = browser.inspect(&target, json!({"operation":operation,"continuation":continuation,
+                "scope":scope,"observation_id":observation_id,"reference":reference,"locator":locator,
+                "text":text,"delta_y":delta_y})).await?;
+            Ok(json!({"observation":data}))
         }
         Action::Observe { .. } => {
             Ok(json!({"targets":targets, "observation":browser.observe(&target).await?}))
@@ -681,6 +763,57 @@ fn valid_action(action: &Action) -> bool {
             url: value,
             target_id,
         } => url(value) && target(target_id),
+        Action::Capture {
+            target_id,
+            endpoint,
+            ticket,
+        } => {
+            target(target_id)
+                && ticket.len() >= 32
+                && ticket.len() <= 128
+                && endpoint.len() <= 2048
+                && url::Url::parse(endpoint).is_ok_and(|u| {
+                    u.username().is_empty()
+                        && u.password().is_none()
+                        && u.query().is_none()
+                        && u.fragment().is_none()
+                        && (u.scheme() == "https"
+                            || (u.scheme() == "http"
+                                && matches!(u.host_str(), Some("127.0.0.1" | "localhost"))))
+                })
+        }
+        Action::Inspect {
+            target_id,
+            operation,
+            continuation,
+            scope,
+            observation_id,
+            reference,
+            locator,
+            text,
+            delta_y,
+        } => {
+            target(target_id)
+                && target(continuation)
+                && target(scope)
+                && target(observation_id)
+                && target(reference)
+                && matches!(
+                    operation.as_str(),
+                    "snapshot"
+                        | "visible_dom"
+                        | "page_info"
+                        | "click"
+                        | "focus"
+                        | "fill"
+                        | "scroll"
+                )
+                && locator.as_ref().is_none_or(|l| {
+                    !l.role.is_empty() && l.role.len() <= 64 && l.name.len() <= 2048
+                })
+                && text.as_ref().is_none_or(|t| t.len() <= 8192)
+                && delta_y.is_none_or(|d| (-10000..=10000).contains(&d))
+        }
         Action::Observe { target_id } => target(target_id),
         Action::Focus { reference } | Action::Click { reference } => id(reference),
         Action::HumanInput {
@@ -779,6 +912,93 @@ mod tests {
             invocation_fence: 1,
             command,
         }
+    }
+
+    #[tokio::test]
+    async fn live_disconnect_during_capture_drains_cdp_without_delivering_frame() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let manager = BrowserManager::new(Some(executable.into()));
+        manager.connect("device".into());
+        assert!(
+            manager
+                .execute(request(1, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        let slot = manager
+            .entries
+            .lock()
+            .unwrap()
+            .get("browser")
+            .unwrap()
+            .clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        assert!(
+            manager
+                .execute(request(
+                    2,
+                    Action::MediaAttach {
+                        endpoint: format!("ws://{}/", listener.local_addr().unwrap()),
+                        ticket: "capture-disconnect-test-ticket-0123456789".into(),
+                        controller_id: None,
+                    }
+                ))
+                .await
+                .ok
+        );
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        socket.next().await.unwrap().unwrap(); // ticket handshake
+        socket
+            .send(Message::Text(json!({"target_id":null}).to_string()))
+            .await
+            .unwrap();
+        // This single-threaded test waits until capture owns the page lock and
+        // has yielded in CDP I/O, rather than guessing a screenshot duration.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if slot.state.try_lock().is_err() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("capture never acquired page lock");
+        manager.disconnect();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while slot.media.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("capture did not drain");
+        assert!(
+            !slot
+                .state
+                .lock()
+                .await
+                .browser
+                .as_mut()
+                .unwrap()
+                .interrupted(),
+            "disconnect poisoned the shared Chrome channel"
+        );
+        assert!(
+            !matches!(socket.next().await, Some(Ok(Message::Text(_)))),
+            "revoked capture delivered pixels"
+        );
+        manager.connect("reconnected".into());
+        let mut observe = request(2, Action::Observe { target_id: None });
+        observe.device_session_id = "reconnected".into();
+        assert!(manager.execute(observe.clone()).await.ok);
+        observe.sequence = 3;
+        observe.command = Action::Close;
+        assert!(manager.execute(observe).await.ok);
     }
 
     #[tokio::test]
@@ -1128,7 +1348,30 @@ mod tests {
                 .error,
             Some("browser_interrupted")
         );
-        assert!(manager.execute(request(7, Action::Close)).await.ok);
+        let mut pause = request(
+            7,
+            Action::Control {
+                control: ControlCommand::Pause,
+            },
+        );
+        pause.control_epoch = 2;
+        assert!(manager.execute(pause).await.ok);
+        let mut acquire = request(
+            8,
+            Action::Control {
+                control: ControlCommand::Acquire {
+                    controller_id: "viewer".into(),
+                },
+            },
+        );
+        acquire.control_epoch = 3;
+        assert_eq!(
+            manager.execute(acquire).await.error,
+            Some("browser_interrupted")
+        );
+        let mut close = request(9, Action::Close);
+        close.control_epoch = 3;
+        assert!(manager.execute(close).await.ok);
         let mut reopen = request(1, Action::Open { url: None });
         reopen.session_id = "replacement".into();
         reopen.generation = "replacement-generation".into();

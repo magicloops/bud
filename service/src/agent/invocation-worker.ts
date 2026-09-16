@@ -104,6 +104,11 @@ export class InvocationWorker {
       const hooks: AgentExecutionHooks = {
         invocation: { id: invocation.id, fence: invocation.fence, workerId: invocation.workerId! },
         checkpoint: renew,
+        browserWaitParked: () => {
+          ended = true;
+          parked = true;
+          if (heartbeat) clearTimeout(heartbeat);
+        },
         parkUserBrowserHandoff: async nextCall=>{
           if(!this.repository.parkUserBrowserHandoff)return null;
           await renew();

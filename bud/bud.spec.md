@@ -59,6 +59,12 @@ Cargo build script for generated protobuf bindings and release metadata.
 
 ## Subfolders
 
+### `browser-helper/` → [browser-helper.spec.md](./browser-helper/browser-helper.spec.md)
+
+Private Node 22+/Playwright semantic snapshot and locator runtime for managed
+Chrome. Install its locked dependencies before enabling the browser.
+
+
 ### `src/` -> [src.spec.md](./src/src.spec.md)
 
 Modular daemon implementation split across:

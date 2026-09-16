@@ -112,6 +112,10 @@ test(
     assert.equal(second.sequence, r.sequence + 1);
     await repo.complete(second, { ok: true, outcome: "completed" });
     assert.equal(await repo.evidenceAllowed(second), true);
+    await repo.complete(second, { ok:false, outcome:"rejected", error:"browser_locator_ambiguous" });
+    assert.equal((await pool.query("select state from browser_session where id=$1", [second.session_id])).rows[0].state,"ready");
+    const reobserve = await repo.prepare(await next(), "boot", { action:"inspect", operation:"snapshot" });
+    await repo.complete(reobserve, { ok:true, outcome:"completed" });
     const controls = new BrowserControlRepository(pool);
     assert.equal((await controls.list("bob", thread)).length, 0);
     await assert.rejects(controls.get("bob", r.session_id), /not_found/);
@@ -145,10 +149,8 @@ test(
     assert.equal(await repo.evidenceAllowed(second), false);
     for (const controlState of ["paused", "human_private", "resume_pending"]) {
       await pool.query("update browser_session set control_state=$1 where id=$2", [controlState, r.session_id]);
-      for (const boot of ["boot", "new-boot"]) {
-        for (const action of ["open", "observe", "click", "close"]) {
-          await assert.rejects(repo.prepare(await next(), boot, { action }), /private_or_paused/);
-        }
+      for (const action of ["open", "observe", "click", "close"]) {
+        await assert.rejects(repo.prepare(await next(), "boot", { action }), /private_or_paused/);
       }
       assert.equal((await controls.get("alice", r.session_id)).boot_id, "boot");
     }
@@ -217,20 +219,39 @@ test(
     assert.notEqual(replacement.generation, r.generation);
     assert.notEqual(replacement.session_id, r.session_id);
     await repo.complete(replacement, { ok: true, outcome: "completed" });
-    const current = await controls.get("alice", replacement.session_id);
+    // Each private state blocks the same boot but cannot hold a dead browser
+    // hostage after a confirmed daemon restart. Keep old privacy metadata intact.
+    let live = replacement;
+    let liveBoot = "new-boot";
+    for (const state of ["paused", "human_private", "resume_pending"]) {
+      await pool.query("update browser_session set control_state=$1,private_content=true where id=$2", [state, live.session_id]);
+      await assert.rejects(repo.prepare(await next(), liveBoot, { action: "open" }), /private_or_paused/);
+      const prior = live;
+      liveBoot += "-next";
+      live = await repo.prepare(await next(), liveBoot, { action: "open" });
+      assert.notEqual(live.session_id, prior.session_id);
+      assert.notEqual(live.generation, prior.generation);
+      const old = (await pool.query("select * from browser_session where id=$1", [prior.session_id])).rows[0];
+      assert.ok(old.closed_at);
+      assert.equal(old.private_content, true);
+      assert.equal(old.control_state, state);
+      assert.equal((await controls.get("alice", live.session_id)).private_content, false);
+      await repo.complete(live, { ok: true, outcome: "completed" });
+    }
+    const current = await controls.get("alice", live.session_id);
     await assert.rejects(
-      controls.requestClose("bob", replacement.session_id, current.revision),
+      controls.requestClose("bob", live.session_id, current.revision),
       /not_found/,
     );
     const closing = await controls.requestClose(
       "alice",
-      replacement.session_id,
+      live.session_id,
       current.revision,
     );
     assert.equal(closing.session.desired_state, "closed");
     assert.deepEqual(closing.invocations, ["inv"]);
     await assert.rejects(
-      controls.requestClose("alice", replacement.session_id, current.revision),
+      controls.requestClose("alice", live.session_id, current.revision),
       /revision_conflict/,
     );
     await pool.query("update thread set deleted_at=now()");
@@ -240,7 +261,7 @@ test(
     );
     const candidates = await repo.cleanupCandidates();
     assert.equal(candidates.length, 1);
-    const close = await repo.prepareCleanup(candidates[0], "new-boot");
+    const close = await repo.prepareCleanup(candidates[0], liveBoot);
     assert.ok(close);
     assert.ok(close.control_epoch > r.control_epoch);
     await repo.complete(close, { ok: true, outcome: "completed" });

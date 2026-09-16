@@ -11,6 +11,7 @@ import {
 } from "./transport.js";
 import type { BrowserHandoffContext } from "../agent/browser-tool-executor.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
+import { BrowserRecoveryTickets } from "./recovery-ticket.js";
 
 type Controller = {
   owner: string;
@@ -19,6 +20,7 @@ type Controller = {
   expires: number;
   revision: number;
   carrier: BrowserCarrier;
+  recoveredTicket?: string;
 };
 
 /** Single-service coordinator. DB revisions persist decisions; leases never survive restart. */
@@ -32,6 +34,7 @@ export class BrowserControl {
     readonly repository = new BrowserControlRepository(),
     private readonly carrierFor = browserCarrier,
     private readonly dispatch = dispatchBrowser,
+    private readonly recoveryTickets = new BrowserRecoveryTickets(),
   ) {}
 
   expireControllers() {
@@ -170,26 +173,45 @@ export class BrowserControl {
           await this.pause(takeover.session, AbortSignal.timeout(35_000));
         return this.repository.get(owner, sessionId);
       }
-      this.controllers.delete(sessionId);
-      const signal = AbortSignal.timeout(35_000);
-      session = await this.pause(session, signal);
-      const id = randomUUID();
-      session = await this.transition(
-        session,
-        "acquire",
-        "human_private",
-        signal,
-        id,
-      );
-      this.controllers.set(sessionId, {
-        owner,
-        viewer,
-        id,
-        expires: Date.now() + 15_000,
-        revision: session.revision,
-        carrier: this.carrier(session),
-      });
-      return session;
+      return this.acquireSession(session, viewer);
+    });
+  }
+
+  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string) {
+    this.controllers.delete(session.id);
+    const signal = AbortSignal.timeout(35_000);
+    session = await this.pause(session, signal);
+    const id = randomUUID();
+    session = await this.transition(session, "acquire", "human_private", signal, id);
+    this.controllers.set(session.id, {
+      owner: session.created_by_user_id, viewer, id, recoveredTicket,
+      expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
+    });
+    return session;
+  }
+
+  recoveryTicket(session: BrowserSession, viewer: string): string | undefined {
+    return this.ownsControl(session.created_by_user_id, session.id, viewer)
+      ? this.recoveryTickets.issue(session, viewer) : undefined;
+  }
+
+  async recoverViewer(owner: string, sessionId: string, viewer: string, ticket: string) {
+    await this.repository.get(owner, sessionId);
+    return this.exclusive(sessionId, async () => {
+      const session = await this.repository.get(owner, sessionId);
+      const claims = this.recoveryTickets.verify(ticket, session, viewer);
+      if (this.runtimeStatus(session) !== "available") throw new BrowserError("browser_handoff_unavailable");
+      const current = this.controllers.get(sessionId);
+      if (current && current.expires > Date.now() && current.carrier.current()) {
+        if (current.owner !== owner || current.viewer !== viewer) throw new BrowserError("browser_controller_exists");
+        if (current.recoveredTicket === ticket) return session;
+      }
+      if (claims.epoch !== session.control_epoch || !session.private_content ||
+          !["paused", "human_private"].includes(session.control_state))
+        throw new BrowserError("browser_recovery_invalid");
+      if (await this.repository.hasRunningInvocation(owner, sessionId))
+        throw new BrowserError("browser_agent_still_running");
+      return this.acquireSession(session, viewer, ticket);
     });
   }
 
@@ -210,6 +232,13 @@ export class BrowserControl {
       throw new BrowserError("browser_control_expired");
     }
     return control;
+  }
+
+  /** Called only after the route has resolved this owner's browser session. */
+  ownsControl(owner: string, sessionId: string, viewer: string): boolean {
+    const control = this.controllers.get(sessionId);
+    return !!control && control.owner === owner && control.viewer === viewer &&
+      control.expires > Date.now() && control.carrier.current();
   }
 
   async mediaAuthority(owner: string, sessionId: string, viewer: string) {

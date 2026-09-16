@@ -634,3 +634,18 @@ test('canonical receipt cannot reorder equal-time rows on a later insert', () =>
   const next = upsertMessage(settled, buildMessage({ client_id: 'c', message_id: 'c' }))
   assert.deepEqual(next.map(message => message.client_id), ['a', 'b', 'c'])
 })
+
+
+test('all durable browser waits survive later turns; canonical results and empty inventory clear them', () => {
+  const waits = ['one','two'].map(id => ({turn_id:id,invocation_id:id,pending_tool:{
+    name:'browser_act',client_id:id,call_id:`call-${id}`,started_at:'2026-04-21T10:00:00.000Z',
+    args:{wait_kind:'return_control',invocation_id:id,session_id:'browser'}}}))
+  const state = buildAgentState({turn_id:'later',pending_browser_waits:waits})
+  const pending = applyAgentStateOverlay([],state)
+  assert.deepEqual(pending.map(m=>m.client_id),['one','two'])
+  assert.equal(pending[0].metadata?.tool,'browser_act')
+  const canonical = buildMessage({client_id:'one',message_id:'stored',role:'tool',content:'not executed'})
+  const reconciled = applyAgentStateOverlay([canonical,...pending.slice(1)],state)
+  assert.equal(reconciled.find(m=>m.client_id==='one'),canonical)
+  assert.deepEqual(applyAgentStateOverlay(pending,buildAgentState({pending_browser_waits:[]})),[])
+})

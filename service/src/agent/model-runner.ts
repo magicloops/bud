@@ -1,3 +1,4 @@
+import { hydrateBrowserImages } from "../browser/image-artifacts.js";
 import { isBrowserToolName } from "./browser-tools.js";
 import { isAutomationToolName, parseAutomationToolInput } from "../personal-data/automation-tool-contracts.js";
 import { ulid } from "ulid";
@@ -353,7 +354,10 @@ export class AgentModelRunner {
     };
 
     try {
-      for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
+      const hydratedMessages = await hydrateBrowserImages(messages, invocationContext,
+        provider.getModelCapabilities(model).supportsVision);
+      signal?.throwIfAborted();
+      for await (const event of provider.invoke(hydratedMessages, tools, modelConfig, signal, invocationContext)) {
         // Only productive boundaries change activity. Tail metadata for older
         // blocks must not steal activity from newer text.
         if (event.type === "tool_use_start" ||

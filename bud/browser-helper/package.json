@@ -1,0 +1,8 @@
+{
+  "name": "@bud/browser-helper",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test *.test.mjs" },
+  "dependencies": { "playwright-core": "1.63.0" },
+  "engines": { "node": ">=22" }
+}

@@ -14,6 +14,7 @@ export interface AgentExecutionHooks {
   checkpoint(): Promise<void>;
   beforeTool(directive: AgentToolCallDirective): Promise<void>;
   parkBrowserHandoff?(callId: string, handoffId: string): Promise<void>;
+  browserWaitParked?(): void;
   parkUserBrowserHandoff?(nextCall?:AgentToolCallDirective): ReturnType<InvocationRepository["parkUserBrowserHandoff"]>;
   parkQuestion?(directive: AgentToolCallDirective, questionRequestId: string): Promise<void>;
   parkAppDataRequest?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAppDataRequest"]>;

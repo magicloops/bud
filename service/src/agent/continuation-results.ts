@@ -11,7 +11,7 @@ export function deferredToolResult(block: Extract<CanonicalContentBlock, { type:
   return {
     ...block.input, args: block.input, tool: names[block.name] ?? block.name, call_id: block.id,
     ok: false, error: waitingFor === "browser" ? "not_executed_due_to_browser_handoff" : waitingFor === "automation" ? "not_executed_due_to_automation_review" : waitingFor === "permission" ? "not_executed_due_to_permission" : "not_executed_due_to_question", retryable: true,
-    summary: waitingFor === "browser" ? "Not executed: reconsider after the user returned browser control." : waitingFor === "automation" ? "Not executed: reconsider this action using the automation review decision." : waitingFor === "permission" ? "Not executed: reconsider this action using the user's permission decision."
+    summary: waitingFor === "browser" ? "Not executed: the user returned browser control. Observe the current page before reconsidering this action." : waitingFor === "automation" ? "Not executed: reconsider this action using the automation review decision." : waitingFor === "permission" ? "Not executed: reconsider this action using the user's permission decision."
       : "Not executed: reconsider this action using the user's answer.",
   };
 }

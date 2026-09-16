@@ -2,7 +2,7 @@ import test, { mock } from "node:test";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 import { BROWSER_TOOL_NAMES, BROWSER_CANONICAL_TOOLS, parseBrowserInput } from "./browser-tools.js";
-import { BrowserToolExecutor, type BrowserAgentBackend, type BrowserAgentContext } from "./browser-tool-executor.js";
+import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentBackend, type BrowserAgentContext } from "./browser-tool-executor.js";
 import { buildToolArgs, toolNameForConversation, type ExecutedBrowserTool } from "./contracts.js";
 import { AgentModelRunner } from "./model-runner.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
@@ -144,11 +144,11 @@ async function loopFixture(t: any, browser: BrowserToolExecutor, responses: Arra
   const events: any[] = [];
   runtime.attachCallback("thread", event => events.push(event));
   runtime.startTurn("thread", "turn", environment);
-  const run = () => Reflect.get(service, "runAgentFlow").call(service, { ...context, sessionId: null,
+  const run = (browserWaitParked?: () => void) => Reflect.get(service, "runAgentFlow").call(service, { ...context, sessionId: null,
     model: "browser-fixture", modelReasoning: { providerModel: "browser-fixture", reasoningLevel: "none", reasoning: { enabled: false } },
     modelSelection: { model: "browser-fixture", reasoningEffort: "none", source: "explicit_request" },
     environment, controller: new AbortController(), executionHooks: {
-      checkpoint: async () => {}, beforeTool: async () => {}, afterTool: async () => {},
+      browserWaitParked, checkpoint: async () => {}, beforeTool: async () => {}, afterTool: async () => {},
     } });
   const reload = (messages: CanonicalMessage[]) => Reflect.set(service, "conversationLoader", {
     loadWithDiagnostics: async () => ({ messages: structuredClone(messages), reconstruction: { mode: "canonical_only" } }),
@@ -178,6 +178,24 @@ test("canonical agent loop records results and parks before trailing calls or an
   assert.equal(fixture.runtime.getSnapshot("thread").phase, "waiting_for_user");
   assert.equal(fixture.runtime.getSnapshot("thread").pending_tool?.name, "browser_request_handoff");
   assert.equal(fixture.events.filter(event => event.event === "agent.tool_result").length, 2);
+});
+
+test("admission wait preserves original call and pauses without trailing tools or final refusal", async t => {
+  let parked=0, executions=0;
+  const executor=new BrowserToolExecutor(backend({execute:async c=>{
+    executions++;
+    assert.ok(c.waitClientId);
+    throw new BrowserToolWait({handoff_id:"handoff",viewer_path:"/browser/browser_01M2KFXEFBTPXR71B57JFBW9Z1",
+      wait_kind:"return_control",invocation_id:"invocation",session_id:"browser_01M2KFXEFBTPXR71B57JFBW9Z1"});
+  }}),async()=>true);
+  const fixture=await loopFixture(t,executor,[[{name:"browser_observe",input:{}},{name:"browser_close",input:{}}]]);
+  assert.equal((await fixture.run(()=>{parked++})).status,"waiting_for_user");
+  assert.equal(parked,1); assert.equal(executions,1); assert.equal(fixture.requests.length,1);
+  assert.equal(fixture.events.filter(e=>e.event==="agent.tool_result").length,0);
+  const pending=fixture.runtime.getSnapshot("thread").pending_tool;
+  assert.equal(pending?.name,"browser_observe"); assert.equal(pending?.call_id,"call-1-0");
+  assert.equal(pending?.args.wait_kind,"return_control");
+  assert.equal(fixture.runtime.getSnapshot("thread").phase,"waiting_for_user");
 });
 
 test("production handoff is paired as unsupported without parking the turn", async t => {

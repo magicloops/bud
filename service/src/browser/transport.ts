@@ -23,6 +23,8 @@ const capability = z.object({
   independent_renewal: z.boolean().optional(),
   hidpi_capture: z.boolean().optional(),
   history_navigation: z.boolean().optional(),
+  semantic_observations: z.boolean().optional(),
+  agent_capture: z.boolean().optional(),
 });
 const resultSchema = z.object({
   browser_version: z.literal(1),
@@ -59,6 +61,8 @@ export type BrowserCarrier = {
   independentRenewal?: boolean;
   hidpiCapture?: boolean;
   historyNavigation?: boolean;
+  semanticObservations?: boolean;
+  agentCapture?: boolean;
   current(): boolean;
   send(frame: Record<string, unknown>): boolean;
 };
@@ -92,6 +96,8 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
       independentRenewal: parsed.data.independent_renewal === true,
       hidpiCapture: parsed.data.hidpi_capture === true,
       historyNavigation: parsed.data.history_navigation === true,
+      semanticObservations: parsed.data.semantic_observations === true,
+      agentCapture: parsed.data.agent_capture === true,
       current,
       send(frame) {
         if (!current()) return false;

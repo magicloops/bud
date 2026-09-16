@@ -36,11 +36,6 @@ pub struct Observation {
     pub truncated: bool,
 }
 
-struct Reference {
-    target: String,
-    document: String,
-    node: u64,
-}
 struct Focus {
     target: String,
     document: String,
@@ -60,10 +55,12 @@ struct Viewport {
 /// Fresh TempDir profiles avoid ever attaching to a user's personal Chrome.
 pub struct Browser {
     cdp: Cdp,
+    semantic: super::semantic::Semantic,
+    semantic_dirty: bool,
+    semantic_target: Option<String>,
     child: Child,
     _profile: TempDir,
     sessions: HashMap<String, String>,
-    references: HashMap<String, Reference>,
     observation_id: u64,
     focus: Option<Focus>,
     viewport: Option<Viewport>,
@@ -124,14 +121,15 @@ impl Browser {
                         if !targets["targetInfos"].is_array() {
                             bail!("browser_invalid_targets");
                         }
-                        return Ok(cdp);
+                        let semantic = super::semantic::Semantic::connect(&endpoint).await?;
+                        return Ok((cdp, semantic));
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         })
         .await;
-        let cdp = match ready {
+        let (cdp, semantic) = match ready {
             Ok(Ok(cdp)) => cdp,
             Ok(Err(error)) => {
                 let _ = child.kill().await;
@@ -144,10 +142,12 @@ impl Browser {
         };
         Ok(Self {
             cdp,
+            semantic,
+            semantic_dirty: false,
+            semantic_target: None,
             child,
             _profile: profile,
             sessions: HashMap::new(),
-            references: HashMap::new(),
             observation_id: 0,
             focus: None,
             viewport: None,
@@ -239,56 +239,77 @@ impl Browser {
         Ok(())
     }
 
-    async fn snapshot(&mut self, target: &str) -> Result<Observation> {
-        let session = self.session(target).await?;
-        let document = self.document(&session).await?;
-        let result = self
-            .cdp
-            .call(Some(&session), "Accessibility.getFullAXTree", json!({}))
-            .await?;
-        if self.document(&session).await? != document {
-            bail!("browser_document_changed");
+    pub async fn inspect(
+        &mut self,
+        target: &str,
+        mut command: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        if self.semantic_dirty {
+            self.semantic
+                .call(json!({"operation":"invalidate"}))
+                .await?;
+            self.semantic_dirty = false;
         }
+        command["target_id"] = json!(target);
+        let result = self.semantic.call(command).await?;
+        self.semantic_target = Some(target.into());
+        Ok(result)
+    }
+
+    // Legacy result shape only. Both service versions use the same semantic engine.
+    pub async fn observe(&mut self, target: &str) -> Result<Observation> {
+        let mut result = self
+            .inspect(target, json!({"operation":"snapshot"}))
+            .await?;
+        let document = result["document_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         self.observation_id += 1;
-        self.references.clear();
-        let nodes = result["nodes"]
-            .as_array()
-            .context("browser_snapshot_failed")?;
         let mut elements = Vec::new();
+        let mut bytes = 0;
         let mut truncated = false;
-        for node in nodes {
-            if node["ignored"] == true {
-                continue;
+        for page in 0..8 {
+            for node in result["nodes"].as_array().into_iter().flatten() {
+                let role = node["role"].as_str().unwrap_or_default();
+                if matches!(role, "table" | "row" | "cell" | "generic" | "paragraph") {
+                    continue;
+                }
+                let Some(reference) = node["reference"].as_str() else {
+                    continue;
+                };
+                let element = Element {
+                    reference: reference.into(),
+                    role: role.into(),
+                    name: node["name"]
+                        .as_str()
+                        .or(node["text"].as_str())
+                        .unwrap_or_default()
+                        .into(),
+                };
+                bytes += serde_json::to_vec(&element)?.len();
+                if elements.len() == 256 || bytes > 64 * 1024 {
+                    truncated = true;
+                    break;
+                }
+                elements.push(element);
             }
-            let Some(id) = node["backendDOMNodeId"].as_u64() else {
-                continue;
+            if truncated {
+                break;
+            }
+            let Some(cursor) = result["continuation"].as_str().map(str::to_owned) else {
+                break;
             };
-            let role = node["role"]["value"].as_str().unwrap_or_default();
-            if matches!(role, "none" | "generic" | "InlineTextBox") {
-                continue;
-            }
-            if elements.len() == 100 {
+            if page == 7 {
                 truncated = true;
                 break;
             }
-            let reference = format!("{}:{}", ulid::Ulid::new(), id);
-            self.references.insert(
-                reference.clone(),
-                Reference {
-                    target: target.into(),
-                    document: document.clone(),
-                    node: id,
-                },
-            );
-            // Never serialize AX values/properties (including passwords). Page
-            // labels/text remain untrusted content. Human handoff is not yet supported.
-            let name = node["name"]["value"].as_str().unwrap_or_default();
-            truncated |= role.len() > 64 || name.len() > 256;
-            elements.push(Element {
-                reference,
-                role: bounded(role, 64),
-                name: bounded(name, 256),
-            });
+            result = self
+                .inspect(
+                    target,
+                    json!({"operation":"snapshot","continuation":cursor}),
+                )
+                .await?;
         }
         Ok(Observation {
             target_id: target.into(),
@@ -299,57 +320,17 @@ impl Browser {
         })
     }
 
-    pub async fn observe(&mut self, target: &str) -> Result<Observation> {
-        let observation = self.snapshot(target).await?;
-        Ok(observation)
-    }
-
     pub async fn focus(&mut self, reference: &str) -> Result<()> {
-        let entry = self
-            .references
-            .get(reference)
+        let target = self
+            .semantic_target
+            .clone()
             .context("browser_stale_reference")?;
-        let (target, document, node) = (entry.target.clone(), entry.document.clone(), entry.node);
+        self.inspect(&target, json!({"operation":"focus","reference":reference}))
+            .await?;
         let session = self.session(&target).await?;
-        if self.document(&session).await? != document {
-            bail!("browser_stale_reference");
-        }
-        self.cdp
-            .call(
-                Some(&session),
-                "Runtime.releaseObjectGroup",
-                json!({"objectGroup":"bud-input"}),
-            )
+        let document = self.document(&session).await?;
+        self.remember_human_focus(&target, &session, &document)
             .await?;
-        self.focus = None;
-        let result = self
-            .cdp
-            .call(
-                Some(&session),
-                "DOM.resolveNode",
-                json!({"backendNodeId":node,"objectGroup":"bud-input"}),
-            )
-            .await?;
-        let object = result["object"]["objectId"]
-            .as_str()
-            .context("browser_stale_reference")?
-            .to_owned();
-        self.cdp
-            .call(Some(&session), "Page.bringToFront", json!({}))
-            .await?;
-        let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
-            "objectId":object, "returnByValue":true, "userGesture":true,
-            "functionDeclaration":"function() { if (!this.isConnected || !(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement)) return false; this.focus(); return this.ownerDocument.activeElement === this; }"
-        })).await?;
-        if result["result"]["value"] != true {
-            bail!("browser_unsupported_field");
-        }
-        self.focus = Some(Focus {
-            target,
-            document,
-            object,
-            token: ulid::Ulid::new().to_string(),
-        });
         Ok(())
     }
 
@@ -381,41 +362,13 @@ impl Browser {
     }
 
     pub async fn click(&mut self, reference: &str) -> Result<()> {
-        let entry = self
-            .references
-            .get(reference)
+        let target = self
+            .semantic_target
+            .clone()
             .context("browser_stale_reference")?;
-        let (target, document, node) = (entry.target.clone(), entry.document.clone(), entry.node);
-        let session = self.session(&target).await?;
-        if self.document(&session).await? != document {
-            bail!("browser_stale_reference");
-        }
-        let result = self
-            .cdp
-            .call(
-                Some(&session),
-                "DOM.resolveNode",
-                json!({"backendNodeId":node,"objectGroup":"bud-click"}),
-            )
+        self.inspect(&target, json!({"operation":"click","reference":reference}))
             .await?;
-        let object = result["object"]["objectId"]
-            .as_str()
-            .context("browser_stale_reference")?;
-        let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
-            "objectId":object,"returnByValue":true,"userGesture":true,
-            "functionDeclaration":"function() { if (!this.isConnected || typeof this.click !== 'function') return false; this.click(); return true; }"
-        })).await?;
-        if result["result"]["value"] != true {
-            bail!("browser_stale_reference");
-        }
         self.focus = None;
-        self.cdp
-            .call(
-                Some(&session),
-                "Runtime.releaseObjectGroup",
-                json!({"objectGroup":"bud-click"}),
-            )
-            .await?;
         Ok(())
     }
 
@@ -757,14 +710,16 @@ impl Browser {
     }
 
     pub fn invalidate_references(&mut self) {
-        self.references.clear();
+        self.semantic_dirty = true;
         self.focus = None;
         self.viewport = None;
         self.last_wheel = None;
     }
 
     pub fn interrupted(&mut self) -> bool {
-        self.cdp.interrupted() || !matches!(self.child.try_wait(), Ok(None))
+        self.cdp.interrupted()
+            || self.semantic.interrupted()
+            || !matches!(self.child.try_wait(), Ok(None))
     }
 
     pub async fn close(mut self) -> Result<()> {

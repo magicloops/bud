@@ -429,3 +429,16 @@ saved intent. Fresh unknown selections still fail; message admission explicitly
 allows known retired client submissions to fall back. Missing Bud-local models
 and provider availability failures never select cloud as a substitute. Already
 admitted invocation snapshots still use strict preflight. Tests cover each boundary.
+
+
+## Requested browser images
+
+The agent runner hydrates owner/thread/call-bound screenshot artifacts only just
+before provider invocation. Original tool_result JSON remains paired and stores
+metadata; sibling canonical text attributes each image to its call, followed by
+an actual canonical image block. Existing OpenAI `input_image` and Anthropic
+base64 image lowering is exercised in `browser/image-artifacts.test.ts`. Current
+local providers advertise no vision and receive an explicit unavailable notice
+when replaying image history; new screenshot calls reject as unsupported. No
+model switch or OCR fallback. Eight newest images maximum; no bytes in context
+diagnostics, text-token estimation, ordinary SSE or persisted tool JSON.

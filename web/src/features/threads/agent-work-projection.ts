@@ -76,7 +76,7 @@ const isWorkMessage = (message: ApiMessage): boolean => {
   if (message.role === 'tool') {
     const tool = getToolName(message)
     if (tool === QUESTION_TOOL) return false
-    const approval = tool === 'browser_request_handoff' || tool === 'data_request_api_key' || tool === 'automations_request_activation' || tool === 'automations_request_existing_contacts'
+    const approval = message.metadata?.wait_kind === 'return_control' || tool === 'browser_request_handoff' || tool === 'data_request_api_key' || tool === 'automations_request_activation' || tool === 'automations_request_existing_contacts'
     // Human decisions must remain visible while pending. Once reconciled with
     // their canonical result, approvals are ordinary work in the same turn.
     return !approval || !isPendingToolMessage(message)

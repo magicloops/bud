@@ -1312,3 +1312,27 @@ and `browser/control.test.ts`; actual signed-in flow acceptance is tracked in
 See [private-control chat](../../../plan/bud-owned-browser/private-control-chat.md).
 Browser rejections explain how to return control; the model can answer normally
 without a retry loop. Handoff catalog availability excludes private/paused sessions.
+
+
+## Phase 3d browser evidence
+
+`browser-tools.ts` retains five tools and adds requested snapshot/visible_dom/
+page_info/screenshot modes plus exact semantic click/fill and scroll. Flat provider
+schemas normalize nullable optional fields before action-specific validation.
+`browser-tool-executor.ts` publishes compact representation-specific summaries.
+`model-runner.ts` hydrates authenticated immutable browser image references after
+context diagnostics and before provider invocation. It reuses canonical image
+blocks, limits hydration to eight newest screenshots, and reports missing/expired/
+unsupported images explicitly. No bytes enter the ordinary tool-result ledger.
+See [browser implementation](../browser/browser.spec.md) for ownership and storage.
+
+## Browser wait continuation (Phase 3e)
+
+`browserWaitParked` acknowledges an already committed pre-dispatch park and stops
+worker renewal. The loop emits waiting metadata with the original tool/call/client
+identity, then exits without a final refusal. `pendingBrowserWaitsForThread`
+recovers up to 50 owner-scoped waits independently of the active turn.
+Return resumes through existing claim/continuation logic: original and trailing
+undispatched provider calls receive paired not-executed results; fresh observation
+is required before acting. Browser continuations deferred for availability release
+thread reservations. Ended/closed/revoked browser waits cancel without fake return.

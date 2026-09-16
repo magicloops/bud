@@ -1,4 +1,4 @@
-import { BrowserToolExecutor, type BrowserAgentContext } from "./browser-tool-executor.js";
+import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentContext } from "./browser-tool-executor.js";
 import { validBrowserInput } from "./browser-tools.js";
 import { isBrowserToolDirective, type AgentToolCallDirective } from "./contracts.js";
 import { WebRetrievalToolExecutor } from "./web-retrieval-tool-executor.js";
@@ -920,7 +920,17 @@ export class AgentService {
               shouldRefreshContext = effectiveToolCall.tool !== "terminal.observe";
             } else if (isBrowserToolDirective(effectiveToolCall)) {
               if (!this.browserToolExecutor) throw new Error("browser_unavailable");
-              execution = await this.browserToolExecutor.execute(browserContext(), effectiveToolCall);
+              try {
+                execution = await this.browserToolExecutor.execute({ ...browserContext(),
+                  waitClientId: args.executionHooks?.browserWaitParked ? toolClientId : undefined }, effectiveToolCall);
+              } catch (error) {
+                if (!(error instanceof BrowserToolWait)) throw error;
+                args.executionHooks!.browserWaitParked!();
+                this.transcriptWriter.emitBrowserHandoff(threadId, turnId, effectiveToolCall,
+                  toolClientId, startedAt, error.handoff);
+                this.cancellations.clear(threadId);
+                return { status: "waiting_for_user" };
+              }
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {

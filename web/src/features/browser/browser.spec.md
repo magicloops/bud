@@ -25,7 +25,7 @@ control, input and media; private input is not a transcript event.
 Metadata polls every three seconds.
 Passive media reattaches when the authorized metadata's control_epoch changes
 (handoff pause or a later agent invocation), even if can_view stays true. Stable
-polls do not remount it. Private control is never automatically reacquired; a
+polls do not remount it. Private control is restored only with a signed proof from the same mounted viewer; a
 private-content revocation closes passive viewing. New attachments clear stale
 connection/input state and must display fresh frames before enabling interaction.
 Image decode/draw and one-frame socket credit
@@ -109,7 +109,10 @@ clears queued input/focus; old daemons receive no new input variant.
 The existing inventory loop exposes pausedSessionId from control_state without
 another request or image state. The thread shows a compact browser-actions-paused
 notice and an explicit link to browser controls; chat stays enabled. Returning
-control remains an intentional action inside the authorized viewer. Older inventory
+control remains an intentional action through the authorized viewer. The mounted
+private controller exposes its existing return action to the chat notice; it uses
+the same viewer identity and clears on control loss, session end or unmount.
+Busy/resize states disable it and duplicate clicks are fenced synchronously. Older inventory
 without control_state omits the notice; obsolete visit responses remain ignored.
 
 
@@ -155,3 +158,35 @@ after 250ms; the existing decoder handles both without remounting media.
 
 - `media.test.ts`: JPEG/PNG switching keeps proportionally fitted CSS coordinates
   and one ACK per decoded/drawn frame, independently of bitmap pixel dimensions.
+
+## Service restart recovery
+
+Session metadata accepts optional `viewer_id` and returns `owns_control` after
+owner authorization, checking the current auth-session/viewer lease rather than
+persisted private state. Old clients may omit it; new clients tolerate its absence.
+The viewer drops lost private authority without returning to agent,
+and rejects pre-transition ownership snapshots. Disconnected passive media retries
+every three seconds while viewing remains authorized; private and ended sessions
+stop retries. Recovery controls appear on the empty canvas.
+
+## Private recovery proof
+
+The mounted viewer retains the service's `recovery_ticket` in memory and refreshes
+it on successful renewal. Media/lease loss clears input but retains this proof;
+the existing metadata poll requests `recover` once the same browser is available.
+Restoration uses a fresh private lease and fresh media, never replays gestures or
+returns the agent. A lost recovery response can be retried idempotently. Explicit
+pause/return/close, input/resize uncertainty, ended sessions and unmount discard
+the proof. A different tab or reload still requires explicit takeover. Older
+services without tickets retain manual recovery. No ticket goes in URLs or chat.
+
+## Inline waiting actions
+
+`BrowserWaitActionsContext` shares the mounted viewer's return callback, error and
+thread-scoped Stop action with waiting chat rows. It adds no controller, heartbeat,
+media subscription or polling loop. Another session/viewer cannot use the callback.
+Errors stay visible on matching pending cards; missing ownership links to browser
+controls. The redundant top-of-chat return banner is removed.
+
+
+The wait-action context includes the currently visible pane session ID for presentation only; this hides redundant Open browser links without granting control.

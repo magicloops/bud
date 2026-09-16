@@ -5,6 +5,13 @@ import { browserReveal, browserSessionId, BrowserRevealTracker } from './pane-st
 
 export const BrowserPaneContext = createContext<((sessionId: string) => void) | null>(null)
 export const useOpenBrowserPane = () => useContext(BrowserPaneContext)
+export const BrowserWaitActionsContext = createContext<{
+  visibleSessionId?: string | null
+  returnAction: { sessionId: string; disabled: boolean; returning: boolean; run: () => void } | null
+  error: { sessionId: string; message: string } | null
+  stop: (invocationId: string) => Promise<void>
+} | null>(null)
+export const useBrowserWaitActions = () => useContext(BrowserWaitActionsContext)
 type Inventory = { session_id: string; state: string; control_state?: string; runtime_status?: string; handoff: { id: string } | null }
 
 export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], initialState: ApiAgentState, reveal: () => void) {

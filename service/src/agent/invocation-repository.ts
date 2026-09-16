@@ -53,6 +53,12 @@ export class InvocationRepository {
     return row ?? null;
   }
 
+  async findForThread(owner: string, threadId: string, invocationId: string) {
+    const [row] = await this.database.select().from(inv).where(and(eq(inv.createdByUserId,owner),
+      eq(inv.threadId,threadId),eq(inv.id,invocationId))).limit(1);
+    return row ?? null;
+  }
+
   async listForThread(owner: string, threadId: string) {
     return this.database.select().from(inv).where(and(eq(inv.createdByUserId, owner), eq(inv.threadId, threadId)))
       .orderBy(desc(inv.reservesThread), desc(inv.createdAt), desc(inv.id)).limit(50);
@@ -67,19 +73,23 @@ export class InvocationRepository {
         eq(inv.reservesThread, true))).orderBy(asc(question.createdAt)).limit(20);
   }
 
-  async pendingBrowserHandoffForThread(owner: string, threadId: string) {
-    const [row] = await this.database.select({handoff:browserHandoff,turnId:inv.turnId})
+  async pendingBrowserWaitsForThread(owner: string, threadId: string) {
+    const rows = await this.database.select({handoff:browserHandoff,turnId:inv.turnId,tool:action.kind})
       .from(browserHandoff).innerJoin(inv,and(eq(inv.id,browserHandoff.invocationId),
         eq(inv.createdByUserId,browserHandoff.createdByUserId)))
       .innerJoin(action,and(eq(action.invocationId,inv.id),eq(action.callId,browserHandoff.callId),
         eq(action.status,"waiting_for_user"),sql`${action.evidence}->>'browser_handoff_id'=${browserHandoff.id}`))
       .where(and(eq(browserHandoff.threadId,threadId),eq(browserHandoff.createdByUserId,owner),
         eq(browserHandoff.status,"pending"),eq(inv.status,"waiting_for_user"),isNull(inv.cancelRequestedAt)))
-      .limit(1);
-    if(!row?.handoff.clientId || !row.handoff.callId)return null;
-    return {turn_id:row.turnId,pending_tool:{client_id:row.handoff.clientId,call_id:row.handoff.callId,
-      name:"browser_request_handoff",started_at:row.handoff.createdAt.toISOString(),
-      args:{reason:row.handoff.reason,handoff_id:row.handoff.id,viewer_path:`/browser/${row.handoff.sessionId}`}}};
+      .orderBy(asc(browserHandoff.createdAt),asc(browserHandoff.id)).limit(50);
+    return rows.filter(row=>row.handoff.clientId && row.handoff.callId).map(row=>({turn_id:row.turnId,invocation_id:row.handoff.invocationId,pending_tool:{client_id:row.handoff.clientId,call_id:row.handoff.callId,
+      name:row.tool === "browser_user_handoff" ? "browser_request_handoff" : row.tool,started_at:row.handoff.createdAt.toISOString(),
+      args:{reason:row.handoff.reason,handoff_id:row.handoff.id,wait_kind:row.handoff.kind,invocation_id:row.handoff.invocationId,
+        session_id:row.handoff.sessionId,viewer_path:`/browser/${row.handoff.sessionId}`}}}));
+  }
+
+  async pendingBrowserHandoffForThread(owner: string, threadId: string) {
+    return (await this.pendingBrowserWaitsForThread(owner,threadId))[0] ?? null;
   }
 
   async pendingDataRequestsForThread(owner: string, threadId: string) {
@@ -337,13 +347,19 @@ export class InvocationRepository {
     });
   }
 
+  private async hasBrowserWait(tx: Transaction, invocationId: string) {
+    const [wait] = await tx.select({id:action.id}).from(action).where(and(eq(action.invocationId,invocationId),
+      eq(action.status,"waiting_for_user"),sql`${action.evidence}->>'browser_handoff_id' is not null`)).limit(1);
+    return Boolean(wait);
+  }
+
   async defer(lease: InvocationLease, status: "waiting_for_bud" | "waiting_for_model" | "retry_wait", delaySeconds = 15) {
     if (!Number.isInteger(delaySeconds) || delaySeconds < 1 || delaySeconds > 300) throw new InvocationError("invalid_retry_delay");
     return this.database.transaction(async tx => {
       await this.lockedLease(tx, lease, ["leased"]);
       const [continuation] = await tx.select({ id: action.id }).from(action)
         .where(and(eq(action.invocationId, lease.id), eq(action.status, "waiting_for_user"))).limit(1);
-      await tx.update(inv).set({ status, reservesThread: Boolean(continuation), workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ status, reservesThread: Boolean(continuation) && !await this.hasBrowserWait(tx,lease.id), workerId: null, leaseExpiresAt: null,
         nextAttemptAt: sql`clock_timestamp() + ${delaySeconds} * interval '1 second'`,
         updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id));
     });
@@ -741,6 +757,25 @@ export class InvocationRepository {
 
   async recoverExpired(ownerFilter?: string) {
     return this.database.transaction(async tx => {
+      const ended = await tx.select({id:inv.id}).from(inv).where(and(
+        sql`${inv.status} in ('waiting_for_user','waiting_for_bud','waiting_for_model','retry_wait')`,
+        sql`exists (select 1 from agent_invocation_action a where a.invocation_id=agent_invocation.id
+          and a.status='waiting_for_user' and a.evidence ? 'browser_handoff_id')`,
+        ownerFilter ? eq(inv.createdByUserId,ownerFilter) : undefined,
+        sql`exists (select 1 from browser_handoff h join browser_session s on s.id=h.session_id
+          join thread t on t.thread_id=h.thread_id join bud b on b.bud_id=h.bud_id
+          where h.invocation_id=agent_invocation.id and h.created_by_user_id=agent_invocation.created_by_user_id
+          and h.status in ('pending','returned') and (s.closed_at is not null or s.desired_state='closed'
+            or s.state='interrupted' or t.deleted_at is not null
+            or t.created_by_user_id is distinct from h.created_by_user_id
+            or b.created_by_user_id is distinct from h.created_by_user_id))`
+      )).for("update",{skipLocked:true}).limit(100);
+      for (const row of ended) {
+        await tx.update(browserHandoff).set({status:"canceled",resolvedAt:sql`clock_timestamp()`})
+          .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,"pending")));
+        await tx.update(inv).set({status:"canceled",reservesThread:false,outcomeCode:"browser_session_ended",
+          fence:sql`${inv.fence}+1`,workerId:null,leaseExpiresAt:null,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
+      }
       const rows = await tx.select().from(inv).where(and(sql`${inv.status} in ('leased','running')`,
         sql`${inv.leaseExpiresAt} <= clock_timestamp()`, ownerFilter ? eq(inv.createdByUserId, ownerFilter) : undefined))
         .for("update", { skipLocked: true }).limit(100);
@@ -750,7 +785,7 @@ export class InvocationRepository {
         if(row.cancelRequestedAt || row.status==='running')await tx.update(browserHandoff)
           .set({status:'canceled',resolvedAt:sql`clock_timestamp()`})
           .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,'pending')));
-        await tx.update(inv).set({ reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation)),
+        await tx.update(inv).set({ reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation) && !await this.hasBrowserWait(tx,row.id)),
           status: row.cancelRequestedAt ? "canceled" : row.status === "leased" ? "retry_wait" : "needs_review",
           outcomeCode: row.cancelRequestedAt ? "user_canceled" : row.status === "leased" ? "preflight_lease_expired" : "execution_lease_expired",
           fence: sql`${inv.fence} + 1`, workerId: null, leaseExpiresAt: null,

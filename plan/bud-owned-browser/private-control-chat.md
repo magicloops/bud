@@ -1,5 +1,10 @@
 # Private browser control without blocking chat
 
+Follow-up proposal: [Phase 3e](phase-3e-inline-browser-waits.md) replaces the
+rejection-as-result behavior below with durable waiting and an inline return
+action. This document describes the existing implementation; follow-up chat
+availability and explicit return remain required in the proposed design.
+
 ## Problem and decision
 A message submitted while the user controlled the browser stayed pending because
 invocation claiming excluded the entire thread. Closing the viewer preserved the
@@ -27,7 +32,7 @@ read. Inventory polling stays at five seconds and does not carry image state.
 
 ## Validation and rollout
 Test claiming follow-up chat during both manual control and a durable handoff,
-private rejection of every action including close across daemon boots, serialized
+private rejection of every action including close within the same daemon boot, serialized
 return, cancellation, and mounted inventory notice state. Service/web builds.
 No wire change or daemon upgrade; existing daemon authority fences remain intact.
 Old clients can chat but lack the notice. Existing reserved handoffs need to be
@@ -41,8 +46,15 @@ within one thread, new scheduler, or private-page data in chat/status metadata.
 - Isolated PostgreSQL: follow-up claim during paused/private handoff; return waits
   for the intervening chat; cancellation and exactly-once continuation pairing.
 - Repository: open/observe/click/close reject in paused/private/returning states,
-  including a different daemon boot, without replacing the browser identity.
+  within the same daemon boot, without replacing the browser identity. A confirmed
+  new daemon boot retires the destroyed session and permits explicit fresh open.
+  It never returns the old handoff or exposes its private content.
 - Agent-loop fixture: blocked browser result reaches the model and chat finishes.
 - Mounted web hook: private notice state, return clearing, stale-visit rejection.
 - Service and web builds, targeted web ESLint pass. Live signed-in acceptance is
   still required; the optional real-browser fixture was not run for this change.
+
+## Daemon restart correction
+A changed authenticated daemon boot proves the ephemeral browser has ended.
+Reconcile that identity before applying private-control restrictions; service
+restart alone is not this signal. See [debug note](../../debug/browser-private-session-daemon-restart.md).

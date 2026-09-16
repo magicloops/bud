@@ -26,6 +26,7 @@ type WorkspaceTopBarProps = {
   onToggleThreads: () => void
   /** While the thread panel is open it hosts the hamburger itself. */
   threadsOpen?: boolean
+  webAvailable?: boolean
   browserAvailable?: boolean
   fileViewLabel?: string | null
   /** Below md the chat pane is a peer view with its own tab. */
@@ -52,6 +53,7 @@ export function WorkspaceTopBar({
   onToggleThreads,
   threadsOpen = false,
   fileViewLabel = null,
+  webAvailable = false,
   browserAvailable = false,
   showChatTab = false,
   alignToPaneRef,
@@ -172,12 +174,11 @@ export function WorkspaceTopBar({
             Chat
           </ViewToggleButton>
         )}
-        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4" />}>
-          Terminal
-        </ViewToggleButton>
-        <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4" />}>
-          Web view
-        </ViewToggleButton>
+        {webAvailable && (
+          <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4" />}>
+            Web view
+          </ViewToggleButton>
+        )}
         {(browserAvailable || view === 'browser') && (
           <ViewToggleButton active={view === 'browser'} onClick={() => onViewChange('browser')} icon={<Globe className="h-4 w-4" />}>
             Browser
@@ -188,6 +189,9 @@ export function WorkspaceTopBar({
             {fileViewLabel ?? 'File'}
           </ViewToggleButton>
         )}
+        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4" />}>
+          Terminal
+        </ViewToggleButton>
       </div>
     </div>
   )

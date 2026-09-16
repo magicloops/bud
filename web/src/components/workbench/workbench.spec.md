@@ -583,6 +583,10 @@ Header bar with workspace title and view toggle.
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available
+- Web view is shown only when `webAvailable` indicates an attached thread proxy;
+  it stays available during proxy connection errors so users can recover.
+- Terminal is always the rightmost view button; Web, Browser and File appear
+  to its left so conditional buttons do not shift Terminal's position.
 - Exports the shared `ViewMode` and `WorkbenchStatus` unions used by the workbench frame and child controls
 
 ## Dependencies
@@ -629,3 +633,11 @@ pane; browser lifecycle/media belongs to that feature, not terminal or chat stat
 Hiding Browser unmounts it to release private input/media while terminal and app
 preview retain their existing mounted behavior. New-thread creation does not show
 Browser until an owned session exists in the resulting conversation.
+
+
+Pending original browser calls with `wait_kind=return_control` select the inline
+handoff renderer and remain visible outside collapsed work. Canonical results
+return to normal tool rendering using the same stable client identity.
+
+
+Pending browser waits render directly as an action row without the tool label, timestamp, copy control or payload toggle. Completed tool receipts retain normal work-group rendering.

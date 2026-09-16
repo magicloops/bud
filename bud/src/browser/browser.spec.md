@@ -11,8 +11,8 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   bounded concurrent admission, cancellation and deadline handling. Includes live
   Chrome regressions for isolation, stale references, cancellation and reconnect,
   plus continuous private capture through two five-second renewals.
-- `adapter.rs`: concrete private Chromium launcher, target inventory, bounded AX
-  observations and document-bound opaque references, guarded focus/text/click,
+- `adapter.rs`: concrete private Chromium launcher, target inventory, private semantic-helper observations and document-bound
+  opaque references, guarded focus/text/click,
   navigation and owned-child close. Partial discovery files are retried.
 - `cdp.rs`: serial private loopback CDP connection; 24 MiB frame cap (bounded PNG before downscaling), 10-second call
   timeout, poison after interrupted calls. Failure diagnostics include only the
@@ -36,8 +36,10 @@ work, private input and fitting) wait at most four seconds for the FIFO serial
 CDP lock. Expired requests reject before page access after waiting.
 Requests expire within 45 seconds (service sends at most 30 seconds,
 limited by the invocation lease). Closed identities remain as 45-second tombstones.
-At most 128 identities, 16 returned targets, 100 AX entries; names 256 bytes, roles
-64 bytes, URLs 2048 bytes, committed input 8192 bytes. No AX values/properties.
+At most 128 identities, 16 returned targets; legacy observations adapt the same
+semantic engine to 256 elements/64 KiB. New observations paginate a 2 MiB retained
+snapshot, with 24 KiB node pages plus text. URLs 2048 bytes, input 8192 bytes.
+Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
 
 `BUD_BROWSER_EXECUTABLE` must explicitly name an installed Chrome for Testing
@@ -151,3 +153,25 @@ Successful wheels select JPEG quality 65, at most 1x/1280px, for 250ms; then nor
 demand restores negotiated PNG/density. Quality never mutates CSS viewport/focus.
 Existing JPEG and PNG wire forms work with old services/viewers. See
 [consolidated plan](../../../plan/bud-owned-browser/scroll-input-and-adaptive-frames.md).
+
+## Capture during service reconnect
+
+Control disconnect is observed while media waits for demand. Once capture owns
+CDP, bounded reads drain instead of being cancelled; the existing connection and
+authority checks discard the result before delivery. This prevents screenshot
+cancellation from poisoning the shared command channel on service restart.
+Acquisition rejects an already-interrupted browser rather than acknowledging a
+lease that can never display frames. Pause and close remain available. Real-Chrome
+regressions disconnect during the capture lock, verify no stale delivery and a
+usable channel after reconnect, and reject acquisition after an uncertain command.
+No protocol change; requires a rebuilt daemon and works with either service version.
+
+## Structured observations (Phase 3d)
+
+`semantic.rs` owns the private Node helper lifecycle and bounded stdio protocol.
+`capture.rs` sends one agent-requested image over ticket-authenticated HTTP, with
+no image bytes in the control result. Both execute under the existing page lock;
+lease renewal remains independent. `semantic_observations` and `agent_capture`
+capabilities gate new requests. Snapshot/default, visible DOM, metadata and exact
+role/name/fill/scroll reuse the same helper; the old AX implementation is removed.
+Read [helper setup/limits](../../browser-helper/browser-helper.spec.md).

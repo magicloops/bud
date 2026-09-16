@@ -155,7 +155,7 @@ test('passive media follows handoff epochs without acquiring private control or 
   const requests: string[] = []
   globalThis.fetch = async (url, init) => {
     requests.push(init?.method ?? 'GET')
-    assert.equal(String(url).endsWith('/browser'), true)
+    assert.equal(String(url).split('?')[0].endsWith('/browser'), true)
     return absent ? Response.json({ error: 'browser_not_found' }, { status: 404 }) : Response.json(metadata)
   }
   const { BrowserViewer } = await import('./viewer')
@@ -169,28 +169,29 @@ test('passive media follows handoff epochs without acquiring private control or 
     await act(async () => clients[0].close())
     metadata = { ...metadata, control_state: 'paused', control_epoch: 3, revision: 2 }
     await poll()
-    assert.equal(clients.length, 2)
-    await act(async () => clients[1].show())
+    assert.ok(clients.length >= 2) // Retry and epoch refresh may overlap.
+    const recovered = clients.length
+    await act(async () => clients.at(-1)!.show())
     await poll()
-    assert.equal(clients.length, 2)
+    assert.equal(clients.length, recovered)
     // A later agent invocation advances epoch without changing UI revision.
     metadata = { ...metadata, control_state: 'agent', control_epoch: 4 }
     await poll()
-    assert.equal(clients[1].closed, true)
-    assert.equal(clients.length, 3)
+    assert.equal(clients[recovered - 1].closed, true)
+    assert.equal(clients.length, recovered + 1)
     // Another viewer takes private control: do not reconnect or acquire it.
     metadata = { ...metadata, control_state: 'human_private', control_epoch: 5, revision: 3, can_view: false }
     await poll()
-    assert.equal(clients[2].closed, true)
+    assert.equal(clients.at(-1)!.closed, true)
     await poll()
-    assert.equal(clients.length, 3)
+    assert.equal(clients.length, recovered + 1)
     metadata = { ...metadata, runtime_status: 'daemon_restarted' }
     await poll()
     assert.equal(view.root.findByType('h1').children.join(''), 'Browser session ended')
     assert.equal(view.root.findAllByType('select').length, 0)
     assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Reconnect view') || b.children.includes('Take control')), false)
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), true)
-    assert.equal(clients.length, 3)
+    assert.equal(clients.length, recovered + 1)
     absent = true
     await poll()
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), false)
@@ -262,3 +263,199 @@ test('passive pane fits without acquisition; failed fitting preserves media and 
     Reflect.deleteProperty(globalThis, '__testBrowserCanvas');
   }
 });
+
+test('chat return action uses the owning viewer and clears after return or dismissal', async () => {
+  const originalFetch = globalThis.fetch
+  const originalAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  Object.assign(globalThis, { __testBrowserCanvas: class { close() {} } })
+  const writes: { operation: string; viewer_id: string }[] = []
+  let finishReturn!: (value: Response) => void
+  let action: import('./viewer').BrowserReturnAction | null = null
+  const publish = (next: typeof action) => { action = next }
+  const metadata = { session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: 'agent', revision: 1, can_view: true }
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/control')) {
+      const body = JSON.parse(String(init?.body))
+      writes.push(body)
+      if (body.operation === 'return') return new Promise(resolve => { finishReturn = resolve })
+      return Response.json({ ...metadata, control_state: 'human_private', revision: 2 })
+    }
+    return Response.json(metadata)
+  }
+  const { BrowserViewer } = await import('./viewer')
+  let view!: ReactTestRenderer
+  try {
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
+    assert.equal(action, null)
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    const acquired = action as unknown as import('./viewer').BrowserReturnAction
+    assert.equal(acquired.sessionId, 'browser')
+    assert.equal(acquired.disabled, false)
+    await act(async () => { acquired.run(); acquired.run() })
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'return'])
+    assert.equal(writes[0].viewer_id, writes[1].viewer_id)
+    assert.equal((action as unknown as import('./viewer').BrowserReturnAction).returning, true)
+    await act(async () => finishReturn(Response.json({ ...metadata, revision: 3 })))
+    assert.equal(action, null)
+    await act(async () => acquired.run())
+    assert.equal(writes.length, 2)
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    assert.ok(action)
+    await act(async () => view.unmount())
+    assert.equal(action, null)
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'return', 'acquire', 'release'])
+  } finally {
+    if (view) await act(async () => view.unmount())
+    globalThis.fetch = originalFetch
+    globalThis.requestAnimationFrame = originalAnimationFrame
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
+  }
+})
+
+test('service restart reconnects passive media and invalidates private ownership without reacquiring', async () => {
+  const originalFetch = globalThis.fetch
+  const originalTimeout = globalThis.setTimeout
+  const originalClear = globalThis.clearTimeout
+  const originalAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  const timers = new Map<number, () => void>()
+  let timer = 0
+  globalThis.setTimeout = ((callback: () => void, delay: number, ...args: unknown[]) => {
+    if (delay !== 3000) return originalTimeout(callback, delay, ...args)
+    timers.set(++timer, callback); return timer
+  }) as typeof setTimeout
+  globalThis.clearTimeout = ((handle: number) => { if (!timers.delete(handle)) originalClear(handle) }) as typeof clearTimeout
+  const clients: FakeCanvas[] = []
+  class FakeCanvas {
+    frame = null
+    constructor(_canvas: unknown, _url: string, _viewer: string, readonly status: (state: string) => void) { clients.push(this) }
+    close() {}
+  }
+  Object.assign(globalThis, { __testBrowserCanvas: FakeCanvas })
+  let ownsControl = false
+  let privateState = false
+  const writes: string[] = []
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'POST') {
+      const operation = JSON.parse(String(init.body)).operation
+      writes.push(operation)
+      if (operation === 'acquire') { privateState = true; ownsControl = true }
+    }
+    return Response.json(snapshot())
+  }
+  const { BrowserViewer } = await import('./viewer')
+  let view!: ReactTestRenderer
+  let action: import('./viewer').BrowserReturnAction | null = null
+  const publish = (next: typeof action) => { action = next }
+  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  try {
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
+    assert.equal(clients.length, 1)
+    await act(async () => clients[0].status('unavailable'))
+    await tick()
+    assert.equal(clients.length, 2) // Same revision and epoch: still reconnect.
+    assert.deepEqual(writes, [])
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    assert.ok(action)
+    ownsControl = false // New coordinator; persisted private state is unchanged.
+    await tick()
+    assert.equal(action, null)
+    assert.equal(view.root.findByType('textarea').props.disabled, true)
+    assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /control was lost/)
+    const count = clients.length
+    await tick()
+    assert.equal(clients.length, count) // Private media must not be retried as passive.
+    assert.equal(writes.filter(op => op === 'acquire').length, 1)
+    assert.equal(writes.includes('return'), false)
+    await act(async () => view.unmount())
+    assert.equal(timers.size, 0)
+  } finally {
+    if (view) await act(async () => view.unmount())
+    globalThis.fetch = originalFetch
+    globalThis.setTimeout = originalTimeout
+    globalThis.clearTimeout = originalClear
+    globalThis.requestAnimationFrame = originalAnimationFrame
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
+  }
+})
+
+test('previously authorized viewer restores its private lease after service restart without replaying input', async () => {
+  const originalFetch = globalThis.fetch
+  const originalTimeout = globalThis.setTimeout
+  const originalClear = globalThis.clearTimeout
+  const originalAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  const timers = new Map<number, () => void>()
+  let timer = 0
+  globalThis.setTimeout = ((callback: () => void, delay: number, ...args: unknown[]) => {
+    if (delay !== 3000) return originalTimeout(callback, delay, ...args)
+    timers.set(++timer, callback); return timer
+  }) as typeof setTimeout
+  globalThis.clearTimeout = ((handle: number) => { if (!timers.delete(handle)) originalClear(handle) }) as typeof clearTimeout
+  const clients: FakeCanvas[] = []
+  class FakeCanvas {
+    frame = null
+    constructor(_canvas: unknown, _url: string, _viewer: string, readonly status: (state: string) => void) { clients.push(this) }
+    close() {}
+  }
+  Object.assign(globalThis, { __testBrowserCanvas: FakeCanvas })
+  let ownsControl = false
+  let privateState = false
+  let lostReply = true
+  const writes: { operation: string; viewer_id: string; recovery_ticket?: string }[] = []
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
+  globalThis.fetch = async (url, init) => {
+    if (init?.method === 'POST') {
+      assert.ok(String(url).endsWith('/control')) // No page input is replayed.
+      const body = JSON.parse(String(init.body))
+      writes.push(body)
+      if (body.operation === 'acquire') {
+        privateState = true; ownsControl = true
+        return Response.json({ ...snapshot(), recovery_ticket: 'proof-before-restart' })
+      }
+      if (body.operation === 'recover') {
+        ownsControl = true
+        if (lostReply) { lostReply = false; throw new TypeError('Lost response') }
+        return Response.json({ ...snapshot(), recovery_ticket: 'rotated-proof' })
+      }
+    }
+    return Response.json(snapshot())
+  }
+  const { BrowserViewer } = await import('./viewer')
+  let view!: ReactTestRenderer
+  let action: import('./viewer').BrowserReturnAction | null = null
+  const publish = (next: typeof action) => { action = next }
+  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  try {
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    assert.ok(action)
+    ownsControl = false // Coordinator restarts; this viewer retains proof in memory.
+    await act(async () => clients.at(-1)!.status('unavailable'))
+    assert.equal(action, null)
+    assert.equal(view.root.findByType('textarea').props.disabled, true)
+    await tick() // Server restored the lease, but the response was lost.
+    assert.equal(action, null)
+    await tick() // Idempotent recovery with the original proof.
+    assert.ok(action)
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'recover', 'recover'])
+    assert.equal(writes.every(w => w.viewer_id === writes[0].viewer_id), true)
+    assert.equal(writes[1].recovery_ticket, 'proof-before-restart')
+    assert.equal(writes[2].recovery_ticket, 'proof-before-restart')
+    const count = clients.length
+    await tick()
+    assert.equal(clients.length, count)
+    await act(async () => view.unmount())
+    assert.equal(writes.at(-1)?.operation, 'release')
+    assert.equal(timers.size, 0)
+  } finally {
+    if (view) await act(async () => view.unmount())
+    globalThis.fetch = originalFetch
+    globalThis.setTimeout = originalTimeout
+    globalThis.clearTimeout = originalClear
+    globalThis.requestAnimationFrame = originalAnimationFrame
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
+  }
+})

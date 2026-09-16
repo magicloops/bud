@@ -416,3 +416,81 @@ async fn live_private_capture_input_and_stale_frame_guard() {
     browser.close().await.unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn live_table_observation_reads_story_links_in_order() {
+    let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+        return;
+    };
+    let mut browser = Browser::launch(Path::new(&executable)).await.unwrap();
+    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    let session = browser.session(&target).await.unwrap();
+    let tree = browser
+        .cdp
+        .call(Some(&session), "Page.getFrameTree", json!({}))
+        .await
+        .unwrap();
+    let rows: String = (1..=30).map(|i| format!(
+        "<tr><td>{i}.</td><td><span><a href='#story{i}'>Story {i}</a></span></td></tr><tr><td></td><td>Discussion {i}</td></tr><tr><td></td></tr>"
+    )).collect();
+    let html = format!("<!doctype html><title>Stories</title><table><tr><td><table>{rows}</table></td></tr><tr><td><a href='#footer'>Footer</a></td></tr></table><input type='password' aria-label='Password' value='synthetic-secret'><button></button>");
+    browser
+        .cdp
+        .call(
+            Some(&session),
+            "Page.setDocumentContent",
+            json!({"frameId":tree["frameTree"]["frame"]["id"],"html":html}),
+        )
+        .await
+        .unwrap();
+    let observation = browser.observe(&target).await.unwrap();
+    let links: Vec<_> = observation
+        .elements
+        .iter()
+        .filter(|e| e.role == "link")
+        .collect();
+    assert_eq!(
+        links.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+        (1..=30)
+            .map(|i| format!("Story {i}"))
+            .chain(["Footer".into()])
+            .collect::<Vec<_>>()
+    );
+    assert!(!observation.truncated);
+    assert!(observation
+        .elements
+        .iter()
+        .any(|e| e.role == "button" && e.name.is_empty()));
+    assert!(!serde_json::to_string(&observation)
+        .unwrap()
+        .contains("synthetic-secret"));
+    let reference = links[15].reference.clone();
+    browser.click(&reference).await.unwrap();
+    let location = browser
+        .cdp
+        .call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression":"location.hash","returnByValue":true}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(location["result"]["value"], "#story16");
+    browser.observe(&target).await.unwrap();
+    assert!(browser.click(&reference).await.is_err());
+    let html = "<button>Example</button>".repeat(400);
+    browser
+        .cdp
+        .call(
+            Some(&session),
+            "Page.setDocumentContent",
+            json!({"frameId":tree["frameTree"]["frame"]["id"],"html":html}),
+        )
+        .await
+        .unwrap();
+    let limited = browser.observe(&target).await.unwrap();
+    assert!(limited.truncated);
+    assert!(limited.elements.len() <= 256);
+    assert!(serde_json::to_vec(&limited.elements).unwrap().len() <= 64 * 1024);
+    browser.close().await.unwrap();
+}

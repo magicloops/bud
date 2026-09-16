@@ -66,7 +66,7 @@ New thread creation view - allows users to start a new conversation.
   2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id, message }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
-- View mode toggle (terminal/web)
+- Terminal toggle; Web view is hidden until a proxy is attached to a thread
 - The shared `ViewMode` type includes `file`, but new-thread mode does not surface the file toggle because no opened file exists yet
 - Top bar title remains the static `New Thread`
 
@@ -185,6 +185,7 @@ loader: async ({ params }) => {
 
 9. **Web View**
    - Delegates proxied-site and thread web-view state to `useWebView(...)`
+   - Exposes the Web view toolbar button only while that thread has an attached proxy, including during transport errors
    - The Web view tab can create or reuse an owned loopback proxied site for
      the current Bud
    - Existing owned sites can be attached to the thread so multiple threads can
@@ -402,3 +403,15 @@ The browser inventory supplies a chat notice when browser actions are paused,
 with Open browser controls to reach the existing explicit return flow. It does
 not disable the composer or imply all agent work is paused. New threads have no
 browser session, so their layout remains unchanged.
+
+The browser-paused chat notice offers Return to agent directly while the mounted
+viewer owns private control, using that viewer’s existing authenticated action.
+Otherwise it offers Open browser controls; chat never acquires control implicitly.
+
+
+The thread supplies the shared browser wait-action context: mounted-viewer return,
+matching-session control errors and authenticated invocation-specific cancellation.
+The previous top-of-chat return notice is replaced by durable inline cards.
+
+
+Browser wait actions receive visibleSessionId only in browser view mode; selecting another pane restores the inline Open browser entry point.
