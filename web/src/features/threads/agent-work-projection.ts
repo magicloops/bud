@@ -5,7 +5,6 @@ import {
   getTurnId,
   isIntermediateAssistantMessage,
 } from '../../lib/agent-message-metadata.ts'
-import { computeAgentWorkDurationMs } from '../../lib/agent-work-duration.ts'
 import {
   getMessageIdentity,
   isPendingToolMessage,
@@ -67,6 +66,7 @@ export type ProjectTimelineInput = {
   liveTurnId: string | null
   /** Session-local outcomes from `final` events (no persisted run status exists). */
   turnOutcomes?: ReadonlyMap<string, TurnOutcome>
+  turnTimings?: ReadonlyMap<string, number | null>
 }
 
 const isWorkMessage = (message: ApiMessage): boolean => {
@@ -116,7 +116,10 @@ export const createTimelineProjector = () => {
 
     // Turns with a canonical final answer anywhere in the loaded window.
     const finalTurnIds = new Set<string>()
+    const lastWorkByTurn = new Map<string, ApiMessage>()
     for (const message of messages) {
+      const workTurnId = getTurnId(message)
+      if (workTurnId && isWorkMessage(message) && (message.role !== 'assistant' || message.content.trim())) lastWorkByTurn.set(workTurnId, message)
       if (isCanonicalFinalAssistant(message)) {
         const turnId = getTurnId(message)
         if (turnId) {
@@ -194,6 +197,11 @@ export const createTimelineProjector = () => {
       const canFold = accumulator.turnId !== null
         ? finalTurnIds.has(accumulator.turnId)
         : Boolean(nextBoundary && isCanonicalFinalAssistant(nextBoundary))
+      // A question/compaction/follow-up can split one turn into several rows.
+      // Show its total once, on the last loaded fragment, never on each fragment.
+      const durationMs = accumulator.turnId && (!live || canFold) &&
+        lastWorkByTurn.get(accumulator.turnId) === accumulator.messages.at(-1)
+        ? input.turnTimings?.get(accumulator.turnId) ?? null : null
       const previous = previousWorkRows.get(id)
       const sourcesUnchanged =
         previous !== undefined &&
@@ -204,7 +212,8 @@ export const createTimelineProjector = () => {
         sourcesUnchanged &&
         previous.live === live &&
         previous.canFold === canFold &&
-        previous.status === status
+        previous.status === status &&
+        previous.durationMs === durationMs
       ) {
         for (const section of previous.sections) if (section.sectionId) usedSectionIds.add(section.sectionId)
         nextWorkRows.set(id, previous)
@@ -235,11 +244,7 @@ export const createTimelineProjector = () => {
         live,
         canFold,
         status,
-        durationMs: live && !canFold
-          ? null
-          : sourcesUnchanged && previous && !previous.live
-            ? previous.durationMs
-            : computeAgentWorkDurationMs(accumulator.messages),
+        durationMs,
       }
       nextWorkRows.set(id, row)
       rows.push(row)

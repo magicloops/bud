@@ -1,3 +1,4 @@
+import { settledWorkDurationSql } from "../agent/invocation-timing.js";
 import { ulid } from "ulid";
 import type { Pool } from "pg";
 import { pool } from "../db/client.js";
@@ -124,7 +125,7 @@ export class BrowserRepository {
         await client.query(`update agent_invocation_action set status='waiting_for_user',fence=fence+1,
           evidence=jsonb_build_object('browser_handoff_id',$3::text,'browser_dispatched',false)
           where invocation_id=$1 and call_id=$2`, [identity.id,context.callId,handoffId]);
-        await client.query(`update agent_invocation set status='waiting_for_user',reserves_thread=false,
+        await client.query(`update agent_invocation set work_duration_ms=${settledWorkDurationSql},work_started_at=null,status='waiting_for_user',reserves_thread=false,
           worker_id=null,lease_expires_at=null,fence=fence+1,updated_at=clock_timestamp() where id=$1`,[identity.id]);
         await client.query("commit");
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });

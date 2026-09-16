@@ -45,6 +45,27 @@ test('completed work collapses, then opens commentary and segment summaries', ()
   assert.match(render([tool, commentary], false, true, new Set(['activity:tool', 'item:tool'])), /tool result/)
 })
 
+test('reasoning disclosure titles remove Markdown decoration for live and completed items', () => {
+  for (const title of ['**Browsing Hacker News**', '## __Browsing Hacker News__', '*Browsing Hacker News*', '`Browsing Hacker News`', 'Browsing Hacker News']) {
+    const item = message('reason', 'reasoning', `\n${title}\n\nReasoning body`)
+    for (const html of [render([item]), render([item], false, true)]) {
+      assert.match(html, />Browsing Hacker News<\/span>/)
+      assert.doesNotMatch(html, /\*\*|__|Reasoning body/)
+    }
+  }
+})
+
+test('completed activity summaries describe membership instead of the last action', () => {
+  const items = [reasoning, message('r2', 'reasoning', 'Last reasoning'), tool,
+    message('t2', 'tool', '', { tool: 'browser_act' }), message('t3', 'tool', '', { tool: 'browser_observe' })]
+  const completed = render([...items, commentary], false, true)
+  assert.match(completed, /2 reasoning steps and 3 tool calls/)
+  assert.doesNotMatch(completed, /browser_observe|Last reasoning|5 activities/)
+  assert.match(render([...items, commentary]), /browser_observe/)
+  assert.match(render([reasoning, commentary], false, true), /1 reasoning step<\/span>/)
+  assert.match(render([tool, commentary], false, true), /1 tool call<\/span>/)
+})
+
 test('no-commentary work reveals compact rows without mounting full details', () => {
   const html = render([tool, reasoning], false, true)
   assert.doesNotMatch(html, /tool result|data-work-detail/)

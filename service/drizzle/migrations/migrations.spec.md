@@ -440,3 +440,11 @@ pending invocations per session, with a session/status index. No row deletion or
 backfill. Apply before the updated service. Rollback to session-wide uniqueness
 requires resolving multiple pending waits first; mixed old/new service workers
 against this schema are not supported by the single-instance deployment contract.
+
+### `0043_redundant_raza.sql`
+
+Adds nullable `agent_invocation.work_duration_ms` bigint and `work_started_at`
+timestamptz without defaults/backfill. Generated SQL/journal/snapshot are checked
+in together. Applied the exact SQL locally transactionally after canceling
+`db:push`'s unrelated invocation-dedupe recreation/truncate prompt. Isolated-schema
+migration and lifecycle tests pass. Deploy migration before updated service startup.

@@ -289,3 +289,11 @@ before listeners run. Turn/call guards reject obsolete completions. Lifecycle
 handoffs clear it; clearing a draft alone preserves final-answer suppression.
 Snapshot updates cannot roll their cursor behind a handoff's clear event.
 See [design](../../../design/assistant-output-activity.md).
+
+## Settled timing events
+
+Service composition publishes `agent.turn_timing` after invocation transactions
+commit, through the normal thread runtime buffer/authorized SSE attachment. Data
+is `{turn_id,work_duration_ms}` (nonnegative safe integer or null). This event may
+follow `final`; it changes neither execution status nor output activity. Durable
+page/state reads recover timing after a replay miss. No timer or runtime ledger.

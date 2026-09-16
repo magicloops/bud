@@ -244,3 +244,12 @@ invocation and pending-tool identity (bounded 50, owner/thread SQL scoped).
 `POST /cancel` optionally accepts `{invocation_id}`; the ID is re-resolved by
 owner/thread. Missing/foreign IDs return 404. Canceling an older waiting invocation
 does not stop a different active runtime turn. Existing bodyless cancel is unchanged.
+
+## Settled turn timing
+
+The paged messages response adds `turn_timings: [{turn_id,work_duration_ms}]`.
+After existing viewer/thread authorization, one bounded invocation query uses the
+page's distinct turn IDs plus owner and thread predicates. Nonterminal turns are
+omitted; unknown terminal/review totals are null. `/agent/state.invocations` exposes
+the same optional settled field through invocation serialization. No model context
+or message payload is rewritten; no additional endpoint or ownership authority.

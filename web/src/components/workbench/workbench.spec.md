@@ -154,13 +154,17 @@ custom widths.
 One turn's presentation under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
 
 - `ActivitySection` renders one initially collapsed header: newest introduced
-  tool/reasoning summary, Cpu/Wrench icon, unique count and running/failure counts.
+  tool/reasoning summary while live, or reasoning-step/tool-call counts when completed,
+  Cpu/Wrench icon, and running/failure counts. Reasoning item titles strip leading,
+  trailing and paired inline Markdown decoration; expanded details keep Markdown.
   Opening shows compact item rows; full existing tool/Markdown details mount only
   after opening an item. Hidden large payloads are not eagerly formatted.
 - Commentary remains at the timeline root with stable message keys through
   streaming and intermediate classification. Explicit completed final folds prior
   work into a closed `AgentWorkGroup`; final Markdown retains its host identity.
 - Expanded Worked for bodies have 8px top padding below the disclosure button.
+- The full Worked for label, including duration, is italic when collapsed and
+  normal when expanded.
 - The full-width Worked for section uses the message hover background (`secondary/40`)
   and retains that background across its header and contents while expanded.
 - Inner disclosure choices survive the final fold. Reopening no-commentary work
@@ -641,3 +645,10 @@ return to normal tool rendering using the same stable client identity.
 
 
 Pending browser waits render directly as an action row without the tool label, timestamp, copy control or payload toggle. Completed tool receipts retain normal work-group rendering.
+
+## Authoritative work duration
+
+`ChatTimeline.turnTimings` passes the thread-owned service timing map into the
+memoized projector. Timing updates change the completed label only; grouping,
+streaming, disclosure and viewport policy are unchanged. Mounted parity tests
+cover merging and retention without requiring transcript rows to change.

@@ -1,3 +1,4 @@
+import { subscribeTurnTimings } from "./agent/invocation-timing.js";
 import { retrievalAvailable } from "./web-retrieval/config.js";
 import { BrowserBroker } from "./browser/broker.js";
 import { BrowserMedia } from "./browser/media.js";
@@ -9,7 +10,7 @@ import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
 import { authPool, registerAuthRoutes } from "./auth/auth.js";
 import { registerBudRoutes } from "./routes/buds.js";
-import { pool } from "./db/client.js";
+import { db, pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
 import { TerminalEventBus } from "./runtime/event-bus.js";
@@ -135,6 +136,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   const terminalEvents = new TerminalEventBus();
   const agentRuntime = new AgentRuntimeStateManager();
+  const unsubscribeTiming = subscribeTurnTimings(db, (threadId, timing) => {
+    agentRuntime.emit(threadId, { event: "agent.turn_timing", data: timing });
+  });
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
@@ -188,6 +192,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await pool.query("select id, verification_hash, encrypted_envelope from data_app_key limit 0");
     }
     if (invocations) {
+      await invocations.invalidateInterruptedTiming();
       // Recovery reads these tables regardless of new-proposal issuance flags.
       await verifyAutomationProposalSchema(pool);
       await verifyBootstrapProposalSchema(pool);
@@ -246,6 +251,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     await grpcControlGateway?.close();
     pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();
+    unsubscribeTiming();
     await releaseInvocationMode?.();
     await authPool.end();
     await pool.end();

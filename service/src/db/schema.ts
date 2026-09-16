@@ -1518,6 +1518,8 @@ export const agentInvocationTable = pgTable("agent_invocation", {
   workerId: text("worker_id"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }),
+  workDurationMs: bigint("work_duration_ms", { mode: "number" }),
+  workStartedAt: timestamp("work_started_at", { withTimezone: true }),
   outcomeCode: text("outcome_code"),
   cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
   canceledByUserId: text("canceled_by_user_id").references(() => authUserTable.id),

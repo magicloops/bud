@@ -3240,3 +3240,34 @@ New service + old daemon omits compact and accepts the legacy format. Old
 service + new daemon receives legacy serialization unless it opts in. Full
 effect requires a daemon rebuild/upgrade and helper installation. No DB or SSE
 shape change, migration, retrospective transcript rewrite, or viewer-media change.
+
+## Service-owned turn timing
+
+Additive `agent.turn_timing` on the existing authorized thread agent SSE stream:
+
+```json
+{"turn_id":"01TURN...","work_duration_ms":95500}
+```
+
+The service publishes after the terminal/review invocation transaction commits,
+possibly after `final`. Existing cursor/replay rules apply. This is presentation
+metadata, not execution status, a spinner signal or model context.
+
+The paged `/api/threads/:thread_id/messages` response adds optional `turn_timings`
+with entries of that shape for eligible turns represented on the page. The query
+is bounded to page turn IDs and owner/thread scope. `/agent/state.invocations[]`
+adds optional `work_duration_ms` with the same meaning. Succeeded, failed,
+canceled and expired totals are nonnegative safe integer milliseconds or null;
+needs_review is explicitly null. Active, queued and waiting invocations omit it.
+
+Duration is accumulated DB-clock running time from acknowledged leased→running
+to durable park/defer/finish. Includes provider startup, tools, gaps and final text;
+excludes queue/preflight and durable human/retry waits. Unknown end or historical
+untracked execution is null, never a partial estimate. No live ticking duration.
+
+Clients merge by turn ID; absent entries do not remove loaded values and explicit
+null means unavailable. Whole-turn Worked for uses only this value, once per turn
+on its last loaded completed work group; no artifact summation fallback. Late
+arrival must not restart activity or alter message identity. Page/state recover
+missed events. Old clients ignore additions; new clients against old service show
+plain Worked. No daemon changes. See [implementation/mobile handoff](../plan/service-owned-turn-timing.md).

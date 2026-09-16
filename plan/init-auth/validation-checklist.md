@@ -404,3 +404,14 @@ from the service-authorized request. No database table or global viewer read.
 - [ ] Phase 3e manual: anonymous wait state/cancel returns 401; foreign thread or
   invocation returns 404; two owner waits recover without leaking browser content;
   only the controlling viewer can return, and stopping an old wait preserves chat.
+
+## Service-owned turn timing
+
+- [x] Isolated PostgreSQL timing lookup excludes foreign owners and wrong threads,
+  deduplicates page turn IDs and exposes no open interval/worker credentials.
+- [ ] Real cookie/bearer checks: anonymous messages/state/SSE return 401; another
+  owner's thread returns 404 before timing lookup or stream attachment/replay.
+- [ ] Account switch clears loaded timing, including an in-flight latest refresh.
+
+No new resource or owner stamping. Existing authorized thread APIs carry timing;
+page lookup additionally filters invocation owner and thread in SQL.

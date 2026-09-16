@@ -1,3 +1,4 @@
+import { invocationTimingTransaction } from "../agent/invocation-timing.js";
 import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { createHash } from "node:crypto";
@@ -222,7 +223,7 @@ export class Automations {
 
   async delete(owner: string, id: string, input: unknown) {
     const value = parseAutomationInput(automationDeleteSchema, input);
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       const prior = await this.load(tx, owner, id, true);
       // Terminal tombstone makes a lost-response retry safe without canceling twice.
@@ -245,7 +246,7 @@ export class Automations {
   }
 
   async pause(owner: string, id: string, input: unknown) {
-    return this.database.transaction(tx => this.pauseInTransaction(tx, owner, id, input));
+    return invocationTimingTransaction(this.database, tx => this.pauseInTransaction(tx, owner, id, input));
   }
 
   async pauseInTransaction(tx: Transaction, owner: string, id: string, input: unknown) {

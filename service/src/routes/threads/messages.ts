@@ -159,6 +159,8 @@ export async function registerThreadMessageRoutes(
 
     reply.send({
       messages: orderedRows.map(serializeMessage),
+      turn_timings: await agentService.durableInvocations?.timingsForTurns(viewer.userId, thread.threadId,
+        orderedRows.flatMap(row => typeof row.metadata.turn_id === "string" ? [row.metadata.turn_id] : [])) ?? [],
       page: {
         limit: query.limit,
         returned: orderedRows.length,

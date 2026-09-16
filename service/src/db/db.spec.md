@@ -516,3 +516,12 @@ pending-invocation uniqueness, adds a session/status lookup index and permits
 Existing agent/user handoffs survive; no private browser content is added.
 Local db:push was reviewed and canceled at its unrelated invocation constraint
 prompt; the exact generated browser migration was applied transactionally instead.
+
+## Invocation running duration
+
+`agent_invocation.work_duration_ms` is nullable bigint (JS number, safe-integer
+validation at serialization); `work_started_at` is nullable timestamptz. Neither
+has a DB default. New admissions explicitly initialize duration to zero; historical
+and older-writer rows remain null. DB-clock lifecycle transitions settle running
+intervals atomically with status. Unknown execution ends invalidate the whole total.
+Migration: `0043_redundant_raza.sql`. No historical backfill or new timing table.

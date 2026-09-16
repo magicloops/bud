@@ -1,3 +1,4 @@
+import { invocationTimingTransaction } from "../agent/invocation-timing.js";
 import { and, asc, desc, eq, gt, lt, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { isDeepStrictEqual } from "node:util";
@@ -86,7 +87,7 @@ export class AutomationBootstrap {
   }
 
   async cancel(owner: string, automationId: string, bootstrapId: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update");
       const [request] = await tx.select().from(requests).where(and(eq(requests.id, bootstrapId),
         eq(requests.automationId, automationId), eq(requests.createdByUserId, owner))).for("update").limit(1);

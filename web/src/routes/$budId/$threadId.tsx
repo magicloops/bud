@@ -231,6 +231,8 @@ function ThreadViewContent() {
   }, [])
   const {
     messages,
+    turnTimings,
+    applyTurnTimings,
     messagePage,
     isLoadingOlderMessages,
     olderMessagesLoadFailed,
@@ -729,6 +731,7 @@ function ThreadViewContent() {
     onCompactionFailed: handleCompactionFailed,
     onThreadTitle: handleThreadTitleUpdate,
     onFinalizeTurn: handleFinalizeTurn,
+    onTurnTiming: timing => applyTurnTimings([timing]),
     refreshBootstrap: refreshAgentBootstrap,
   })
   agentStreamCursorSetterRef.current = setAgentStreamCursor
@@ -1116,6 +1119,7 @@ function ThreadViewContent() {
             notices={contextCompactionNotices}
             liveTurnId={liveTurnId}
             turnOutcomes={turnOutcomes}
+            turnTimings={turnTimings}
             activityIndicatorVisible={activityIndicatorVisible}
             activityIndicatorWorkStarted={assistantActivityGate.workStarted}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}

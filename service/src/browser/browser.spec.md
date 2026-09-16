@@ -253,3 +253,10 @@ replay, rejecting a complete serialized compact tool payload above 12 KiB with
 scoping guidance. Snapshot text and visible-DOM nodes are mutually exclusive;
 image paths and screenshot hydration are unchanged. Broker tests cover capability
 negotiation; agent observation-budget tests cover final payload size and replay.
+
+## Timing at return-control parking
+
+The raw-pg admission transaction uses the shared invocation timing SQL before
+moving a running invocation into waiting_for_user. The later worker notification
+is not the timing boundary. Continuation tests verify this path and ordinary
+agent/user handoffs exclude private wait time and accumulate on resume.

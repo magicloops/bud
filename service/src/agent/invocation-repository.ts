@@ -1,5 +1,6 @@
+import { beginWorkTiming, settleWorkTiming, invalidateWorkTiming, settledTurnTiming, recordSettledTiming, invocationTimingTransaction } from "./invocation-timing.js";
 import { browserHandoffTable as browserHandoff, browserSessionTable as browserSession } from "../db/schema.js";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
@@ -39,6 +40,20 @@ export class InvocationRepository {
     if (!Number.isInteger(automationConcurrencyPerBud) || automationConcurrencyPerBud < 1 || automationConcurrencyPerBud > 32) {
       throw new InvocationError("invalid_automation_concurrency");
     }
+  }
+
+  async timingsForTurns(owner: string, threadId: string, turnIds: string[]) {
+    if (!turnIds.length) return [];
+    const rows = await this.database.select({ turnId: inv.turnId, threadId: inv.threadId, status: inv.status,
+      workDurationMs: inv.workDurationMs, workStartedAt: inv.workStartedAt }).from(inv).where(and(eq(inv.createdByUserId, owner),
+      eq(inv.threadId, threadId), inArray(inv.turnId, [...new Set(turnIds)])));
+    return rows.flatMap(row => { const timing = settledTurnTiming(row); return timing ? [timing] : []; });
+  }
+
+  async invalidateInterruptedTiming() {
+    // Preserve healthy leases during overlapping service startup.
+    await this.database.update(inv).set(invalidateWorkTiming()).where(sql`${inv.workStartedAt} is not null
+      and (${inv.status} <> 'running' or ${inv.leaseExpiresAt} is null or ${inv.leaseExpiresAt} <= clock_timestamp())`);
   }
 
   async findByTurn(owner: string, threadId: string, turnId: string) {
@@ -173,7 +188,7 @@ export class InvocationRepository {
     const [invocation] = await tx.insert(inv).values({
       id, turnId: ulid(), threadId: thread.threadId, budId: thread.budId, inputMessageId: message.messageId,
       origin: input.origin, idempotencyKey: input.idempotencyKey, model: input.model,
-      reasoningEffort: input.reasoningEffort, latestStartAt: input.latestStartAt,
+      workDurationMs: 0, reasoningEffort: input.reasoningEffort, latestStartAt: input.latestStartAt,
       createdByUserId: input.owner,
     }).returning();
     if (!invocation) throw new InvocationError("invocation_insert_failed");
@@ -186,7 +201,7 @@ export class InvocationRepository {
 
   async claim(workerId: string, ownerFilter?: string): Promise<Invocation | null> {
     if (!workerId) throw new InvocationError("worker_required");
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       // Lock the thread, not just its queued item: two pending items in the
       // same thread must not be independently leased by different workers.
       const [candidate] = await tx.select({ id: inv.id }).from(inv)
@@ -256,7 +271,8 @@ export class InvocationRepository {
         eq(inv.reservesThread, true))).limit(1);
       if (active) return null;
       if (selected.expired && current.status !== "waiting_for_user") {
-        await tx.update(inv).set({ status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, current.id));
+        const [timed] = await tx.update(inv).set({ ...settleWorkTiming(), status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, current.id)).returning();
+        recordSettledTiming(tx, timed);
         return null;
       }
       if (current.origin === "automation" && !current.reservesThread) {
@@ -343,7 +359,7 @@ export class InvocationRepository {
         jsonb_build_object('model_context_at', coalesce(${messageTable.metadata}->>'model_context_at',
           ${contextClock.at.toISOString()}::text))` })
         .where(and(eq(messageTable.messageId, row.inputMessageId), eq(messageTable.createdByUserId, row.createdByUserId)));
-      await tx.update(inv).set({ status: "running", updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id));
+      await tx.update(inv).set({ ...beginWorkTiming(), status: "running", updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id));
     });
   }
 
@@ -359,7 +375,7 @@ export class InvocationRepository {
       await this.lockedLease(tx, lease, ["leased"]);
       const [continuation] = await tx.select({ id: action.id }).from(action)
         .where(and(eq(action.invocationId, lease.id), eq(action.status, "waiting_for_user"))).limit(1);
-      await tx.update(inv).set({ status, reservesThread: Boolean(continuation) && !await this.hasBrowserWait(tx,lease.id), workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ ...settleWorkTiming(), status, reservesThread: Boolean(continuation) && !await this.hasBrowserWait(tx,lease.id), workerId: null, leaseExpiresAt: null,
         nextAttemptAt: sql`clock_timestamp() + ${delaySeconds} * interval '1 second'`,
         updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id));
     });
@@ -386,21 +402,22 @@ export class InvocationRepository {
   }
 
   async finish(lease: InvocationLease, status: "succeeded" | "failed" | "needs_review", outcomeCode: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const current = await this.lockedLease(tx, lease, ["leased", "running"], true);
       const [pending] = await tx.select({ id: action.id }).from(action)
         .where(and(eq(action.invocationId, lease.id), sql`${action.status} in ('intent','waiting_for_user')`)).limit(1);
       if(!pending || current.cancelRequestedAt)await tx.update(browserHandoff).set({status:"canceled",resolvedAt:sql`clock_timestamp()`})
         .where(and(eq(browserHandoff.invocationId,lease.id),eq(browserHandoff.status,"pending")));
-      await tx.update(inv).set({ status: current.cancelRequestedAt ? "canceled" : pending ? "needs_review" : status,
+      const [timed] = await tx.update(inv).set({ ...(!current.cancelRequestedAt && (pending || status === "needs_review") ? invalidateWorkTiming() : settleWorkTiming()), status: current.cancelRequestedAt ? "canceled" : pending ? "needs_review" : status,
         reservesThread: !current.cancelRequestedAt && (Boolean(pending) || status === "needs_review"),
         outcomeCode: current.cancelRequestedAt ? "user_canceled" : pending ? "unresolved_action_intent" : outcomeCode,
-        workerId: null, leaseExpiresAt: null, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id));
+        workerId: null, leaseExpiresAt: null, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id)).returning();
+      recordSettledTiming(tx, timed);
     });
   }
 
   async requestCancel(owner: string, invocationId: string) {
-    return this.database.transaction(tx => this.requestCancelInTransaction(tx, owner, invocationId));
+    return invocationTimingTransaction(this.database, tx => this.requestCancelInTransaction(tx, owner, invocationId));
   }
 
   async requestCancelInTransaction(tx: Transaction, owner: string, invocationId: string) {
@@ -428,10 +445,11 @@ export class InvocationRepository {
         .where(and(eq(bootstrapProposal.invocationId, row.id), eq(bootstrapProposal.createdByUserId, owner), eq(bootstrapProposal.status, "pending")));
       const [updated] = await tx.update(inv).set({
         cancelRequestedAt: row.cancelRequestedAt ?? new Date(), canceledByUserId: owner,
-        ...(running ? {} : { status: "canceled" as const, reservesThread: false, workerId: null, leaseExpiresAt: null,
+        ...(running ? {} : { ...settleWorkTiming(), status: "canceled" as const, reservesThread: false, workerId: null, leaseExpiresAt: null,
           fence: sql`${inv.fence} + 1`, outcomeCode: "user_canceled" }),
         updatedAt: sql`clock_timestamp()`,
       }).where(eq(inv.id, row.id)).returning();
+      recordSettledTiming(tx, updated);
       return updated;
   }
 
@@ -448,7 +466,7 @@ export class InvocationRepository {
         evidence:{browser_handoff_id:handoffId}}).where(and(eq(action.invocationId,row.id),
           eq(action.callId,callId),eq(action.fence,lease.fence),eq(action.status,"intent"))).returning();
       if (!intent) throw new InvocationError("browser_handoff_action_not_pending");
-      await tx.update(inv).set({status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
+      await tx.update(inv).set({...settleWorkTiming(),status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
         fence:sql`${inv.fence}+1`,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
     });
   }
@@ -467,7 +485,7 @@ export class InvocationRepository {
         status:"waiting_for_user",fence:lease.fence+1,createdByUserId:row.createdByUserId,
         evidence:{browser_handoff_id:handoff.handoff.id}});
       await tx.update(browserHandoff).set({callId}).where(eq(browserHandoff.id,handoff.handoff.id));
-      await tx.update(inv).set({status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
+      await tx.update(inv).set({...settleWorkTiming(),status:"waiting_for_user",reservesThread:false,workerId:null,leaseExpiresAt:null,
         fence:sql`${inv.fence}+1`,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
       return {handoff_id:handoff.handoff.id,viewer_path:`/browser/${handoff.handoff.sessionId}`,
         client_id:handoff.handoff.clientId!,call_id:callId};
@@ -486,7 +504,7 @@ export class InvocationRepository {
         .where(and(eq(action.invocationId, row.id), eq(action.callId, callId), eq(action.fence, lease.fence),
           eq(action.kind, "ask_user_questions"), eq(action.status, "intent"))).returning();
       if (!intent) throw new InvocationError("question_action_not_pending");
-      await tx.update(inv).set({ status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
         fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
     });
   }
@@ -507,7 +525,7 @@ export class InvocationRepository {
         .where(and(eq(action.invocationId, row.id), eq(action.callId, callId), eq(action.fence, lease.fence),
           eq(action.kind, APP_KEY_REQUEST_TOOL), eq(action.status, "intent"))).returning();
       if (!intent) throw new InvocationError("app_data_action_not_pending");
-      await tx.update(inv).set({ status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
         fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
       return request;
     });
@@ -526,7 +544,7 @@ export class InvocationRepository {
         .where(and(eq(action.invocationId, row.id), eq(action.callId, callId), eq(action.fence, lease.fence),
           eq(action.kind, AUTOMATION_PROPOSAL_TOOL), eq(action.status, "intent"))).returning();
       if (!intent) throw new InvocationError("automation_proposal_action_not_pending");
-      await tx.update(inv).set({ status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
         fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
       return proposal;
     });
@@ -546,14 +564,14 @@ export class InvocationRepository {
         .where(and(eq(action.invocationId, row.id), eq(action.callId, callId), eq(action.fence, lease.fence),
           eq(action.kind, BOOTSTRAP_PROPOSAL_TOOL), eq(action.status, "intent"))).returning();
       if (!intent) throw new InvocationError("bootstrap_proposal_action_not_pending");
-      await tx.update(inv).set({ status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
         fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
       return result;
     });
   }
 
   async abandonReviewed(owner: string, threadId: string, invocationId: string, expectedUpdatedAt: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       // Match claim's thread-first lock order so queued work cannot acquire the
       // reservation until both the owner's decision and its audit commit.
       const [thread] = await tx.select({ id: threadTable.threadId }).from(threadTable)
@@ -586,11 +604,12 @@ export class InvocationRepository {
         .where(and(eq(automationProposal.invocationId, row.id), eq(automationProposal.createdByUserId, owner), eq(automationProposal.status, "pending")));
       await tx.update(bootstrapProposal).set({ status: "canceled", version: sql`${bootstrapProposal.version} + 1`, updatedAt: sql`clock_timestamp()` })
         .where(and(eq(bootstrapProposal.invocationId, row.id), eq(bootstrapProposal.createdByUserId, owner), eq(bootstrapProposal.status, "pending")));
-      const [updated] = await tx.update(inv).set({ status: "canceled", reservesThread: false,
+      const [updated] = await tx.update(inv).set({ ...invalidateWorkTiming(), status: "canceled", reservesThread: false,
         canceledByUserId: owner, cancelRequestedAt: row.cancelRequestedAt ?? sql`clock_timestamp()`,
         outcomeCode: "user_abandoned_after_review", fence: sql`${inv.fence} + 1`,
         workerId: null, leaseExpiresAt: null, updatedAt: sql`clock_timestamp()` })
         .where(eq(inv.id, row.id)).returning();
+      recordSettledTiming(tx, updated);
       return updated;
     });
   }
@@ -740,7 +759,7 @@ export class InvocationRepository {
   }
 
   async expireQueued(ownerFilter?: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const rows = await tx.select({ id: inv.id }).from(inv).where(and(
         sql`${inv.status} in ('pending','retry_wait','waiting_for_bud','waiting_for_model')`,
         sql`${inv.latestStartAt} <= clock_timestamp()`,
@@ -748,15 +767,16 @@ export class InvocationRepository {
         ownerFilter ? eq(inv.createdByUserId, ownerFilter) : undefined,
       )).for("update", { skipLocked: true }).limit(100);
       for (const row of rows) {
-        await tx.update(inv).set({ status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` })
-          .where(eq(inv.id, row.id));
+        const [timed] = await tx.update(inv).set({ ...settleWorkTiming(), status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` })
+          .where(eq(inv.id, row.id)).returning();
+        recordSettledTiming(tx, timed);
       }
       return rows.length;
     });
   }
 
   async recoverExpired(ownerFilter?: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const ended = await tx.select({id:inv.id}).from(inv).where(and(
         sql`${inv.status} in ('waiting_for_user','waiting_for_bud','waiting_for_model','retry_wait')`,
         sql`exists (select 1 from agent_invocation_action a where a.invocation_id=agent_invocation.id
@@ -773,8 +793,9 @@ export class InvocationRepository {
       for (const row of ended) {
         await tx.update(browserHandoff).set({status:"canceled",resolvedAt:sql`clock_timestamp()`})
           .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,"pending")));
-        await tx.update(inv).set({status:"canceled",reservesThread:false,outcomeCode:"browser_session_ended",
-          fence:sql`${inv.fence}+1`,workerId:null,leaseExpiresAt:null,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id));
+        const [timed] = await tx.update(inv).set({...settleWorkTiming(),status:"canceled",reservesThread:false,outcomeCode:"browser_session_ended",
+          fence:sql`${inv.fence}+1`,workerId:null,leaseExpiresAt:null,updatedAt:sql`clock_timestamp()`}).where(eq(inv.id,row.id)).returning();
+        recordSettledTiming(tx, timed);
       }
       const rows = await tx.select().from(inv).where(and(sql`${inv.status} in ('leased','running')`,
         sql`${inv.leaseExpiresAt} <= clock_timestamp()`, ownerFilter ? eq(inv.createdByUserId, ownerFilter) : undefined))
@@ -785,11 +806,12 @@ export class InvocationRepository {
         if(row.cancelRequestedAt || row.status==='running')await tx.update(browserHandoff)
           .set({status:'canceled',resolvedAt:sql`clock_timestamp()`})
           .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,'pending')));
-        await tx.update(inv).set({ reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation) && !await this.hasBrowserWait(tx,row.id)),
+        const [timed] = await tx.update(inv).set({ ...(row.status === "running" ? invalidateWorkTiming() : settleWorkTiming()), reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation) && !await this.hasBrowserWait(tx,row.id)),
           status: row.cancelRequestedAt ? "canceled" : row.status === "leased" ? "retry_wait" : "needs_review",
           outcomeCode: row.cancelRequestedAt ? "user_canceled" : row.status === "leased" ? "preflight_lease_expired" : "execution_lease_expired",
           fence: sql`${inv.fence} + 1`, workerId: null, leaseExpiresAt: null,
-          nextAttemptAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
+          nextAttemptAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id)).returning();
+        recordSettledTiming(tx, timed);
       }
       return rows.length;
     });

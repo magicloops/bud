@@ -706,3 +706,16 @@ of the latest turn, keyed by original client ID. Canonical tool results win; emp
 inventory removes synthetic waits. Pending return-control rows stay outside work
 folds; resolved results regroup normally. Existing tool-call events mark waiting
 for user when `args.wait_kind=return_control`. No additional polling is introduced.
+
+## Service-owned Worked for duration
+
+`turn-timing.ts` validates and idempotently merges settled timing by turn ID;
+`turn-timing.test.ts` covers absent, null, duplicate and invalid entries.
+`use-thread-messages.ts` merges page/state/SSE totals while preserving older loaded
+timings; the authenticated owner/thread route remount resets the map.
+`use-agent-stream.ts` handles `agent.turn_timing` without changing activity/status.
+The projector reads only this service total, once on the last loaded completed
+work fragment for a turn. Missing/null means plain Worked; no artifact fallback.
+Duration participates in row memoization, leaving unrelated rows unchanged.
+Projection and mounted parity tests cover before/after-final arrival, repeated
+refreshes, pagination and thread changes. See [plan](../../../../plan/service-owned-turn-timing.md).

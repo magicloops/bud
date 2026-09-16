@@ -1,3 +1,4 @@
+import { mergeTurnTimings } from './turn-timing'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '@/lib/transport'
 import { generateMessageClientId } from '@/lib/messages'
@@ -90,6 +91,11 @@ export function useThreadMessages({
   const [messages, publishMessages] = useState<ApiMessage[]>(
     () => applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
   )
+  const [turnTimings, setTurnTimings] = useState(() => mergeTurnTimings(
+    mergeTurnTimings(new Map(), initialMessagePage.turn_timings), initialAgentState.invocations))
+  const applyTurnTimings = useCallback((rows: readonly unknown[]) => {
+    setTurnTimings(current => mergeTurnTimings(current, rows))
+  }, [])
   const [messagePage, setMessagePage] = useState<ApiMessagePage['page']>(initialMessagePage.page)
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
   // Last older-page fetch failed: the timeline stops auto-loading on scroll
@@ -144,6 +150,8 @@ export function useThreadMessages({
       setIsLoadingOlderMessages(false)
       setOlderMessagesLoadFailed(false)
     }
+    setTurnTimings(current => mergeTurnTimings(
+      mergeTurnTimings(changedThread ? new Map() : current, initialMessagePage.turn_timings), initialAgentState.invocations))
     const next = changedThread
       ? { messages: applyAgentStateOverlay(initialMessagePage.messages, initialAgentState), page: initialMessagePage.page }
       : mergeLatestBootstrapState(messagesRef.current, messagePageRef.current, initialMessagePage, initialAgentState, protectedIds.current, removedIds.current)
@@ -166,17 +174,19 @@ export function useThreadMessages({
       nextAgentState,
       protectedIds.current, removedIds.current,
     )
+    applyTurnTimings([...(nextPage.turn_timings ?? []), ...(nextAgentState.invocations ?? [])])
     publish(nextState.messages)
     messagePageRef.current = nextState.page
     setMessagePage(nextState.page)
-  }, [publish])
+  }, [publish, applyTurnTimings])
 
   const applyAgentState = useCallback((nextAgentState: ApiAgentState) => {
+    applyTurnTimings(nextAgentState.invocations ?? [])
     const next = mergeLatestBootstrapState(messagesRef.current, messagePageRef.current,
       { messages: messagesRef.current.filter(message => !protectedIds.current.has(message.client_id)), page: messagePageRef.current },
       nextAgentState, protectedIds.current, removedIds.current)
     publish(next.messages)
-  }, [publish])
+  }, [publish, applyTurnTimings])
 
   const loadOlderMessages = useCallback(async () => {
     if (
@@ -211,6 +221,7 @@ export function useThreadMessages({
 
       const data = (await resp.json()) as ApiMessagePage
       if (selection.current !== scope) return
+      applyTurnTimings(data.turn_timings ?? [])
       chatScrollRef.current?.dispatchEvent(new Event('bud:before-history-prepend'))
       publish(mergeOlderMessages(messagesRef.current, data.messages.filter(message => !removedIds.current.has(message.client_id))))
       const previousPage = messagePageRef.current
@@ -233,6 +244,7 @@ export function useThreadMessages({
       }
     }
   }, [
+    applyTurnTimings,
     publish,
     isLoadingOlderMessages,
     messagePage.before_cursor,
@@ -466,6 +478,8 @@ export function useThreadMessages({
   }, [setMessages])
 
   return {
+    turnTimings,
+    applyTurnTimings,
     messages,
     messagePage,
     isLoadingOlderMessages,

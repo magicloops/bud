@@ -79,6 +79,7 @@ test(
       const lease = await repo.claim("worker", "alice");
       assert.ok(lease);
       await repo.start(lease);
+      await pool.query("update agent_invocation set work_started_at=clock_timestamp()-interval '2 seconds' where id=$1", [lease.id]);
       const callId = randomUUID(),
         clientId = randomUUID(),
         llmId = randomUUID(),
@@ -185,6 +186,9 @@ test(
           callId,
           (handoff as { id: string }).id,
         );
+      const timingAtPark = (await pool.query("select work_duration_ms,work_started_at from agent_invocation where id=$1", [lease.id])).rows[0];
+      assert.equal(timingAtPark.work_started_at, null);
+      assert.ok(Number(timingAtPark.work_duration_ms) >= 2000);
       await assert.rejects(repo.heartbeat(lease), /lease_lost/);
       assert.equal(await repo.claim("other", "alice"), null);
       const recovered = await new InvocationRepository(
@@ -255,6 +259,7 @@ test(
       assert.equal(resumed.id, lease.id);
       assert.equal(resumed.turnId, lease.turnId);
       await repo.start(resumed);
+      await pool.query("update agent_invocation set work_started_at=clock_timestamp()-interval '3 seconds' where id=$1", [resumed.id]);
       const results = await repo.prepareQuestionContinuation(resumed);
       assert.equal(results.length, idle ? 1 : 2);
       if (idle) {
@@ -275,6 +280,9 @@ test(
       }
       assert.deepEqual(await repo.prepareQuestionContinuation(resumed), []);
       await repo.finish(resumed, "succeeded", "done");
+      const completed = (await pool.query("select work_duration_ms,work_started_at from agent_invocation where id=$1", [resumed.id])).rows[0];
+      assert.equal(completed.work_started_at, null);
+      assert.ok(Number(completed.work_duration_ms) >= Number(timingAtPark.work_duration_ms) + 3000);
     }
   },
 );

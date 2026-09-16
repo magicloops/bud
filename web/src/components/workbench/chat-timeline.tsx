@@ -87,6 +87,7 @@ type ChatTimelineProps = {
   liveTurnId?: string | null
   /** Session-local `final`-event outcomes for failed/canceled badges. */
   turnOutcomes?: ReadonlyMap<string, TurnOutcome>
+  turnTimings?: ReadonlyMap<string, number | null>
   responseActive?: boolean
   activityIndicatorVisible?: boolean
   activityIndicatorWorkStarted?: boolean
@@ -110,6 +111,7 @@ const ChatTimelineComponent = ({
   notices = [],
   liveTurnId = null,
   turnOutcomes,
+  turnTimings,
   activityIndicatorVisible = false,
   activityIndicatorWorkStarted = false,
   responseActive = activityIndicatorVisible,
@@ -155,9 +157,10 @@ const ChatTimelineComponent = ({
       projectorRef.current({
         messages: visibleMessages,
         liveTurnId,
+        turnTimings,
         ...(turnOutcomes ? { turnOutcomes } : {}),
       }),
-    [liveTurnId, turnOutcomes, visibleMessages],
+    [liveTurnId, turnOutcomes, turnTimings, visibleMessages],
   )
 
   // Expansion state is ephemeral presentation state keyed by stable

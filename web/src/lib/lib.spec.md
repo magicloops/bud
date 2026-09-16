@@ -124,11 +124,11 @@ the content payload). Tested in `agent-message-metadata.test.ts`.
 
 ### `agent-work-duration.ts`
 
-`Worked for …` duration for one agent-work group, mobile-parity semantics:
-union of authoritative `service_wall_clock` intervals (overlaps counted
-once), legacy pure-tool payload-`duration_ms` sum as fallback, else null
-(render `Worked`, never an estimate). Plus `formatWorkDuration` (`42s`,
-`1m 28s`). Tested in `agent-work-duration.test.ts`.
+`formatWorkDuration` formats service-owned totals (`42s`, `1m 28s`).
+Artifact interval aggregation and legacy tool-duration fallback are removed from
+the top-level label. Individual message timing accessors remain available.
+`ApiTurnTiming` and optional message-page/state fields carry settled turn totals;
+validation/merging live in `features/threads/turn-timing.ts`.
 
 ### `relative-time.ts`
 

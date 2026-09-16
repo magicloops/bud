@@ -1,3 +1,4 @@
+import { isTurnTiming } from './turn-timing'
 import { useCallback, useEffect, useRef } from 'react'
 import { createAuthEventSource } from '@/lib/transport'
 import { isAuthRedirectPending } from '@/lib/auth-redirect'
@@ -8,6 +9,7 @@ import type {
   ApiAgentState,
   ApiOutputActivity,
   ApiMessage,
+  ApiTurnTiming,
 } from '@/lib/api-types'
 import {
   getThreadStreamHeartbeatConfig,
@@ -117,6 +119,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onTurnTiming?: (timing: ApiTurnTiming) => void
   onStreamEvent: () => void
   onOutputActivity: (event: { turnId: string; llmCallId: string; state: ApiOutputActivity["state"] | null }) => void
   threadId: string | null
@@ -200,6 +203,7 @@ export function useAgentStream({
   onCompactionFailed,
   onThreadTitle,
   onFinalizeTurn,
+  onTurnTiming,
   refreshBootstrap,
 }: UseAgentStreamArgs) {
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -230,6 +234,7 @@ export function useAgentStream({
     onCompactionFailed,
     onThreadTitle,
     onFinalizeTurn,
+    onTurnTiming,
     refreshBootstrap,
   })
 
@@ -253,6 +258,7 @@ export function useAgentStream({
       onCompactionFailed,
       onThreadTitle,
       onFinalizeTurn,
+      onTurnTiming,
       refreshBootstrap,
     }
   }, [
@@ -269,6 +275,7 @@ export function useAgentStream({
     onCompactionStart,
     onError,
     onFinalizeTurn,
+    onTurnTiming,
     onStatusChange,
     onStreamEvent,
     onThreadTitle,
@@ -440,6 +447,21 @@ export function useAgentStream({
     source.addEventListener('heartbeat', () => {
       if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       lastEventTimeRef.current = Date.now()
+    })
+
+    source.addEventListener('agent.turn_timing', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
+      try {
+        const data: unknown = JSON.parse(evt.data)
+        if (!isTurnTiming(data)) return
+        lastEventTimeRef.current = Date.now()
+        cursorRef.current = evt.lastEventId || cursorRef.current
+        // Timing never changes active-turn, text streaming, or spinner state.
+        callbacksRef.current.onTurnTiming?.(data)
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse turn timing', error)
+      }
     })
 
     source.addEventListener('agent.output_activity', (evt) => {

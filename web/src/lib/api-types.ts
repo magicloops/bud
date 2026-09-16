@@ -96,7 +96,10 @@ export type ApiMessage = {
   created_at: string
 }
 
+export type ApiTurnTiming = { turn_id: string; work_duration_ms: number | null }
+
 export type ApiMessagePage = {
+  turn_timings?: ApiTurnTiming[]
   messages: ApiMessage[]
   page: {
     limit: number
@@ -377,6 +380,7 @@ export type ApiDraftReasoning = {
 }
 
 export type ApiAgentInvocation = {
+  work_duration_ms?: number | null
   invocation_id: string
   turn_id: string
   input_message_id: string

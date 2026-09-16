@@ -1352,3 +1352,20 @@ authorization are unaffected.
 Unicode content and exact replay through `AgentConversationLoader`. See
 [Phase 3f](../../../plan/bud-owned-browser/phase-3f-compact-browser-observations.md)
 and [measurements](../../../debug/browser-compact-observations.md).
+
+## Service-owned turn timing
+
+`invocation-timing.ts` owns the two DB-clock start/settle fragments, terminal
+serialization and post-commit timing publication. `InvocationRepository` initializes
+new admissions at zero, starts on fenced leased→running, settles every durable
+park/finish, and invalidates unknown execution ends. `invocationTimingTransaction`
+collects settled rows inside the existing transaction and publishes only after
+commit; outer automation cancellation transactions use the same helper. Rollbacks
+and stale fences publish nothing. No per-token writes or provider clocks.
+
+`timingsForTurns` reads only requested page turn IDs with owner/thread predicates.
+`serializeInvocation` exposes terminal/review timing; live and waiting entries omit
+it. `invocation-timing.test.ts` covers real PostgreSQL migration, lifecycle, owner
+scope, cancellation rollback, restart/lease boundaries and SSE replay. Browser
+continuation tests also verify accumulated timing across all handoff paths.
+See [contract](../../../plan/service-owned-turn-timing.md).

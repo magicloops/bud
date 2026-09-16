@@ -443,3 +443,11 @@ worker startup. Shutdown stops media/capture eligibility before pool disposal.
 The daemon media URL derives from the configured public Better Auth origin.
 Browser handoffs reuse normal agent transcript/SSE and durable invocation waits;
 private images and input never enter those channels.
+
+## Turn timing composition
+
+`server.ts` subscribes the shared DB's post-commit invocation timing publisher to
+`agentRuntime.emit(... agent.turn_timing ...)` and unsubscribes on close. Readiness
+invalidates inconsistent leftover intervals and expired running intervals; valid
+running leases survive overlapping startup. Migration 0043 is required first.
+Existing lease recovery remains responsible for invocation lifecycle recovery.

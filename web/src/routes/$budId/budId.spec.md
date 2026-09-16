@@ -415,3 +415,10 @@ The previous top-of-chat return notice is replaced by durable inline cards.
 
 
 Browser wait actions receive visibleSessionId only in browser view mode; selecting another pane restores the inline Open browser entry point.
+
+## Turn timing wiring
+
+The existing-thread route forwards `agent.turn_timing` to the message hook's
+settled lookup and passes that lookup to ChatTimeline. The owner/thread-keyed
+workbench remount clears it on identity changes. Timing callbacks do not mutate
+turn/spinner status or trigger transcript refreshes.
