@@ -484,3 +484,35 @@ Generated custom migration metadata remains Drizzle-owned. Reviewed SQL applied
 locally in a transaction and validated with replay/provenance tests.
 New admission snapshots live in the input message's `metadata.model_resolution`
 and existing agent_invocation model/effort columns, avoiding duplicate storage.
+
+## Browser sessions
+
+`browserSessionTable` / `browser_session` stores owned thread/Bud identity, tenant,
+generation and daemon boot identity, ephemeral profile mode, lifecycle/desired
+state, control epoch/sequence, current invocation/fence, pending deadline and
+closure timestamps. Composite thread/Bud/owner FK and a unique active-thread
+partial index prevent cross-scope reuse and concurrent default sessions. No DOM,
+CDP endpoints or profile credentials are stored. Migration: `0039_tiny_loners.sql`.
+See [browser repository](../browser/browser.spec.md).
+
+Phase 2 adds `control_state`, optimistic `revision`, `control_request_id` and a
+`private_content` latch independent of paused/agent lifecycle. Controller leases
+remain process-local; restart does not expose a formerly private page.
+`browserHandoffTable` / `browser_handoff` binds session/thread/Bud/owner/tenant to
+an optional invocation and call/client ID, reason, agent/user kind and pending/
+returned/canceled decision. Owner-context FKs, invocation/call uniqueness and one
+pending handoff per session initially prevented cross-scope or duplicate continuations
+(the latter is replaced by per-invocation uniqueness in Phase 3e below).
+`returned_by_user_id` stamps the explicit returning actor. No input, screenshots,
+cookies or media tickets are stored. Migrations `0040_broad_cassandra_nova.sql`
+and `0041_cool_lyja.sql` are generated, reviewed and locally applied; see the
+[validation note](../../../debug/bud-browser-phase-2.md).
+
+## Multiple browser waits
+
+Migration `0042_foamy_invisible_woman.sql` replaces pending-session uniqueness with
+pending-invocation uniqueness, adds a session/status lookup index and permits
+`kind=return_control`. Ownership FKs and explicit-return actor stamps are unchanged.
+Existing agent/user handoffs survive; no private browser content is added.
+Local db:push was reviewed and canceled at its unrelated invocation constraint
+prompt; the exact generated browser migration was applied transactionally instead.

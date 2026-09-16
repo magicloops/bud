@@ -504,3 +504,13 @@ External crates (from `Cargo.toml`):
 ---
 
 *Referenced by: [bud.spec.md](../bud.spec.md)*
+
+## Bud-owned browser control
+
+`browser/` ([spec](./browser/browser.spec.md)) owns managed Chromium lifetime and
+serial CDP operations. `app.rs` probes it once, advertises `capabilities.browser`,
+binds hello-ack device sessions, and spawns browser operations outside the control
+receive loop for both WS and gRPC. Disconnect fences work without closing browsers.
+`main.rs` handles SIGINT/SIGTERM by dropping runtime tasks and owned children;
+`doctor.rs` reports the optional runtime and `BUD_BROWSER_EXECUTABLE` setup guidance.
+`proto_wire.rs` maps browser command/result to envelope tags 190/191.

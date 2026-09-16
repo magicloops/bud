@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
+import { receiveBrowserResult } from "../browser/transport.js";
 import { once } from "node:events";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -248,6 +249,11 @@ class GrpcControlConnection {
     }
 
     switch (envelope.data.type) {
+      case "browser_result": {
+        const tracker = this.getCurrentTracker();
+        if (tracker) receiveBrowserResult(tracker, frame);
+        break;
+      }
       case "hello":
         await this.handleHello(frame);
         break;
@@ -772,6 +778,7 @@ class GrpcControlConnection {
     const tracker: GrpcSessionTracker = {
       budId,
       sessionId,
+      browserCapability: hello.capabilities.browser,
       deviceSessionId: deviceSession.deviceSessionId,
       transportSessionId: transportSession.transportSessionId,
       drainState: "active",
@@ -1024,4 +1031,3 @@ function loadBudControlServices(): LoadedBudProto["bud"]["v1"] {
   const loaded = grpc.loadPackageDefinition(packageDefinition) as unknown as LoadedBudProto;
   return loaded.bud.v1;
 }
-

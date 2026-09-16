@@ -68,6 +68,8 @@ message BudEnvelope {
     ProxyWebSocketMessage proxy_ws_message = 184;
     ProxyWebSocketClose proxy_ws_close = 185;
     ProxyWebSocketError proxy_ws_error = 186;
+    BrowserCommand browser_command = 190;
+    BrowserResult browser_result = 191;
   }
 }
 
@@ -492,3 +494,7 @@ message FileResolveResult {
   BudError error = 9;
   bytes frame_json = 99;
 }
+
+// Versioned, bounded browser control payloads; no continuous media.
+message BrowserCommand { bytes frame_json = 99; }
+message BrowserResult { bytes frame_json = 99; }

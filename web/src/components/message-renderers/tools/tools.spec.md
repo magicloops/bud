@@ -8,6 +8,24 @@ Provides components for rendering tool-specific UI within chat messages. When th
 
 ## Files
 
+### `browser-observation.tsx`
+
+Compact observation summary and partial-snapshot notice in existing tool groups.
+Text/image detail expands on demand; image paths must match the first-party
+thread-artifact route and use normal cookie authorization. No continuous frames
+or automatic requests when collapsed; expired images show unavailable.
+`browser-observation.test.tsx` covers lazy expansion, path restrictions and expiry.
+
+
+### `browser-handoff.tsx`
+
+Inline `browser_request_handoff` reason and Open browser link. Only a strict
+first-party `/browser/browser_<ULID>` path is accepted; no arbitrary external
+viewer URL or secret input is rendered. Pending handoffs stay visible outside
+collapsed work. Normal clicks use the workbench Browser pane context; modifier
+clicks or missing context retain the standalone link. Rendering history never
+opens a viewer. Completed results use the existing summary/payload behavior.
+
 ### `web-retrieval.tsx`
 
 Concise `web_search`/`web_read` result summaries and source links inside the
@@ -136,3 +154,14 @@ Potential tool renderers to add:
 ---
 
 *Referenced by: [../message-renderers.spec.md](../message-renderers.spec.md)*
+
+## Pending browser actions
+
+`browser-handoff.tsx` also renders original browser operations carrying pending
+`wait_kind=return_control`. Return uses the matching mounted viewer action; Stop
+targets only the invocation. Without ownership, Open browser provides recovery.
+Historical rows expose no return/stop actions. `browser-handoff.test.tsx` covers
+matching-session authority, targeted stop and inert history.
+
+
+Pending browser handoffs use a compact row of shared Button components: Return to agent and Cancel (invocation stop). Open browser appears only when that session’s pane is not visible. Ordinary helper copy is omitted; actual errors remain visible. Return stays disabled without the matching controller, preserving private authority.

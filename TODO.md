@@ -127,6 +127,11 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Future / Long-Term
 
+- **Bud-owned browser runtime before real browsing use cases**
+  - Suppress unchanged viewer frames after control-lifecycle validation; keep liveness, capture credit, input freshness and lease renewal independent of image updates. See the [media efficiency roadmap](plan/bud-owned-browser/phases.md#media-efficiency-follow-up).
+  - Phase 1 normal-agent control is implemented; [setup, validation and remaining release checks](plan/bud-owned-browser/phase-1-agent-browser.md). Add identity-safe orphan/profile scavenging after hard daemon termination; current cleanup covers explicit close and graceful shutdown.
+  - Chrome for Testing is the accepted development runtime; see the [decision and validation evidence](plan/bud-owned-browser/phase-0-findings.md#accepted-development-runtime).
+  - Before using real accounts or arbitrary sites, revisit browser distribution and security updates, persistent-profile credential protection, and real-site/authentication compatibility. Do not carry the disposable fixture's mock/basic credential settings into persistent profiles.
 - **Revisit public web tool naming**
   - Assess whether our Firecrawl-backed custom `web_search` / `web_read` names cause model confusion with OpenAI's hosted Responses API `web_search`; this is a hypothesis, not an observed failure.
   - Compare the current names with `web.search` / `web.read`, provider-compatible underscore names, and Codex's `web.run` namespace approach. Verify period/namespace support across our provider adapters before choosing names.

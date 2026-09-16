@@ -1,4 +1,6 @@
+import { BrowserObservationContent } from './browser-observation'
 import { AppPermissionContent } from './app-permission'
+import { BrowserHandoffContent } from './browser-handoff'
 import { WebRetrievalContent } from './web-retrieval'
 import type { ToolContentRenderer } from '../types'
 import {
@@ -18,6 +20,8 @@ import { AutomationProposalContent } from './automation-proposal'
  * 2. Import and add it to this registry
  */
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
+  browser_observe: BrowserObservationContent,
+  browser_request_handoff: BrowserHandoffContent,
   web_search: WebRetrievalContent,
   web_read: WebRetrievalContent,
   'terminal.run': TerminalRunContent,

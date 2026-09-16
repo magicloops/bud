@@ -589,6 +589,18 @@ Terminal session/xterm ownership for the existing-thread route.
 
 ## Durable invocation recovery
 
+Browser handoffs use the existing `pending_tool` shape with durable waiting
+invocation evidence even when the process-local runtime is inactive. The message
+overlay preserves original call/client identity and marks the row pending;
+`agent-work-projection.ts` keeps it outside collapsed work until resolved. The
+first-party handoff renderer opens the separately authenticated viewer. Images and
+human input never pass through these transcript helpers.
+
+`browser-handoff-state.test.ts` covers inactive-runtime recovery, stable identity,
+duplicate snapshots, canonical-return precedence and removal of cleared prompts.
+The live stream classifies browser handoff as waiting for user immediately, so it
+does not keep a work spinner running until the next metadata poll.
+
 `invocation-state.ts` projects reserved/queued/offline/review/expired status independently of process-local activity and provides a lifecycle revision that ignores heartbeat-only updates. `invocation-state.test.ts` covers reservation priority, selected-model waits, stale-runtime suppression, refresh revisions, cold question recovery and completed-result precedence. Transcript overlays restore `pending_questions` with stable IDs and timestamps even after a service restart; canonical results win over stale pending snapshots. Durable answer responses refresh bootstrap.
 
 The lifecycle revision also includes pending app-request identity/version/status,
@@ -686,3 +698,11 @@ Spinner reveal now bypasses the startup grace once accepted normalized output
 activity has started. Text/wait/final eligibility still wins; without a signal,
 the 500 ms fallback reveals progress in the immediately reserved row. See
 [working-signal debug note](/debug/web-spinner-working-signal.md).
+
+## Browser wait recovery
+
+`thread-message-state.ts` overlays every `pending_browser_waits` entry independently
+of the latest turn, keyed by original client ID. Canonical tool results win; empty
+inventory removes synthetic waits. Pending return-control rows stay outside work
+folds; resolved results regroup normally. Existing tool-call events mark waiting
+for user when `args.wait_kind=return_control`. No additional polling is introduced.

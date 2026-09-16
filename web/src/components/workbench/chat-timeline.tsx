@@ -1,3 +1,4 @@
+import { BrowserHandoffContent } from '@/components/message-renderers/tools/browser-handoff'
 import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -464,7 +465,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const toolName = (payload?.tool as string | undefined) ?? (message.display_role || 'Tool')
   const pendingQuestionRequest =
     isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
-  const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
+  const ToolContentRenderer = message.metadata?.pending === true && payload?.wait_kind === 'return_control' ? BrowserHandoffContent : payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
   const assistantFileSource: OpenFileSource | null = isAssistant && isFinalAssistantMessage(message)
     ? {
@@ -517,6 +518,15 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       return next
     })
   }, [ensureJsonViewLoaded])
+
+  if (payload && message.metadata?.pending === true &&
+    (payload.wait_kind === 'return_control' || toolName === 'browser_request_handoff')) {
+    return <div className={TRANSCRIPT_COLUMN_CLASSES}>
+      <div className="border-l-[3px] border-transparent px-4 py-2.5">
+        <BrowserHandoffContent payload={payload} />
+      </div>
+    </div>
+  }
 
   if (isCompaction) {
     return <CompactionRow message={message} />

@@ -2792,3 +2792,422 @@ SSE attachment/replay. No new endpoint, DB rows or daemon messages are introduce
 Service/web and rebuilt mobile are a coordinated update; older clients ignore
 the event and retain their previous visual behavior. See
 [design and provider coverage](../design/assistant-output-activity.md).
+
+### Browser agent tool results (Phase 1)
+
+Normal production composition emits existing `agent.tool_call` and
+`agent.tool_result` envelopes for `browser_open`, `browser_observe`, `browser_act`
+and `browser_close` on a capable online Bud. The prototype fifth tool
+`browser_request_handoff` is not advertised; a stale call gets a paired unsupported
+result without parking. Handoff below describes only retained Phase-0 fixtures.
+
+Ordinary results expose `kind: "browser"`, `ok`, optional `error`, and
+`retryable: false` on the live event. The canonical tool message JSON includes
+`tool`, `call_id`, validated `args`, `kind`, `ok`, `outcome`
+(`completed | rejected | unknown`), optional `error`/`data`, and `summary`.
+Unknown mutation outcomes require inspection; they are not safe-retry claims.
+
+A successful handoff park publishes `agent.tool_call` with the original
+call/client identity and `args: {reason, handoff_id, viewer_path}`, then sets
+`waiting_for_user`. The path alone grants no access. Private input, host tickets,
+CDP endpoints and control epochs do not appear in this payload. The injected
+backend must park before the event; trailing calls cannot execute. The spike
+uses fixture persistence and explicit viewer return with fresh observation;
+durable recovery and first-party handoff UI are not implemented. This is not an
+`ask_user_questions` request and its response endpoint cannot resume a browser.
+See [scope and limitations](../plan/bud-owned-browser/phase-0-agent-integration.md).
+
+## Bud-owned browser control version 1
+
+Browser control uses the existing authenticated WS binary or gRPC control carrier,
+base `proto: "0.1"`, BudEnvelope v1 payload tags **190** (`browser_command`) and
+**191** (`browser_result`). Each typed payload uses bytes `frame_json = 99` for
+this bounded versioned document; these are not generic legacy JSON frames.
+Phase 2 adds a separate media WebSocket; chat reuses the existing SSE families.
+
+The active connection must advertise:
+
+```json
+{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"ephemeral","handoff":true,"max_sessions":2}}
+```
+
+Absent/false/incompatible capability omits browser tools. A new daemon does not
+emit browser results unsolicited, so old service/new daemon and new service/old
+daemon preserve existing traffic. A daemon upgrade plus explicit configured Chrome
+for Testing runtime is required. The service follows control-carrier preference,
+captures one authenticated tracker, and never retries on a different carrier.
+
+Service -> Bud:
+
+```json
+{
+  "proto":"0.1","type":"browser_command","id":"01REQUEST...","ts":1770000000000,"ext":{},
+  "browser_version":1,
+  "request":{
+    "request_id":"01REQUEST...","device_session_id":"s_01DEVICE...",
+    "session_id":"browser_01SESSION...","generation":"01GEN...",
+    "thread_id":"owned-thread-uuid","owner_user_id":"owner",
+    "control_epoch":2,"sequence":1,"expires_at_ms":1770000030000,
+    "invocation_id":"01INVOCATION...","invocation_fence":1,
+    "command":{"action":"open","url":"https://example.com"}
+  }
+}
+```
+
+Command variants:
+- `open {url?}` and `observe {target_id?}`.
+- `navigate {url,target_id?}`, `focus {reference}`, `click {reference}`,
+  `insert_text {text}` and `close {}`.
+- `cancel {}` is internal best-effort cancellation of the exact original
+  `request_id`/session/generation. It does not promise rollback of a mutation.
+
+Authority fields are server-created, never model arguments. Existing invocation
+lease/fence checks and durable action intent precede send. Daemon admission checks
+current hello-ack device session, immutable owner/thread/generation, monotonically
+increasing sequence and control epoch, and matching invocation identity within an
+epoch. Page operations wait up to four seconds for the serial CDP lock, then
+reject busy without page access. Deadline is at most 30 seconds from
+the service and no later than the lease expiry; daemon rejects bounds beyond 45
+seconds. Terminal receive/heartbeat handling does not await browser work.
+
+Bud -> service:
+
+```json
+{
+  "proto":"0.1","type":"browser_result","id":"01REPLY...","ts":1770000000500,"ext":{},
+  "browser_version":1,
+  "result":{
+    "request_id":"01REQUEST...","session_id":"browser_01SESSION...","generation":"01GEN...",
+    "ok":true,"outcome":"completed","error":null,
+    "data":{"state":"ready","profile_mode":"ephemeral","target_id":"opaque","navigation_requested":true,"targets":[]}
+  }
+}
+```
+
+The service accepts replies only from the captured still-current tracker with
+matching request/session/generation. Outcomes: `completed`, `rejected` (no asserted
+mutation), `unknown` (may have happened). Static errors include
+`browser_unavailable`, `browser_busy`, `browser_authority_lost`,
+`browser_call_already_dispatched`, `browser_stale_connection`,
+`browser_scope_mismatch`, `browser_stale_request`, `browser_session_limit`,
+`browser_stale_reference`, `browser_focus_required`, `browser_interrupted`,
+`browser_interrupted_reopen_required`, `browser_closed`, and
+`browser_outcome_unknown`. No browser error is an automatic retry instruction.
+
+Observe data contains `targets` and `observation` with `target_id`, `document_id`,
+`observation_id`, `elements: [{reference,role,name}]`, and `truncated`. References
+are opaque, document-bound, replaced by a new observation and invalidated on
+connection/epoch changes. No AX values/properties, cookies or CDP endpoints are
+serialized. Page labels and text remain untrusted evidence. Navigation results
+say requested; observe confirms the page. This is a bounded semantic surface,
+not full DOM inspection or screenshot/JavaScript access.
+
+Limits: 24 KiB command input, 128 KiB result, 128 pending service requests,
+two active daemon sessions, 256 AX entries (64 KiB serialized element budget), 256-byte names, 64-byte roles,
+2048-byte URLs and 8192-byte committed text. Whole CDP messages are capped at
+24 MiB (local PNG capture before bounded downscaling). CDP interruption poisons the connection; close/open is explicit recovery.
+Normal disconnect preserves live browsers, but outstanding commands are never
+replayed. A changed daemon boot invalidates durable session identity. Desired
+close persists across offline thread deletion/unclaim. See the
+[implementation evidence and limits](../plan/bud-owned-browser/phase-1-agent-browser.md).
+
+### Phase-2 private control and media
+
+`handoff:true` gates all new command variants. Phase-1 peers with `handoff:false`
+retain ordinary semantic browsing without receiving these requests. No new
+protobuf tags or shared transport streams are added.
+
+Additional `request.command` variants:
+
+```json
+{"action":"control","control":{"operation":"pause"}}
+{"action":"control","control":{"operation":"acquire","controller_id":"opaque"}}
+{"action":"control","control":{"operation":"renew","controller_id":"opaque"}}
+{"action":"control","control":{"operation":"prepare_return","controller_id":"opaque"}}
+{"action":"control","control":{"operation":"finish_return"}}
+{"action":"media_attach","endpoint":"wss://app.bud.dev/ws/browser-media","ticket":"one-use-secret","controller_id":"opaque-or-omitted"}
+{"action":"human_input","controller_id":"opaque","target_id":"opaque","document_id":"opaque","frame_token":"opaque","input":{"kind":"click","x":100,"y":100}}
+```
+
+Input kinds are `click {x,y}`, `scroll {x,y,delta_y}`, `text {focus_token,text}` and
+`key {focus_token,key}`. Keys: Tab, Enter, Backspace, Delete, ArrowLeft, ArrowRight,
+Home, End. Input result contains only an opaque `focus_token`. Coordinates refer
+to the unscaled captured viewport, not canvas pixels. Stale document, viewport,
+focus or frames older than three seconds reject; uncertain inputs are not replayed.
+
+Control uses server-created `invocation_id: viewer_<session_id>` and fence 1;
+owner/device/session/generation validation still applies. State transitions advance
+epoch/revision; input advances command sequence without changing revision.
+Legacy serialized renewal also advances sequence; independent renewal below does not.
+Media attachment checks exact authority independently of agent command sequence.
+Pause fences before waiting for CDP. Control/input may wait up to four seconds for
+the CDP lock; agent operations use the same bounded wait. Private leases expire after 15
+seconds and renew every five seconds. Control acknowledgements contain
+`control_acknowledged:true`; media attach returns `media_connecting:true`.
+Prepare return validates a fresh observation but sends no page contents in its ACK.
+Only acknowledged finish plus durable return allows the invocation to resume.
+Duplicate/stale Return returns a conflict and cannot cause a second continuation.
+Lost ACKs leave service authority paused; recovery requires explicit reacquisition.
+
+The service's durable private-content latch survives pause/restart, while controller
+leases do not. Private frames require the exact controlling auth-session/viewer.
+Agent evidence is checked again after dispatch; prior-epoch results are discarded.
+This protects broker paths, not privileged terminal/host software.
+
+#### Web API and live media
+
+- `GET /api/threads/:thread_id/browser-sessions`: bounded owned inventory.
+- `GET /api/browser/sessions/:session_id`: metadata (`session_id`, `thread_id`,
+  `bud_id`, `generation`, lifecycle `state`, `control_state`, `revision`, `can_view`,
+  `can_take_control`, pending `handoff`). No page contents or controller secrets.
+- `POST .../:session_id/control`: `{viewer_id,revision,operation}`, where operation
+  is acquire, renew, release, return or close. Close also requests run cancellation.
+- `POST .../:session_id/input`: `{viewer_id,target_id,document_id,frame_token,input}`.
+- `WS /api/browser/sessions/:session_id/media`: authorize owner/thread/Bud/live
+  browser session and trusted Origin before upgrade. First message `{viewer_id}`
+  within three seconds binds the viewer; no token in the URL.
+- `WS /ws/browser-media`: daemon first message `{ticket}` within three seconds,
+  consuming a five-second one-use ticket delivered over authenticated control.
+  Ticket binds carrier, session, generation, epoch and relay instance.
+
+Web writes/upgrades require an allowed Origin and live Better Auth browser session.
+401 means unauthenticated; foreign resources return 404. Metadata polls at three
+seconds in the viewer/five seconds for discovery; no new discovery SSE is required.
+
+Relay demand is `{target_id?}`. Daemon replies with `{busy:true}` or a frame:
+`{target_id,document_id,frame_token,width,height,image,targets:[{target_id,origin}]}`.
+`image` is base64 JPEG (quality 65, longest side at most 1280 pixels); `width` and
+`height` describe the original viewport. The service adds `type:"frame"` for
+viewers. Viewer messages are `{type:"ack"}` after decode/draw, or
+`{type:"target",target_id}`. `{type:"revoked"}` clears displayed content before
+closure. Frame bodies never enter chat SSE, DB, provider ledgers or app logs.
+
+Limits: 1.4 million base64 image characters; 1,420,000-byte media WS messages;
+32 active relay groups, three viewers each, 32 pending daemon handshakes; one
+outstanding frame credit per viewer; five-second ACK deadline; capture no faster
+than ten frames/sec and none with zero eligible viewers. Decode/canvas and credit
+are imperative, outside React/chat state. Slow viewers cannot accumulate frames.
+The TLS-terminating service is trusted with private content; this is not E2EE.
+Single service/gateway instance remains required; hosted edge upgrade validation
+is outstanding. Native mobile viewer auth/integration is deferred to Phase 3.
+
+#### Durable handoff in chat
+
+`browser_request_handoff` parks the original invocation/action, releases its worker
+lease, retains the thread reservation and emits existing `agent.tool_call` with
+public `handoff_id`, `reason`, `session_id` and `viewer_path`. `/agent/state` restores
+the same `pending_tool` from durable rows after restart. Human waiting has no work
+spinner. Return restores original call pairing once; subsequent undispatched calls
+receive `not_executed_due_to_browser_handoff`. User takeover with no pending tool
+adds a system context note to observe again rather than inventing a provider call.
+Stop cancels the invocation without implicitly closing Chrome; dismiss/media loss
+does not return control. See [Phase 2](../plan/bud-owned-browser/phase-2-private-handoff.md).
+
+### Phase-3a private viewport fitting
+
+Optional `hello.capabilities.browser.viewport_resize:true` advertises the new
+request variant below, in the existing version-1 browser command envelope and
+frame_json payload on both WS and gRPC. Service MUST check this capability before
+sending it. Phase-2 daemons still support viewing/input without fitting; old
+services ignore the capability and never send the command. No new protobuf tags.
+
+```json
+{"action":"resize_viewport","controller_id":"opaque","target_id":"opaque","document_id":"opaque","width":640,"height":480}
+```
+
+The service exposes POST `/api/browser/sessions/:session_id/viewport` with strict
+`{viewer_id,target_id,document_id,width,height}` (2 KiB limit). Width is an integer
+240–2560 and height 160–2560, both CSS pixels. Cookie session/Origin and owned
+Bud/thread/session checks run before mutation; only the existing private controller
+can resize. No model tool or passive viewer gains layout authority. Sequence
+advances, but epoch/revision and lease remain unchanged. Daemon rechecks controller
+and epoch after waiting for the serial CDP lock. Target/document must already exist.
+
+Success data is `{viewport_applied:true,viewport_id,target_id,document_id,width,height}`;
+the HTTP response exposes only `{viewport_applied:true,viewport_id}`. The daemon
+invalidates old frame/focus/AX references and applies the viewport without
+navigation. Captures then include optional `viewport_id`. It is omitted until a
+resize command is received, preserving old-service media behavior. New clients
+must await a drawn frame matching target/document/viewport_id before using its
+actual width/height for coordinates. An ACK alone cannot validate old pixels.
+JPEG capture bounds are independent of CSS size. Unknown resize outcomes are not
+replayed; explicit reconnect obtains fresh media before input can resume.
+
+Metadata, control responses and inventory include `can_resize_viewport`; inventory
+also includes the pending `handoff` identity. These are additive owner-scoped
+fields, not authority tokens. Browser discovery reuses existing chat events and
+five-second inventory polling; no new SSE family or database migration.
+
+
+### Independent private-control renewal
+
+Optional `hello.capabilities.browser.independent_renewal:true` permits the service
+to send the existing `control/renew` command concurrently with page work. The
+request retains current sequence, epoch, owner/thread/generation and controller;
+it neither advances the page-operation sequence nor waits for the CDP lock.
+Connection/deadline/scope validation and exact live controller/epoch checks still
+apply. Renewal cannot revive expired, paused or closed authority.
+
+New service/old daemon keeps serialized renewal; old service/new daemon continues
+using the same command, whose extra sequence increment is harmless. No new action,
+protobuf tag, table or credential. Unknown input/unconfirmed resize fences service
+control and media; late renewal replies cannot restore a revoked controller.
+Private leases remain 15 seconds with five-second renewal. Explicit return is
+still required before the agent can observe private content.
+
+### Negotiated high-density screenshots
+
+Optional browser capability `hidpi_capture:true` enables owner-authorized session
+metadata `can_capture_hidpi`. After reading it, a new viewer may send
+`{type:"ack",pixel_ratio:2}` (finite ratio 1–2). Omission selects legacy capture.
+The relay forwards optional `pixel_ratio` on demand only to advertising daemons,
+using the minimum density when all connected viewers opt in. A newly joined legacy
+viewer skips an already in-flight PNG; subsequent demand falls back to JPEG.
+
+Enhanced frames add `image_format:"png"`; width/height remain CSS coordinates.
+PNG dimensions are bounded by 2560 per side and four million pixels; the existing
+1.4M-character image payload cap is unchanged. Oversized images are recaptured at
+half scale, up to four attempts, then discarded rather than sent over budget.
+Legacy demands preserve JPEG/1280 behavior and omit image_format. No new control
+message or mutation, no density-driven CSS resize, and no new authorization path.
+Old services never request enhanced capture; new services omit the demand field
+for old daemons. New clients omit ACK density without service metadata support.
+
+### Remote history navigation
+
+Optional `browser.history_navigation:true` gates human input `{kind:"back"}` in
+the existing frame-bound input request. The service exposes owner-scoped metadata
+`can_navigate_history` and rejects unsupported carriers before dispatch. The daemon
+checks controller/epoch, target/document and frame freshness before resolving
+Page.getNavigationHistory and calling Page.navigateToHistoryEntry. Empty history
+returns rejected/browser_no_previous_page; success returns focus_token:null. No
+new rows or authority. New service/old daemon sends no back variant; old service/
+new daemon ignores the capability. Unknown outcomes are not retried.
+
+
+### Agent-owned viewport fitting
+
+Optional `hello.capabilities.browser.agent_viewport_resize:true` permits:
+
+```json
+{"action":"fit_viewport","target_id":"opaque","document_id":"opaque","width":640,"height":480}
+```
+
+The existing version-1 envelope and viewport HTTP body remain unchanged; metadata
+adds `can_resize_agent_viewport`. Service dispatch requires open/agent/nonprivate
+state, current capable carrier, owner authorization and the first live media viewer
+bound to that owner/generation/epoch and auth-session/viewer identity. Secondary
+viewers get `browser_viewport_other_viewer`; no new rows or credentials.
+
+Daemon rechecks current connection, exact epoch, agent authority and selected target
+after its bounded FIFO page lock. Document and dimension bounds match private
+resize. This viewer command does not consume sequence or replace invocation identity.
+Changed dimensions invalidate AX/focus/frame references; the agent must observe
+again before using stale references. Identical applied dimensions are a no-op.
+Success guarantees `viewport_applied:true,viewport_id`; additional geometry metadata
+is optional. Passive failures do not revoke control or media, and do not pause chat.
+
+New service/old daemon disables passive fitting, retaining private fitting when
+supported. Old service/new daemon uses existing actions unchanged. No new protobuf
+tags, SSE family or migration; a daemon upgrade is required for this capability.
+
+
+### Browser runtime availability metadata
+
+Existing owner-authorized inventory/session/control responses add runtime_status:
+`available`, `disconnected`, `daemon_restarted`, or `ended`. A current capable
+carrier with a different boot proves restart; missing carrier reports disconnected.
+Closed/interrupted rows report ended. can_view and can_take_control are false
+when runtime is unavailable. No boot IDs or authority tokens are exposed. A 404
+remains non-disclosing and cannot prove restart. Old clients ignore the additive
+field; updated web hides ineffective reconnect/page controls for ended browsers.
+
+### Browser viewer control reconciliation
+
+The owner-authorized `GET /api/browser/sessions/:session_id` accepts optional
+`viewer_id` (UUID). When supplied, the response includes `owns_control: boolean`,
+resolved against the current service controller lease and authenticated session
+plus viewer identity. This is not an authority grant; clients never acquire or
+resume automatically from it. Omitted query fields preserve the existing response;
+clients tolerate older services omitting the field. No daemon message changes.
+After service restart, persisted private state remains private but this boolean
+is false until explicit acquisition succeeds.
+
+### Browser private viewer recovery
+
+Successful private acquire/renew/recover replies may include `recovery_ticket`.
+`POST /api/browser/sessions/:session_id/control` adds operation `recover` with
+`recovery_ticket` (max 2048 characters), existing `viewer_id`, and `revision`
+(recovery checks the signed epoch against current state instead of relying on
+the possibly pre-restart revision). Control body limit is 4096 bytes. Existing
+operations are unchanged; old clients ignore the extra response property and
+new clients only recover after receiving a ticket. Daemon messages are unchanged.
+
+The service signs a ten-minute, domain-separated proof bound to owner, current
+authentication-session/viewer identity, browser ID/generation/daemon boot and
+control epoch using a key derived from BETTER_AUTH_SECRET. Login, Origin and
+owner checks remain mandatory. No ticket is accepted in a URL or returned in
+normal metadata/inventory. Recovery preserves private_content, uses acknowledged
+pause/acquire to establish a fresh private lease, and never invokes agent return.
+Explicit release/return/other takeover invalidates old epochs. A duplicate proof
+for the still-live recovered controller returns that lease without redispatch.
+Expired, mismatched or tampered proofs return browser_recovery_invalid.
+
+
+## Browser semantic observations and agent captures (Phase 3d)
+
+Additive `capabilities.browser.semantic_observations` gates `command.action:
+"inspect"` in the existing browser_command envelope. `operation` is snapshot,
+visible_dom, page_info, click, focus, fill or scroll. Optional snake_case fields:
+target_id, continuation, scope, observation_id, reference, locator:{role,name},
+text, delta_y. The service validates operation-specific combinations; locators
+match exactly. All existing owner/invocation/generation/epoch/sequence fences apply.
+
+Results carry `data.observation` with target_id, document_id, observation_id,
+structured nodes (depth/role/name/text/reference and optional box), rendered text,
+truncated, continuation, expires_in_ms, coverage, limitations and viewport
+(width/height/scroll_x/scroll_y). Page info returns title/url/document only; action
+results acknowledge action_applied or scroll_requested. A new observation replaces
+old references. Continuation is bounded to one 60-second snapshot and checks the
+current document; navigation/authority changes invalidate it.
+
+Additive `agent_capture` gates `command.action:"capture"` with optional target_id,
+endpoint and one-use ticket. This is service-generated, never model-supplied.
+The daemon captures one viewport and POSTs bounded JSON image bytes to
+`/api/browser/captures`, using `Authorization: Bearer <ticket>` and no redirects.
+Ticket binds live carrier, owner, thread, call, session/generation, invocation and
+epoch and expires with the request. Capture authorization is rechecked before
+storage and evidence delivery. No viewer/controller grant is needed or borrowed.
+
+Control result contains only `data.image_artifact:{id,mime_type,expires_at,path}`
+and target_id/document_id. Path is an authenticated thread image resource:
+`/api/threads/:thread_id/browser-images/:image_id`. Cookie or mobile bearer resolves
+the acting viewer, then existing thread/Bud owner checks run before file access.
+Anonymous=401, foreign/deleted/unavailable=404, Cache-Control:no-store. No image
+bytes enter ordinary SSE, tool JSON, ledger or control messages. Service hydrates
+actual provider image content immediately before a vision-capable model call.
+
+Images: 1.4M base64 characters, seven-day TTL, 128 files per service instance,
+eight most recent images per provider request. Storage uses a configured persistent
+private filesystem directory; no DB/wire-version migration. Restart with lost
+storage returns unavailable for old references. Never recapture for replay.
+
+Mixed versions: new service + old daemon retains default plain observe and rejects
+explicit new representations/actions before dispatch; old service + new daemon
+receives the old elements shape adapted from the same semantic helper. Unknown
+optional capability fields are ignored by older services. No new enum is sent
+without advertisement; full effect requires daemon rebuild/helper installation.
+
+## Durable browser waiting metadata (Phase 3e)
+
+No daemon wire changes. `agent.tool_call` may repeat the original call/client ID
+with `args.wait_kind: "return_control"`, `handoff_id`, `invocation_id`, `session_id`
+and first-party `viewer_path`. This means undispatched durable waiting, not a tool
+result. Authorized `/api/threads/:threadId/agent/state` adds `pending_browser_waits`:
+`[{turn_id, invocation_id, pending_tool:{client_id,call_id,name,args,started_at}}]`.
+It contains at most 50 owner/thread-scoped waits; existing handoffs use kind
+`agent`/`user`. No private content or control credentials appear here.
+Explicit acknowledged viewer return wakes eligible invocations; original calls
+receive truthful deferred results before fresh model work. `/api/threads/:threadId/cancel`
+accepts optional JSON `{invocation_id}` to stop only that owned thread invocation.
+Old clients retain viewer links; new clients tolerate absent collection metadata.

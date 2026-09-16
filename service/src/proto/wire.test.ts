@@ -461,7 +461,7 @@ test("tolerates unknown protobuf fields", () => {
 });
 
 test("rejects unknown protobuf payload fields with a typed unsupported-payload error", () => {
-  const bytes = encodeEnvelopeWithUnknownPayloadField(190);
+  const bytes = encodeEnvelopeWithUnknownPayloadField(192); // 190/191 are browser control.
 
   assert.throws(() => decodeBudEnvelope(bytes), UnsupportedBudEnvelopePayloadError);
   assert.throws(() => decodeBudEnvelopePayloadCase(bytes), UnsupportedBudEnvelopePayloadError);

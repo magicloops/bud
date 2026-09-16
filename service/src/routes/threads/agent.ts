@@ -146,6 +146,7 @@ export async function registerThreadAgentRoutes(
     }
 
     const runtimeSnapshot = agentRuntime.getSnapshot(params.threadId);
+    const browserHandoff = await agentService.durableInvocations?.pendingBrowserHandoffForThread?.(access.viewer.userId,params.threadId);
     const environment = await agentService.getEnvironmentForBud(access.thread.budId);
     const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget
       ? runtimeSnapshot.context_budget
@@ -155,11 +156,15 @@ export async function registerThreadAgentRoutes(
         });
     reply.send({
       ...runtimeSnapshot,
+      ...(!runtimeSnapshot.active && browserHandoff && (!runtimeSnapshot.turn_id || runtimeSnapshot.turn_id === browserHandoff.turn_id) ? browserHandoff :
+        ((runtimeSnapshot.pending_tool?.name === "browser_request_handoff" || runtimeSnapshot.pending_tool?.args?.wait_kind === "return_control") &&
+          runtimeSnapshot.turn_id !== browserHandoff?.turn_id ? {pending_tool:null} : {})),
       ...(agentService.durableInvocations ? { invocations: (await agentService.durableInvocations.listForThread(access.viewer.userId, params.threadId)).map(serializeInvocation) } : {}),
       ...(agentService.durableInvocations ? { pending_questions: await agentService.durableInvocations.pendingQuestionsForThread(access.viewer.userId, params.threadId) } : {}),
       ...(agentService.durableInvocations ? { pending_data_requests: await agentService.durableInvocations.pendingDataRequestsForThread(access.viewer.userId, params.threadId) } : {}),
       ...(agentService.durableInvocations ? { pending_automation_requests: await agentService.durableInvocations.pendingAutomationProposalsForThread(access.viewer.userId, params.threadId) } : {}),
       ...(agentService.durableInvocations ? { pending_bootstrap_requests: await agentService.durableInvocations.pendingBootstrapProposalsForThread(access.viewer.userId, params.threadId) } : {}),
+      ...(agentService.durableInvocations?.pendingBrowserWaitsForThread ? { pending_browser_waits: await agentService.durableInvocations.pendingBrowserWaitsForThread(access.viewer.userId,params.threadId) } : {}),
       environment,
       context_budget: contextBudget,
     });
@@ -218,9 +223,12 @@ export async function registerThreadAgentRoutes(
     const { thread } = access;
     if (agentService.durableInvocations) {
       const invocations = await agentService.durableInvocations.listForThread(access.viewer.userId, thread.threadId);
-      const current = invocations.find(row => row.reservesThread) ?? invocations.find(row =>
-        ["pending", "retry_wait", "waiting_for_bud", "waiting_for_model"].includes(row.status));
+      const target = z.object({ invocation_id: z.string().min(1).max(128).optional() }).parse(request.body ?? {}).invocation_id;
+      const current = target ? await agentService.durableInvocations.findForThread(access.viewer.userId,thread.threadId,target) : invocations.find(row => row.reservesThread) ?? invocations.find(row =>
+        ["pending", "retry_wait", "waiting_for_bud", "waiting_for_model", "waiting_for_user"].includes(row.status));
+      if (target && !current) return reply.code(404).send({error:"invocation_not_found"});
       if (current) await agentService.durableInvocations.requestCancel(access.viewer.userId, current.id);
+      if (target && current?.turnId !== agentRuntime.getSnapshot(thread.threadId).turn_id) return reply.send({ok:true});
     }
     await agentService.cancelThread(thread.threadId);
     reply.send({ ok: true });

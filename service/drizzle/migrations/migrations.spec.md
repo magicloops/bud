@@ -237,7 +237,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0038` currently)
+- Snapshot files for each migration (`0000` through `0041` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -405,3 +405,38 @@ Generated with `db:generate --custom --name automation_model_inheritance`;
 local SQL application and isolated replay/provenance tests pass. Deploy via the
 normal migration runner before using the updated service/web/mobile authoring.
 Coordinate the upgrade; old authoring code is not a rollback target.
+
+### `0039_tiny_loners.sql`
+
+Adds `browser_session`, owner/thread/Bud composite foreign key, lifecycle/profile
+checks, one-active-per-thread partial unique index, and owner/cleanup indexes.
+Generated journal and `0039_snapshot.json` accompany this additive migration.
+Validated in an isolated local PostgreSQL schema and applied locally without
+rewriting existing invocation data. Full local `db:push` proposed unrelated
+invocation dedupe work and was canceled; see [debug note](../../../debug/bud-browser-phase-1.md).
+Deploy through the ordinary checked-in migration runner before service startup.
+
+### `0040_broad_cassandra_nova.sql`
+
+Adds browser control state/revision/request identity and owner-context uniqueness;
+creates `browser_handoff` with owner/tenant stamps, session/invocation composite
+FKs, call dedupe, one pending handoff per session and lifecycle checks/indexes.
+Generated SQL was reordered to create referenced session uniqueness before its
+dependent FK; generated metadata is unchanged. Applied locally after declining
+db:push's unrelated invocation dedupe proposal; isolated-schema execution passes.
+
+### `0041_cool_lyja.sql`
+
+Adds `browser_session.private_content` (boolean, not null, default false), retaining
+private visibility across paused states/service restart. Generated metadata and
+SQL accompany the migration. Reviewed/applied locally and tested with 0039/0040.
+Deploy all browser migrations before starting the updated service. No production
+migration or deployment has been performed for Phase 2.
+
+## 0042_foamy_invisible_woman.sql
+
+Allows `return_control` handoffs, one pending wait per invocation and multiple
+pending invocations per session, with a session/status index. No row deletion or
+backfill. Apply before the updated service. Rollback to session-wide uniqueness
+requires resolving multiple pending waits first; mixed old/new service workers
+against this schema are not supported by the single-instance deployment contract.
