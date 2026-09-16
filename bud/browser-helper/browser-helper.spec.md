@@ -10,11 +10,19 @@ or CDP is accepted. The Rust browser manager owns serialization and authority.
 - `engine.mjs`: snapshot hierarchy, value exclusion, visible geometry, metadata,
   exact role/name and reference targeting, fill and wheel. Uses Playwright's
   `ariaSnapshotJSON({mode:'ai'})` and `aria-ref` selectors from that snapshot.
-- `engine.test.mjs`: disposable Chrome fixture and sanitizer regressions.
+- `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context.
+- `compact.test.mjs`: structure/state preservation, pagination, Unicode and limits.
+- `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
 - `package.json` / `package-lock.json`: reproducible runtime dependency.
 
-One snapshot per browser, 60-second lifetime, 2 MiB retained nodes, 24 KiB node
-pages plus rendered text. New snapshot, navigation, disconnect or authority
+One snapshot per browser, 60-second lifetime, 2 MiB retained nodes. Negotiated
+compact snapshots return text only; visible DOM returns nodes/boxes only. The full
+helper observation is limited to 8 KiB, reserving space for the service envelope.
+Legacy requests retain 24 KiB node pages plus text through the same engine.
+Compact reference namespaces combine a random helper-lifetime prefix and monotonic
+observation counter; exact maps and document/epoch fences remain authoritative.
+Continuation format/mode must match its retained snapshot. Oversized single nodes
+report browser_observation_limit; they are never skipped. New snapshot, navigation, disconnect or authority
 invalidation retires references. Continuations read retained nodes, not a new
 page; each call checks the current document. Scope uses an observed reference.
 Closed shadow roots/inaccessible frames are explicitly outside coverage.

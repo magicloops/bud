@@ -38,7 +38,8 @@ Requests expire within 45 seconds (service sends at most 30 seconds,
 limited by the invocation lease). Closed identities remain as 45-second tombstones.
 At most 128 identities, 16 returned targets; legacy observations adapt the same
 semantic engine to 256 elements/64 KiB. New observations paginate a 2 MiB retained
-snapshot, with 24 KiB node pages plus text. URLs 2048 bytes, input 8192 bytes.
+snapshot. Negotiated compact observations have an 8 KiB complete helper budget;
+legacy consumers retain 24 KiB node pages plus text. URLs 2048 bytes, input 8192 bytes.
 Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
 
@@ -175,3 +176,13 @@ lease renewal remains independent. `semantic_observations` and `agent_capture`
 capabilities gate new requests. Snapshot/default, visible DOM, metadata and exact
 role/name/fill/scroll reuse the same helper; the old AX implementation is removed.
 Read [helper setup/limits](../../browser-helper/browser-helper.spec.md).
+
+
+## Compact observations (Phase 3f)
+
+`compact_observations:true` gates optional `inspect.compact:true` for snapshot and
+visible DOM. It forwards to the same helper with unchanged authority/page locking.
+Absent opt-in retains existing output, including the old observe adapter. Compact
+snapshots contain text only, visible DOM nodes only; metadata identifies
+`format:compact_v1` and document/subtree/viewport coverage. Short references remain
+observation-qualified. See the helper spec for budgeting and cursor behavior.

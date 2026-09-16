@@ -242,3 +242,14 @@ Multiple invocations may wait on one browser; explicit return resolves all eligi
 waits. Cleanup also inspects sessions with pending waits for confirmed boot changes;
 disconnection alone preserves them. Continuation tests cover original identities,
 multiple waits, targeted cancellation and same-thread follow-up availability.
+
+
+## Compact observations (Phase 3f)
+
+The carrier parses `compact_observations`; only capable semantic peers receive
+`inspect.compact:true` for snapshot/visible_dom. Older peers get the existing
+command. The executor preserves compact output in live results and transcript
+replay, rejecting a complete serialized compact tool payload above 12 KiB with
+scoping guidance. Snapshot text and visible-DOM nodes are mutually exclusive;
+image paths and screenshot hydration are unchanged. Broker tests cover capability
+negotiation; agent observation-budget tests cover final payload size and replay.

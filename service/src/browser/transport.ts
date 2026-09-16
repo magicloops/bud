@@ -23,6 +23,7 @@ const capability = z.object({
   independent_renewal: z.boolean().optional(),
   hidpi_capture: z.boolean().optional(),
   history_navigation: z.boolean().optional(),
+  compact_observations: z.boolean().optional(),
   semantic_observations: z.boolean().optional(),
   agent_capture: z.boolean().optional(),
 });
@@ -61,6 +62,7 @@ export type BrowserCarrier = {
   independentRenewal?: boolean;
   hidpiCapture?: boolean;
   historyNavigation?: boolean;
+  compactObservations?: boolean;
   semanticObservations?: boolean;
   agentCapture?: boolean;
   current(): boolean;
@@ -96,6 +98,7 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
       independentRenewal: parsed.data.independent_renewal === true,
       hidpiCapture: parsed.data.hidpi_capture === true,
       historyNavigation: parsed.data.history_navigation === true,
+      compactObservations: parsed.data.compact_observations === true,
       semanticObservations: parsed.data.semantic_observations === true,
       agentCapture: parsed.data.agent_capture === true,
       current,

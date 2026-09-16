@@ -22,3 +22,18 @@ test('browser evidence stays collapsed and images use only authenticated artifac
     await act(async () => tree.unmount())
   }
 })
+
+
+test('compact snapshots and node-only visible DOM expand without requiring duplicate representations', async () => {
+  for (const observation of [
+    {format:'compact_v1',text:'link "Story 16" [ref=s1:e16]'},
+    {format:'compact_v1',coverage:'viewport',nodes:[{role:'link',name:'Story 16',reference:'s1:e16',box:{x:0,y:0,width:20,height:20}}]},
+  ]) {
+    let tree!: ReturnType<typeof create>
+    await act(async () => { tree=create(<BrowserObservationContent payload={{data:{observation}}} />) })
+    assert.equal(tree.root.findAllByType('pre').length,0)
+    await act(async () => { tree.root.findByType('button').props.onClick() })
+    assert.match(String(tree.root.findByType('pre').children[0]),/Story 16/)
+    await act(async () => tree.unmount())
+  }
+})

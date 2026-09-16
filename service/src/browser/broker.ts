@@ -53,13 +53,17 @@ export class BrowserBroker implements BrowserAgentBackend {
       tool === "browser_act" && (args.locator || ["fill", "scroll"].includes(String(args.action)));
     if (extended && !carrier.semanticObservations)
       return { ok: false, outcome: "rejected", error: "browser_representation_unsupported" };
-    const command = carrier.semanticObservations && (tool === "browser_observe" || extended)
+    const command: Record<string, unknown> = carrier.semanticObservations && (tool === "browser_observe" || extended)
       ? { ...args, action: "inspect", operation: tool === "browser_observe" ? args.mode ?? "snapshot" : args.action }
       :
       tool === "browser_act"
         ? args
         : { action: tool.replace("browser_", ""), ...args };
     delete command.mode;
+    if (carrier.compactObservations && command.action === "inspect" &&
+      tool === "browser_observe" && ["snapshot", "visible_dom"].includes(String(args.mode ?? "snapshot"))) {
+      command.compact = true;
+    }
     let request;
     try {
       request = await this.repository.prepare(carrier.handoff ? context : { ...context, waitClientId: undefined }, carrier.bootId, command);

@@ -1,5 +1,9 @@
 import { chromium } from 'playwright-core';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
+import { compactNodes, compactPage } from './compact.mjs';
+
+const referenceNamespace = randomBytes(8).toString('base64url');
+let observationSequence = 0;
 
 const TTL = 60_000, MAX_BYTES = 2 * 1024 * 1024, PAGE_BYTES = 24 * 1024;
 const fields = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton', 'slider']);
@@ -70,6 +74,7 @@ export class Engine {
     return ref === 'body' ? page.locator('body') : page.locator(`aria-ref=${ref}`);
   }
   pageResult(s, offset) {
+    if (s.compact) return compactPage(s, offset);
     let bytes = 0, end = offset;
     for (; end < s.nodes.length; end++) {
       const size = Buffer.byteLength(JSON.stringify(s.nodes[end]));
@@ -93,7 +98,7 @@ export class Engine {
         const s = await this.current(page, c);
         const [id, raw] = c.continuation.split(':');
         const offset = Number(raw);
-        if (id !== s.id || !Number.isSafeInteger(offset) || offset < 0 || offset >= s.nodes.length) fail('browser_stale_reference');
+        if (s.mode !== c.operation || s.compact !== (c.compact === true) || id !== s.id || !Number.isSafeInteger(offset) || offset < 0 || offset >= s.nodes.length) fail('browser_stale_reference');
         return this.pageResult(s, offset);
       }
       let root = page.locator('body');
@@ -101,7 +106,7 @@ export class Engine {
       const document = await this.document(page), navigation = this.navigation;
       const raw = await root.ariaSnapshotJSON({ mode: 'ai', boxes: c.operation === 'visible_dom', timeout: 3000 });
       if (await this.document(page) !== document || this.navigation !== navigation) fail('browser_document_changed');
-      const id = randomUUID(), refs = new Map();
+      const id = c.compact === true ? `${referenceNamespace}${(++observationSequence).toString(36)}` : randomUUID(), refs = new Map();
       let nodes = sanitize(raw, id, refs);
       if (!c.scope) {
         refs.set(`${id}:root`, 'body');
@@ -110,7 +115,9 @@ export class Engine {
       if (Buffer.byteLength(JSON.stringify(nodes)) > MAX_BYTES) fail('browser_observation_limit');
       const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scroll_x: scrollX, scroll_y: scrollY }));
       if (c.operation === 'visible_dom') nodes = nodes.filter(n => n.box && n.box.width > 0 && n.box.height > 0 && n.box.x < viewport.width && n.box.y < viewport.height && n.box.x + n.box.width > 0 && n.box.y + n.box.height > 0);
-      this.snapshot = { id, refs, nodes, viewport, target: c.target_id, document, at: Date.now() };
+      if (c.compact === true) nodes = compactNodes(nodes);
+      this.snapshot = { id, refs, nodes, viewport, target: c.target_id, document, at: Date.now(),
+        compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
       return { ...this.pageResult(this.snapshot, 0), viewport };
     }
     const s = await this.current(page, c);

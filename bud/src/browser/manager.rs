@@ -25,6 +25,7 @@ pub enum Action {
         ticket: String,
     },
     Inspect {
+        compact: Option<bool>,
         target_id: Option<String>,
         operation: String,
         continuation: Option<String>,
@@ -191,7 +192,7 @@ impl BrowserManager {
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
             "managed":true, "profile_mode":"ephemeral", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
-            "semantic_observations":true, "agent_capture":true, "max_sessions":2})
+            "semantic_observations":true, "compact_observations":true, "agent_capture":true, "max_sessions":2})
     }
 
     pub fn connect(&self, device_session_id: String) {
@@ -679,6 +680,7 @@ async fn perform(
         }
         Action::Capture { .. } => browser.capture_scaled(&target, Some(1.0)).await,
         Action::Inspect {
+            compact,
             operation,
             continuation,
             scope,
@@ -689,7 +691,7 @@ async fn perform(
             delta_y,
             ..
         } => {
-            let data = browser.inspect(&target, json!({"operation":operation,"continuation":continuation,
+            let data = browser.inspect(&target, json!({"compact":compact,"operation":operation,"continuation":continuation,
                 "scope":scope,"observation_id":observation_id,"reference":reference,"locator":locator,
                 "text":text,"delta_y":delta_y})).await?;
             Ok(json!({"observation":data}))
@@ -792,6 +794,7 @@ fn valid_action(action: &Action) -> bool {
             locator,
             text,
             delta_y,
+            ..
         } => {
             target(target_id)
                 && target(continuation)

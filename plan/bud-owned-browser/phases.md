@@ -146,6 +146,14 @@ cleanup boundaries. Implemented locally; user testing confirmed waiting, inline
 return and continuation. Compact action styling is user-validated. Broader restart,
 concurrency and hosted acceptance remain in the phase validation checklist.
 
+## Phase 3f — compact browser observations
+
+Implemented locally; automated validation passed, actual-agent acceptance pending: [phase-3f-compact-browser-observations.md](phase-3f-compact-browser-observations.md).
+Reduce duplicated snapshot representations, layout noise and reference overhead;
+budget complete results and clarify scope/continuation versus viewport inspection.
+Preserve observation authority and replay, with measured bytes/tokens and actual-agent
+acceptance. Excludes history eviction, snapshot diffs and a new browser API.
+
 ## Phase 4 — release validation and cleanup
 
 - Run the matrix below; record measured performance and revise tuning defaults.

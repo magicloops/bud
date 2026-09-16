@@ -1336,3 +1336,19 @@ Return resumes through existing claim/continuation logic: original and trailing
 undispatched provider calls receive paired not-executed results; fresh observation
 is required before acting. Browser continuations deferred for availability release
 thread reservations. Ended/closed/revoked browser waits cancel without fake return.
+
+## Compact browser observation results (Phase 3f)
+
+`browser-tools.ts` explains document/subtree snapshots, frozen continuation,
+viewport-only visible DOM and metadata-only page_info. The browser broker opts
+into compact output only when the connected daemon advertises support.
+`browser-tool-executor.ts` preserves that single representation and guards the
+complete serialized compact tool envelope at 12 KiB, returning explicit limit
+guidance instead of silently truncating evidence. Existing stored history and
+provider replay remain unchanged; screenshot hydration and private-control
+authorization are unaffected.
+
+`browser-observation-budget.test.ts` verifies the final envelope limit with
+Unicode content and exact replay through `AgentConversationLoader`. See
+[Phase 3f](../../../plan/bud-owned-browser/phase-3f-compact-browser-observations.md)
+and [measurements](../../../debug/browser-compact-observations.md).

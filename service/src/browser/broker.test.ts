@@ -40,4 +40,11 @@ test('new observations are capability gated; legacy default and new default use 
   assert.deepEqual(commands[1],{action:'inspect',operation:'snapshot'});
   assert.equal((await broker.execute(context,'browser_observe',{mode:'page_info'})).ok,true);
   assert.deepEqual(commands[2],{action:'inspect',operation:'page_info'});
+  tracker.browserCapability = {...capability,semantic_observations:true,compact_observations:true};
+  await broker.execute(context,'browser_observe',{});
+  assert.deepEqual(commands[3],{action:'inspect',operation:'snapshot',compact:true});
+  await broker.execute(context,'browser_observe',{mode:'visible_dom',continuation:'short:10'});
+  assert.deepEqual(commands[4],{action:'inspect',operation:'visible_dom',continuation:'short:10',compact:true});
+  await broker.execute(context,'browser_observe',{mode:'page_info'});
+  assert.deepEqual(commands[5],{action:'inspect',operation:'page_info'});
 });

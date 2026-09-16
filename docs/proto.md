@@ -3211,3 +3211,32 @@ Explicit acknowledged viewer return wakes eligible invocations; original calls
 receive truthful deferred results before fresh model work. `/api/threads/:threadId/cancel`
 accepts optional JSON `{invocation_id}` to stop only that owned thread invocation.
 Old clients retain viewer links; new clients tolerate absent collection metadata.
+
+## Compact browser observations (Phase 3f)
+
+Additive `capabilities.browser.compact_observations` gates optional
+`command.compact: true` on semantic `inspect` snapshot/visible_dom requests.
+Only the service chooses this flag. Other operations and existing authority,
+owner, generation, document and invocation checks are unchanged.
+
+`data.observation.format: "compact_v1"` identifies the compact result. Snapshot
+returns structured `text` only; visible_dom returns `nodes` with available boxes
+only. Both retain target_id, document_id, observation_id, viewport, coverage,
+limitations, truncated, continuation and expires_in_ms. Empty presentational
+wrappers are promoted; meaningful table/list structure, ranks and control state
+remain. Short observation-qualified references still require current document
+and authority checks and are not credentials.
+
+The helper bounds the complete serialized observation to 8 KiB of UTF-8 JSON,
+including escaping, metadata and continuation context. The service guards the
+final persisted/model-facing tool envelope at 12 KiB. Oversized indivisible
+content returns `browser_observation_limit` with guidance instead of silently
+skipping content. Continuations advance within one frozen 60-second snapshot,
+include ancestor context for text, and reject mode/format mismatches. Coverage
+is document/subtree for snapshots and viewport for visible_dom; scrolling does
+not paginate a document snapshot. Stored results replay unchanged.
+
+New service + old daemon omits compact and accepts the legacy format. Old
+service + new daemon receives legacy serialization unless it opts in. Full
+effect requires a daemon rebuild/upgrade and helper installation. No DB or SSE
+shape change, migration, retrospective transcript rewrite, or viewer-media change.
