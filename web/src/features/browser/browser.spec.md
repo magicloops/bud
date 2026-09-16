@@ -190,3 +190,11 @@ controls. The redundant top-of-chat return banner is removed.
 
 
 The wait-action context includes the currently visible pane session ID for presentation only; this hides redundant Open browser links without granting control.
+
+## Operation-driven agent viewing (Phase 3h)
+
+Updated service/daemon pairs retain the last canvas frame between successful agent
+browser operations; human control remains continuous. Existing native WebSocket
+pong support needs no app message or new client capability. Canvas frame/ACK shapes
+and production web code stay unchanged. `media.test.ts` verifies retained idle
+pixels and immediate clearing on revocation, in addition to density/credit behavior.

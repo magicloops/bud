@@ -34,6 +34,7 @@ test('new observations are capability gated; legacy default and new default use 
   assert.equal((await broker.execute(context,'browser_observe',{mode:'visible_dom'})).error,'browser_representation_unsupported');
   assert.equal((await broker.execute(context,'browser_act',{action:'fill',locator:{role:'textbox',name:'Search'},text:'test'})).error,'browser_representation_unsupported');
   assert.equal((await broker.execute(context,'browser_observe',{mode:'screenshot'})).error,'browser_image_unsupported');
+  assert.equal((await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'})).error,'browser_representation_unsupported');
   assert.equal(commands.length,1);
   tracker.browserCapability = {...capability,semantic_observations:true};
   assert.equal((await broker.execute(context,'browser_observe',{})).ok,true);
@@ -47,4 +48,8 @@ test('new observations are capability gated; legacy default and new default use 
   assert.deepEqual(commands[4],{action:'inspect',operation:'visible_dom',continuation:'short:10',compact:true});
   await broker.execute(context,'browser_observe',{mode:'page_info'});
   assert.deepEqual(commands[5],{action:'inspect',operation:'page_info'});
+  await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'});
+  assert.deepEqual(commands[6],{action:'inspect',operation:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'});
+  await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1'});
+  assert.deepEqual(commands[7],{action:'click',reference:'obs:e1'});
 });

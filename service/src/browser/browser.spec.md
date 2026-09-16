@@ -254,6 +254,37 @@ scoping guidance. Snapshot text and visible-DOM nodes are mutually exclusive;
 image paths and screenshot hydration are unchanged. Broker tests cover capability
 negotiation; agent observation-budget tests cover final payload size and replay.
 
+## Identity-qualified reference clicks
+
+The broker routes click + reference + target_id + observation_id through existing
+semantic inspect, gated by semantic_observations. Legacy bare-reference clicks
+retain their original command. No identity fields are discarded, no failed
+mutation is replayed, and unsupported peers reject before dispatch. Broker tests
+cover both forms and the capability boundary.
+
+Rejected `browser_busy` agent commands are recoverable: completion clears pending
+admission and leaves the session ready, without changing control/privacy/identity
+or retrying the command. Unknown outcomes still interrupt. The isolated repository
+regression checks these boundaries and subsequent admission. This service-only
+classification works with existing daemons.
+
+## Operation-driven agent media (Phase 3h)
+
+The optional carrier capability `operation_driven_media` gates
+`media_attach.operation_driven:true` for agent-controlled groups only. A dirty bit
+coalesces daemon refresh notifications, new viewers, density changes and slow
+viewers catching up; credit alone does not request another screenshot. Busy captures
+retry at existing pacing at most three times before closing; mutations never retry.
+Native ping/pong every three seconds keeps both legs alive independently of credit.
+Viewer pong and idle authorization deadlines are ten seconds; outstanding image
+ACKs remain five seconds. Daemon pong allowance is sixty seconds for bounded capture
+draining. Idle checks re-resolve authentication and owner/session/epoch authority;
+heartbeats do not renew private controllers. Idle live viewers retain fit ownership.
+No new web messages, tables or screenshot storage. Old peers/private groups retain
+continuous cadence. `media-idle.test.ts` covers idle liveness, fitting authority,
+refresh coalescing/delivery races, slow/new viewers and idle revocation; legacy
+coverage remains in `media.test.ts`.
+
 ## Timing at return-control parking
 
 The raw-pg admission transaction uses the shared invocation timing SQL before

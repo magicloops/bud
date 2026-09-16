@@ -69,6 +69,7 @@ test("browser protobuf frames survive both control encodings", () => {
   for (const frame of [
     { type: "browser_command", browser_version: 1, request: request() },
     { type: "browser_command", browser_version: 1, request: { ...request(), command: { action: "resize_viewport", controller_id: "controller", target_id: "page", document_id: "document", width: 640, height: 480 } } },
+    { type: "browser_command", browser_version: 1, request: { ...request(), command: { action: "media_attach", endpoint: "wss://service.test/ws/browser-media", ticket: "fixture", controller_id: null, operation_driven: true } } },
     { type: "browser_result", ...reply(request()) },
   ]) {
     const input = {
@@ -173,10 +174,12 @@ test("old daemon capability is omitted; captured carrier cannot move to a replac
   assert.equal(carrier.viewportResize, false);
   assert.equal(carrier.independentRenewal, false);
   assert.equal(carrier.hidpiCapture, false);
-  tracker.browserCapability = { ...capability, handoff: true, viewport_resize: true, independent_renewal: true, hidpi_capture: true };
+  assert.equal(carrier.operationDrivenMedia, false);
+  tracker.browserCapability = { ...capability, handoff: true, viewport_resize: true, independent_renewal: true, hidpi_capture: true, operation_driven_media: true };
   assert.equal(browserCarrier(id)?.viewportResize, true);
   assert.equal(browserCarrier(id)?.independentRenewal, true);
   assert.equal(browserCarrier(id)?.hidpiCapture, true);
+  assert.equal(browserCarrier(id)?.operationDrivenMedia, true);
   sessions.set(id, { ...tracker, sessionId: "replacement" });
   assert.equal(
     (await dispatchBrowser(carrier, request(), new AbortController().signal))

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserCanvas } from "./media.ts";
 
-test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async () => {
+test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async t => {
   const originalSocket = globalThis.WebSocket;
   const originalBitmap = globalThis.createImageBitmap;
   const sockets: FakeSocket[] = [];
@@ -22,10 +22,11 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     height: blob.type === "image/png" ? 800 : 400,
     close() {},
   })) as typeof createImageBitmap;
+  let clears = 0;
   const canvas = {
     width: 0, height: 0, style: { width: "", height: "" },
     parentElement: { getBoundingClientRect: () => ({ width: 300, height: 400 }) },
-    getContext: () => ({ drawImage() {}, clearRect() {} }),
+    getContext: () => ({ drawImage() {}, clearRect() { clears++; } }),
   };
   let drawn!: () => void;
   const client = new BrowserCanvas(canvas as unknown as HTMLCanvasElement, "ws://fixture",
@@ -44,9 +45,16 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
       assert.equal(client.frame?.width, 600);
       assert.equal(canvas.width, image_format ? 1200 : 600);
     }
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    t.mock.timers.tick(30_000);
+    assert.equal(client.frame?.target_id, "page", "idle canvas retains its latest frame");
+    assert.equal(clears, 0);
     assert.deepEqual(socket.sent.map(value => JSON.parse(value)), [
       { viewer_id: "viewer" }, { type: "ack", pixel_ratio: 2 }, { type: "ack", pixel_ratio: 2 },
     ]);
+    socket.onmessage!({ data: '{"type":"revoked"}' });
+    assert.equal(client.frame, null);
+    assert.equal(clears, 1, "revocation clears retained pixels immediately");
   } finally {
     client.close();
     globalThis.WebSocket = originalSocket;

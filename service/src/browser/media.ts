@@ -13,6 +13,10 @@ type Viewer = {
   ready: boolean;
   pixelRatio?: number;
   deadline: number;
+  aliveUntil: number;
+  checking: boolean;
+  authorizationUntil: number;
+  lastFrame: number;
   authorize: () => Promise<boolean>;
 };
 type Group = {
@@ -31,6 +35,11 @@ type Group = {
   closed: boolean;
   frames: number;
   started: number;
+  operationDriven: boolean;
+  dirty: boolean;
+  retries: number;
+  nextHeartbeat: number;
+  daemonAliveUntil: number;
 };
 const frameSchema = z
   .object({
@@ -69,7 +78,10 @@ export class BrowserMedia {
     control.isSizingViewer = (owner, session, viewerId) => {
       const group = this.groups.get(`${session.id}:${session.generation}:${session.control_epoch}:view`);
       if (!group || group.closed || group.owner !== owner || !group.carrier.current()) return false;
-      const first = [...group.viewers].find(viewer => viewer.socket.readyState === WebSocket.OPEN && viewer.deadline > Date.now());
+      const first = [...group.viewers].find(viewer => viewer.socket.readyState === WebSocket.OPEN &&
+        (group.operationDriven
+          ? viewer.aliveUntil > Date.now() && viewer.authorizationUntil > Date.now() && (viewer.ready || viewer.deadline > Date.now())
+          : viewer.deadline > Date.now()));
       return first?.viewer === viewerId;
     };
     this.timer = setInterval(() => this.sweep(), 1000);
@@ -111,22 +123,53 @@ export class BrowserMedia {
         this.close(group, "carrier_changed");
         continue;
       }
+      const now = Date.now();
+      if (group.operationDriven && group.daemon && group.daemonAliveUntil < now) {
+        this.close(group, "daemon_heartbeat_timeout");
+        continue;
+      }
+      if (group.operationDriven && group.nextHeartbeat <= now) {
+        group.nextHeartbeat = now + 3000;
+        if (group.daemon?.readyState === WebSocket.OPEN) group.daemon.ping();
+        for (const viewer of group.viewers) {
+          if (viewer.socket.readyState !== WebSocket.OPEN) continue;
+          viewer.socket.ping();
+          if (!viewer.checking) {
+            viewer.checking = true;
+            void this.checkViewer(group, viewer)
+              .then(ok => { if (!ok) viewer.socket.terminate(); else viewer.authorizationUntil = Date.now() + 10_000; })
+              .catch(() => viewer.socket.terminate())
+              .finally(() => { viewer.checking = false; });
+          }
+        }
+      }
       for (const viewer of group.viewers)
-        if (viewer.deadline < Date.now()) {
+        if ((!viewer.ready && viewer.deadline < now) ||
+            (group.operationDriven ? viewer.aliveUntil < now || viewer.authorizationUntil < now : viewer.deadline < now)) {
           this.onDiagnostic({ session_id: group.sessionId, event: "viewer_timeout", frames: group.frames });
           viewer.socket.terminate();
         }
     }
   }
+  private async checkViewer(group: Group, viewer: Viewer): Promise<boolean> {
+    if (!(await viewer.authorize())) return false;
+    const permitted = await this.control.mediaAuthority(viewer.owner, viewer.sessionId, viewer.viewer);
+    return !group.closed && group.carrier.current()
+      && permitted.session.generation === group.generation
+      && permitted.session.control_epoch === group.epoch
+      && permitted.controllerId === group.controllerId;
+  }
   private demand(group: Group) {
     if (
       group.closed ||
       group.awaiting ||
+      (group.operationDriven && !group.dirty) ||
       !group.daemon ||
       ![...group.viewers].some((v) => v.ready)
     )
       return;
     group.awaiting = true;
+    group.dirty = false;
     const viewers = [...group.viewers];
     const pixelRatio = group.carrier.hidpiCapture && viewers.every(v => v.pixelRatio !== undefined)
       ? Math.min(...viewers.map(v => v.pixelRatio!)) : undefined;
@@ -162,6 +205,11 @@ export class BrowserMedia {
         closed: false,
         frames: 0,
         started: Date.now(),
+        operationDriven: carrier.operationDrivenMedia === true && !controllerId,
+        dirty: true,
+        retries: 0,
+        nextHeartbeat: Date.now() + 3000,
+        daemonAliveUntil: Date.now() + 60_000,
       };
       this.groups.set(key, group);
     }
@@ -175,8 +223,14 @@ export class BrowserMedia {
       authorize,
       ready: true,
       deadline: Date.now() + 10_000,
+      aliveUntil: Date.now() + 10_000,
+      checking: false,
+      authorizationUntil: Date.now() + 10_000,
+      lastFrame: 0,
     };
     active.viewers.add(viewer);
+    active.dirty = true; // A new viewer needs pixels even when the agent is idle.
+    socket.on("pong", () => { viewer.aliveUntil = Date.now() + 10_000; });
     socket.on("message", (raw) => {
       if (Buffer.byteLength(raw.toString()) > 512) {
         socket.terminate();
@@ -197,7 +251,12 @@ export class BrowserMedia {
             throw new Error("no control");
           active.target = message.target_id;
         }
-        if (message.type === "ack") viewer.pixelRatio = message.pixel_ratio;
+        if (message.type === "ack") {
+          if (viewer.pixelRatio !== message.pixel_ratio) active.dirty = true;
+          viewer.pixelRatio = message.pixel_ratio;
+        }
+        // A slow viewer may have missed the latest shared frame while decoding.
+        if (viewer.lastFrame < active.frames) active.dirty = true;
         viewer.ready = true;
         viewer.deadline = Date.now() + 10_000;
         this.demand(active);
@@ -222,6 +281,7 @@ export class BrowserMedia {
       endpoint: this.endpoint,
       ticket,
       controller_id: controllerId ?? null,
+      ...(active.operationDriven ? { operation_driven: true } : {}),
     });
     const signal = AbortSignal.timeout(4000);
     let result = await this.dispatch(carrier, request, signal);
@@ -265,6 +325,7 @@ export class BrowserMedia {
         const group = entry.group;
         if (group.daemon) throw new Error("duplicate");
         group.daemon = socket;
+        socket.on("pong", () => { group.daemonAliveUntil = Date.now() + 60_000; });
         socket.on("message", (raw) => {
           void this.frame(group, raw.toString()).catch((error) => this.close(group,
             error instanceof z.ZodError ? "invalid_frame" :
@@ -283,6 +344,14 @@ export class BrowserMedia {
     socket.on("error", () => {});
   }
   private async frame(group: Group, raw: string) {
+    if (group.closed || raw.length > 1_410_000) throw new Error("invalid media");
+    const data = JSON.parse(raw);
+    if (group.operationDriven && data.refresh === true) {
+      z.object({ refresh: z.literal(true) }).strict().parse(data);
+      group.dirty = true;
+      this.demand(group);
+      return;
+    }
     if (
       group.closed ||
       group.processing ||
@@ -292,40 +361,37 @@ export class BrowserMedia {
       throw new Error("unsolicited frame");
     // Keep awaiting true through authorization; a second frame cannot trigger
     // another demand. The daemon only captures on explicit credit.
-    const data = JSON.parse(raw);
     if (data.busy === true) {
       group.awaiting = false;
+      group.dirty = true;
+      if (group.operationDriven && ++group.retries > 3) {
+        this.close(group, "capture_retries_exhausted");
+        return;
+      }
       setTimeout(() => this.demand(group), 100);
       return;
     }
     group.processing = true;
     const frame = frameSchema.parse(data);
     group.frames++;
+    group.retries = 0;
     const viewers = [...group.viewers].filter((v) => v.ready);
     for (const viewer of viewers) {
-      if (frame.image_format && viewer.pixelRatio === undefined) continue;
-      if (!(await viewer.authorize())) {
+      if (frame.image_format && viewer.pixelRatio === undefined) {
+        group.dirty = true; // A newly joined legacy-quality viewer needs JPEG.
+        continue;
+      }
+      if (!(await this.checkViewer(group, viewer))) {
         viewer.socket.terminate();
         continue;
       }
-      const permitted = await this.control.mediaAuthority(
-        viewer.owner,
-        viewer.sessionId,
-        viewer.viewer,
-      );
-      if (
-        group.closed ||
-        !group.carrier.current() ||
-        permitted.session.control_epoch !== group.epoch ||
-        permitted.controllerId !== group.controllerId
-      )
-        throw new Error("revoked");
       if (viewer.socket.readyState !== WebSocket.OPEN) continue;
       if (viewer.socket.bufferedAmount > 1_410_000) {
         viewer.socket.terminate();
         continue;
       }
       viewer.ready = false;
+      viewer.lastFrame = group.frames;
       viewer.deadline = Date.now() + 5000;
       viewer.socket.send(JSON.stringify({ type: "frame", ...frame }));
     }

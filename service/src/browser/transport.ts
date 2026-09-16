@@ -22,6 +22,7 @@ const capability = z.object({
   agent_viewport_resize: z.boolean().optional(),
   independent_renewal: z.boolean().optional(),
   hidpi_capture: z.boolean().optional(),
+  operation_driven_media: z.boolean().optional(),
   history_navigation: z.boolean().optional(),
   compact_observations: z.boolean().optional(),
   semantic_observations: z.boolean().optional(),
@@ -61,6 +62,7 @@ export type BrowserCarrier = {
   agentViewportResize?: boolean;
   independentRenewal?: boolean;
   hidpiCapture?: boolean;
+  operationDrivenMedia?: boolean;
   historyNavigation?: boolean;
   compactObservations?: boolean;
   semanticObservations?: boolean;
@@ -97,6 +99,7 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
       agentViewportResize: parsed.data.agent_viewport_resize === true,
       independentRenewal: parsed.data.independent_renewal === true,
       hidpiCapture: parsed.data.hidpi_capture === true,
+      operationDrivenMedia: parsed.data.operation_driven_media === true,
       historyNavigation: parsed.data.history_navigation === true,
       compactObservations: parsed.data.compact_observations === true,
       semanticObservations: parsed.data.semantic_observations === true,

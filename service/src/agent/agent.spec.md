@@ -1353,6 +1353,16 @@ Unicode content and exact replay through `AgentConversationLoader`. See
 [Phase 3f](../../../plan/bud-owned-browser/phase-3f-compact-browser-observations.md)
 and [measurements](../../../debug/browser-compact-observations.md).
 
+## Focused browser reliability (Phase 3g)
+
+Reference clicks may provide both target_id and observation_id with reference.
+The parser retains this identity pair; the broker uses existing semantic inspect
+so the helper validates it instead of dropping freshness checks. Bare reference
+clicks retain their original path. `browser-reference-input.test.ts` reproduces
+the nullable provider input and rejects partial IDs, ambiguous targets and extra
+fields. Tool guidance clarifies snapshot replacement and partial reading. See
+[findings](../../../debug/browser-agent-reliability.md).
+
 ## Service-owned turn timing
 
 `invocation-timing.ts` owns the two DB-clock start/settle fragments, terminal

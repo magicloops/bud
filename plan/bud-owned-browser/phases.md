@@ -1,12 +1,33 @@
 # Delivery phases: Bud-owned browser
 
-Status: **Phase 0 closed; Phase 1 validated; Phase 2 implemented for development,
-with broader signed-in acceptance pending; Phase 3a implemented locally** (2026-09-14).
-Phase 0 established enough evidence to implement the real daemon/agent path.
-Closing the experiment does not certify production readiness or mark deferred
-checks as passed. See [findings](./phase-0-findings.md) and the
-[Phase-1 implementation plan](./phase-1-agent-browser.md).
-Contract and defaults: [README](./README.md).
+Status: **Phase 0 closed; Phases 1–2 and web Phases 3a/3c–3f implemented for
+local development. Phase 3g reliability is in progress; Phase 3h viewing is implemented locally, with actual-agent acceptance pending before Phase 3b iOS.**
+Updated 2026-09-16. Local user validation and automated checks do not certify the
+remaining hosted, multi-client, privacy, device and release acceptance matrix.
+Contract and defaults: [README](./README.md). Detailed phase documents and debug
+notes retain the evidence and limitations for each implementation.
+
+## Current status and next sequence
+
+| Phase | Current evidence / remaining work |
+| --- | --- |
+| 0 — experiment | Closed; continue through the actual agent, not the standalone prototype |
+| 1 — daemon and agent tools | Actual-agent external navigation confirmed; broader release matrix remains |
+| 2 — private handoff | Implemented; local viewer/control user-tested; hosted login/recovery/concurrency checks remain |
+| 3a — web pane | Implemented and locally user-tested, including overlay controls, fitting and scrolling |
+| 3c — screenshot quality | Implemented; screenshot transport retained, with lighter motion frames and sharper settled capture |
+| 3d — semantic observations | Actual-agent text navigation/targeting confirmed; broader visual/provider acceptance remains |
+| 3e — inline waits | User confirmed waiting, Return to agent and continuation; broader races/restart checks remain |
+| 3f — compact observations | Automated checks and live compact output/pagination confirmed; reading quality tracked in 3g |
+| 3g — focused agent reliability | Next: investigate observed argument, freshness, viewport and reading-coverage issues |
+| 3h — operation-driven viewer | Implemented; idle/credit/authority and live Chrome tests pass; actual-agent acceptance pending |
+| 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
+| 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
+| 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
+
+Sequence: **3g → 3h → 3b → 4**. Phase numbers reflect when slices were scoped, not a
+requirement to implement them in numerical order. Keep this pass narrow; it does
+not add a REPL, change browser ownership or expand the private-control lifecycle.
 
 ## Phase 0 — risky vertical slice and decisions (closed)
 
@@ -103,9 +124,9 @@ private input is absent from transcript, ledger and logs.
 ## Phase 3 — polished web integration and iOS viewer
 
 Deliver web first as [Phase 3a: automatic browser pane and viewport fitting](phase-3a-web-pane.md).
-Phase 3a automated checks pass; signed-in pane acceptance remains pending.
-Phase 3b then adds native iOS hosting and device-specific behavior. The standalone
-viewer is user-confirmed working locally; broader Phase-2 acceptance remains tracked.
+Phase 3a automated checks and local user pane testing passed. Phase 3b adds native
+iOS hosting and device-specific behavior after the focused Phase-3g reliability
+pass. Broader hosted and Phase-2 acceptance remains tracked.
 
 - Reuse the Phase-2 viewer, input and handoff components; add the workbench Browser
   surface alongside app preview and refine navigation, layout and accessibility.
@@ -130,8 +151,9 @@ Deliver requested structured text snapshots and exact semantic actions, then
 provider-visible on-demand screenshots and visible DOM. Agent observations are
 independent of continuous human viewer media. Retain five tools; a REPL is deferred.
 This phase owns the provider image serialization/ledger/replay gate previously
-listed as a deferral. It can proceed independently of the iOS viewer. Implemented locally; normal-agent
-text/visual acceptance and comparative performance measurement remain pending.
+listed as a deferral. Implemented locally, independently of the iOS viewer; actual-agent
+text snapshots and semantic targeting are confirmed. Broader visual/provider
+acceptance and performance measurements remain pending.
 See the phase document for setup, limits and validation status.
 
 ## Phase 3e — inline browser waits and continuation cleanup
@@ -148,11 +170,71 @@ concurrency and hosted acceptance remain in the phase validation checklist.
 
 ## Phase 3f — compact browser observations
 
-Implemented locally; automated validation passed, actual-agent acceptance pending: [phase-3f-compact-browser-observations.md](phase-3f-compact-browser-observations.md).
+Implemented locally; automated validation and actual-agent compact output/pagination confirmed: [phase-3f-compact-browser-observations.md](phase-3f-compact-browser-observations.md).
 Reduce duplicated snapshot representations, layout noise and reference overhead;
 budget complete results and clarify scope/continuation versus viewport inspection.
 Preserve observation authority and replay, with measured bytes/tokens and actual-agent
 acceptance. Excludes history eviction, snapshot diffs and a new browser API.
+
+### Measured evidence
+
+The [Phase-3f debug note](../../debug/browser-compact-observations.md) records the
+controlled fixture (81.0% fewer bytes, 84.3% fewer tokenizer tokens) and live-thread
+comparison. For six requested stories in each thread, peak provider input fell
+337,870 → 91,858 tokens, with 41 → 50 model calls. Different articles and access
+restrictions mean this is not a controlled task comparison or proof of complete
+reading. The old thread's third batch is excluded from this comparison.
+
+## Phase 3g — focused agent reliability (next)
+
+In progress: [initial diagnosis and fixes](../../debug/browser-agent-reliability.md).
+Identity-qualified reference clicks now validate and use the existing semantic
+path; observation/coverage guidance clarified. Automated checks passed. Bounded
+page scrolling reproduces repeated offsets without a defect; historical page
+bounds remain unknown. Actual-agent rerun is still required before closing 3g.
+
+Investigate before choosing fixes, using the recorded calls from
+`d34e4e7b-3571-4770-be5e-fac926330eca` and deterministic reproductions:
+
+- **Arguments:** recover the original two rejected browser_act arguments and
+  distinguish model construction mistakes from schema/normalization issues.
+  Do not infer empty model arguments from an error envelope with `args: {}`.
+- **Freshness:** explain and reproduce the stale continuation and old observation
+  ID used for an action after newer observations. Preserve current freshness and
+  privacy fences; improve the smallest relevant contract/guidance rather than
+  accepting stale references or silently replaying mutations.
+- **Viewport:** both visible-DOM reads after scroll reported scroll_y=104. Check
+  page bounds, scroll target and capture timing before treating this as a bug.
+  Verify visible_dom corresponds to the current viewport and continuation remains
+  pagination of the frozen observation, not scrolling.
+- **Reading coverage:** distinguish partial page capture from sufficient article
+  evidence. Use existing scope/continuation where needed; claims should accurately
+  describe excerpts and blocked/fallback sources. Do not require reading unrelated
+  menus/footer content merely to reach truncated=false.
+
+Exit: diagnosed issues have targeted fixes or documented expected behavior;
+regressions cover each confirmed defect. An actual-agent run reaches requested
+entries and uses evidence sufficient for its answer, reporting access/coverage
+limits honestly. Record call counts and output size alongside success so reduced
+payload size does not hide extra retries or missing evidence.
+
+Won't-dos: no multi-snapshot archive, context-history eviction, new browser tool
+family, REPL, automatic mutation retries, broader controller refactor or media
+transport change. Open a focused debug note before code fixes; retain Phase-3f
+budgets and use capability negotiation for any cross-version request changes.
+
+## Phase 3h — operation-driven agent viewer (implemented locally)
+
+See [phase-3h-operation-driven-viewer.md](phase-3h-operation-driven-viewer.md).
+Automated idle/credit/authority and live Chrome tests passed; actual-agent
+acceptance with a rebuilt daemon remains pending.
+Refresh screenshots after agent browser operations and on viewer attachment or
+actual fitting; retain the last image while idle. Keep interactive capture for
+human control. Reuse the media pipeline, separating idle liveness from frame
+credit with negotiated mixed-version behavior. No screenshot archive, exact
+DOM/image pairing, image diffing or controller rewrite. This phase supersedes
+the earlier recommendation to implement unchanged-frame suppression first for
+agent-controlled viewing. Human-mode efficiency remains later work.
 
 ## Phase 4 — release validation and cleanup
 
@@ -172,11 +254,13 @@ desktop control, arbitrary browser attachment or crash-preserved live page state
 
 ### Media efficiency follow-up
 
-Current capture sends complete JPEG frames on viewer demand, capped at ten per
-second, including unchanged screens. Start by comparing captures on the daemon
+Current capture sends complete screenshots on viewer demand, using negotiated
+sharper capture and lighter motion frames. Unchanged-screen suppression remains
+a follow-up; see [adaptive frames](scroll-input-and-adaptive-frames.md). Start by comparing captures on the daemon
 and skipping identical image payloads; retain full frames for changed content.
 This reduces transfer/decode work, but still incurs capture/comparison cost.
-Measure that cost before adding event-driven capture or adaptive idle polling.
+Phase 3h handles operation-driven agent viewing first. Evaluate these remaining
+optimizations for human live viewing only after measuring that change.
 
 - Keep transport liveness, viewer credit and private-control renewal independent
   of image changes. A static page must remain connected and controllable; an
@@ -243,8 +327,9 @@ do not refactor surrounding systems unless needed for a concrete boundary.
 | Edge | Cloudflare route bindings and worker/deployment config only as required | Deployment runbook; localhost/ngrok setup notes |
 
 Add the browser owner-isolation matrix to
-`plan/init-auth/validation-checklist.md`. Update root `bud.spec.md` when the
-architecture is implemented; this proposal does not describe existing runtime.
+`plan/init-auth/validation-checklist.md`. Keep root `bud.spec.md` and the affected folder specs synchronized with each
+implementation slice. The table lists implementation touchpoints, not work still
+entirely unimplemented.
 
 ## Rollout
 
@@ -257,7 +342,7 @@ clients; new daemons advertise support only after local browser readiness checks
 | --- | --- |
 | New service / old daemon | Browser tools unavailable; no new request shapes sent; existing work unaffected |
 | Old service / new daemon | Ignore unknown capability; daemon does not open media or emit browser events without negotiated service support |
-| Both new | Semantic tools and Phase-2 handoff/viewer after migrations 0039–0041 and a ready upgraded daemon; manual acceptance remains pending |
+| Both new | Semantic tools and Phase-2 handoff/viewer after migrations 0039–0042 and a ready upgraded daemon; manual acceptance remains pending |
 | Old mobile / new service | Existing app previews/chat work; generic tool summary remains intelligible, browser handoff offers first-party web viewer link |
 
 Phase 1 needs a daemon release/upgrade, but no mobile rebuild or new viewer UI.

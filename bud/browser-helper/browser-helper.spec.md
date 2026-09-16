@@ -10,6 +10,9 @@ or CDP is accepted. The Rust browser manager owns serialization and authority.
 - `engine.mjs`: snapshot hierarchy, value exclusion, visible geometry, metadata,
   exact role/name and reference targeting, fill and wheel. Uses Playwright's
   `ariaSnapshotJSON({mode:'ai'})` and `aria-ref` selectors from that snapshot.
+  Reference locators retain the observed iframe ancestry; a document-root selector
+  prevents Playwright from routing cached references through obsolete frame IDs.
+  Scoped observations inherit their source frame. No mutation is retried.
 - `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context.
 - `compact.test.mjs`: structure/state preservation, pagination, Unicode and limits.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
@@ -36,3 +39,13 @@ must set `BUD_BROWSER_HELPER` to the deployed helper and supply Node on PATH or
 still release work. Missing helper disables browser readiness, not terminals.
 
 See [Phase 3d](../../plan/bud-owned-browser/phase-3d-agent-observations-and-targeting.md).
+
+Reliability fixtures additionally exercise explicit identity-qualified reference
+clicks, stale observation rejection and wheel requests at a bounded page bottom.
+Repeated viewport offsets alone do not prove dropped wheel input; dispatch
+acknowledges the request, not animation completion.
+
+BFCache-enabled Chrome coverage verifies retained page state, fresh reference clicks
+after Back, invalidated-reference rejection, and exact iframe/scoped targeting.
+This is helper-local; wire shapes, capability negotiation and ownership fences
+are unchanged. Restart an already-running helper (or daemon) to load the fix.

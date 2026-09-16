@@ -22,7 +22,26 @@ async fn live_private_capture_input_and_stale_frame_guard() {
     });
     let mut browser = Browser::launch(Path::new(&executable)).await.unwrap();
     let target = browser.targets().await.unwrap()[0].target_id.clone();
-    let blank = browser.capture(&target).await.unwrap();
+    let mut timing = CaptureTiming::default();
+    let blank = browser
+        .capture_scaled_timed(&target, None, &mut timing)
+        .await
+        .unwrap();
+    assert_eq!(timing.stage, "complete");
+    assert_eq!(timing.format, "jpeg");
+    assert!((1..=4).contains(&timing.attempts));
+    assert_eq!(
+        timing.image_chars[timing.attempts - 1],
+        blank["image"].as_str().unwrap().len()
+    );
+    assert!(blank.get("capture_stages").is_none());
+    let mut failed = CaptureTiming::default();
+    assert!(browser
+        .capture_scaled_timed("missing-target", None, &mut failed)
+        .await
+        .is_err());
+    assert_eq!(failed.stage, "session");
+    assert_eq!(failed.attempts, 0);
     assert_eq!(
         browser
             .human_input(

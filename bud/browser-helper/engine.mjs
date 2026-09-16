@@ -32,6 +32,20 @@ export function sanitize(nodes, prefix, refs, depth = 0, result = []) {
   return result;
 }
 
+// Resolve within the observed frame rather than letting aria-ref's retained fN
+// prefix select a frame. BFCache can preserve that prefix across frame recreation.
+function bindReferences(nodes, prefix, refs, frame) {
+  for (const node of nodes) {
+    let childFrame = frame;
+    if (typeof node.ref === 'string' && refs.has(`${prefix}:${node.ref}`)) {
+      const locator = frame.locator(':root').locator(`aria-ref=${node.ref}`);
+      refs.set(`${prefix}:${node.ref}`, { locator, frame });
+      if (node.role === 'iframe') childFrame = locator.contentFrame();
+    }
+    if (!fields.has(node.role) && Array.isArray(node.children)) bindReferences(node.children, prefix, refs, childFrame);
+  }
+}
+
 export class Engine {
   static async connect(endpoint) {
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 8000 });
@@ -68,10 +82,10 @@ export class Engine {
       document !== s.document) fail('browser_stale_reference');
     return s;
   }
-  ref(page, snapshot, reference) {
+  ref(snapshot, reference) {
     const ref = snapshot.refs.get(reference);
     if (!ref) fail('browser_stale_reference');
-    return ref === 'body' ? page.locator('body') : page.locator(`aria-ref=${ref}`);
+    return ref.locator;
   }
   pageResult(s, offset) {
     if (s.compact) return compactPage(s, offset);
@@ -101,15 +115,20 @@ export class Engine {
         if (s.mode !== c.operation || s.compact !== (c.compact === true) || id !== s.id || !Number.isSafeInteger(offset) || offset < 0 || offset >= s.nodes.length) fail('browser_stale_reference');
         return this.pageResult(s, offset);
       }
-      let root = page.locator('body');
-      if (c.scope) root = this.ref(page, await this.current(page, c), c.scope);
+      let root = page.locator('body'), frame = page;
+      if (c.scope) {
+        const current = await this.current(page, c);
+        root = this.ref(current, c.scope);
+        frame = current.refs.get(c.scope).frame;
+      }
       const document = await this.document(page), navigation = this.navigation;
       const raw = await root.ariaSnapshotJSON({ mode: 'ai', boxes: c.operation === 'visible_dom', timeout: 3000 });
       if (await this.document(page) !== document || this.navigation !== navigation) fail('browser_document_changed');
       const id = c.compact === true ? `${referenceNamespace}${(++observationSequence).toString(36)}` : randomUUID(), refs = new Map();
       let nodes = sanitize(raw, id, refs);
+      bindReferences(raw, id, refs, frame);
       if (!c.scope) {
-        refs.set(`${id}:root`, 'body');
+        refs.set(`${id}:root`, { locator: page.locator('body'), frame: page });
         nodes.unshift({ depth: 0, role: 'document', name: await page.title(), reference: `${id}:root` });
       }
       if (Buffer.byteLength(JSON.stringify(nodes)) > MAX_BYTES) fail('browser_observation_limit');
@@ -122,9 +141,9 @@ export class Engine {
     }
     const s = await this.current(page, c);
     let locator;
-    if (c.reference) locator = this.ref(page, s, c.reference);
+    if (c.reference) locator = this.ref(s, c.reference);
     else if (c.locator) {
-      const root = c.scope ? this.ref(page, s, c.scope) : page;
+      const root = c.scope ? this.ref(s, c.scope) : page;
       locator = root.getByRole(c.locator.role, { name: c.locator.name, exact: true });
     }
     if (c.operation === 'scroll') {

@@ -51,6 +51,28 @@ struct Viewport {
     stable: bool,
 }
 
+/// Local diagnostics only; never included in viewer frames.
+#[derive(Debug, Default)]
+pub(super) struct CaptureTiming {
+    pub stage: &'static str,
+    pub session_ms: u64,
+    pub document_ms: u64,
+    pub layout_ms: u64,
+    pub screenshot_ms: [u64; 4],
+    pub attempts: usize,
+    pub assembly_ms: u64,
+    pub format: &'static str,
+    pub scales: [f64; 4],
+    pub image_chars: [usize; 4],
+}
+
+async fn timed<T>(elapsed: &mut u64, operation: impl std::future::Future<Output = T>) -> T {
+    let started = Instant::now();
+    let result = operation.await;
+    *elapsed += started.elapsed().as_millis() as u64;
+    result
+}
+
 /// One owner, one serial command boundary; callers cannot clone the CDP handle.
 /// Fresh TempDir profiles avoid ever attaching to a user's personal Chrome.
 pub struct Browser {
@@ -372,6 +394,10 @@ impl Browser {
         Ok(())
     }
 
+    pub(super) fn viewport_revision(&self) -> Option<String> {
+        self.viewport_id.clone()
+    }
+
     /// Authorized viewport mutation. Never navigate/reload the page to fit it.
     pub async fn resize_viewport(
         &mut self,
@@ -417,12 +443,27 @@ impl Browser {
         target: &str,
         pixel_ratio: Option<f64>,
     ) -> Result<serde_json::Value> {
-        let session = self.session(target).await?;
-        let document = self.document(&session).await?;
-        let metrics = self
-            .cdp
-            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
-            .await?;
+        self.capture_scaled_timed(target, pixel_ratio, &mut CaptureTiming::default())
+            .await
+    }
+
+    pub(super) async fn capture_scaled_timed(
+        &mut self,
+        target: &str,
+        pixel_ratio: Option<f64>,
+        timing: &mut CaptureTiming,
+    ) -> Result<serde_json::Value> {
+        timing.stage = "session";
+        let session = timed(&mut timing.session_ms, self.session(target)).await?;
+        timing.stage = "document_before";
+        let document = timed(&mut timing.document_ms, self.document(&session)).await?;
+        timing.stage = "layout_before";
+        let metrics = timed(
+            &mut timing.layout_ms,
+            self.cdp
+                .call(Some(&session), "Page.getLayoutMetrics", json!({})),
+        )
+        .await?;
         let width = metrics["cssLayoutViewport"]["clientWidth"]
             .as_f64()
             .context("browser_viewport_unavailable")?;
@@ -443,36 +484,50 @@ impl Browser {
         };
         let mut image = String::new();
         // Read-only recapture at lower resolution bounds high-entropy PNGs.
-        for _ in 0..4 {
-            let shot = self.cdp.call(Some(&session), "Page.captureScreenshot", json!({
+        timing.format = if enhanced { "png" } else { "jpeg" };
+        for attempt in 0..4 {
+            timing.stage = "screenshot";
+            timing.attempts = attempt + 1;
+            timing.scales[attempt] = scale;
+            let shot = timed(&mut timing.screenshot_ms[attempt], self.cdp.call(Some(&session), "Page.captureScreenshot", json!({
                 "format":if enhanced { "png" } else { "jpeg" }, "quality":65, "captureBeyondViewport":false,
                 "clip":{"x":metrics["cssLayoutViewport"]["pageX"], "y":metrics["cssLayoutViewport"]["pageY"],
                     "width":width, "height":height, "scale":scale}
-            })).await?;
+            }))).await?;
             image = shot["data"]
                 .as_str()
                 .context("browser_capture_failed")?
                 .to_owned();
+            timing.image_chars[attempt] = image.len();
             if image.len() <= 1_400_000 {
                 break;
             }
             scale *= 0.5;
         }
-        if image.len() > 1_400_000 || self.document(&session).await? != document {
+        timing.stage = "document_after";
+        if image.len() > 1_400_000
+            || timed(&mut timing.document_ms, self.document(&session)).await? != document
+        {
             bail!("browser_frame_discarded");
         }
-        let after = self
-            .cdp
-            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
-            .await?;
+        timing.stage = "layout_after";
+        let after = timed(
+            &mut timing.layout_ms,
+            self.cdp
+                .call(Some(&session), "Page.getLayoutMetrics", json!({})),
+        )
+        .await?;
+        timing.stage = "validate";
         let before_viewport = &metrics["cssLayoutViewport"];
         let after_viewport = &after["cssLayoutViewport"];
         if before_viewport["clientWidth"] != after_viewport["clientWidth"]
             || before_viewport["clientHeight"] != after_viewport["clientHeight"]
-            || self.document(&session).await? != document
+            || timed(&mut timing.document_ms, self.document(&session)).await? != document
         {
             bail!("browser_frame_discarded");
         }
+        timing.stage = "assembly";
+        let assembly_started = Instant::now();
         // Show motion immediately, but never treat uncertain pixel coordinates
         // as proof for a click or text input.
         let stable = before_viewport == after_viewport;
@@ -519,6 +574,8 @@ impl Browser {
         if let Some(id) = &self.viewport_id {
             frame["viewport_id"] = json!(id);
         }
+        timing.assembly_ms = assembly_started.elapsed().as_millis() as u64;
+        timing.stage = "complete";
         Ok(frame)
     }
 

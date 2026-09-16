@@ -205,7 +205,7 @@ export class BrowserRepository {
     const recoverable = result.outcome === "rejected" && [
       "browser_locator_ambiguous", "browser_locator_not_found", "browser_stale_reference",
       "browser_observation_limit", "browser_target_not_found", "browser_document_changed",
-      "browser_invalid_arguments",
+      "browser_invalid_arguments", "browser_busy",
     ].includes(result.error ?? "");
     await this.database.query(
       `update browser_session set state=$4,pending_until=null,

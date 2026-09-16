@@ -52,6 +52,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
     control,
     `${endpoint}/daemon`,
     async (_carrier, request) => {
+      assert.equal(request.command.operation_driven, undefined);
       ticket = request.command.ticket as string;
       const daemon = new WebSocket(`${endpoint}/daemon`);
       sockets.add(daemon);

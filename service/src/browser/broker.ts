@@ -50,7 +50,7 @@ export class BrowserBroker implements BrowserAgentBackend {
       if (!vision) return { ok:false, outcome:"rejected", error:"browser_image_unsupported" };
     }
     const extended = tool === "browser_observe" && Object.keys(args).some(k => k !== "target_id") ||
-      tool === "browser_act" && (args.locator || ["fill", "scroll"].includes(String(args.action)));
+      tool === "browser_act" && (args.locator || args.action === "click" && args.reference && args.observation_id || ["fill", "scroll"].includes(String(args.action)));
     if (extended && !carrier.semanticObservations)
       return { ok: false, outcome: "rejected", error: "browser_representation_unsupported" };
     const command: Record<string, unknown> = carrier.semanticObservations && (tool === "browser_observe" || extended)

@@ -3241,6 +3241,48 @@ service + new daemon receives legacy serialization unless it opts in. Full
 effect requires a daemon rebuild/upgrade and helper installation. No DB or SSE
 shape change, migration, retrospective transcript rewrite, or viewer-media change.
 
+### Identity-qualified agent reference clicks (Phase 3g)
+
+The service accepts browser_act click with reference plus the target_id and
+observation_id pair, lowering it to the already-supported inspect/click request
+only with semantic_observations. Current helper reference-map, target, document
+and observation checks apply. Bare-reference clicks retain the legacy form.
+No new wire field/variant: old semantic daemons support the request, older
+non-semantic daemons reject before dispatch; old services remain unchanged.
+
+## Operation-driven browser viewer (Phase 3h)
+
+Optional `hello.capabilities.browser.operation_driven_media:true` gates optional
+`command.operation_driven:true` on the existing `media_attach` action over either
+WS or gRPC control. Service sends it only for agent-authorized media; daemon also
+requires absent controller ID. Omitted/false selects legacy continuous demand.
+No protobuf tag or web frame/ACK schema changes.
+
+Only a negotiated daemon media connection may emit `{refresh:true}`. This contains
+no page data and consumes no frame credit. Successful agent actions/fresh observations
+and actual viewport fits advance a per-session watch revision; frozen snapshot
+continuations, identical fits and renewal do not. Relay coalesces notifications into
+one dirty bit and demands a frame only with available credit. Initial/new viewer
+attachments, density changes and slow viewers catching up also request fresh pixels.
+Updates during delivery remain pending. Bounded busy captures retry up to three
+times at existing pacing; exhaustion closes media, never replays browser mutations.
+
+In negotiated mode service sends native WebSocket Ping every three seconds on both
+media legs. Native Pong updates liveness without granting image credit. Browsers
+answer automatically; daemon handles these frames without page-lock/Chrome work.
+Viewer liveness and authorization have ten-second deadlines, separately from the
+five-second outstanding-frame ACK deadline. Daemon pong has sixty-second allowance
+for draining bounded capture calls. Idle authentication/owner/session/generation/
+epoch/controller checks run in the existing sweep, at most one check per viewer
+in flight. Existing capture/delivery fences remain mandatory. No heartbeat renews
+private control. Revocation/disconnect clears retained client pixels.
+
+New service/old daemon omits operation_driven and uses continuous media. Old
+service/new daemon never opts in, so it receives no refresh notices. Existing web
+clients work with both: idle frames stay on canvas and native pong requires no
+JavaScript change. Full effect requires updated service and rebuilt/upgraded daemon;
+private control retains continuous capture. No DB, SSE or provider-payload changes.
+
 ## Service-owned turn timing
 
 Additive `agent.turn_timing` on the existing authorized thread agent SSE stream:

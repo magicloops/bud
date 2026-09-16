@@ -116,6 +116,20 @@ test(
     assert.equal((await pool.query("select state from browser_session where id=$1", [second.session_id])).rows[0].state,"ready");
     const reobserve = await repo.prepare(await next(), "boot", { action:"inspect", operation:"snapshot" });
     await repo.complete(reobserve, { ok:true, outcome:"completed" });
+    const busy = await repo.prepare(await next(), "boot", { action:"navigate", url:"https://example.com" });
+    const beforeBusy = (await pool.query("select * from browser_session where id=$1", [busy.session_id])).rows[0];
+    await repo.complete(busy, { ok:false, outcome:"rejected", error:"browser_busy" });
+    const afterBusy = (await pool.query("select * from browser_session where id=$1", [busy.session_id])).rows[0];
+    assert.equal(afterBusy.state, "ready");
+    assert.equal(afterBusy.pending_until, null);
+    for (const key of ["id", "generation", "control_epoch", "control_state", "private_content", "revision", "closed_at"])
+      assert.deepEqual(afterBusy[key], beforeBusy[key]);
+    const afterRejection = await repo.prepare(await next(), "boot", { action:"observe" });
+    assert.equal(afterRejection.session_id, busy.session_id);
+    await repo.complete(afterRejection, { ok:false, outcome:"unknown", error:"browser_busy" });
+    assert.equal((await pool.query("select state from browser_session where id=$1", [busy.session_id])).rows[0].state, "interrupted");
+    // Restore fixture state to continue testing the unrelated handoff paths.
+    await repo.complete(afterRejection, { ok:true, outcome:"completed" });
     const controls = new BrowserControlRepository(pool);
     assert.equal((await controls.list("bob", thread)).length, 0);
     await assert.rejects(controls.get("bob", r.session_id), /not_found/);

@@ -186,3 +186,34 @@ Absent opt-in retains existing output, including the old observe adapter. Compac
 snapshots contain text only, visible DOM nodes only; metadata identifies
 `format:compact_v1` and document/subtree/viewport coverage. Short references remain
 observation-qualified. See the helper spec for budgeting and cursor behavior.
+
+## Targeted contention diagnostics
+
+`browser_timing` INFO events report command page-lock waits and page-operation
+execution at >=250ms, plus all lock timeouts. Media reports slow lock waits/holds
+with separate target enumeration and screenshot durations. Session/epoch and
+command request IDs correlate contention without logging arguments, URLs, images,
+tickets, controller IDs or raw exceptions. Normal fast frames are silent. These
+measurements do not change locking, deadlines, authority, capture or retry behavior;
+rebuild/restart the daemon to enable them, with no service/wire dependency.
+See [busy investigation](../../../debug/browser-busy-session-preservation.md).
+
+Slow media capture events include `capture_stages`: last reached stage (also on
+failure), session/document/layout timings, up to four screenshot attempt timings,
+attempt count, per-attempt scale/encoded length, format and assembly
+time. Document/layout timings sum their pre/post checks. Screenshot request time
+includes Chrome resizing/encoding; it does not distinguish those internal stages.
+No additional per-frame log events or wire fields are emitted.
+
+## Operation-driven agent media (Phase 3h)
+
+`operation_driven_media:true` advertises optional `media_attach.operation_driven`.
+Only explicit opt-in without a controller enables refresh notifications. Each slot
+owns a watch revision advanced by successful agent actions/fresh observations and
+actual fit changes, excluding frozen continuation and unchanged fit. The media
+worker sends `{refresh:true}`; it still captures only on service demand, consuming
+the covered revision under the page lock. Native ping/pong keeps idle sockets
+alive without Chrome work. Existing connection/epoch checks fence capture/delivery.
+Private or unnegotiated attachments retain continuous demand behavior. Live manager
+tests cover idle heartbeats, refresh, fit, rejection and disconnect. See
+[Phase 3h](../../../plan/bud-owned-browser/phase-3h-operation-driven-viewer.md).

@@ -73,12 +73,36 @@ pub enum Action {
         endpoint: String,
         ticket: String,
         controller_id: Option<String>,
+        operation_driven: Option<bool>,
     },
     Control {
         control: ControlCommand,
     },
     Close,
     Cancel,
+}
+
+impl Action {
+    // Static labels only: never serialize action arguments into diagnostics.
+    fn diagnostic_name(&self) -> &'static str {
+        match self {
+            Self::Open { .. } => "open",
+            Self::Observe { .. } => "observe",
+            Self::Capture { .. } => "capture",
+            Self::Inspect { .. } => "inspect",
+            Self::Navigate { .. } => "navigate",
+            Self::Focus { .. } => "focus",
+            Self::InsertText { .. } => "insert_text",
+            Self::Click { .. } => "click",
+            Self::HumanInput { .. } => "human_input",
+            Self::ResizeViewport { .. } => "resize_viewport",
+            Self::FitViewport { .. } => "fit_viewport",
+            Self::MediaAttach { .. } => "media_attach",
+            Self::Control { .. } => "control",
+            Self::Close => "close",
+            Self::Cancel => "cancel",
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -139,6 +163,7 @@ pub(super) struct Slot {
     pub(super) state: AsyncMutex<Entry>,
     pub(super) authority: Mutex<Authority>,
     pub(super) media: std::sync::atomic::AtomicBool,
+    pub(super) refresh: watch::Sender<u64>,
 }
 
 pub(super) struct Entry {
@@ -192,7 +217,7 @@ impl BrowserManager {
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
             "managed":true, "profile_mode":"ephemeral", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
-            "semantic_observations":true, "compact_observations":true, "agent_capture":true, "max_sessions":2})
+            "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":2})
     }
 
     pub fn connect(&self, device_session_id: String) {
@@ -285,6 +310,7 @@ impl BrowserManager {
                     thread: request.thread_id.clone(),
                     generation: request.generation.clone(),
                     cancel: watch::channel(None).0,
+                    refresh: watch::channel(0).0,
                     authority: Mutex::new(Authority::default()),
                     media: std::sync::atomic::AtomicBool::new(false),
                     state: AsyncMutex::new(Entry {
@@ -339,6 +365,7 @@ impl BrowserManager {
             endpoint,
             ticket,
             controller_id,
+            operation_driven,
         } = &request.command
         {
             if !entry
@@ -353,6 +380,7 @@ impl BrowserManager {
                 return Reply::error(&request, "browser_media_busy", false);
             }
             super::media::start(
+                request.session_id.clone(),
                 entry,
                 connection,
                 request.device_session_id.clone(),
@@ -360,6 +388,7 @@ impl BrowserManager {
                 controller_id.clone(),
                 endpoint.clone(),
                 ticket.clone(),
+                operation_driven == &Some(true) && controller_id.is_none(),
             );
             return Reply {
                 request_id: request.request_id,
@@ -411,8 +440,16 @@ impl BrowserManager {
         }
         // Bound the FIFO wait for page operations, captures and fitting. This
         // avoids rejecting agent work merely because a viewer resize won the lock.
-        let mut entry = match tokio::time::timeout(Duration::from_secs(4), entry.state.lock()).await
-        {
+        let wait_started = Instant::now();
+        let acquired = tokio::time::timeout(Duration::from_secs(4), entry.state.lock()).await;
+        let wait_ms = wait_started.elapsed().as_millis() as u64;
+        if wait_ms >= 250 || acquired.is_err() {
+            tracing::info!(component = "browser_timing", event = "page_lock_wait",
+                session_id = %request.session_id, request_id = %request.request_id,
+                epoch = request.control_epoch, action = request.command.diagnostic_name(),
+                wait_ms, timed_out = acquired.is_err(), "Browser page lock wait");
+        }
+        let mut entry = match acquired {
             Ok(guard) => guard,
             Err(_) => return Reply::error(&request, "browser_busy", false),
         };
@@ -498,6 +535,8 @@ impl BrowserManager {
         }
         // Connection change wins over a simultaneously completed read. Dropping
         // a CDP call poisons it; a later operation cannot reuse uncertain state.
+        let viewport_before = entry.browser.as_ref().and_then(|b| b.viewport_revision());
+        let operation_started = Instant::now();
         let result = tokio::select! {
             biased;
             _ = connection.changed() => Err(anyhow::anyhow!("browser_connection_lost")),
@@ -507,6 +546,13 @@ impl BrowserManager {
                 result.unwrap_or_else(|_| Err(anyhow::anyhow!("browser_deadline")))
             }
         };
+        let operation_ms = operation_started.elapsed().as_millis() as u64;
+        if operation_ms >= 250 {
+            tracing::info!(component = "browser_timing", event = "page_operation",
+                session_id = %request.session_id, request_id = %request.request_id,
+                epoch = request.control_epoch, action = request.command.diagnostic_name(),
+                operation_ms, ok = result.is_ok(), "Slow browser page operation");
+        }
         if control.is_none()
             && !matches!(
                 request.command,
@@ -554,6 +600,23 @@ impl BrowserManager {
         } else {
             result
         };
+        let refresh = match &request.command {
+            Action::Open { .. }
+            | Action::Observe { .. }
+            | Action::Capture { .. }
+            | Action::Navigate { .. }
+            | Action::Focus { .. }
+            | Action::Click { .. }
+            | Action::InsertText { .. } => true,
+            Action::Inspect { continuation, .. } => continuation.is_none(),
+            Action::FitViewport { .. } => {
+                viewport_before != entry.browser.as_ref().and_then(|b| b.viewport_revision())
+            }
+            _ => false,
+        };
+        if result.is_ok() && refresh {
+            slot.refresh.send_modify(|revision| *revision += 1);
+        }
         match result {
             Ok(data) => Reply {
                 request_id: request.request_id,
@@ -860,6 +923,7 @@ fn valid_action(action: &Action) -> bool {
             endpoint,
             ticket,
             controller_id,
+            ..
         } => {
             ticket.len() >= 32
                 && ticket.len() <= 128
@@ -918,6 +982,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_operation_media_idles_and_refreshes_without_chrome_heartbeat_work() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let manager = BrowserManager::new(Some(executable.into()));
+        manager.connect("device".into());
+        assert!(
+            manager
+                .execute(request(1, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        let slot = manager
+            .entries
+            .lock()
+            .unwrap()
+            .get("browser")
+            .unwrap()
+            .clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        assert!(
+            manager
+                .execute(request(
+                    2,
+                    Action::MediaAttach {
+                        endpoint: format!("ws://{}/", listener.local_addr().unwrap()),
+                        ticket: "operation-driven-media-test-ticket-0123456789".into(),
+                        controller_id: None,
+                        operation_driven: Some(true),
+                    }
+                ))
+                .await
+                .ok
+        );
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        socket.next().await.unwrap().unwrap(); // ticket
+        socket
+            .send(Message::Text(json!({"target_id":null}).to_string()))
+            .await
+            .unwrap();
+        let frame: Value =
+            serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
+                .unwrap();
+        assert!(frame["image"].is_string());
+        // Across the old ten-second idle timeout. Hold the CDP lock to prove
+        // protocol heartbeats do not need page access or capture.
+        let page = slot.state.lock().await;
+        for _ in 0..4 {
+            socket.send(Message::Ping(vec![1])).await.unwrap();
+            let pong = tokio::time::timeout(Duration::from_secs(1), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(matches!(pong, Message::Pong(_)));
+            assert!(
+                tokio::time::timeout(Duration::from_secs(3), socket.next())
+                    .await
+                    .is_err(),
+                "unsolicited idle capture"
+            );
+        }
+        drop(page);
+        let observed = manager
+            .execute(request(2, Action::Observe { target_id: None }))
+            .await;
+        assert!(observed.ok);
+        let refresh = tokio::time::timeout(Duration::from_secs(1), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&refresh.into_text().unwrap()).unwrap(),
+            json!({"refresh":true})
+        );
+        socket
+            .send(Message::Text(json!({"target_id":null}).to_string()))
+            .await
+            .unwrap();
+        let updated = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert!(serde_json::from_str::<Value>(&updated).unwrap()["image"].is_string());
+        let fit = request(
+            2,
+            Action::FitViewport {
+                target_id: frame["target_id"].as_str().unwrap().into(),
+                document_id: frame["document_id"].as_str().unwrap().into(),
+                width: 640,
+                height: 480,
+            },
+        );
+        assert!(manager.execute(fit.clone()).await.ok);
+        let revision = *slot.refresh.borrow();
+        assert!(manager.execute(fit).await.ok);
+        assert_eq!(*slot.refresh.borrow(), revision, "identical fit refreshed");
+        let rejected = manager
+            .execute(request(
+                3,
+                Action::Click {
+                    reference: "missing".into(),
+                },
+            ))
+            .await;
+        assert!(!rejected.ok);
+        assert_eq!(*slot.refresh.borrow(), revision, "rejection refreshed");
+        manager.disconnect();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while slot.media.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!slot
+            .state
+            .lock()
+            .await
+            .browser
+            .as_mut()
+            .unwrap()
+            .interrupted());
+        manager.connect("device".into());
+        assert!(manager.execute(request(4, Action::Close)).await.ok);
+    }
+
+    #[tokio::test]
     async fn live_disconnect_during_capture_drains_cdp_without_delivering_frame() {
         use futures::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message;
@@ -948,6 +1141,7 @@ mod tests {
                         endpoint: format!("ws://{}/", listener.local_addr().unwrap()),
                         ticket: "capture-disconnect-test-ticket-0123456789".into(),
                         controller_id: None,
+                        operation_driven: None,
                     }
                 ))
                 .await
@@ -1088,6 +1282,7 @@ mod tests {
                 endpoint: format!("ws://{}/", listener.local_addr().unwrap()),
                 ticket: ticket.into(),
                 controller_id: Some("viewer".into()),
+                operation_driven: None,
             },
         );
         attach.control_epoch = 3;

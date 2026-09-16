@@ -405,6 +405,24 @@ from the service-authorized request. No database table or global viewer read.
   invocation returns 404; two owner waits recover without leaking browser content;
   only the controlling viewer can return, and stopping an old wait preserves chat.
 
+
+## Operation-driven browser media (Phase 3h)
+
+- [x] Loopback relay fixtures revoke idle viewers when authentication or owner
+  authority fails, without requiring another screenshot. Missing frame ACK times
+  out even while native pongs continue. Live sizing authority survives idle periods.
+- [x] New/slow viewers share bounded capture credit; refresh during delivery is
+  retained. Native liveness grants neither frame credit nor private control.
+- [x] Canvas regression clears retained pixels on revocation; real Chrome tests
+  fence disconnected capture and keep private renewal independent.
+- [ ] Real two-account sign-out/unclaim/thread deletion while agent viewer is idle;
+  other owner cannot attach or retain pixels. Existing resource ownership applies.
+- [ ] Takeover while agent capture is in flight, return, service reconnect and
+  multiple real viewers: no private content reaches a passive/previous viewer.
+
+No routes or rows are added. Existing browser-session/thread/Bud owner resolution
+and authenticated viewer binding govern attachment, idle checks and delivery.
+
 ## Service-owned turn timing
 
 - [x] Isolated PostgreSQL timing lookup excludes foreign owners and wrong threads,

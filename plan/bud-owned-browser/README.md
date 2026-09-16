@@ -1,16 +1,22 @@
 # Plan: Bud-owned browser sessions
 
-Status: **Phase 0 closed; Phases 1–2 implemented for development.** Updated 2026-09-14.
-The normal agent now controls daemon-owned ephemeral Chrome through authenticated
-WS/gRPC. Phase 2 adds private handoff and a standalone web viewer; signed-in
-end-to-end acceptance is still pending. See each phase's evidence and limitations.
-The user has confirmed the local standalone viewer is working.
-Polished web/mobile integration is Phase 3; persistent-profile policy is separate.
+Status: **Phase 0 closed; Phases 1–2 and web Phases 3a/3c–3f implemented for
+local development.** Updated 2026-09-15. Actual-agent navigation, semantic
+observations, compact output/pagination, and local web handoff/pane interactions
+have been exercised. Broader hosted, multi-client, privacy and release acceptance
+remains outstanding; this is not production-readiness certification.
+
+Next: [Phase 3g focused agent reliability](phases.md#phase-3g--focused-agent-reliability-next),
+then [Phase 3h operation-driven viewing](phase-3h-operation-driven-viewer.md),
+Phase 3b iOS viewer, and Phase 4 release validation/cleanup. See the
+[status table and sequence](phases.md#current-status-and-next-sequence) for current
+priorities and evidence. Persistent profiles, optional personal-browser attachment
+and WebRTC remain future work.
 
 The sections below retain the broader product design. The detailed Phase-2 plan
 records the implemented simplifications: direct first-party cookie auth (native
 bootstrap grants later), revisioned metadata polling, REST input and demand-driven
-JPEG capture. Profiles remain explicitly ephemeral for development, despite the
+screenshot capture (subsequently refined by Phases 3a/3c). Profiles remain explicitly ephemeral for development, despite the
 future persistent-profile recommendation below. Exact routes/wire shapes are in
 [docs/proto.md](../../docs/proto.md#phase-2-private-control-and-media).
 
@@ -32,7 +38,12 @@ remote-desktop framework.
 - [Phase-1 implementation plan](./phase-1-agent-browser.md): real daemon/agent integration and acceptance checks.
 - [Phase-2 handoff plan](./phase-2-private-handoff.md): private input through a minimal real web viewer, durable pause and return.
 
-- [Phase-3a web pane plan](./phase-3a-web-pane.md): automatic chat-side presentation and controller-owned viewport fitting.
+- [Phase-3a web pane plan](./phase-3a-web-pane.md): automatic chat-side presentation; [agent viewport fitting](agent-viewport-fitting.md) extends resize arbitration.
+- [Phase-3d observations](phase-3d-agent-observations-and-targeting.md): semantic snapshots/actions and requested agent screenshots.
+- [Phase-3e inline waits](phase-3e-inline-browser-waits.md): durable waiting and inline Return to agent.
+- [Phase-3f compact observations](phase-3f-compact-browser-observations.md): bounded output, pagination and measured context savings.
+- [Phase-3h operation-driven viewer](phase-3h-operation-driven-viewer.md): implemented agent snapshots, human live capture and independent idle liveness; actual-agent acceptance pending.
+- [Live comparison and follow-ups](../../debug/browser-compact-observations.md): evidence informing the Phase-3g reliability pass.
 
 ## Recommended decisions
 

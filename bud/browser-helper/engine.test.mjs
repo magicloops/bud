@@ -95,3 +95,105 @@ test('compact real-browser observations keep actions, scope and pagination witho
     }
   } finally { await browser.close(); }
 });
+
+test('bounded scrolling and observation replacement explain unchanged viewport and stale cursors', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
+  try {
+    const page = await browser.newPage({viewport:{width:758,height:1110}});
+    await page.setContent(`<style>body{margin:0;height:1214px} a{display:block;height:20px}</style>${Array.from({length:50},(_,i)=>`<a href="#${i}">Story ${i}</a>`).join('')}`);
+    const cdp=await page.context().newCDPSession(page);
+    const target=(await cdp.send('Target.getTargetInfo')).targetInfo.targetId; await cdp.detach();
+    const engine=new Engine(browser);
+    const first=await engine.execute({operation:'snapshot',target_id:target,compact:true});
+    await engine.execute({operation:'scroll',target_id:target,observation_id:first.observation_id,delta_y:875});
+    // Wheel dispatch acknowledges submission, not animation completion.
+    await page.waitForFunction(()=>scrollY===104);
+    const visible=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
+    assert.equal(visible.viewport.scroll_y,104);
+    await engine.execute({operation:'scroll',target_id:target,observation_id:visible.observation_id,delta_y:1500});
+    const again=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
+    assert.equal(again.viewport.scroll_y,104);
+    assert.ok(again.nodes.every(n=>n.box.y+n.box.height>0 && n.box.y<1110));
+    await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:first.observation_id,reference:first.text.match(/link "Story 0" \[ref=([^\]]+)\]/)[1]}),/browser_stale_reference/);
+    const fresh=await engine.execute({operation:'snapshot',target_id:target,compact:true});
+    const reference=fresh.text.match(/link "Story 3" \[ref=([^\]]+)\]/)[1];
+    await engine.execute({operation:'click',target_id:target,observation_id:fresh.observation_id,reference});
+    assert.match(page.url(),/#3$/);
+  } finally {await browser.close();}
+});
+
+test('fresh references after BFCache restoration resolve without replaying clicks', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((request, response) => {
+    response.setHeader('Content-Type', 'text/html');
+    response.end(request.url === '/other' ? '<title>Other</title><p>Other page</p>' :
+      '<title>Cached</title><main><button onclick="window.clicks++">Apply once</button></main>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  try {
+    browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,
+      ignoreDefaultArgs:['--disable-back-forward-cache'],args:['--use-mock-keychain','--password-store=basic']});
+    const page = await browser.newPage();
+    const cdp = await page.context().newCDPSession(page);
+    const target = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+    const engine = new Engine(browser);
+    const observe = () => engine.execute({operation:'snapshot',target_id:target,compact:true});
+    const url = `http://127.0.0.1:${server.address().port}`;
+    await page.goto(url); await observe();
+    await page.goto(`${url}/other`); await observe();
+    await page.goto(url);
+    const old = await observe();
+    const reference = result => result.text.match(/button "Apply once" \[ref=([^\]]+)\]/)[1];
+    await page.evaluate(() => { window.cachedMarker = true; window.clicks = 0; });
+    await page.goto(`${url}/other`); await observe();
+    const history = await cdp.send('Page.getNavigationHistory');
+    await cdp.send('Page.navigateToHistoryEntry', {entryId:history.entries[history.currentIndex-1].id});
+    // A preserved JS marker proves this is cached restoration, not a new load.
+    await page.waitForFunction(() => window.cachedMarker === true, null, {timeout:5000});
+    await engine.execute({operation:'invalidate'});
+    const fresh = await observe();
+    await assert.rejects(engine.execute({operation:'click',target_id:target,
+      observation_id:old.observation_id,reference:reference(old)}), /browser_stale_reference/);
+    await engine.execute({operation:'click',target_id:target,
+      observation_id:fresh.observation_id,reference:reference(fresh)});
+    assert.equal(await page.evaluate(() => window.clicks), 1);
+    const scope = fresh.text.match(/main \[ref=([^\]]+)\]/)[1];
+    const scoped = await engine.execute({operation:'snapshot',target_id:target,compact:true,scope});
+    assert.match(scoped.text, /Apply once/);
+    await engine.execute({operation:'invalidate'});
+    await assert.rejects(engine.execute({operation:'click',target_id:target,
+      observation_id:scoped.observation_id,reference:reference(scoped)}), /browser_stale_reference/);
+    assert.equal(await page.evaluate(() => window.clicks), 1);
+  } finally {
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('snapshot references preserve iframe ownership and scoped targeting', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button onclick="window.clicked=true">Apply</button><iframe srcdoc="<main><button onclick=window.clicked=true>Apply</button></main>"></iframe>');
+    const child = page.frames().find(frame => frame.parentFrame());
+    await child.getByRole('button').waitFor();
+    const cdp = await page.context().newCDPSession(page);
+    const target = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+    await cdp.detach();
+    const engine = new Engine(browser);
+    const snapshot = await engine.execute({operation:'snapshot',target_id:target});
+    const buttons = snapshot.nodes.filter(n => n.role === 'button');
+    assert.equal(buttons.length, 2);
+    await engine.execute({operation:'click',target_id:target,observation_id:snapshot.observation_id,reference:buttons[1].reference});
+    assert.equal(await child.evaluate(() => window.clicked), true);
+    assert.equal(await page.evaluate(() => window.clicked), undefined);
+    const scope = snapshot.nodes.find(n => n.role === 'main').reference;
+    const scoped = await engine.execute({operation:'snapshot',target_id:target,scope});
+    await child.evaluate(() => { window.clicked = false; });
+    await engine.execute({operation:'click',target_id:target,observation_id:scoped.observation_id,
+      reference:scoped.nodes.find(n => n.role === 'button').reference});
+    assert.equal(await child.evaluate(() => window.clicked), true);
+    assert.equal(await page.evaluate(() => window.clicked), undefined);
+  } finally { await browser.close(); }
+});
