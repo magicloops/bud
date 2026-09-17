@@ -66,7 +66,7 @@ New thread creation view - allows users to start a new conversation.
   2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id, message }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
-- View mode toggle (terminal/web)
+- Terminal toggle; Web view is hidden until a proxy is attached to a thread
 - The shared `ViewMode` type includes `file`, but new-thread mode does not surface the file toggle because no opened file exists yet
 - Top bar title remains the static `New Thread`
 
@@ -185,6 +185,7 @@ loader: async ({ params }) => {
 
 9. **Web View**
    - Delegates proxied-site and thread web-view state to `useWebView(...)`
+   - Exposes the Web view toolbar button only while that thread has an attached proxy, including during transport errors
    - The Web view tab can create or reuse an owned loopback proxied site for
      the current Bud
    - Existing owned sites can be attached to the thread so multiple threads can
@@ -225,7 +226,7 @@ web/file view. No storage.
 status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
-viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
+viewMode: 'chat' | 'terminal' | 'web' | 'file' | 'browser' | 'none'  // chat-first: desktop starts 'none' (viewer collapsed); clicking the active tab collapses
 transcriptMode: 'chat' | 'model'  // session-only, reset on thread switch; 'model' hides the mounted ChatTimeline while showing ModelContextView, preserving inspection/disclosure
 terminalMenuOpen: boolean
 
@@ -361,7 +362,7 @@ and clears after a supported deliberate replacement.
 
 ## Web streaming parity (September 13, 2026)
 
-Thread content is keyed by thread ID. State/bootstrap refreshes capture the current
+Thread content is keyed by authenticated owner and thread ID. State/bootstrap refreshes capture the current
 visit, request sequence and stream revision; obsolete responses cannot rewind
 streamed activity. `message_done` classification reaches message state immediately,
 and explicit nonempty final completion suppresses progress before persistence.
@@ -384,3 +385,40 @@ progress. See [debug note](../../../../debug/web-spinner-stale-snapshot.md).
 Post-send durable admission (`pending`/`leased`/`running` with inactive runtime)
 keeps dispatching progress visible through worker startup. Accepted blocked/waiting
 or terminal states still clear it; no cosmetic timer masks the transition.
+
+## Browser pane integration
+
+`useBrowserPane` owns one bounded inventory poll and visit-local reveal identities.
+Canonical successful browser_open results and committed handoff tool events reveal
+Browser once. Existing history and first inventory are baselines; repeated events
+never override dismissal. Explicit inline links use the same open context. The
+shared viewer uses the right split pane (narrow layouts: a peer view); its identity
+survives resize/polling. Composer autofocus is keyed to thread, not viewer mode,
+so automatic reveals do not steal focus. Terminal receives its existing hidden
+file-overlay mode while Browser is selected. Dismissal releases viewer control
+without closing the remote browser or resuming the agent. New-thread layout needs
+no discovery until creation navigates into the existing-thread route.
+
+The browser inventory supplies a chat notice when browser actions are paused,
+with Open browser controls to reach the existing explicit return flow. It does
+not disable the composer or imply all agent work is paused. New threads have no
+browser session, so their layout remains unchanged.
+
+The browser-paused chat notice offers Return to agent directly while the mounted
+viewer owns private control, using that viewer’s existing authenticated action.
+Otherwise it offers Open browser controls; chat never acquires control implicitly.
+
+
+The thread supplies the shared browser wait-action context: mounted-viewer return,
+matching-session control errors and authenticated invocation-specific cancellation.
+The previous top-of-chat return notice is replaced by durable inline cards.
+
+
+Browser wait actions receive visibleSessionId only in browser view mode; selecting another pane restores the inline Open browser entry point.
+
+## Turn timing wiring
+
+The existing-thread route forwards `agent.turn_timing` to the message hook's
+settled lookup and passes that lookup to ChatTimeline. The owner/thread-keyed
+workbench remount clears it on identity changes. Timing callbacks do not mutate
+turn/spinner status or trigger transcript refreshes.

@@ -1,3 +1,5 @@
+import { hydrateBrowserImages } from "../browser/image-artifacts.js";
+import { isBrowserToolName } from "./browser-tools.js";
 import { isAutomationToolName, parseAutomationToolInput } from "../personal-data/automation-tool-contracts.js";
 import { ulid } from "ulid";
 import type { FastifyBaseLogger } from "fastify";
@@ -352,7 +354,10 @@ export class AgentModelRunner {
     };
 
     try {
-      for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
+      const hydratedMessages = await hydrateBrowserImages(messages, invocationContext,
+        provider.getModelCapabilities(model).supportsVision);
+      signal?.throwIfAborted();
+      for await (const event of provider.invoke(hydratedMessages, tools, modelConfig, signal, invocationContext)) {
         // Only productive boundaries change activity. Tail metadata for older
         // blocks must not steal activity from newer text.
         if (event.type === "tool_use_start" ||
@@ -640,6 +645,10 @@ export class AgentModelRunner {
 
   private extractToolCallDirective(toolCall: CanonicalToolCall): AgentToolCallDirective | null {
     const args = toolCall.input;
+    // Preserve invalid calls as directives so execution can return a paired
+    // validation error, rather than silently dropping a provider call ID.
+    if (isBrowserToolName(toolCall.name)) return { type: "tool_call", tool: toolCall.name,
+      callId: toolCall.id, args };
     if (isAutomationToolName(toolCall.name)) return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
       args: parseAutomationToolInput(toolCall.name, args) };
 

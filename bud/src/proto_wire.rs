@@ -1585,6 +1585,8 @@ fn payload_field_for_frame_type(frame_type: &str) -> Option<u32> {
         "proxy_ws_message" => 184,
         "proxy_ws_close" => 185,
         "proxy_ws_error" => 186,
+        "browser_command" => 190,
+        "browser_result" => 191,
         _ => return None,
     })
 }
@@ -1627,6 +1629,8 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
         184 => "proxy_ws_message",
         185 => "proxy_ws_close",
         186 => "proxy_ws_error",
+        190 => "browser_command",
+        191 => "browser_result",
         _ => return None,
     })
 }

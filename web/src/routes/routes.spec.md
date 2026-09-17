@@ -8,6 +8,14 @@ Defines the application's route structure using TanStack Router's file-based rou
 
 ## Files
 
+### `browser.$sessionId.tsx`
+
+Standalone `/browser/$sessionId` viewer for the Bud-owned browser. Root auth
+session gates mounting; owner/session identity keys all viewer state and cleanup.
+`features/browser/viewer.tsx` owns metadata, control and media. Session IDs confer
+no access; the service authorizes each route and media connection against owner,
+thread, Bud and live auth session. No browser page contents enter route loaders.
+
 ### `__root.tsx`
 
 Root layout component wrapping all routes.

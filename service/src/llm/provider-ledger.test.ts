@@ -7,6 +7,7 @@ import {
   loadProviderLedgerMessages,
   loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
+  loadLatestContextUsageAnchor,
   recordLlmToolResultItem,
 } from "./provider-ledger.js";
 
@@ -525,4 +526,26 @@ test("loadProviderLedgerMessages derives historical OpenAI assistant phases", as
     ],
     [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
   ]);
+});
+
+
+test("completed baseline survives ledger persistence and fresh lookup", async (t) => {
+  t.after(() => mock.restoreAll());
+  let stored: Record<string, unknown> = {};
+  mock.method(db, "transaction", async (fn: (tx: unknown) => Promise<unknown>) => fn({
+    insert: () => ({ values: (row: Record<string, unknown>) => { stored = structuredClone(row); } }),
+  }));
+  const baseline = { version: 1 as const, identity: "identity", prefix_hash: "prefix", message_count: 2 };
+  await recordLlmCall({ llmCallId: "call-1", threadId: "thread-1", turnId: "turn-1", stepIndex: 0,
+    provider: "openai", model: "test", requestMode: "openai_responses", output: [],
+    ownerUserId: "owner-1", contextBaseline: baseline, usage: { input_tokens: 100, output_tokens: 10 } });
+  assert.equal(stored.status, "completed");
+  assert.equal(stored.createdByUserId, "owner-1");
+  mock.method(db, "select", () => ({ from: () => ({ where: () => ({ orderBy: () => ({
+    limit: async (limit: number) => { assert.equal(limit, 1); return [{ llmCallId: stored.llmCallId,
+      usage: stored.usage, metadata: stored.cacheMetadata }]; },
+  }) }) }) }) as never);
+  assert.deepEqual(await loadLatestContextUsageAnchor("thread-1"), {
+    llmCallId: "call-1", baseline, usage: { input_tokens: 100, output_tokens: 10 },
+  });
 });

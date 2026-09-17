@@ -6,7 +6,6 @@ import {
   type MessageSource,
 } from "../../agent/conversation-loader.js";
 import { applyRuntimeInstructionsWithSources } from "../../agent/environment.js";
-import { resolveAgentToolsForEnvironment } from "../../agent/tool-definitions.js";
 import {
   estimateCanonicalMessagesTokens,
   estimateCanonicalToolsTokens,
@@ -187,13 +186,14 @@ export async function registerThreadModelContextRoutes(
         : undefined,
     );
     const environment = await agentService.getEnvironmentForBud(thread.budId);
+    const tools = await agentService.getContextTools(environment, thread.threadId, access.viewer.userId);
     const withRuntime = applyRuntimeInstructionsWithSources(loaded.messages, loaded.sources, environment);
 
     const runtimeSnapshot = agentRuntime.getSnapshot(thread.threadId);
     const contextBudget =
       runtimeSnapshot.active && runtimeSnapshot.context_budget
         ? runtimeSnapshot.context_budget
-        : await getThreadContextBudgetSnapshot({ thread, runtimeSnapshot });
+        : await getThreadContextBudgetSnapshot({ thread, runtimeSnapshot, environment, tools });
 
     reply.send(
       buildModelContextDocument({
@@ -203,7 +203,7 @@ export async function registerThreadModelContextRoutes(
         turnActive: runtimeSnapshot.active === true,
         messages: withRuntime.messages,
         sources: withRuntime.sources,
-        tools: resolveAgentToolsForEnvironment(environment),
+        tools,
         compaction: loaded.reconstruction.checkpointApplied && loaded.reconstruction.checkpointId
           ? {
               checkpointId: loaded.reconstruction.checkpointId,

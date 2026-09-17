@@ -1,0 +1,288 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { config } from "../config.js";
+import * as schema from "../db/schema.js";
+import { InvocationRepository } from "../agent/invocation-repository.js";
+import { BrowserRepository } from "./repository.js";
+import { BrowserToolWait } from "../agent/browser-tool-executor.js";
+import { BrowserControlRepository } from "./control-repository.js";
+
+test(
+  "durable browser wait survives restart and pairs multi-call continuations once",
+  { skip: process.env.BUD_DATA_DB_TEST !== "1" },
+  async (t) => {
+    assert.ok(
+      ["localhost", "127.0.0.1"].includes(new URL(config.databaseUrl).hostname),
+    );
+    const name = `browser_continuation_${randomUUID().replaceAll("-", "")}`;
+    const pool = new Pool({
+      connectionString: config.databaseUrl,
+      max: 3,
+      options: `-c search_path=${name}`,
+    });
+    t.after(async () => {
+      await pool.query(`drop schema ${name} cascade`);
+      await pool.end();
+    });
+    await pool.query(`create schema ${name}`);
+    // Isolate worker tables from the running development service. Migrations/FKs
+    // are separately exercised by repository.test.ts; LIKE does not clone FKs.
+    const tables = (
+      await pool.query(
+        "select tablename from pg_tables where schemaname='public'",
+      )
+    ).rows;
+    for (const { tablename } of tables) {
+      if (!/^[a-z_]+$/.test(tablename)) continue;
+      await pool.query(
+        `create table ${name}.${tablename} (like public.${tablename} including all)`,
+      );
+    }
+    const database = drizzle(pool, { schema });
+    const repo = new InvocationRepository(database);
+    const controls = new BrowserControlRepository(pool);
+    await database.insert(schema.budTable).values({
+      budId: "bud",
+      name: "Fixture",
+      os: "test",
+      arch: "test",
+      createdByUserId: "alice",
+    });
+    for (const provider of [
+      "openai",
+      "anthropic",
+      "ds4",
+      "cancel",
+      "user-tool",
+      "user-idle",
+      "return-control",
+    ]) {
+      const returnControl = provider === "return-control";
+      const userTakeover = provider.startsWith("user-") || returnControl;
+      const idle = provider === "user-idle";
+      const thread = randomUUID();
+      await database
+        .insert(schema.threadTable)
+        .values({ threadId: thread, budId: "bud", createdByUserId: "alice" });
+      await repo.admit({
+        owner: "alice",
+        threadId: thread,
+        origin: "human",
+        idempotencyKey: thread,
+        text: "Use browser",
+        model: "fixture",
+        reasoningEffort: "none",
+      });
+      const lease = await repo.claim("worker", "alice");
+      assert.ok(lease);
+      await repo.start(lease);
+      await pool.query("update agent_invocation set work_started_at=clock_timestamp()-interval '2 seconds' where id=$1", [lease.id]);
+      const callId = randomUUID(),
+        clientId = randomUUID(),
+        llmId = randomUUID(),
+        sessionId = `browser_${randomUUID()}`;
+      if (!userTakeover)
+        await repo.recordAction(lease, callId, "browser_request_handoff");
+      await database.insert(schema.browserSessionTable).values({
+        id: sessionId,
+        threadId: thread,
+        budId: "bud",
+        createdByUserId: "alice",
+        generation: "generation",
+        bootId: "boot",
+      });
+      await database.insert(schema.llmCallTable).values({
+        llmCallId: llmId,
+        threadId: thread,
+        turnId: lease.turnId,
+        stepIndex: 0,
+        provider,
+        model: "fixture",
+        requestMode: provider,
+        createdByUserId: "alice",
+      });
+      if (!idle)
+        await database.insert(schema.llmCallItemTable).values(
+          [
+            {
+              id: callId,
+              name: userTakeover
+                ? "browser_observe"
+                : "browser_request_handoff",
+              input: { reason: "Sign in" },
+            },
+            {
+              id: `later-${callId}`,
+              name: "browser_act",
+              input: { action: "click", reference: "old-reference" },
+            },
+          ].map((block, sequence) => ({
+            llmCallItemId: randomUUID(),
+            llmCallId: llmId,
+            threadId: thread,
+            direction: "output",
+            kind: "tool_use",
+            sequence,
+            toolCallId: block.id,
+            canonicalPayload: { type: "tool_use", ...block },
+            createdByUserId: "alice",
+          })),
+        );
+      if (returnControl) {
+        await pool.query("update browser_session set control_state='human_private',private_content=true where id=$1",[sessionId]);
+        await repo.recordAction(lease,callId,"browser_observe");
+        await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
+          turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
+          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"observe"}),BrowserToolWait);
+        assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
+      }
+      const handoff = returnControl ? null : userTakeover
+        ? await controls.requestUser("alice", sessionId)
+        : await controls.requestAgent({
+            ownerUserId: "alice",
+            threadId: thread,
+            budId: "bud",
+            turnId: lease.turnId,
+            invocation: {
+              id: lease.id,
+              fence: lease.fence,
+              workerId: lease.workerId!,
+            },
+            signal: new AbortController().signal,
+            directive: {
+              type: "tool_call",
+              tool: "browser_request_handoff",
+              callId,
+              args: { reason: "Sign in" },
+            },
+            clientId,
+            llmCallId: llmId,
+            startedAt: new Date(),
+            remainingCalls: [],
+          });
+      let paused = await controls.prepare(
+        "alice",
+        sessionId,
+        "boot",
+        0,
+        "pause",
+        { action: "control", operation: "pause" },
+        "paused",
+      );
+      if (returnControl) { /* Already atomically parked at admission. */ }
+      else if (userTakeover)
+        assert.ok(
+          await repo.parkUserBrowserHandoff(
+            lease,
+            idle ? undefined : { callId, tool: "browser_observe" },
+          ),
+        );
+      else
+        await repo.parkBrowserHandoff(
+          lease,
+          callId,
+          (handoff as { id: string }).id,
+        );
+      const timingAtPark = (await pool.query("select work_duration_ms,work_started_at from agent_invocation where id=$1", [lease.id])).rows[0];
+      assert.equal(timingAtPark.work_started_at, null);
+      assert.ok(Number(timingAtPark.work_duration_ms) >= 2000);
+      await assert.rejects(repo.heartbeat(lease), /lease_lost/);
+      assert.equal(await repo.claim("other", "alice"), null);
+      const recovered = await new InvocationRepository(
+        database,
+      ).pendingBrowserHandoffForThread("alice", thread);
+      assert.ok(recovered?.pending_tool.client_id);
+      if (!userTakeover)
+        assert.equal(recovered?.pending_tool.client_id, clientId);
+      assert.equal(
+        await repo.pendingBrowserHandoffForThread("bob", thread),
+        null,
+      );
+      assert.ok(await controls.pending("alice", sessionId));
+      if (provider === "openai") {
+        paused = await controls.prepare("alice", sessionId, "boot", paused.session.revision,
+          "acquire", { action: "control", operation: "acquire" }, "human_private");
+      }
+      if (returnControl) {
+        await repo.admit({owner:"alice",threadId:thread,origin:"human",idempotencyKey:`${thread}-second`,text:"Browse too",model:"fixture",reasoningEffort:"none"});
+        const second=await repo.claim("second","alice"); assert.ok(second); await repo.start(second);
+        await repo.recordAction(second,"second-call","browser_act");
+        await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
+          turnId:second.turnId,invocation:{id:second.id,fence:second.fence,workerId:second.workerId!},
+          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"click"}),BrowserToolWait);
+        assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,2);
+        await repo.requestCancel("alice",second.id);
+        assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,1);
+      }
+      // Private browser work must not reserve the entire conversation. A newer
+      // chat can execute, while the original handoff remains durably parked.
+      const followup = await repo.admit({ owner: "alice", threadId: thread,
+        origin: "human", idempotencyKey: `${thread}-followup`, text: "Explain this while I sign in",
+        model: "fixture", reasoningEffort: "none" });
+      const chatting = await repo.claim("chat-worker", "alice");
+      assert.equal(chatting?.id, followup.invocation.id);
+      assert.ok(chatting);
+      await repo.start(chatting);
+      assert.deepEqual(await repo.prepareQuestionContinuation(chatting), []);
+      assert.equal(await repo.claim("concurrent", "alice"), null);
+      if (provider === "cancel") await repo.requestCancel("alice", lease.id);
+      const returning = await controls.prepare(
+        "alice",
+        sessionId,
+        "boot",
+        paused.session.revision,
+        "return",
+        { action: "control", operation: "prepare_return" },
+        "resume_pending",
+      );
+      await controls.returned(
+        "alice",
+        sessionId,
+        returning.session.revision,
+        "done",
+      );
+      // Return does not run two model loops in the same conversation.
+      assert.equal(await repo.claim("while-chatting", "alice"), null);
+      await repo.finish(chatting, "succeeded", "done");
+      if (provider === "cancel") {
+        assert.equal(await repo.claim("after-cancel", "alice"), null);
+        continue;
+      }
+      const resumed = await new InvocationRepository(database).claim(
+        "resumed",
+        "alice",
+      );
+      assert.ok(resumed);
+      assert.equal(resumed.id, lease.id);
+      assert.equal(resumed.turnId, lease.turnId);
+      await repo.start(resumed);
+      await pool.query("update agent_invocation set work_started_at=clock_timestamp()-interval '3 seconds' where id=$1", [resumed.id]);
+      const results = await repo.prepareQuestionContinuation(resumed);
+      assert.equal(results.length, idle ? 1 : 2);
+      if (idle) {
+        assert.equal(results[0].role, "system");
+        assert.match(results[0].content, /Observe the current page/);
+      }
+      if (!idle) {
+        if (userTakeover)
+          assert.match(
+            results[0].content,
+            /not_executed_due_to_browser_handoff/,
+          );
+        else {
+          assert.equal(results[0].clientId, clientId);
+          assert.equal(JSON.parse(results[0].content).ok, true);
+        }
+        assert.match(results[1].content, /not_executed_due_to_browser_handoff/);
+      }
+      assert.deepEqual(await repo.prepareQuestionContinuation(resumed), []);
+      await repo.finish(resumed, "succeeded", "done");
+      const completed = (await pool.query("select work_duration_ms,work_started_at from agent_invocation where id=$1", [resumed.id])).rows[0];
+      assert.equal(completed.work_started_at, null);
+      assert.ok(Number(completed.work_duration_ms) >= Number(timingAtPark.work_duration_ms) + 3000);
+    }
+  },
+);

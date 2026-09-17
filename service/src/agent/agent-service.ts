@@ -1,3 +1,8 @@
+import { captureContextBaseline } from "./context-accounting.js";
+import { loadLatestContextUsageAnchor } from "../llm/provider-ledger.js";
+import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentContext } from "./browser-tool-executor.js";
+import { validBrowserInput } from "./browser-tools.js";
+import { isBrowserToolDirective, type AgentToolCallDirective } from "./contracts.js";
 import { WebRetrievalToolExecutor } from "./web-retrieval-tool-executor.js";
 import { isWebRetrievalToolDirective } from "./contracts.js";
 import { DataRequestError } from "../personal-data/contracts.js";
@@ -56,7 +61,7 @@ import {
       isAutomationToolDirective,
 	} from "./contracts.js";
 import {
-  buildAgentEnvironmentInstruction,
+  applyRuntimeInstructions,
   buildAgentEnvironmentSnapshot,
   type AgentEnvironmentSnapshot,
 } from "./environment.js";
@@ -91,6 +96,7 @@ import {
 } from "./context-budget-state.js";
 import {
   getCurrentContextCheckpointBoundary,
+  getLatestCompletedContextCheckpoint,
   type AgentContextCheckpointPhase,
   type AgentContextCheckpointReason,
   type AgentContextCheckpointTrigger,
@@ -135,6 +141,7 @@ export class AgentService {
     private readonly appPermissionsEnabled = false,
     private readonly automationToolsEnabled = false,
     private readonly existingContactReviewsEnabled = false,
+    private readonly browserToolExecutor?: BrowserToolExecutor,
   ) {
     this.terminalSessionManager = terminalSessionManager;
     this.runtime = runtime;
@@ -255,6 +262,22 @@ export class AgentService {
       });
       throw err;
     }
+  }
+
+  async getContextTools(environment: AgentEnvironmentSnapshot, threadId: string, ownerUserId: string | null,
+    hooks?: AgentExecutionHooks): Promise<CanonicalTool[]> {
+    const context: BrowserAgentContext = { threadId, turnId: "", budId: environment.bud_id, ownerUserId: ownerUserId ?? "", signal: new AbortController().signal, invocation: hooks?.invocation };
+    const durable = Boolean(this.durableInvocations);
+    const browserEligible = hooks ? Boolean(hooks.invocation) : durable;
+    const browser = Boolean(browserEligible && this.browserToolExecutor && ownerUserId && environment.mode === "normal" &&
+      await this.browserToolExecutor.available(context));
+    const browserHandoff = Boolean(browser && this.browserToolExecutor && await this.browserToolExecutor.canHandoff(context));
+    return resolveAgentToolsForEnvironment(environment, {
+      browser, browserHandoff,
+      appPermissions: this.appPermissionsEnabled && (hooks ? Boolean(hooks.parkAppDataRequest) : durable),
+      automations: this.automationToolsEnabled && (hooks ? Boolean(hooks.executeAutomationTool && hooks.parkAutomationProposal) : durable),
+      existingContactReviews: this.existingContactReviewsEnabled && (hooks ? Boolean(hooks.parkBootstrapProposal) : durable),
+    });
   }
 
   async cancelThread(threadId: string): Promise<void> {
@@ -526,6 +549,22 @@ export class AgentService {
     let conversation = loadedConversation.messages;
     let reconstruction = loadedConversation.reconstruction;
     const compactedBoundaryKeys = new Set<string>();
+    const browserContext = (): BrowserAgentContext => ({ threadId, turnId,
+      budId: environment.bud_id, ownerUserId: ownerUserId ?? "", signal: controller.signal,
+      invocation: args.executionHooks?.invocation });
+    const browserHandoffAvailable = async () => Boolean(this.browserToolExecutor && ownerUserId &&
+      environment.mode === "normal" &&
+      await this.browserToolExecutor.canHandoff(browserContext()));
+    const browserAvailable = async () => Boolean(this.browserToolExecutor && ownerUserId &&
+      environment.mode === "normal" && await this.browserToolExecutor.available(browserContext()));
+    const parkForUserBrowser = async (nextCall?:AgentToolCallDirective) => {
+      const handoff=await args.executionHooks?.parkUserBrowserHandoff?.(nextCall);
+      if(!handoff)return false;
+      this.transcriptWriter.emitBrowserHandoff(threadId,turnId,{type:"tool_call",tool:"browser_request_handoff",
+        callId:handoff.call_id,args:{reason:"You requested browser control."}},handoff.client_id,new Date(),handoff);
+      this.cancellations.clear(threadId);
+      return true;
+    };
 	    this.debug("Starting agent run", {
 	      threadId,
 	      sessionId: currentSessionId,
@@ -563,9 +602,7 @@ export class AgentService {
         // Mirror the main-loop request shape (runtime instructions +
         // tool schemas) so the summary request shares its prompt-cache prefix.
         conversation: applyRuntimeInstructions(conversation, environment),
-        tools: resolveAgentToolsForEnvironment(environment, { appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
-          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
-          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) }),
+        tools: await this.getContextTools(environment, threadId, ownerUserId ?? null, args.executionHooks),
         ownerUserId,
         controller,
         compactedBoundaryKeys,
@@ -578,6 +615,7 @@ export class AgentService {
 
       let steps = 0;
       while (steps < config.agentMaxSteps) {
+        if(await parkForUserBrowser())return {status:"waiting_for_user"};
 	        if (controller.signal.aborted) {
 	          throw new Error("agent_canceled");
 	        }
@@ -591,13 +629,15 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
-	        const modelTools = resolveAgentToolsForEnvironment(environment, { appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
-          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
-          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) });
+	        const modelTools = await this.getContextTools(environment, threadId, ownerUserId ?? null, args.executionHooks);
 	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
 	        );
+        let contextBaseline = captureContextBaseline(conversationForModel, {
+          provider: providerName, model: modelReasoning.providerModel, reasoning: modelReasoning.reasoning,
+          requestMode: buildRequestMode(providerName), checkpointId: reconstruction.checkpointId ?? null, tools: modelTools,
+        });
         let llmCallId = createLlmCallId();
 	        let modelResult: {
 	          response: CanonicalResponse;
@@ -653,6 +693,10 @@ export class AgentService {
           loadedConversation = retryCompaction.loadedConversation;
           conversation = loadedConversation.messages;
           reconstruction = loadedConversation.reconstruction;
+          contextBaseline = captureContextBaseline(applyRuntimeInstructions(conversation, environment), {
+            provider: providerName, model: modelReasoning.providerModel, reasoning: modelReasoning.reasoning,
+            requestMode: buildRequestMode(providerName), checkpointId: reconstruction.checkpointId ?? null, tools: modelTools,
+          });
           llmCallId = createLlmCallId();
 	          await args.executionHooks?.checkpoint();
           modelResult = await this.modelRunner.invokeModel(
@@ -735,6 +779,7 @@ export class AgentService {
           assistantMessageId,
           ownerUserId,
           reconstruction,
+          contextBaseline,
         });
 
         for (const segment of reasoningSegments) {
@@ -764,9 +809,22 @@ export class AgentService {
           const toolResultBlocks: CanonicalContentBlock[] = [];
 
           for (const toolCall of toolCalls) {
+            if(await parkForUserBrowser(toolCall))return {status:"waiting_for_user"};
             await args.executionHooks?.checkpoint();
             const toolClientId = generateMessageClientId();
             const startedAt = new Date();
+            if (await browserHandoffAvailable() && isBrowserToolDirective(toolCall) && toolCall.tool === "browser_request_handoff" && validBrowserInput(toolCall.tool, toolCall.args)) {
+              if (!this.browserToolExecutor || !await browserAvailable()) throw new Error("browser_unavailable");
+              await args.executionHooks?.beforeTool(toolCall);
+              controller.signal.throwIfAborted();
+              const handoff = await this.browserToolExecutor.park({ ...browserContext(), directive: toolCall,
+                clientId: toolClientId, llmCallId, startedAt, parkDurably: args.executionHooks?.parkBrowserHandoff,
+                remainingCalls: toolCalls.slice(toolCalls.indexOf(toolCall) + 1) });
+              controller.signal.throwIfAborted();
+              this.transcriptWriter.emitBrowserHandoff(threadId, turnId, toolCall, toolClientId, startedAt, handoff);
+              this.cancellations.clear(threadId);
+              return { status: "waiting_for_user" };
+            }
             let reviewRequestFailure: DataRequestError | null = null;
             let bootstrapNoWork: Record<string, unknown> | null = null;
             if (toolCall.tool === "automations_request_activation") {
@@ -848,7 +906,7 @@ export class AgentService {
 	              sessionId: currentSessionId,
 	              threadId,
 	              tool: effectiveToolCall.tool,
-              ...((isWebRetrievalToolDirective(effectiveToolCall) || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
+              ...((isBrowserToolDirective(effectiveToolCall) || isWebRetrievalToolDirective(effectiveToolCall) || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
               callId: effectiveToolCall.callId,
 	            });
 
@@ -884,6 +942,19 @@ export class AgentService {
             if (isTerminalToolDirective(effectiveToolCall)) {
               execution = await this.toolExecutor.execute(threadId, effectiveToolCall);
               shouldRefreshContext = effectiveToolCall.tool !== "terminal.observe";
+            } else if (isBrowserToolDirective(effectiveToolCall)) {
+              if (!this.browserToolExecutor) throw new Error("browser_unavailable");
+              try {
+                execution = await this.browserToolExecutor.execute({ ...browserContext(),
+                  waitClientId: args.executionHooks?.browserWaitParked ? toolClientId : undefined }, effectiveToolCall);
+              } catch (error) {
+                if (!(error instanceof BrowserToolWait)) throw error;
+                args.executionHooks!.browserWaitParked!();
+                this.transcriptWriter.emitBrowserHandoff(threadId, turnId, effectiveToolCall,
+                  toolClientId, startedAt, error.handoff);
+                this.cancellations.clear(threadId);
+                return { status: "waiting_for_user" };
+              }
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {
@@ -1213,12 +1284,18 @@ export class AgentService {
       model: args.model,
       modelReasoning: args.modelReasoning,
     });
+    const checkpoint = await getLatestCompletedContextCheckpoint(args.threadId);
+    const usageAnchor = await loadLatestContextUsageAnchor(args.threadId);
     const checkedAt = new Date();
     const decision = buildContextBudgetDecision({
       model: args.model,
       provider: args.providerName,
       budget,
       conversation: args.conversation,
+      checkpoint, usageAnchor,
+      requestIdentity: { provider: args.providerName, model: args.modelReasoning.providerModel,
+        reasoning: args.modelReasoning.reasoning, requestMode: buildRequestMode(args.providerName),
+        checkpointId: checkpoint?.checkpointId ?? null, tools: args.tools },
       source: "active_agent_decision",
       phase: args.phase,
       reason: args.reason,
@@ -1702,7 +1779,8 @@ function buildCompactionDecisionLogMeta(args: {
     force: args.force,
     conversationMessages: args.conversationMessages,
     estimatedTokens: args.estimatedTokens,
-    estimateBasis: "model_agnostic_estimate",
+    estimateBasis: args.snapshot.status === "available" ? args.snapshot.basis : null,
+    anchorCallId: args.snapshot.status === "available" ? args.snapshot.provider_usage_estimate?.llm_call_id ?? null : null,
     thresholdTokens: args.budget.thresholdTokens,
     thresholdRatio: args.budget.thresholdRatio,
     percentOfThreshold: safeTokenRatio(args.estimatedTokens, args.budget.thresholdTokens),
@@ -1799,29 +1877,6 @@ function applyOpenAIAssistantPhaseFallback(
       assistantPhase: fallbackPhase,
     };
   });
-}
-
-function applyRuntimeInstructions(
-  conversation: CanonicalMessage[],
-  environment: AgentEnvironmentSnapshot,
-): CanonicalMessage[] {
-  const instructions = [
-    buildAgentEnvironmentInstruction(environment),
-  ].filter((instruction): instruction is string => Boolean(instruction));
-
-  if (instructions.length === 0) {
-    return conversation;
-  }
-
-  const runtimeMessages: CanonicalMessage[] = instructions.map((instruction) => ({
-    role: "system",
-    content: instruction,
-  }));
-  const [first, ...rest] = conversation;
-  if (first?.role === "system") {
-    return [first, ...runtimeMessages, ...rest];
-  }
-  return [...runtimeMessages, ...conversation];
 }
 
 function formatTerminalPathContext(pathContext: TerminalPathContext | null): string | null {

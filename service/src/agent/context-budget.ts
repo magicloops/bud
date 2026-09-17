@@ -8,9 +8,7 @@ import {
   type ResolvedModelReasoning,
 } from "../llm/index.js";
 
-// Codex parity (90% of the active window). Also the clamp: our trigger is a
-// chars/4 estimate of the next request, and code tokenizes closer to 3
-// chars/token, so the 10% margin absorbs estimate error.
+// Preserve the 90% policy; heuristic error is not bounded by this margin.
 const DEFAULT_AUTO_COMPACTION_RATIO = 0.9;
 const MESSAGE_TOKEN_OVERHEAD = 8;
 const CONTENT_BLOCK_TOKEN_OVERHEAD = 4;

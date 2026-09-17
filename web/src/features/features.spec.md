@@ -8,6 +8,11 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ## Subfolders
 
+### `browser/` → [browser/browser.spec.md](./browser/browser.spec.md)
+
+Bud-owned remote browser viewer, imperative bounded canvas/media lifecycle,
+private human controls and thread session discovery. Separate from app proxies.
+
 ### `threads/` → [threads/threads.spec.md](./threads/threads.spec.md)
 
 Thread-scoped browser runtime logic extracted from `/$budId/$threadId`,

@@ -430,3 +430,24 @@ and database pools. Human review and ownership checks remain enforced.
 Database admission locks still reject overlapping legacy processes and unresolved
 legacy questions on cutover; removing feature flags does not bypass data integrity.
 See [rollout plan](../../plan/rolled-out-capability-defaults.md).
+
+## Browser runtime composition
+
+`browser/` ([spec](./browser/browser.spec.md)) provides the production broker,
+fenced repository, bounded transport correlation and owned cleanup. `server.ts`
+checks the additive browser table before starting the invocation worker, supplies
+`BrowserToolExecutor` with that broker, starts cleanup and stops it during close.
+No prototype host/relay is involved. Phase 2 also composes control recovery,
+authorized viewer routes and a separate bounded media WebSocket relay before
+worker startup. Shutdown stops media/capture eligibility before pool disposal.
+The daemon media URL derives from the configured public Better Auth origin.
+Browser handoffs reuse normal agent transcript/SSE and durable invocation waits;
+private images and input never enter those channels.
+
+## Turn timing composition
+
+`server.ts` subscribes the shared DB's post-commit invocation timing publisher to
+`agentRuntime.emit(... agent.turn_timing ...)` and unsubscribes on close. Readiness
+invalidates inconsistent leftover intervals and expired running intervals; valid
+running leases survive overlapping startup. Migration 0043 is required first.
+Existing lease recovery remains responsible for invocation lifecycle recovery.

@@ -274,6 +274,41 @@
       "when": 1788992897387,
       "tag": "0038_automation_model_inheritance",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789430565387,
+      "tag": "0039_tiny_loners",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789432948050,
+      "tag": "0040_broad_cassandra_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789434420389,
+      "tag": "0041_cool_lyja",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1789514203535,
+      "tag": "0042_foamy_invisible_woman",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1789590218073,
+      "tag": "0043_redundant_raza",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,16 @@
+import { subscribeTurnTimings } from "./agent/invocation-timing.js";
 import { retrievalAvailable } from "./web-retrieval/config.js";
+import { BrowserBroker } from "./browser/broker.js";
+import { BrowserMedia } from "./browser/media.js";
+import { registerBrowserRoutes } from "./browser/routes.js";
+import { BrowserToolExecutor } from "./agent/browser-tool-executor.js";
 import { RetrievalRepository } from "./web-retrieval/repository.js";
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
 import { authPool, registerAuthRoutes } from "./auth/auth.js";
 import { registerBudRoutes } from "./routes/buds.js";
-import { pool } from "./db/client.js";
+import { db, pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
 import { TerminalEventBus } from "./runtime/event-bus.js";
@@ -131,6 +136,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   const terminalEvents = new TerminalEventBus();
   const agentRuntime = new AgentRuntimeStateManager();
+  const unsubscribeTiming = subscribeTurnTimings(db, (threadId, timing) => {
+    agentRuntime.emit(threadId, { event: "agent.turn_timing", data: timing });
+  });
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
@@ -139,6 +147,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   initializeProviders();
 
   const agentLogger = server.log.child({ component: "agent" });
+  const browserBroker = new BrowserBroker();
+  const browserMediaUrl = new URL("/ws/browser-media",config.betterAuthUrl);
+  browserMediaUrl.protocol = browserMediaUrl.protocol === "https:" ? "wss:" : "ws:";
+  const browserMedia = new BrowserMedia(browserBroker.control,browserMediaUrl.toString());
   const invocations = invocationSettings.mode === "durable"
     ? new InvocationRepository(undefined, invocationSettings.automationConcurrencyPerBud)
     : undefined;
@@ -152,6 +164,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     invocationSettings.appKeysEnabled,
     invocationSettings.automationProposalsEnabled,
     invocationSettings.bootstrapProposalsEnabled,
+    new BrowserToolExecutor(browserBroker),
   );
   const invocationWorker = invocations ? new InvocationWorker(
     new ServiceInvocationExecutor(agentService, undefined, undefined, undefined,
@@ -179,6 +192,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await pool.query("select id, verification_hash, encrypted_envelope from data_app_key limit 0");
     }
     if (invocations) {
+      await invocations.invalidateInterruptedTiming();
       // Recovery reads these tables regardless of new-proposal issuance flags.
       await verifyAutomationProposalSchema(pool);
       await verifyBootstrapProposalSchema(pool);
@@ -195,7 +209,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       retrievalCleanupTimer = setInterval(cleanRetrieval, 60000);
       retrievalCleanupTimer.unref();
     }
+    await pool.query("select id, generation, control_epoch, control_state, revision, private_content from browser_session limit 0");
+    await pool.query("select id, session_id, invocation_id, call_id, status from browser_handoff limit 0");
+    await browserBroker.control.repository.recover();
     invocationWorker?.start();
+    browserBroker.start(() => server.log.warn({component:"browser",code:"cleanup_failed"},"Browser cleanup failed"));
     server.log.info({ admission_mode: invocationSettings.mode,
       automation_concurrency_per_bud: invocationSettings.automationConcurrencyPerBud,
       automations_enabled: invocationSettings.automationsEnabled,
@@ -218,6 +236,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   let grpcDataGateway: Awaited<ReturnType<typeof startGrpcDataGateway>>;
   let stopPersonalData = async () => {};
   server.addHook("preClose", async () => {
+    browserMedia.stop();
+    await browserBroker.stop();
     await automationWorker?.stop();
     await invocationWorker?.stop();
   });
@@ -231,6 +251,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     await grpcControlGateway?.close();
     pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();
+    unsubscribeTiming();
     await releaseInvocationMode?.();
     await authPool.end();
     await pool.end();
@@ -248,6 +269,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerAuthRoutes(server);
+  await registerBrowserRoutes(server,browserBroker.control,browserMedia);
   await registerDeviceInstallClaimRoutes(server);
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);

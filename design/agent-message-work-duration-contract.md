@@ -1,6 +1,10 @@
 # Design: Agent Message Work Duration Contract
 
-Status: Draft
+Status: Historical per-message design. Whole-turn aggregation superseded on
+2026-09-16 by [service-owned turn timing](../plan/service-owned-turn-timing.md).
+Message metadata remains for individual detail rows. The group calculations,
+legacy fallback and proposed future turn envelope below are historical guidance,
+not the current Worked for contract.
 
 Audience: Backend, iOS, web, product
 

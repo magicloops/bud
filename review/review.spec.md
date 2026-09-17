@@ -14,6 +14,13 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `agent-tools-and-context-building.md`
+
+Current request-building review: conversation reconstruction, dynamic tool selection,
+execution authority, provider invocation and shared accounting. Explains the missing
+invocation browser-catalog regression, its fix, and remaining preview/preparation
+coupling with bounded follow-up recommendations.
+
 ### `web-streaming-behavior.md`
 
 Review of web live work grouping, commentary visibility, completion disclosures and spinner suppression. Records current implementation gaps against the requested streaming experience and validation needs without changing application behavior.

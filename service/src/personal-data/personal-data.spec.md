@@ -335,3 +335,10 @@ Lists/details return `model_resolution` for active behavior and
 Delivery history returns actual invocation model/effort and its recorded resolution.
 Reads do not change preferences or grants. Migration 0038 marks prior definitions
 inherited; see [implementation plan](../../../plan/automation-model-inheritance-and-fallback.md).
+
+## Timing on automation cancellation
+
+Automation pause/delete and bootstrap cancellation use the invocation-specific
+transaction wrapper when calling nested invocation cancellation. Timing and status
+commit together; terminal timing SSE publishes only after the outer transaction
+commits. Running cancellation still waits for executor acknowledgement.

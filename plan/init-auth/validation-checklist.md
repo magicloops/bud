@@ -272,3 +272,179 @@ versioned human endpoints and their existing decision/cancellation actors.
 
 Existing owner/tenant stamping and authenticated viewer resolution are unchanged.
 Model projection reads add no grant or new management authority.
+
+## Bud-owned browser — experimental phase 0
+
+- [x] Local PostgreSQL temporary-table fixture exercises the actual executor
+  ownership SQL, including Bud mismatch/unclaim, soft deletion and withholding
+  a result when deletion happens during dispatch. This tests SQL authority only, not cookie/bearer resolution.
+
+- [x] Fixture authority rejects other owners and forged fields before relay work;
+  exact Origin and one-use host tickets are covered by relay tests.
+- [x] Agent executor fixture rejects wrong owner before dispatch and withholds
+  observations after authority changes or cancellation; transcript writes inherit
+  the invocation owner.
+- [x] Real Chrome/Rust/relay fixture fences agent observations during private
+  takeover and returns fresh evidence only after explicit viewer return. Fake
+  private input is absent from model requests.
+- [ ] Repeat owner/other-owner checks using real cookie/bearer sessions and real
+  thread/Bud rows, including revocation during an in-flight read or viewer return.
+- [ ] Before product enablement: durable handoff/worker cancellation and stale
+  fence rejection, profile ownership, device unclaim, account switching and
+  first-party web/mobile recovery. Fixture persistence does not validate these.
+
+Browser authority derives from the invocation owner and matching thread/Bud SQL
+ownership, never model arguments. Viewer authority uses the existing authenticated
+relay route before control; no new database rows are added in phase 0. See
+[findings](../bud-owned-browser/phase-0-findings.md).
+
+## Bud-owned browser — Phase 1 runtime
+
+- [x] Real normal authenticated HTTP chat reaches the actual owner-bound daemon
+  through the production broker and persists owner-stamped tool results.
+- [x] Local PostgreSQL tests reject foreign owner/Bud, stale invocation fence,
+  deleted thread and unclaimed Bud; late evidence is withheld after scope loss.
+- [x] Repository test verifies owner/tenant stamps, single active thread session,
+  durable no-replay receipt, service identity recovery and deletion close intent.
+- [x] WS/gRPC codec and transport tests reject stale tracker/generation results;
+  live Chrome manager tests reject foreign scope, stale references and duplicates.
+- [ ] Live two-account OAuth/device-unclaim race against the running browser.
+- [-] Viewer grants, browser inventory routes and handoff UI: Phase 2/3.
+
+No browser-specific viewer route was introduced. Acting identity comes from the
+admitted invocation; ownership is checked before dispatch and before page evidence
+is returned. Internal cleanup is privileged lifecycle work, never a global read API.
+
+## Bud-owned browser — Phase 2 private handoff
+
+- [x] Isolated PostgreSQL checks: foreign owner inventory/get/close excluded;
+  handoff/continuation records inherit matching owner, thread, Bud and invocation.
+- [x] Local anonymous browser-session GET returns 401 before reading content.
+- [x] Controller fixture rejects foreign owner, second controller and stale Return;
+  unknown return acknowledgement and release leave the invocation paused.
+- [x] Daemon authority fixtures reject stale/foreign controller and old-epoch agent
+  evidence; private state remains hidden after media loss/lease expiry.
+- [x] Real loopback media sockets reject ticket replay and stop sending frames
+  after auth revocation; a slow viewer cannot accumulate frames or block another.
+- [x] Canonical continuation fixtures restore one original invocation/turn across
+  OpenAI/Anthropic/ds4 ledger shapes; cancellation wins over explicit return.
+- [ ] Real cookie-authenticated owner/foreign-owner GET/list/control/input/media
+  and Origin-denied writes/upgrades, including guessed/copied session IDs.
+- [ ] Real sign-out, account switch, unclaim, thread deletion and service restart
+  revoke connected media/input; private content remains unavailable to other tabs.
+- [ ] Actual agent → viewer → private login → Return with no credential-bearing
+  input, frames or URLs in transcript, provider ledger, app/access logs.
+
+New routes resolve the live Better Auth browser session before owner-scoped SQL
+and upgrade; private control additionally binds auth session plus viewer UUID.
+Browser/handoff rows carry owner and nullable tenant; explicit return stamps the
+acting user. Tickets are memory-only and never URL parameters. See
+[implementation evidence](../../debug/bud-browser-phase-2.md).
+
+## Bud-owned browser — Phase 3a pane and viewport
+
+- [x] Controller fixture rejects foreign owner and other viewer before viewport
+  dispatch; missing capability dispatches nothing; resize preserves epoch/revision.
+- [x] Codec tests carry resize over both WS/gRPC encodings; absent capability
+  remains false and upgraded carrier advertises fitting.
+- [x] Mounted pane test suppresses initial-history/duplicate handoff reveals and
+  drops late responses from a previous thread visit.
+- [x] Live localhost HTTPS viewport POST without authentication returns 401.
+- [ ] Real cookie requests to POST `/api/browser/sessions/:id/viewport`: foreign 404 (including while owner is busy), untrusted Origin 403, malformed
+  size 400; second viewer cannot resize or receive private frames.
+- [ ] Sign-out/thread switch/dismiss during resize clears media and input; no
+  late acknowledgement reopens the pane or returns the agent's authority.
+
+Resize reuses the owned browser resource and existing controller identity, with
+owner lookup before occupancy and again inside the mutation. No rows are created;
+existing session sequence updates remain owner-authorized. No global read added.
+
+
+## Agent-owned browser fitting
+
+- [x] Controller fixtures reject foreign owners and non-elected viewers before
+  passive fit dispatch; private state cannot use passive authority.
+- [x] Live media fixtures bind sizing to owner/generation/epoch and the first
+  connected viewer, transferring eligibility after disconnect.
+- [ ] Real cookie/Origin checks for passive viewport fitting, including sign-out
+  during fit and two viewers with different sizes. Existing 401/404 rules apply.
+
+
+- [ ] Browser runtime_status is returned only after existing session/thread/Bud
+  owner checks; anonymous/foreign session reads remain 401/404. Confirmed restart
+  clears stale private UI; missing session never reveals another owner's state.
+
+### Browser viewer recovery
+
+- [ ] Recovery POST still requires a live cookie session, allowed Origin and owned
+  browser/thread/Bud before ticket validation or dispatch; foreign IDs return 404.
+- [ ] Another viewer UUID or login session cannot use a captured recovery proof.
+- [ ] Expiry, signature tampering, daemon boot/generation change, explicit release,
+  return and takeover invalidate proofs; no private pixels reach other viewers.
+- [ ] Same mounted viewer recovers through service restart without resuming agent
+  work or replaying input; duplicate recovery does not duplicate transitions.
+- [ ] Tickets do not appear in URLs, logs, transcripts or agent tool payloads.
+
+
+### Browser agent screenshots (Phase 3d)
+
+- [x] Upload fixture rejects consumed/disposed tickets, disconnected carriers,
+  revoked evidence, wrong target, malformed image and oversized request bodies.
+- [x] Immutable artifact lookup binds owner/thread/tool call; provider hydration
+  performs fresh owner authorization and does not hydrate for text-only models.
+- [ ] Real cookie and mobile bearer GET: anonymous 401, other owner/deleted
+  thread/Bud 404, sign-out/account switch during image fetch, no-store response.
+- [ ] Live takeover during capture/upload prevents late evidence reaching the
+  model; no image or upload ticket in SSE, transcript or operational logs.
+
+Artifacts stamp owner, thread, Bud, call, session/generation/epoch and document
+from the service-authorized request. No database table or global viewer read.
+
+
+- [ ] Phase 3e manual: anonymous wait state/cancel returns 401; foreign thread or
+  invocation returns 404; two owner waits recover without leaking browser content;
+  only the controlling viewer can return, and stopping an old wait preserves chat.
+
+
+## Operation-driven browser media (Phase 3h)
+
+- [x] Loopback relay fixtures revoke idle viewers when authentication or owner
+  authority fails, without requiring another screenshot. Missing frame ACK times
+  out even while native pongs continue. Live sizing authority survives idle periods.
+- [x] New/slow viewers share bounded capture credit; refresh during delivery is
+  retained. Native liveness grants neither frame credit nor private control.
+- [x] Canvas regression clears retained pixels on revocation; real Chrome tests
+  fence disconnected capture and keep private renewal independent.
+- [ ] Real two-account sign-out/unclaim/thread deletion while agent viewer is idle;
+  other owner cannot attach or retain pixels. Existing resource ownership applies.
+- [ ] Takeover while agent capture is in flight, return, service reconnect and
+  multiple real viewers: no private content reaches a passive/previous viewer.
+
+No routes or rows are added. Existing browser-session/thread/Bud owner resolution
+and authenticated viewer binding govern attachment, idle checks and delivery.
+
+## Service-owned turn timing
+
+- [x] Isolated PostgreSQL timing lookup excludes foreign owners and wrong threads,
+  deduplicates page turn IDs and exposes no open interval/worker credentials.
+- [ ] Real cookie/bearer checks: anonymous messages/state/SSE return 401; another
+  owner's thread returns 404 before timing lookup or stream attachment/replay.
+- [ ] Account switch clears loaded timing, including an in-flight latest refresh.
+
+No new resource or owner stamping. Existing authorized thread APIs carry timing;
+page lookup additionally filters invocation owner and thread in SQL.
+
+## Agent viewer continuity (Phase 3j)
+
+- [x] Relay fixtures preserve the same passive group across agent epochs and retain
+  owner-bound first-viewer sizing; private media remains epoch/controller-bound.
+- [x] An authorization result arriving after a control fence delivers no frame.
+- [x] Daemon authority fixtures reject a pre-takeover attachment even after return;
+  stale agent commands and private controller checks retain exact authority.
+- [ ] Real two-account takeover during capture, sign-out/unclaim/thread deletion,
+  return and reconnect: no private pixels reach a passive or previous viewer.
+- [ ] Real agent follow-up turns preserve media connection IDs; private takeover
+  and return replace those connections and clear old pixels.
+
+No resource or row-stamping changes. Existing authenticated browser-session,
+thread and Bud ownership gates protect metadata, attachment, idle checks and delivery.

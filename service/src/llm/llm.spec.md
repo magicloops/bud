@@ -228,6 +228,15 @@ Standalone Node tests for effective model-selection precedence.
 
 Durable provider-call ledger helpers for same-provider reconstruction and cache diagnostics.
 
+Completed agent calls atomically store optional `cache_metadata.context_baseline`
+(version, identity hash, prefix hash, message count) alongside usage/output.
+`loadLatestContextUsageAnchor(threadId)` returns only the latest completed call;
+internal callers resolve thread ownership first. Old rows fall back without a
+backfill or migration. Context accounting uses OpenAI/ds4 inclusive input and
+Anthropic input plus cache reads/writes; billing usage remains unchanged. Generic
+chat-completions and changing browser-image hydration are not anchor-compatible.
+
+
 **Responsibilities**:
 - create stable `llm_call` identifiers
 - persist one `llm_call` row per provider invocation
@@ -429,3 +438,16 @@ saved intent. Fresh unknown selections still fail; message admission explicitly
 allows known retired client submissions to fall back. Missing Bud-local models
 and provider availability failures never select cloud as a substitute. Already
 admitted invocation snapshots still use strict preflight. Tests cover each boundary.
+
+
+## Requested browser images
+
+The agent runner hydrates owner/thread/call-bound screenshot artifacts only just
+before provider invocation. Original tool_result JSON remains paired and stores
+metadata; sibling canonical text attributes each image to its call, followed by
+an actual canonical image block. Existing OpenAI `input_image` and Anthropic
+base64 image lowering is exercised in `browser/image-artifacts.test.ts`. Current
+local providers advertise no vision and receive an explicit unavailable notice
+when replaying image history; new screenshot calls reject as unsupported. No
+model switch or OCR fallback. Eight newest images maximum; no bytes in context
+diagnostics, text-token estimation, ordinary SSE or persisted tool JSON.
