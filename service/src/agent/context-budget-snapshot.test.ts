@@ -8,8 +8,10 @@ import type { AgentContextCheckpoint } from "./context-checkpoint-repository.js"
 import {
   buildContextBudgetSnapshot,
   type ContextBudgetSnapshot,
-  type ContextBudgetUsageAnchor,
 } from "./context-budget-snapshot.js";
+import { captureContextBaseline, type ContextRequestIdentity } from "./context-accounting.js";
+import { buildContextBudgetDecision } from "./context-budget-state.js";
+import type { CanonicalMessage } from "../llm/types.js";
 import { AGENT_TOOL_SCHEMA_TOKENS } from "./tool-definitions.js";
 
 const KNOWN_BUDGET: ContextBudget = {
@@ -42,6 +44,7 @@ test("buildContextBudgetSnapshot exposes the same threshold as automatic compact
     });
 
     const snapshot = buildContextBudgetSnapshot({
+    toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
       model: selection.model,
       provider: selection.modelReasoning.providerName,
       budget,
@@ -82,6 +85,7 @@ test("buildContextBudgetSnapshot exposes the same threshold as automatic compact
 
 test("buildContextBudgetSnapshot returns unknown when model context window is unavailable", () => {
   const snapshot = buildContextBudgetSnapshot({
+    toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
     model: "local-model",
     provider: "local",
     budget: {
@@ -117,6 +121,7 @@ test("buildContextBudgetSnapshot returns unknown when model context window is un
 
 test("buildContextBudgetSnapshot uses usable input window when compaction is disabled", () => {
   const snapshot = buildContextBudgetSnapshot({
+    toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
     model: "gpt-test",
     provider: "openai",
     budget: {
@@ -150,6 +155,7 @@ test("buildContextBudgetSnapshot uses usable input window when compaction is dis
 
 test("buildContextBudgetSnapshot returns unknown for invalid context policy", () => {
   const snapshot = buildContextBudgetSnapshot({
+    toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
     model: "gpt-test",
     provider: "openai",
     budget: {
@@ -183,90 +189,29 @@ test("buildContextBudgetSnapshot returns unknown for invalid context policy", ()
   });
 });
 
-test("buildContextBudgetSnapshot reports provider usage only as diagnostics", () => {
-  const usageAnchor: ContextBudgetUsageAnchor = {
-    llmCallId: "llm-call-1",
-    createdAt: new Date("2026-05-24T09:59:00.000Z"),
-    provider: "openai",
-    model: "gpt-test-provider",
-    usage: {
-      input_tokens: 1_000,
-      output_tokens: 250,
-    },
-    reasoning: {
-      enabled: false,
-    },
-  };
-
-  const snapshot = buildContextBudgetSnapshot({
-    model: "gpt-test",
-    provider: "openai",
-    budget: KNOWN_BUDGET,
-    conversation: [
-      {
-        role: "user",
-        content: [{ type: "text", text: "This rough estimate should not win." }],
-      },
-    ],
-    checkpoint: null,
-    usageAnchor,
-    deltaMessages: [],
-    now: new Date("2026-05-24T10:00:00.000Z"),
-  });
-
+test("active compaction and durable meter use the same anchored total", () => {
+  const requestIdentity: ContextRequestIdentity = { provider: "openai", model: "gpt-test",
+    reasoning: { enabled: false }, requestMode: "openai_responses", checkpointId: null, tools: [] };
+  const conversation: CanonicalMessage[] = [{ role: "user", content: "hello" }];
+  const usageAnchor = { llmCallId: "call-1", baseline: captureContextBaseline(conversation, requestIdentity),
+    usage: { input_tokens: 64_000, output_tokens: 20_000 } };
+  const args = { model: "gpt-test", provider: "openai", budget: KNOWN_BUDGET,
+    conversation, usageAnchor, requestIdentity, checkpoint: null, toolSchemaTokens: 100 };
+  const snapshot = buildContextBudgetSnapshot(args);
+  const decision = buildContextBudgetDecision({ ...args, source: "active_agent_decision" });
   assertAvailable(snapshot);
-  assert.equal(snapshot.basis, "model_agnostic_estimate");
-  assert.equal(snapshot.confidence, "medium");
-  assert.equal(snapshot.provider_usage_estimate?.estimated_input_tokens, 1_250);
-  assert.equal(snapshot.provider_usage_estimate?.input_tokens, 1_000);
-  assert.equal(snapshot.provider_usage_estimate?.output_tokens, 250);
-  assert.equal(snapshot.provider_usage_estimate?.llm_call_id, "llm-call-1");
-  assert.equal(snapshot.provider_usage_estimate?.confidence, "high");
-});
-
-test("buildContextBudgetSnapshot keeps backend trigger estimate primary when provider diagnostics exceed threshold", () => {
-  const budget: ContextBudget = {
-    ...KNOWN_BUDGET,
-    thresholdTokens: 27_200,
-    effectiveInputBudgetTokens: 27_200,
-  };
-  const usageAnchor: ContextBudgetUsageAnchor = {
-    llmCallId: "llm-call-2",
-    createdAt: new Date("2026-05-24T09:59:00.000Z"),
-    provider: "openai",
-    model: "gpt-test-provider",
-    usage: {
-      input_tokens: 32_000,
-      output_tokens: 3_000,
-    },
-    reasoning: {
-      enabled: false,
-    },
-  };
-
-  const snapshot = buildContextBudgetSnapshot({
-    model: "gpt-test",
-    provider: "openai",
-    budget,
-    conversation: [
-      {
-        role: "user",
-        content: "x".repeat((15_142 - 8) * 4),
-      },
-    ],
-    checkpoint: null,
-    usageAnchor,
-    deltaMessages: [],
-    now: new Date("2026-05-24T10:00:00.000Z"),
-  });
-
-  assertAvailable(snapshot);
-  assert.equal(snapshot.message_estimated_tokens, 15_142);
-  assert.equal(snapshot.tool_schema_tokens, AGENT_TOOL_SCHEMA_TOKENS);
-  assert.equal(snapshot.estimated_input_tokens, 15_142 + AGENT_TOOL_SCHEMA_TOKENS);
-  assert.equal(snapshot.provider_usage_estimate?.estimated_input_tokens, 35_000);
-  assert.equal(snapshot.percent_of_context_budget, (15_142 + AGENT_TOOL_SCHEMA_TOKENS) / 27_200);
-  assert.equal(snapshot.basis, "model_agnostic_estimate");
+  assert.equal(snapshot.estimated_input_tokens, 64_000);
+  assert.equal(snapshot.basis, "provider_token_count");
+  assert.equal(decision.estimatedTokens, snapshot.estimated_input_tokens);
+  assert.equal(decision.shouldCompact, true);
+  assert.equal(snapshot.breakdown.reduce((n, row) => n + row.percent_of_estimated_input, 0), 1);
+  assert.notEqual(snapshot.breakdown.reduce((n, row) => n + row.tokens, 0), snapshot.estimated_input_tokens);
+  conversation.push({ role: "assistant", content: "response" });
+  const appended = buildContextBudgetSnapshot(args);
+  assertAvailable(appended);
+  assert.equal(appended.basis, "provider_usage_trigger");
+  assert.equal(appended.estimated_input_tokens, 64_000 + appended.provider_usage_estimate!.delta_tokens);
+  assert.ok(appended.estimated_input_tokens < 65_000, "raw output usage is not replayed input");
 });
 
 test("buildContextBudgetSnapshot carries checkpoint metadata and stale state", () => {
@@ -277,6 +222,7 @@ test("buildContextBudgetSnapshot carries checkpoint metadata and stale state", (
   } as AgentContextCheckpoint;
 
   const snapshot = buildContextBudgetSnapshot({
+    toolSchemaTokens: AGENT_TOOL_SCHEMA_TOKENS,
     model: "gpt-test",
     provider: "openai",
     budget: KNOWN_BUDGET,

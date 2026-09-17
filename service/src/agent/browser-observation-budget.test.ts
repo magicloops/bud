@@ -15,14 +15,17 @@ test('compact output is bounded at the final tool envelope and preserved exactly
   const result=await executor(observation).execute(context,directive);
   assert.equal(result.result.ok,true);
   const content=JSON.stringify(result.payload);
-  assert.ok(Buffer.byteLength(content)<=12288);
+  assert.ok(Buffer.byteLength(content)<=36 * 1024);
   const replay:any[]=[]; const loader=new AgentConversationLoader();
   Reflect.get(loader,'appendStoredMessage').call(loader,(message:unknown)=>replay.push(message),
     {messageId:'message',clientId:'client',role:'tool',content,metadata:{}},{toolUseFromProviderLedger:false});
   assert.equal(replay[1].content[0].content,content);
   assert.deepEqual(JSON.parse(replay[1].content[0].content).data.observation,observation);
-  const huge=await executor({...observation,text:'😀'.repeat(4000)}).execute(context,directive);
+  const larger=await executor({...observation,text:'x'.repeat(32 * 1024 - 1024)}).execute(context,directive);
+  assert.equal(larger.result.ok,true);
+  assert.ok(Buffer.byteLength(JSON.stringify(larger.payload))>12 * 1024);
+  const huge=await executor({...observation,text:'😀'.repeat(10000)}).execute(context,directive);
   assert.equal(huge.result.ok,false);assert.equal(huge.payload.error,'browser_observation_limit');
-  assert.ok(Buffer.byteLength(JSON.stringify(huge.payload))<=12288);
+  assert.ok(Buffer.byteLength(JSON.stringify(huge.payload))<=36 * 1024);
   assert.equal((huge.payload.data as any).observation,undefined);
 });

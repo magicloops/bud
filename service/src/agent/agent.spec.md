@@ -145,7 +145,6 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - checkpointed reconstruction uses fresh system prompt, checkpoint replacement history, and post-checkpoint transcript delta
 - provider switches are reconstructed through canonical transcript fallback with explicit degradation diagnostics
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`, and retired `terminal.run` rows replay as canonical `terminal_send { text }`
-- the system prompt describes the unified terminal surface (send/wait/observe, two send result shapes, mode model, still-running semantics), never mentions `terminal.run`, and contains none of the retired readiness/wait vocabulary
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
 - `sources` is parallel to `messages` (system prompt, checkpoint summary vs kept history, one provenance per replayed row even when a tool row becomes two messages) and `repairOrphanedToolCalls` tags injected results as `repair`
@@ -693,7 +692,7 @@ Token-estimation helper for automatic compaction and browser-visible context bud
 - default `reservedOutputTokens` to `maxOutputTokens` unless a catalog entry
   overrides it
 - apply automatic-compaction enablement and ratio configuration, clamped to
-  `0.9` (Codex parity; the margin also absorbs chars/4 estimate error)
+  `0.9` (policy unchanged; the margin does not bound estimator error)
 - expose request-kind budget semantics so normal agent turns use the proactive
   threshold while compaction-summary calls can use the larger usable input window
 - decide whether a candidate provider request should compact before invocation
@@ -721,17 +720,30 @@ Browser-facing context budget snapshot builder used by the owned `/agent/state` 
 - resolve the thread's effective model/reasoning selection and selected-model compaction budget
 - load context through `AgentConversationLoader` using the same latest completed checkpoint boundary as the agent loop
 - delegate primary budget math to `context-budget-state.ts` so durable snapshots and active compaction decisions agree
-- include the normal agent tool-schema estimate by default so durable snapshots match provider requests for ordinary agent turns
+- accept the actual environment and resolved tool catalog from `AgentService.getContextTools`, shared with provider invocation
 - count completed checkpoints for `compaction_count` (diagnostic: a count failure yields null, never an unknown snapshot)
 - expose hard model window, Bud usable context window, output reserve, usable
   input window, compaction threshold, and effective budget fields
 - expose the effective budget as the auto-compaction threshold when compaction
   is enabled, or the usable input window when compaction is disabled
-- load the latest same-provider completed `llm_call.usage` anchor after the checkpoint boundary and add estimated delta messages after that call as optional provider diagnostics
-- include both provider input and output tokens from the usage anchor because output tokens are part of the visible conversation before the next request
-- keep `estimated_input_tokens` and `percent_of_context_budget` aligned with the backend trigger estimate rather than provider diagnostics, with `message_estimated_tokens` and `tool_schema_tokens` exposing the current split
+- load the latest completed ledger baseline and usage; validate identity and request prefix through the shared accounting resolver
+- apply the same runtime instructions as the agent; count actual appended canonical content, never raw output usage
+- expose heuristic message/tool composition separately from the provider-anchored primary total
 - return an `unknown` snapshot instead of failing `/agent/state` when model-window metadata is missing, context policy is invalid, or counting fails
 - mark snapshots stale while an agent turn is active so clients can avoid treating them as live intra-turn telemetry
+
+### `context-accounting.ts` / `context-accounting.test.ts`
+
+Pure shared request-prefix accounting. A versioned SHA-256 identity/prefix digest
+and message count are frozen before invocation and persisted with completed usage.
+Identity includes provider, effective model, reasoning, request mode, checkpoint
+and actual tools; prefix includes runtime instructions and native replay content.
+JSON object key order is stable across JSONB reconstruction; array order matters.
+OpenAI/ds4 input already includes cache hits; Anthropic adds cache reads/writes
+once. Missing/invalid usage, incompatible history/settings, unsupported providers
+and browser image hydration use the full fallback estimate. Raw output/reasoning
+usage is never added to input. Tests cover these cases and appended user/tool data.
+No tokenizer, historical calibration or request-content archive is introduced.
 
 ### `context-budget-state.ts`
 
@@ -739,13 +751,13 @@ Shared context budget state builder for active agent decisions and durable agent
 
 **Responsibilities**:
 - build client-safe available/unknown context budget snapshots from resolved `ContextBudget` plus `CanonicalMessage[]`
-- keep the primary estimate on the model-agnostic canonical-message estimator plus normal agent tool-schema overhead used by the automatic compaction trigger
+- resolve primary usage through `context-accounting.ts`: compatible provider input plus estimated suffix, otherwise the full canonical-message/tool-schema estimate
 - expose provenance fields (`source`, `phase`, `reason`, `turn_id`, `checked_at`) so clients can distinguish durable reconstruction, active decisions, and post-compaction snapshots
 - expose `message_estimated_tokens` and `tool_schema_tokens` alongside total `estimated_input_tokens`
 - expose `breakdown` (every category incl. `tool_schemas`, with
-  `percent_of_estimated_input`, summing to `estimated_input_tokens`) and
+  `percent_of_estimated_input`, normalized against the heuristic composition sum) and
   `compaction_count` (null when the caller did not count — active-turn decisions)
-- attach optional provider usage diagnostics without letting those diagnostics drive compaction threshold percentages
+- use the same resolved total for utilization and compaction; optional provider usage details describe that same anchor
 - return `{ snapshot, shouldCompact, estimatedTokens }` for agent compaction decisions without exposing raw conversation content
 
 ### `context-budget-snapshot.test.ts`
@@ -756,11 +768,11 @@ Direct tests for snapshot math and fallback behavior.
 - unknown model context windows return an `unknown` snapshot
 - disabled compaction uses the usable input window as the effective budget
 - invalid context policy returns an `unknown` snapshot
-- provider-usage diagnostics include output tokens but do not change primary budget math
-- provider-usage diagnostics above threshold do not make the primary percent exceed the backend trigger estimate
+- compatible provider usage drives identical active/durable totals and compaction decisions
+- raw output usage is diagnostic only; actual appended content contributes once
 - normal agent tool-schema overhead contributes to `estimated_input_tokens`
 - checkpoint ids and stale state are carried into the snapshot
-- `breakdown` sums to `estimated_input_tokens` (tool schemas included) and `compaction_count` passes through
+- `breakdown` sums to heuristic composition (independent of anchored usage) and `compaction_count` passes through
 
 ### `compaction-message.ts`
 
@@ -1343,7 +1355,7 @@ thread reservations. Ended/closed/revoked browser waits cancel without fake retu
 viewport-only visible DOM and metadata-only page_info. The browser broker opts
 into compact output only when the connected daemon advertises support.
 `browser-tool-executor.ts` preserves that single representation and guards the
-complete serialized compact tool envelope at 12 KiB, returning explicit limit
+complete serialized compact tool envelope at 36 KiB (32 KiB observation plus envelope allowance), returning explicit limit
 guidance instead of silently truncating evidence. Existing stored history and
 provider replay remain unchanged; screenshot hydration and private-control
 authorization are unaffected.
@@ -1379,3 +1391,12 @@ it. `invocation-timing.test.ts` covers real PostgreSQL migration, lifecycle, own
 scope, cancellation rollback, restart/lease boundaries and SSE replay. Browser
 continuation tests also verify accumulated timing across all handoff paths.
 See [contract](../../../plan/service-owned-turn-timing.md).
+
+### `context-tool-catalog.test.ts`
+
+Regression coverage for the shared provider/accounting tool catalog with the real
+browser broker: durable active and idle catalogs agree, legacy/offline/incapable
+contexts omit browser tools, and discovery never dispatches. `getContextTools`
+forwards live invocation context and gates browser eligibility on execution hooks
+(or durable configuration for read-only previews). Runtime capability discovery
+must not require an invented invocation for idle meter reads.

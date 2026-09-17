@@ -13,14 +13,14 @@ or CDP is accepted. The Rust browser manager owns serialization and authority.
   Reference locators retain the observed iframe ancestry; a document-root selector
   prevents Playwright from routing cached references through obsolete frame IDs.
   Scoped observations inherit their source frame. No mutation is retried.
-- `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context.
-- `compact.test.mjs`: structure/state preservation, pagination, Unicode and limits.
+- `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context. Removes empty row leaves and redundant single-cell table nesting while preserving real/ambiguous table structure. Text uses one-space depth and `[opaque-reference]` annotations; identities and map lookup are unchanged.
+- `compact.test.mjs`: structure/state preservation (including blank cells and named containers), deep hierarchy, pagination, Unicode and limits.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
 - `package.json` / `package-lock.json`: reproducible runtime dependency.
 
 One snapshot per browser, 60-second lifetime, 2 MiB retained nodes. Negotiated
 compact snapshots return text only; visible DOM returns nodes/boxes only. The full
-helper observation is limited to 8 KiB, reserving space for the service envelope.
+helper observation is limited to 32 KiB, reserving space for the service envelope.
 Legacy requests retain 24 KiB node pages plus text through the same engine.
 Compact reference namespaces combine a random helper-lifetime prefix and monotonic
 observation counter; exact maps and document/epoch fences remain authoritative.
@@ -49,3 +49,8 @@ BFCache-enabled Chrome coverage verifies retained page state, fresh reference cl
 after Back, invalidated-reference rejection, and exact iframe/scoped targeting.
 This is helper-local; wire shapes, capability negotiation and ownership fences
 are unchanged. Restart an already-running helper (or daemon) to load the fix.
+
+[Phase 3i](../../plan/bud-owned-browser/phase-3i-snapshot-structure-compaction.md) and
+[measurements](../../debug/browser-snapshot-structure-compaction.md) document the
+serializer follow-up. Nested 30-story fixture drops from three pages to two;
+all-30-in-8-KiB is not claimed. Restart the helper/daemon to load this change.

@@ -145,49 +145,57 @@ export function ContextSendButton({
         <div className="space-y-2">
           <div>
             <div className="font-semibold">{presentation.headline}</div>
-            {presentation.subline && <div className="text-muted-foreground">{presentation.subline}</div>}
+            {presentation.subline && <div className="mt-1 tabular-nums">{presentation.subline}</div>}
+            {(contextBudget?.status !== 'available' || contextBudget.basis !== 'provider_usage_trigger') && (
+              <div className="mt-1 text-muted-foreground">{presentation.footer[0]}</div>
+            )}
           </div>
 
           {presentation.rows.length > 0 && (
-            <>
-              <div
-                className="flex h-2 w-full overflow-hidden rounded-full border border-black/40 bg-muted"
-                role="img"
-                aria-label="Context usage by category"
-              >
-                {presentation.rows.map((row) => (
-                  <div
-                    key={row.id}
-                    style={{
-                      // Tiny categories keep a sliver so they stay visible.
-                      width: `${Math.max(row.percent * 100, 0.75)}%`,
-                      backgroundColor: row.color,
-                    }}
-                  />
-                ))}
-              </div>
-              <ul className="space-y-0.5">
-                {presentation.rows.map((row) => (
-                  <li key={row.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-2">
-                    <span
-                      aria-hidden
-                      className="h-2 w-2 rounded-sm border border-black/40"
-                      style={{ backgroundColor: row.color }}
+            <div>
+              <div className="text-muted-foreground">Estimated composition</div>
+              <div className="mt-2 space-y-2">
+                <div
+                  className="flex h-2 w-full overflow-hidden rounded-full border border-black/40 bg-muted"
+                  role="img"
+                  aria-label="Estimated context composition by category"
+                >
+                  {presentation.rows.map((row) => (
+                    <div
+                      key={row.id}
+                      style={{
+                        // Tiny categories keep a sliver so they stay visible.
+                        width: `${Math.max(row.percent * 100, 0.75)}%`,
+                        backgroundColor: row.color,
+                      }}
                     />
-                    <span className="truncate">{row.label}</span>
-                    <span className="tabular-nums text-muted-foreground">{row.tokensLabel}</span>
-                    <span className="w-8 text-right tabular-nums text-muted-foreground">{row.percentLabel}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
+                  ))}
+                </div>
+                <ul className="space-y-0.5">
+                  {presentation.rows.map((row) => (
+                    <li key={row.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-2">
+                      <span
+                        aria-hidden
+                        className="h-2 w-2 rounded-sm border border-black/40"
+                        style={{ backgroundColor: row.color }}
+                      />
+                      <span className="truncate">{row.label}</span>
+                      <span className="tabular-nums text-muted-foreground">{row.tokensLabel}</span>
+                      <span className="w-8 text-right tabular-nums text-muted-foreground">{row.percentLabel}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="space-y-0.5 text-muted-foreground">
+                  {presentation.footer.slice(1).map((line, index) => (
+                    <div key={`${index}-${line}`}>{line}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
-
-          <div className="space-y-0.5 text-muted-foreground">
-            {presentation.footer.map((line, index) => (
-              <div key={`${index}-${line}`}>{line}</div>
-            ))}
-          </div>
+          {presentation.rows.length === 0 && presentation.footer.slice(1).map((line, index) => (
+            <div key={`${index}-${line}`} className="text-muted-foreground">{line}</div>
+          ))}
 
           {onViewModelContext && (
             <button

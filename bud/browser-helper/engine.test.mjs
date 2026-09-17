@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { Engine, sanitize } from './engine.mjs';
+import { OBSERVATION_BYTES } from './compact.mjs';
 
 test('field values and implementation properties never enter snapshots', () => {
   const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:[{role:'text',text:'secret'}]}], 'x', new Map());
@@ -70,14 +71,14 @@ test('compact real-browser observations keep actions, scope and pagination witho
     const oldBytes=Buffer.byteLength(JSON.stringify(before)), newBytes=Buffer.byteLength(JSON.stringify(after));
     t.diagnostic(`HN-like fixture serialized bytes: legacy=${oldBytes} compact=${newBytes} reduction=${(100*(1-newBytes/oldBytes)).toFixed(1)}%; pages=${before.length}/${after.length}`);
     assert.ok(newBytes<oldBytes*.3);
-    assert.ok(after.every(x=>!('nodes' in x) && Buffer.byteLength(JSON.stringify(x))<=8192));
+    assert.ok(after.every(x=>!('nodes' in x) && Buffer.byteLength(JSON.stringify(x))<=OBSERVATION_BYTES));
     const text=after.map(x=>x.text).join('\n');assert.doesNotMatch(text,/secret/);
     for(const rank of [3,4,16])assert.match(text,new RegExp(`Example story ${rank}"`));
-    const ref=text.match(/link "Example story 16" \[ref=([^\]]+)\]/)[1];
+    const ref=text.match(/link "Example story 16" \[([^\]]+)\]/)[1];
     await engine.execute({operation:'click',target_id:target,reference:ref});assert.match(page.url(),/#story16$/);
     const fresh=await engine.execute({operation:'snapshot',target_id:target,compact:true});
     await assert.rejects(engine.execute({operation:'click',target_id:target,reference:ref}),/browser_stale_reference/);
-    const scope=fresh.text.match(/main \[ref=([^\]]+)\]/)[1];
+    const scope=fresh.text.match(/main \[([^\]]+)\]/)[1];
     const scoped=await engine.execute({operation:'snapshot',target_id:target,compact:true,scope});
     assert.equal(scoped.coverage,'subtree');assert.doesNotMatch(scoped.text,/Password/);
     const visible=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
@@ -114,9 +115,9 @@ test('bounded scrolling and observation replacement explain unchanged viewport a
     const again=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
     assert.equal(again.viewport.scroll_y,104);
     assert.ok(again.nodes.every(n=>n.box.y+n.box.height>0 && n.box.y<1110));
-    await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:first.observation_id,reference:first.text.match(/link "Story 0" \[ref=([^\]]+)\]/)[1]}),/browser_stale_reference/);
+    await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:first.observation_id,reference:first.text.match(/link "Story 0" \[([^\]]+)\]/)[1]}),/browser_stale_reference/);
     const fresh=await engine.execute({operation:'snapshot',target_id:target,compact:true});
-    const reference=fresh.text.match(/link "Story 3" \[ref=([^\]]+)\]/)[1];
+    const reference=fresh.text.match(/link "Story 3" \[([^\]]+)\]/)[1];
     await engine.execute({operation:'click',target_id:target,observation_id:fresh.observation_id,reference});
     assert.match(page.url(),/#3$/);
   } finally {await browser.close();}
@@ -144,7 +145,7 @@ test('fresh references after BFCache restoration resolve without replaying click
     await page.goto(`${url}/other`); await observe();
     await page.goto(url);
     const old = await observe();
-    const reference = result => result.text.match(/button "Apply once" \[ref=([^\]]+)\]/)[1];
+    const reference = result => result.text.match(/button "Apply once" \[([^\]]+)\]/)[1];
     await page.evaluate(() => { window.cachedMarker = true; window.clicks = 0; });
     await page.goto(`${url}/other`); await observe();
     const history = await cdp.send('Page.getNavigationHistory');
@@ -158,7 +159,7 @@ test('fresh references after BFCache restoration resolve without replaying click
     await engine.execute({operation:'click',target_id:target,
       observation_id:fresh.observation_id,reference:reference(fresh)});
     assert.equal(await page.evaluate(() => window.clicks), 1);
-    const scope = fresh.text.match(/main \[ref=([^\]]+)\]/)[1];
+    const scope = fresh.text.match(/main \[([^\]]+)\]/)[1];
     const scoped = await engine.execute({operation:'snapshot',target_id:target,compact:true,scope});
     assert.match(scoped.text, /Apply once/);
     await engine.execute({operation:'invalidate'});
@@ -196,4 +197,32 @@ test('snapshot references preserve iframe ownership and scoped targeting', {skip
     assert.equal(await child.evaluate(() => window.clicked), true);
     assert.equal(await page.evaluate(() => window.clicked), undefined);
   } finally { await browser.close(); }
+});
+
+test('nested news layout preserves all thirty stories, metadata and compact reference actions', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async t => {
+  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<title>Nested news</title><table><tr><td><table>${Array.from({length:30},(_,i)=>`<tr><td>${i+1}.</td><td><a href="#vote${i+1}" aria-label="upvote">↑</a></td><td><a href="#story${i+1}">Example story ${i+1}</a> <a href="#domain${i+1}">example.com</a></td></tr><tr><td></td><td></td><td>${42+i} points <a href="#author${i+1}">author${i+1}</a> <a href="#time${i+1}">3 hours ago</a> <a href="#hide${i+1}">hide</a> <a href="#comments${i+1}">${i+1} comments</a></td></tr>`).join('')}</table></td></tr></table>`);
+    const cdp=await page.context().newCDPSession(page);
+    const target=(await cdp.send('Target.getTargetInfo')).targetInfo.targetId;await cdp.detach();
+    const engine=new Engine(browser);
+    const collect=async()=>{
+      const pages=[];let continuation;
+      do {const result=await engine.execute({operation:'snapshot',target_id:target,compact:true,continuation});pages.push(result);continuation=result.continuation;}while(continuation);
+      assert.ok(pages.every(p=>Buffer.byteLength(JSON.stringify(p))<=OBSERVATION_BYTES));
+      return pages;
+    };
+    const pages=await collect();
+    const text=pages.map(p=>p.text).join('\n');
+    assert.deepEqual([...text.matchAll(/link "Example story (\d+)"/g)].map(m=>Number(m[1])),Array.from({length:30},(_,i)=>i+1));
+    for (const n of [3,16,30]) {
+      assert.match(text,new RegExp(`author${n}"`));assert.match(text,new RegExp(`${n} comments"`));
+      const current=(await collect()).map(p=>p.text).join('\n');
+      const reference=current.match(new RegExp(`link "Example story ${n}" \\[([^\\]]+)\\]`))[1];
+      await engine.execute({operation:'click',target_id:target,reference});
+      assert.match(page.url(),new RegExp(`#story${n}$`));
+    }
+    t.diagnostic(`Nested 30-story fixture: bytes=${Buffer.byteLength(JSON.stringify(pages))}; pages=${pages.length}`);
+  } finally {await browser.close();}
 });

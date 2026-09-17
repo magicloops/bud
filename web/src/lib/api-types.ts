@@ -254,7 +254,7 @@ export type ApiContextBreakdownKind =
 export type ApiContextBudgetBreakdownEntry = {
   kind: ApiContextBreakdownKind
   tokens: number
-  /** Share of estimated_input_tokens (0..1). */
+  /** Share of the heuristic composition sum (0..1), not measured attribution. */
   percent_of_estimated_input: number
 }
 
@@ -283,7 +283,7 @@ export type ApiContextBudgetAvailable = {
   message_estimated_tokens: number
   tool_schema_tokens: number
   estimated_input_tokens: number
-  /** Per-category split summing to estimated_input_tokens (absent on older services). */
+  /** Heuristic composition; may differ from anchored primary usage (absent on older services). */
   breakdown?: ApiContextBudgetBreakdownEntry[]
   /** Completed compactions; null when the snapshot source did not count them. */
   compaction_count?: number | null

@@ -21,7 +21,7 @@ export class BrowserBroker implements BrowserAgentBackend {
     readonly control = new BrowserControl(),
   ) {}
   async handoffAvailable(context: BrowserAgentContext): Promise<boolean> {
-    if (!context.invocation || !browserCarrier(context.budId)?.handoff) return false;
+    if (!browserCarrier(context.budId)?.handoff) return false;
     const sessions = await this.control.repository.list(context.ownerUserId, context.threadId);
     return sessions.every(session => session.control_state === "agent" && !session.private_content);
   }
@@ -29,7 +29,8 @@ export class BrowserBroker implements BrowserAgentBackend {
     return this.control.park(context);
   }
   async available(context: BrowserAgentContext): Promise<boolean> {
-    return Boolean(context.invocation && browserCarrier(context.budId));
+    // Catalog discovery also runs outside a turn; dispatch validates the real lease.
+    return Boolean(browserCarrier(context.budId));
   }
   async execute(
     context: BrowserAgentContext,

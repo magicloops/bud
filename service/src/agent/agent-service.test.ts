@@ -763,7 +763,13 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   );
   assert.equal(llmCallRows.length, 1);
   assert.equal(llmCallRows[0]?.providerResponseId, "resp-final");
-  assert.deepEqual(llmCallRows[0]?.cacheMetadata, {
+  const metadata = llmCallRows[0]?.cacheMetadata as Record<string, unknown>;
+  const baseline = metadata.context_baseline as Record<string, unknown>;
+  assert.equal(baseline.version, 1);
+  assert.equal(baseline.message_count, 0);
+  assert.match(String(baseline.prefix_hash), /^[a-f0-9]{64}$/);
+  const { context_baseline: _baseline, ...otherMetadata } = metadata;
+  assert.deepEqual(otherMetadata, {
     reconstruction_mode: "canonical_fallback",
     reconstruction_degraded: true,
     reconstruction_target_provider: "openai",

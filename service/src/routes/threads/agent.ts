@@ -152,7 +152,8 @@ export async function registerThreadAgentRoutes(
       ? runtimeSnapshot.context_budget
       : await getThreadContextBudgetSnapshot({
           thread: access.thread,
-          runtimeSnapshot,
+          runtimeSnapshot, environment,
+          tools: await agentService.getContextTools(environment, params.threadId, access.viewer.userId),
         });
     reply.send({
       ...runtimeSnapshot,

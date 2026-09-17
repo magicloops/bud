@@ -2,6 +2,8 @@
 
 Status: implemented locally; automated validation and actual-agent compact output/pagination confirmed. Reading-quality and broader acceptance follow-ups remain. 2026-09-15.
 
+Follow-up: [Phase 3i: snapshot structure compaction](phase-3i-snapshot-structure-compaction.md) implements further layout/reference savings with measurements at 8 KiB and a subsequent selected default of 32 KiB. Automated validation passed; actual-agent acceptance pending.
+
 ## Context and evidence
 
 Follow-up to [Phase 3d](phase-3d-agent-observations-and-targeting.md).

@@ -110,7 +110,7 @@ export class BrowserToolExecutor {
         : "Browser operation was rejected.";
     const payload = { tool: directive.tool, call_id: directive.callId, args, kind: "browser", ...result, summary };
     // Enforce the final persisted/model-facing envelope, not only helper nodes.
-    if (observation?.format === "compact_v1" && Buffer.byteLength(JSON.stringify(payload)) > 12 * 1024) {
+    if (observation?.format === "compact_v1" && Buffer.byteLength(JSON.stringify(payload)) > 36 * 1024) {
       payload.ok = false;
       payload.outcome = "rejected";
       payload.error = "browser_observation_limit";

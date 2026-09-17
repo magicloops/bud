@@ -33,5 +33,50 @@ test('visible DOM has one representation and honest viewport coverage; limits ar
   const s={...snapshot([{depth:0,role:'button',reference:'short1:e1',box:{x:0,y:0,width:30,height:20}}]),mode:'visible_dom'};
   const result=compactPage(s,0);assert.equal(result.text,undefined);assert.equal(result.coverage,'viewport');assert.equal(result.nodes.length,1);
   assert.equal(compactPage(snapshot([]),0).truncated,false);
-  assert.throws(()=>compactPage(snapshot([{depth:0,role:'text',text:'x'.repeat(20000)}]),0),/browser_observation_limit/);
+  assert.throws(()=>compactPage(snapshot([{depth:0,role:'text',text:'x'.repeat(OBSERVATION_BYTES + 1)}]),0),/browser_observation_limit/);
+});
+
+test('removes only empty structural leaves and redundant single-cell table chains', () => {
+  const input = [
+    {depth:0,role:'table',reference:'s:outer'},
+    {depth:1,role:'row'}, {depth:2,role:'cell'},
+    {depth:3,role:'table',name:'Scores',reference:'s:table'},
+    {depth:4,role:'row',reference:'s:row'},
+    {depth:5,role:'columnheader',name:'Name'}, {depth:5,role:'columnheader',name:'Score'},
+    {depth:4,role:'row'}, {depth:5,role:'cell',name:'A'}, {depth:5,role:'cell'},
+    {depth:4,role:'row'},
+    {depth:4,role:'row',selected:false},
+    {depth:4,role:'row'}, {depth:5,role:'cell'},
+    {depth:0,role:'button',reference:'s:button'},
+  ];
+  const result = compactNodes(input);
+  assert.equal(result[0].name,'Scores'); assert.equal(result[0].depth,0);
+  assert.ok(!result.some(n=>n.reference==='s:outer'));
+  assert.equal(result.filter(n=>n.role==='row').length,4);
+  assert.equal(result.filter(n=>n.role==='cell' && !n.name).length,2);
+  assert.equal(result.at(-1).reference,'s:button');
+  assert.equal(result.at(-1).depth,0);
+  assert.deepEqual(input[0],{depth:0,role:'table',reference:'s:outer'});
+  const text=compactPage(snapshot(result),0).text;
+  assert.match(text,/table "Scores" \[s:table\]\n row/);
+  assert.match(text,/selected=false/);
+  for (const protectedNode of [{name:'Named'}, {selected:false}]) {
+    const protectedInput=input.map(n=>({...n})); Object.assign(protectedInput[0],protectedNode);
+    assert.equal(compactNodes(protectedInput)[0].reference,'s:outer');
+  }
+});
+
+test('preserves list scope, duplicate names, deep hierarchy and visible geometry', () => {
+  const nodes=compactNodes([
+    {depth:0,role:'list',reference:'s:list'},
+    {depth:1,role:'listitem',name:'1.',reference:'s:first'},
+    {depth:2,role:'link',name:'Same',reference:'s:a',box:{x:1,y:2,width:3,height:4}},
+    {depth:1,role:'listitem',name:'2.',reference:'s:second'},
+    {depth:2,role:'link',name:'Same',reference:'s:b'},
+  ]);
+  assert.deepEqual(nodes.map(n=>n.reference),['s:list','s:first','s:a','s:second','s:b']);
+  assert.deepEqual(nodes[2].box,{x:1,y:2,width:3,height:4});
+  const deep=Array.from({length:30},(_,depth)=>({depth,role:'group',name:`Level ${depth}`}));
+  const text=compactPage(snapshot(compactNodes(deep)),0).text;
+  assert.equal(text.split('\n').at(-1).match(/^ */)[0].length,29);
 });

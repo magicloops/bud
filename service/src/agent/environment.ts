@@ -75,7 +75,7 @@ export function buildRuntimeInstructionMessages(
 /**
  * Insert runtime instructions right after the base system prompt (or at the
  * front when there is none), keeping the provenance side-channel aligned.
- * `agent-service.ts`'s `applyRuntimeInstructions` uses the same placement;
+ * `applyRuntimeInstructions` uses the same placement;
  * the model-view endpoint uses this variant so it can label the messages.
  */
 export function applyRuntimeInstructionsWithSources(
@@ -100,4 +100,17 @@ export function applyRuntimeInstructionsWithSources(
     messages: [...runtimeMessages, ...conversation],
     sources: [...runtimeSources, ...sources],
   };
+}
+
+export function applyRuntimeInstructions(
+  conversation: CanonicalMessage[],
+  environment: AgentEnvironmentSnapshot,
+): CanonicalMessage[] {
+  const runtimeMessages = buildRuntimeInstructionMessages(environment);
+  if (runtimeMessages.length === 0) return conversation;
+  const [first, ...rest] = conversation;
+  if (first?.role === "system") {
+    return [first, ...runtimeMessages, ...rest];
+  }
+  return [...runtimeMessages, ...conversation];
 }

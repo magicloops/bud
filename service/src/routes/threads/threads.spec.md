@@ -64,7 +64,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
 - enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
-- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
+- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, actual environment/tool catalog, provider-prefix accounting, and compaction threshold as the agent loop
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - passes through `draft_assistant.started_at` so refreshes can recover active assistant draft timing from service timestamps
 - passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
@@ -100,6 +100,7 @@ Read-only "model view" route: `GET /api/threads/:threadId/model-context`
 - authorizes the owning thread first (`401` unauthenticated, `404` non-owner) before any load
 - resolves the thread's effective model/reasoning exactly like the agent loop, runs `AgentConversationLoader.loadWithDiagnostics` for that provider, then inserts the Bud environment's runtime instructions with `applyRuntimeInstructionsWithSources`
 - serializes canonical messages to snake_case blocks with per-message provenance (`source`) and per-message token estimates; adds the environment's tool list, tool-schema tokens, compaction boundary, the system prompt `scope`/`version`, `turn_active`, and the same `context_budget` snapshot `/agent/state` returns
+- model-view per-message/top-level token counts remain heuristic composition; nested `context_budget` is the shared provider-anchored utilization total when compatible
 - `buildModelContextDocument` / `serializeCanonicalBlock` are pure and unit-tested; the handler is thin
 
 ### `model-context.test.ts`

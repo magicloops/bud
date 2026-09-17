@@ -1,3 +1,5 @@
+import { captureContextBaseline } from "./context-accounting.js";
+import { loadLatestContextUsageAnchor } from "../llm/provider-ledger.js";
 import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentContext } from "./browser-tool-executor.js";
 import { validBrowserInput } from "./browser-tools.js";
 import { isBrowserToolDirective, type AgentToolCallDirective } from "./contracts.js";
@@ -59,7 +61,7 @@ import {
       isAutomationToolDirective,
 	} from "./contracts.js";
 import {
-  buildAgentEnvironmentInstruction,
+  applyRuntimeInstructions,
   buildAgentEnvironmentSnapshot,
   type AgentEnvironmentSnapshot,
 } from "./environment.js";
@@ -94,6 +96,7 @@ import {
 } from "./context-budget-state.js";
 import {
   getCurrentContextCheckpointBoundary,
+  getLatestCompletedContextCheckpoint,
   type AgentContextCheckpointPhase,
   type AgentContextCheckpointReason,
   type AgentContextCheckpointTrigger,
@@ -259,6 +262,22 @@ export class AgentService {
       });
       throw err;
     }
+  }
+
+  async getContextTools(environment: AgentEnvironmentSnapshot, threadId: string, ownerUserId: string | null,
+    hooks?: AgentExecutionHooks): Promise<CanonicalTool[]> {
+    const context: BrowserAgentContext = { threadId, turnId: "", budId: environment.bud_id, ownerUserId: ownerUserId ?? "", signal: new AbortController().signal, invocation: hooks?.invocation };
+    const durable = Boolean(this.durableInvocations);
+    const browserEligible = hooks ? Boolean(hooks.invocation) : durable;
+    const browser = Boolean(browserEligible && this.browserToolExecutor && ownerUserId && environment.mode === "normal" &&
+      await this.browserToolExecutor.available(context));
+    const browserHandoff = Boolean(browser && this.browserToolExecutor && await this.browserToolExecutor.canHandoff(context));
+    return resolveAgentToolsForEnvironment(environment, {
+      browser, browserHandoff,
+      appPermissions: this.appPermissionsEnabled && (hooks ? Boolean(hooks.parkAppDataRequest) : durable),
+      automations: this.automationToolsEnabled && (hooks ? Boolean(hooks.executeAutomationTool && hooks.parkAutomationProposal) : durable),
+      existingContactReviews: this.existingContactReviewsEnabled && (hooks ? Boolean(hooks.parkBootstrapProposal) : durable),
+    });
   }
 
   async cancelThread(threadId: string): Promise<void> {
@@ -583,9 +602,7 @@ export class AgentService {
         // Mirror the main-loop request shape (runtime instructions +
         // tool schemas) so the summary request shares its prompt-cache prefix.
         conversation: applyRuntimeInstructions(conversation, environment),
-        tools: resolveAgentToolsForEnvironment(environment, { browser: await browserAvailable(), browserHandoff: await browserHandoffAvailable(), appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
-          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
-          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) }),
+        tools: await this.getContextTools(environment, threadId, ownerUserId ?? null, args.executionHooks),
         ownerUserId,
         controller,
         compactedBoundaryKeys,
@@ -612,13 +629,15 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
-	        const modelTools = resolveAgentToolsForEnvironment(environment, { browser: await browserAvailable(), browserHandoff: await browserHandoffAvailable(), appPermissions: this.appPermissionsEnabled && Boolean(args.executionHooks?.parkAppDataRequest),
-          automations: this.automationToolsEnabled && Boolean(args.executionHooks?.executeAutomationTool && args.executionHooks?.parkAutomationProposal),
-          existingContactReviews: this.existingContactReviewsEnabled && Boolean(args.executionHooks?.parkBootstrapProposal) });
+	        const modelTools = await this.getContextTools(environment, threadId, ownerUserId ?? null, args.executionHooks);
 	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
 	        );
+        let contextBaseline = captureContextBaseline(conversationForModel, {
+          provider: providerName, model: modelReasoning.providerModel, reasoning: modelReasoning.reasoning,
+          requestMode: buildRequestMode(providerName), checkpointId: reconstruction.checkpointId ?? null, tools: modelTools,
+        });
         let llmCallId = createLlmCallId();
 	        let modelResult: {
 	          response: CanonicalResponse;
@@ -674,6 +693,10 @@ export class AgentService {
           loadedConversation = retryCompaction.loadedConversation;
           conversation = loadedConversation.messages;
           reconstruction = loadedConversation.reconstruction;
+          contextBaseline = captureContextBaseline(applyRuntimeInstructions(conversation, environment), {
+            provider: providerName, model: modelReasoning.providerModel, reasoning: modelReasoning.reasoning,
+            requestMode: buildRequestMode(providerName), checkpointId: reconstruction.checkpointId ?? null, tools: modelTools,
+          });
           llmCallId = createLlmCallId();
 	          await args.executionHooks?.checkpoint();
           modelResult = await this.modelRunner.invokeModel(
@@ -756,6 +779,7 @@ export class AgentService {
           assistantMessageId,
           ownerUserId,
           reconstruction,
+          contextBaseline,
         });
 
         for (const segment of reasoningSegments) {
@@ -1260,12 +1284,18 @@ export class AgentService {
       model: args.model,
       modelReasoning: args.modelReasoning,
     });
+    const checkpoint = await getLatestCompletedContextCheckpoint(args.threadId);
+    const usageAnchor = await loadLatestContextUsageAnchor(args.threadId);
     const checkedAt = new Date();
     const decision = buildContextBudgetDecision({
       model: args.model,
       provider: args.providerName,
       budget,
       conversation: args.conversation,
+      checkpoint, usageAnchor,
+      requestIdentity: { provider: args.providerName, model: args.modelReasoning.providerModel,
+        reasoning: args.modelReasoning.reasoning, requestMode: buildRequestMode(args.providerName),
+        checkpointId: checkpoint?.checkpointId ?? null, tools: args.tools },
       source: "active_agent_decision",
       phase: args.phase,
       reason: args.reason,
@@ -1749,7 +1779,8 @@ function buildCompactionDecisionLogMeta(args: {
     force: args.force,
     conversationMessages: args.conversationMessages,
     estimatedTokens: args.estimatedTokens,
-    estimateBasis: "model_agnostic_estimate",
+    estimateBasis: args.snapshot.status === "available" ? args.snapshot.basis : null,
+    anchorCallId: args.snapshot.status === "available" ? args.snapshot.provider_usage_estimate?.llm_call_id ?? null : null,
     thresholdTokens: args.budget.thresholdTokens,
     thresholdRatio: args.budget.thresholdRatio,
     percentOfThreshold: safeTokenRatio(args.estimatedTokens, args.budget.thresholdTokens),
@@ -1846,29 +1877,6 @@ function applyOpenAIAssistantPhaseFallback(
       assistantPhase: fallbackPhase,
     };
   });
-}
-
-function applyRuntimeInstructions(
-  conversation: CanonicalMessage[],
-  environment: AgentEnvironmentSnapshot,
-): CanonicalMessage[] {
-  const instructions = [
-    buildAgentEnvironmentInstruction(environment),
-  ].filter((instruction): instruction is string => Boolean(instruction));
-
-  if (instructions.length === 0) {
-    return conversation;
-  }
-
-  const runtimeMessages: CanonicalMessage[] = instructions.map((instruction) => ({
-    role: "system",
-    content: instruction,
-  }));
-  const [first, ...rest] = conversation;
-  if (first?.role === "system") {
-    return [first, ...runtimeMessages, ...rest];
-  }
-  return [...runtimeMessages, ...conversation];
 }
 
 function formatTerminalPathContext(pathContext: TerminalPathContext | null): string | null {

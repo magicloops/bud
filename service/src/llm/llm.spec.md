@@ -228,6 +228,15 @@ Standalone Node tests for effective model-selection precedence.
 
 Durable provider-call ledger helpers for same-provider reconstruction and cache diagnostics.
 
+Completed agent calls atomically store optional `cache_metadata.context_baseline`
+(version, identity hash, prefix hash, message count) alongside usage/output.
+`loadLatestContextUsageAnchor(threadId)` returns only the latest completed call;
+internal callers resolve thread ownership first. Old rows fall back without a
+backfill or migration. Context accounting uses OpenAI/ds4 inclusive input and
+Anthropic input plus cache reads/writes; billing usage remains unchanged. Generic
+chat-completions and changing browser-image hydration are not anchor-compatible.
+
+
 **Responsibilities**:
 - create stable `llm_call` identifiers
 - persist one `llm_call` row per provider invocation

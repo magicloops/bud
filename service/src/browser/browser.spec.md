@@ -291,3 +291,11 @@ The raw-pg admission transaction uses the shared invocation timing SQL before
 moving a running invocation into waiting_for_user. The later worker notification
 is not the timing boundary. Continuation tests verify this path and ordinary
 agent/user handoffs exclude private wait time and accumulate on resume.
+
+## Read-only catalog availability
+
+Broker availability checks live carrier capabilities and handoff state without
+requiring an active invocation. AgentService gates catalog eligibility separately
+and forwards actual invocation context during execution. Executor owner checks
+still precede availability reads; dispatch still requires the repository's real
+invocation lease/fence and action receipt. Idle accounting cannot execute a tool.

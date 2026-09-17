@@ -290,16 +290,14 @@ Circular composer submit control with the context-budget ring and popover.
   focus for keyboard users, and on tap when the button is disabled (empty
   composer) — a tap on an enabled button is the send action and is never
   intercepted. Escape / outside click close it.
-- Popover content, from `getContextBudgetMeterPresentation`: headline
-  (`Model · 44% of auto-compact limit`), subline (`108k of 245k · compacts at
-  90% of the 272k window`), a segmented bar plus legend of the token
-  breakdown (tool output, messages, system prompt, tool calls, reasoning,
-  compaction summary, tool schemas, other), and a two-line footer (estimate
-  basis + last measured request; compaction count + output reserve). Segment
-  / swatch colors are fixed per category from the bud accent palette
-  (`DEFAULT_AVATAR_COLORS`: messages pink, tool calls orange, tool output
-  cyan, system prompt purple, reasoning green; minor categories gray) so the
-  legend reads the same on every bud
+- Popover leads with utilization, used tokens against the effective limit,
+  remaining capacity. The model name is omitted visually (retained in the send
+  button’s accessible summary). The provider-usage-plus-additions label is omitted; measured
+  and estimate-only basis labels remain visible.
+- **Estimated composition** is always visible (not collapsible). It contains
+  the existing segmented bar/category legend plus compaction count and reply reserve.
+  Category colors remain fixed across Buds; category shares describe estimated
+  composition, not provider-measured attribution. Model-view access stays visible.
 - policy/provenance diagnostics (Bud cap, hard window, basis/confidence,
   source/phase) render only behind a "Diagnostics" disclosure when
   `config.showSystemMessages` is on
@@ -310,6 +308,12 @@ Circular composer submit control with the context-budget ring and popover.
 
 Pure presentation helpers for the context budget send-button popover and ring.
 
+Utilization uses the service primary total. Category shares use their own heuristic
+sum, not that primary total; they are not measured provider token attribution.
+The popover omits the anchored-total basis label; unchanged measured input retains
+the measured basis. No proportional category rescaling.
+
+
 **Responsibilities**:
 - map usage percentage to normal/elevated/near/over/unknown tones
 - format visual percentages and rounded token counts such as `312k`
@@ -319,10 +323,10 @@ Pure presentation helpers for the context budget send-button popover and ring.
   categories under 0.5% fold into "Other"; older services without a
   `breakdown` fall back to the messages / tool-schemas split), `footer`, and
   `diagnostics`
-- footer copy: `Estimated (~4 chars/token)` / `Measured by provider` plus
-  `last request Xk in / Yk out` from `provider_usage_estimate`; `Compacted N×`
-  (or `Compacted earlier` when only a checkpoint id is known) and
-  `Xk reserved for the reply`
+- first footer line: `Estimated`, `Measured by provider`, or
+  `Provider usage + estimated additions`; remaining footer details contain
+  compaction count and reply reserve, rendered below the always-visible composition.
+  The anchored basis line is not displayed in the popover
 - keep policy numbers and provenance out of product copy (diagnostics only)
 - clamp radial ring progress from 0-100%
 
@@ -330,7 +334,7 @@ Pure presentation helpers for the context budget send-button popover and ring.
 
 Node-runner coverage for rounded token formatting, ring clamping, headline /
 subline copy, breakdown grouping + sorting + "Other" folding, footer variants
-(measured request, compaction count fallbacks, disabled compaction, stale),
+(accounting basis, compaction count fallbacks, disabled compaction, stale),
 the no-breakdown fallback, the diagnostics/product-copy split, and unknown
 snapshots.
 

@@ -34,6 +34,8 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **Simplify agent request building and tool discovery.** Implement [design/agent-request-building.md](./design/agent-request-building.md): select tools from configuration and owned Bud capabilities, prepare messages/tools once for invocation and accounting, and keep invocation/lease checks exclusively in execution. Remove preview-hook branching and duplicate preparation without adding another framework. See the [review](./review/agent-tools-and-context-building.md) for the browser-catalog regression and current architecture.
+
 - **Responsive web: real-device pass**
   - iOS Safari / Android Chrome against prod: soft-keyboard viewport
     behavior, toolbar collapse, programmatic IME focus from tap — the three

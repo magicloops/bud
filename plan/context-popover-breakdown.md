@@ -1,5 +1,8 @@
 # Plan: Context popover — less prose, a real breakdown
 
+> Accounting update: [provider-anchored context accounting](provider-anchored-context-accounting.md) supersedes the independent provider diagnostic and the assumption that category estimates equal primary utilization. Categories now describe estimated composition.
+
+
 Status: Implemented 2026-09-03. Deviations from the plan below:
 - Runtime instructions only exist while the bud is offline (~100 tokens), so
   the idle snapshot does not replicate the environment machinery; the
