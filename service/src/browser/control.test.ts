@@ -12,6 +12,9 @@ import { BrowserError } from "./repository.js";
 function fixture() {
   let session: BrowserSession = {
     id: "browser",
+    browser_id: "resource",
+    browser_epoch: 1,
+    control_session_id: null,
     thread_id: "thread",
     bud_id: "bud",
     created_by_user_id: "alice",
@@ -33,6 +36,7 @@ function fixture() {
   let rejection: string | undefined;
   const requests: BrowserCommand[] = [];
   let fitReply: BrowserBackendResult | undefined;
+  let reopenReply: BrowserBackendResult | undefined;
   let inputReply: Promise<BrowserBackendResult> | undefined;
   let renewalReply: Promise<BrowserBackendResult> | undefined;
   const repository = {
@@ -67,6 +71,7 @@ function fixture() {
         revision: session.revision + Number(advance),
         sequence: session.sequence + 1,
         control_epoch: session.control_epoch + Number(advance),
+        browser_epoch: session.browser_epoch + Number(advance),
       };
       return {
         session: { ...session },
@@ -110,6 +115,7 @@ function fixture() {
   } as BrowserCarrier;
   const dispatch = async (_carrier: BrowserCarrier, request: BrowserCommand): Promise<BrowserBackendResult> => {
       requests.push(request);
+      if (request.command.action === "reopen_pages" && reopenReply) return reopenReply;
       if (request.command.action === "fit_viewport" && fitReply) return fitReply;
       if (request.command.operation === "renew" && renewalReply) return renewalReply;
       if (request.command.action === "human_input" && inputReply) return inputReply;
@@ -122,13 +128,14 @@ function fixture() {
       return {
         ok: true,
         outcome: "completed",
-        data: { control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
+        data: { pages_reopened: true, control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
       };
     };
   const control = new BrowserControl(repository, () => carrier, dispatch);
   return {
     control,
     restart: () => new BrowserControl(repository, () => carrier, dispatch),
+    set reopenReply(value: BrowserBackendResult) { reopenReply = value; },
     set fitReply(value: BrowserBackendResult) { fitReply = value; },
     set inputReply(value: Promise<BrowserBackendResult>) { inputReply = value; },
     set renewalReply(value: Promise<BrowserBackendResult>) { renewalReply = value; },
@@ -229,19 +236,14 @@ test("release and lost return acknowledgement never make an invocation runnable"
   }
 });
 
-test("private input cannot begin while an invocation is still executing", async () => {
+test("takeover fences browser work without waiting for unrelated invocation work", async () => {
   const f = fixture();
   f.running = true;
   const waiting = await f.control.acquire("alice", "browser", "viewer", 1);
-  assert.equal(waiting.control_state, "paused");
-  assert.deepEqual(
-    f.requests.map((request) => request.command.operation),
-    ["pause"],
-  );
-  assert.equal(
-    (await f.control.mediaAuthority("alice", "browser", "viewer")).controllerId,
-    undefined,
-  );
+  assert.equal(waiting.control_state, "human_private");
+  assert.deepEqual(f.requests.map(request => request.command.operation), ["pause", "acquire"]);
+  assert.ok((await f.control.mediaAuthority("alice", "browser", "viewer")).controllerId);
+
 });
 
 
@@ -373,6 +375,9 @@ test("runtime status distinguishes restart from a temporary disconnect without m
   f.carrier.current = () => true;
   assert.equal(f.control.runtimeStatus(f.session), "daemon_restarted");
   assert.deepEqual(f.session, before);
+  assert.equal(f.control.runtimeStatus({ ...f.session, state: "interrupted" }), "daemon_restarted");
+  assert.equal(f.control.runtimeStatus({ ...f.session, desired_state: "closed" }), "ended");
+  f.carrier.bootId = f.session.boot_id;
   assert.equal(f.control.runtimeStatus({ ...f.session, state: "interrupted" }), "ended");
 });
 
@@ -421,4 +426,29 @@ test('signed viewer recovery survives coordinator restart, fences old tickets an
   await restarted.returnToAgent('alice', 'browser', 'auth:other', another.revision);
   await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:other', anotherTicket), /recovery_invalid/);
   assert.equal(f.returned, 1);
+});
+
+
+test("explicit page recovery takes private control first and never resumes agent work", async () => {
+  const f = fixture();
+  await assert.rejects(f.control.acquire("bob","browser","viewer",1,true), /not_found/);
+  assert.equal(f.requests.length,0);
+  await f.control.acquire("alice","browser","viewer",1,true);
+  assert.deepEqual(f.requests.map(r=>r.command.operation ?? r.command.action),["pause","acquire","reopen_pages","renew"]);
+  assert.equal(f.session.private_content,true);
+  assert.equal(f.returned,0);
+  assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
+});
+
+test("unknown or unavailable page recovery is not retried and leaves private state paused", async () => {
+  for (const outcome of ["unknown","rejected"] as const) {
+    const f = fixture();
+    f.reopenReply = {ok:false,outcome,error:"browser_recovery_unavailable"};
+    await assert.rejects(f.control.acquire("alice","browser","viewer",1,true), /browser_recovery_/);
+    assert.equal(f.requests.filter(r=>r.command.action==="reopen_pages").length,1);
+    assert.equal(f.session.private_content,true);
+    assert.equal(f.session.control_state,"paused");
+    assert.equal(f.control.ownsControl("alice","browser","viewer"),false);
+    assert.equal(f.returned,0);
+  }
 });

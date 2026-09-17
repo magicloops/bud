@@ -209,7 +209,8 @@ export async function buildServer(): Promise<FastifyInstance> {
       retrievalCleanupTimer = setInterval(cleanRetrieval, 60000);
       retrievalCleanupTimer.unref();
     }
-    await pool.query("select id, generation, control_epoch, control_state, revision, private_content from browser_session limit 0");
+    await pool.query("select id, browser_id, generation, control_epoch from browser_session limit 0");
+    await pool.query("select id, control_epoch, control_state, revision, private_content, desired_state, lifecycle_request_id from browser_resource limit 0");
     await pool.query("select id, session_id, invocation_id, call_id, status from browser_handoff limit 0");
     await browserBroker.control.repository.recover();
     invocationWorker?.start();

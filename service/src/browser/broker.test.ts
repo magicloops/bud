@@ -10,7 +10,7 @@ import { receiveBrowserResult } from './transport.js';
 test('new observations are capability gated; legacy default and new default use supported forms', async t => {
   const budId = randomUUID();
   const commands: Record<string, unknown>[] = [];
-  const capability = {version:1, available:true, boot_id:'boot', managed:true, profile_mode:'ephemeral'};
+  const capability = {version:1, available:true, boot_id:'boot', managed:true, profile_mode:'persistent'};
   const tracker = {
     budId, sessionId:'device', browserCapability:capability,
     socket:{readyState:1, OPEN:1, send(bytes:Buffer) {

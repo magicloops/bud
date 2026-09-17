@@ -895,4 +895,9 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ## Bud-owned browser (Phases 1–2)
 
-Normal agent chats can use browser_open, browser_observe, browser_act and browser_close through the service browser broker and the selected daemon. Each thread owns an isolated ephemeral Chrome for Testing session with durable service identity and fenced WS/gRPC commands. This is separate from localhost app previews. Phase 2 adds browser_request_handoff, durable agent parking/return, private user takeover and a standalone authenticated web viewer with a separate bounded media WebSocket relay. Native mobile/workbench integration remains Phase 3. See [setup](./plan/bud-owned-browser/phase-1-agent-browser.md), [Phase-2 acceptance](./plan/bud-owned-browser/phase-2-private-handoff.md), [service broker](./service/src/browser/browser.spec.md), and [daemon runtime](./bud/src/browser/browser.spec.md).
+Normal agent chats can use browser_open, browser_observe, browser_act and browser_close through the service browser broker and the selected daemon. Each Bud owns one persistent browser profile/process; threads own separate tab workspaces with shared website sign-ins and Bud-wide private-control fencing. Service identity and WS/gRPC commands remain owner-bound. This is separate from localhost app previews. Phase 2 adds browser_request_handoff, durable agent parking/return, private user takeover and a standalone authenticated web viewer with a separate bounded media WebSocket relay. Native mobile/workbench integration remains Phase 3. See [setup](./plan/bud-owned-browser/phase-1-agent-browser.md), [Phase-2 acceptance](./plan/bud-owned-browser/phase-2-private-handoff.md), [service broker](./service/src/browser/browser.spec.md), and [daemon runtime](./bud/src/browser/browser.spec.md).
+
+Phase 3k adds acknowledged Bud-level Stop/Reset, claim-bound profile quarantine and
+graceful daemon shutdown. macOS native-store preflight is required; Linux persistent
+runtime is unavailable pending secure-store validation. Exact tab/history restoration
+is Phase 3l. See [shared-browser implementation and acceptance](./plan/bud-owned-browser/phase-3k-shared-persistent-browser.md).

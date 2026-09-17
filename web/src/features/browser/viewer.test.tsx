@@ -194,7 +194,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     assert.equal(clients.length, recovered + 1)
     metadata = { ...metadata, runtime_status: 'daemon_restarted' }
     await poll()
-    assert.equal(view.root.findByType('h1').children.join(''), 'Browser session ended')
+    assert.equal(view.root.findByType('h1').children.join(''), 'Recover browser pages')
     assert.equal(view.root.findAllByType('select').length, 0)
     assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Reconnect view') || b.children.includes('Take control')), false)
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), true)
@@ -466,3 +466,36 @@ test('previously authorized viewer restores its private lease after service rest
     Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
   }
 })
+
+
+test('daemon restart offers explicit page recovery without polling-driven navigation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (()=>0) as typeof requestAnimationFrame;
+  Object.assign(globalThis,{__testBrowserCanvas:class { close() {} }});
+  const writes: string[] = [];
+  let metadata = {session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'old',state:'ready',control_state:'agent',revision:1,can_view:false,runtime_status:'daemon_restarted',can_take_control:true};
+  globalThis.fetch = async (_url,init) => {
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)); writes.push(body.operation);
+      metadata = {...metadata,generation:'new',revision:3,runtime_status:'available',control_state:'human_private'};
+    }
+    return Response.json(metadata);
+  };
+  const {BrowserViewer} = await import('./viewer');
+  let view!: ReactTestRenderer;
+  try {
+    await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser'}),{createNodeMock:()=>({value:''})})});
+    assert.deepEqual(writes,[]);
+    assert.match(JSON.stringify(view.toJSON()),/Back history and unsaved edits are not restored/);
+    await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Reopen saved pages'))!.props.onClick());
+    assert.deepEqual(writes,['reopen']);
+    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
+    await act(async()=>view.unmount());
+    assert.deepEqual(writes,['reopen','release']);
+  } finally {
+    if(view) await act(async()=>view.unmount());
+    globalThis.fetch=originalFetch; globalThis.requestAnimationFrame=originalAnimationFrame;
+    Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
+  }
+});

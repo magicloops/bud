@@ -4,6 +4,16 @@ Production bridge from `BrowserToolExecutor` to the selected Bud's authenticated
 control connection. It launches no service-local Chrome and imports no spike code.
 
 ## Files
+- `resource-repository.ts`: Durable owner/Bud authority used by live dispatch and control.
+  Owner/Bud resource creation, durable global private intent, revision/epoch-fenced
+  control receipts, eligible cross-workspace handoff return, pending stop/reset
+  acknowledgements and owner retirement. Locks Bud/resource before ordered threads,
+  invocations and workspaces. Does not perform daemon I/O or schedule runs.
+- `resource-repository.test.ts`: isolated PostgreSQL migration, owner/FK boundaries,
+  concurrent creation/takeover, private restart recovery, cross-thread return,
+  canceled/completed waits, reset acknowledgement and owner-change coverage.
+- `lifecycle.ts`: reconciles durable Bud-level stop/reset intent using the existing
+  broker cleanup loop. Offline requests remain pending until exact daemon acknowledgement.
 - `broker.ts`: backend composition, capability availability, fenced dispatch and
   completion, five-second bounded cleanup reconciliation (32 candidates per pass).
 - `repository.ts`: owner/thread/Bud SQL checks, existing invocation lease/fence
@@ -39,6 +49,14 @@ control connection. It launches no service-local Chrome and imports no spike cod
   live revocation and zero-viewer shutdown.
 
 ## Authority and storage
+`browser_resource` owns persistent profile identity and global private/control state.
+`browser_session` is an owner-bound thread workspace. Lock order is Bud/resource →
+ordered threads → invocation/action → workspace; shared private intent is never
+copied onto workspace rows. Takeover fences every passive media group on the
+resource and all agent browser operations; unrelated chat/terminal continue.
+Acknowledged return wakes eligible waits across workspaces. Stop/reset cancels
+browser waits without canceling unrelated chat. Reclaim retires the resource.
+
 The invocation supplies owner, Bud, thread, worker and fence; tool arguments cannot
 supply these. Authorization runs before dispatch and again before evidence enters
 agent context. Browser rows inherit owner and tenant; composite thread/Bud/owner
@@ -47,15 +65,16 @@ FKs and a partial unique active-thread index enforce scope. Existing
 is not a second invocation scheduler. Phase 2 adds first-party web routes; existing
 authorized chat carries handoff prompts and tool results without a new SSE family.
 
-DB identity survives service restart; a different daemon boot closes the obsolete
-identity and requires explicit open. Same-boot interrupted browsers can be closed
+DB identity survives service and daemon restart; a different daemon boot preserves
+workspace inventory for explicit page recovery. Private intent survives and needs
+explicit takeover/return, even though live tabs may have been lost. Same-boot interrupted browsers can be closed
 then opened with a new generation. Deleted threads/unclaimed Buds persist desired
 close until an eligible daemon connection returns. Internal cleanup scans are
 not viewer reads. Browser mutation outcomes are never automatically replayed.
 
 Limits: 128 pending service requests, 24 KiB daemon command boundary, 128 KiB
 accepted results, 30-second request deadline capped by the current invocation
-lease. Device capability requires version 1, ready managed ephemeral runtime.
+lease. Device capability requires version 1, ready managed persistent runtime.
 Mixed-version peers without that capability receive no browser commands.
 
 Dependencies: pg/schema, invocation execution hooks, authenticated WS/gRPC session
@@ -74,9 +93,8 @@ upgrades require an allowed Origin. Signed-out requests return 401, foreign IDs
 
 Control leases are memory-only, 15 seconds, renewed every five seconds. Private
 content remains private after pause, disconnect or restart (`private_content`);
-only an acknowledged explicit return clears it. Acquisition serializes with worker
-claim through the thread lock and cannot enable input while a worker is running.
-User takeover parks at the next safe provider/tool boundary. Close fences media,
+only an acknowledged explicit return clears it. Acquisition persists global pause before dispatch, drains bounded page work and
+parks subsequent browser calls through durable waits without blocking normal chat. Close fences media,
 requests cancellation and uses existing offline cleanup. Stop alone does not close
 Chrome. Duplicate Return rejects stale authority without a second continuation.
 
@@ -151,9 +169,8 @@ Private/paused control no longer excludes the thread from invocation claiming.
 Browser handoff waits release their thread reservation, preserving the original
 continuation and serialized execution on return. Inventory handoff recovery uses
 invocation status rather than reservation. Browser prepare parks eligible undispatched agent operations on same-boot private
-sessions, including close; unsupported/non-durable callers receive a rejection. A confirmed different
-authenticated daemon boot retires the destroyed ephemeral session first; explicit
-open can create a fresh identity without returning or exposing the old private session. Only browser access is blocked; ordinary chat remains available.
+sessions, including close; unsupported/non-durable callers receive a rejection. A confirmed different authenticated daemon boot requires explicit page recovery;
+private intent survives at browser scope and requires explicit human recovery. Only browser access is blocked; ordinary chat remains available.
 See [plan](../../../plan/bud-owned-browser/private-control-chat.md).
 
 
@@ -175,8 +192,7 @@ See [plan](../../../plan/bud-owned-browser/agent-viewport-fitting.md).
 Owner-authorized metadata adds runtime_status (available, disconnected,
 daemon_restarted, ended). Compare the current capable carrier boot with the
 stored session boot; absence alone never claims restart. The web pane clears
-stale private/media/page controls on confirmed end, explains lost ephemeral
-pages, and retains explicit close with its stop-run semantics. Missing-session
+stale private/media/page controls on confirmed end, explains lost live tabs while preserving stored website sign-ins, and retains explicit close with its stop-run semantics. Missing-session
 404 shows generic unavailable recovery; no automatic browser recreation or
 private resume. Temporary disconnects retain reconnect. No DB/wire migration.
 
@@ -233,8 +249,8 @@ runtimes retain interrupted behavior; no automatic mutation retry.
 
 With a capable handoff carrier and durable execution hook, private-session admission
 atomically parks the original invocation/action and creates a `return_control`
-handoff before any daemon command. Lock order is thread → invocation → action →
-session; acknowledged return locks pending invocations before the session. Return
+handoff before any daemon command. Lock order starts at Bud/browser resource before thread → invocation → action →
+workspace; acknowledged return locks all affected pending invocations before workspaces. Return
 therefore includes a committed wait or admission observes returned authority.
 `BrowserToolWait` is internal control flow, never a completed provider result.
 Unknown post-dispatch outcomes retain normal error handling and never park/replay.
@@ -309,3 +325,28 @@ and control-fence closure remain mandatory; delayed checks cannot deliver after
 closure. No new capability, request or metadata flags. The unreleased browser
 feature uses updated daemon/service/web together. Relay tests cover multi-viewer
 reuse across epochs and delayed authorization after takeover.
+
+## Shared-browser lifecycle API (Phase 3k)
+
+`GET /api/buds/:bud_id/browser` resolves live cookie auth and owned Bud before
+reading the active resource. `POST /api/buds/:bud_id/browser/lifecycle` additionally
+requires allowed Origin, observed revision, `operation:stop|reset` and explicit
+`confirmed:true` for reset. Foreign Bud IDs return 404. Resource rows inherit Bud
+owner/tenant; the lifecycle actor is stamped from the authenticated viewer.
+202 means intent persisted, not completion. Reconciliation fences all resource
+media, sends one receipt/epoch-qualified lifecycle request and acknowledges only
+matching successful daemon results. Stop preserves profile/private intent; Reset
+also clears private intent and advances profile generation. No browser data leaves
+the host. Routes and metadata expose browser/control-workspace identity without
+conferring access. Migrations 0044–0046 are a coordinated unreleased-feature cutover.
+
+## Explicit page recovery (Phase 3l)
+
+A changed daemon boot preserves open workspace inventory and rejects agent admission
+with `browser_recovery_required`; resource retirement and explicit close still win.
+Owner-authorized control `operation:reopen` acknowledges pause/acquire first,
+rotates workspace generation on the boot boundary, dispatches `reopen_pages` once,
+then renews the private lease. Lost/failed recovery stays private and is not retried.
+Old results/proofs cannot use the new generation. Local URL hints never enter the
+service. Existing cookie/Origin/owner checks and row ownership remain unchanged;
+no new migration. Updated unreleased service/daemon/web must run together.

@@ -1,0 +1,2 @@
+ALTER TABLE "browser_resource" ADD COLUMN "control_operation" text;--> statement-breakpoint
+ALTER TABLE "browser_resource" ADD CONSTRAINT "browser_resource_operation_check" CHECK ("browser_resource"."control_operation" is null or "browser_resource"."control_operation" in ('pause','acquire','prepare_return','finish_return'));

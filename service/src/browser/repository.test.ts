@@ -26,7 +26,7 @@ test(
       await pool.end();
     });
     await pool.query(`create schema ${schema}`);
-    await pool.query(`create table bud(bud_id text primary key,created_by_user_id text);
+    await pool.query(`create table bud(bud_id text primary key,created_by_user_id text,tenant_id text,device_secret text,unique(bud_id,created_by_user_id));
     create table thread(thread_id uuid primary key,bud_id text,created_by_user_id text,tenant_id text,deleted_at timestamptz,
       unique(thread_id,bud_id,created_by_user_id));
     create table agent_invocation(id text primary key,thread_id uuid,turn_id text,created_by_user_id text,
@@ -56,8 +56,11 @@ test(
         "utf8",
       ),
     );
+    for (const name of ["0044_dry_princess_powerful.sql", "0045_gorgeous_luke_cage.sql", "0046_tired_johnny_blaze.sql"]) {
+      await pool.query((await readFile(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")).replaceAll('"public".', `"${schema}".`));
+    }
     const thread = randomUUID();
-    await pool.query("insert into bud values('bud','alice');");
+    await pool.query("insert into bud values('bud','alice','tenant','secret');");
     await pool.query(
       "insert into thread values($1,'bud','alice','tenant',null)",
       [thread],
@@ -92,7 +95,7 @@ test(
     ]) {
       await assert.rejects(
         repo.prepare({ ...first, ...bad }, "boot", { action: "open" }),
-        /authority_lost/,
+        /authority_lost|not_found/,
       );
     }
     const r = await repo.prepare(first, "boot", { action: "open" });
@@ -162,13 +165,13 @@ test(
     );
     assert.equal(await repo.evidenceAllowed(second), false);
     for (const controlState of ["paused", "human_private", "resume_pending"]) {
-      await pool.query("update browser_session set control_state=$1 where id=$2", [controlState, r.session_id]);
+      await pool.query("update browser_resource set control_state=$1,private_content=true,control_session_id=$2 where id=(select browser_id from browser_session where id=$2)", [controlState, r.session_id]);
       for (const action of ["open", "observe", "click", "close"]) {
         await assert.rejects(repo.prepare(await next(), "boot", { action }), /private_or_paused/);
       }
       assert.equal((await controls.get("alice", r.session_id)).boot_id, "boot");
     }
-    await pool.query("update browser_session set control_state='paused' where id=$1", [r.session_id]);
+    await pool.query("update browser_resource set control_state='paused' where id=(select browser_id from browser_session where id=$1)", [r.session_id]);
     await assert.rejects(
       controls.prepare(
         "alice",
@@ -179,22 +182,26 @@ test(
         { action: "control", operation: "acquire" },
         "human_private",
       ),
-      /agent_still_running/,
+      /revision_conflict/,
     );
     await pool.query("update agent_invocation set status='waiting_for_user'");
+    const acquired = await controls.prepare("alice", r.session_id, "boot", paused.session.revision,
+      "acquire", { action:"control", operation:"acquire" }, "human_private");
     const returning = await controls.prepare(
       "alice",
       r.session_id,
       "boot",
-      paused.session.revision,
+      acquired.session.revision,
       "return",
       { action: "control", operation: "prepare_return" },
       "resume_pending",
     );
+    const finished = await controls.prepare("alice", r.session_id, "boot", returning.session.revision,
+      "finish", { action:"control", operation:"finish_return" }, "resume_pending");
     await controls.returned(
       "alice",
       r.session_id,
-      returning.session.revision,
+      finished.session.revision,
       "returned",
     );
     assert.equal(
@@ -215,7 +222,7 @@ test(
       /revision_conflict/,
     );
     await pool.query("update agent_invocation set status='running'");
-    // A new service instance recovers identity; a new daemon boot cannot reuse it.
+    // Service restart preserves live state; daemon restart retains recoverable inventory.
     const recovered = await new BrowserRepository(pool).prepare(
       await next(),
       "boot",
@@ -225,33 +232,33 @@ test(
     await repo.complete(recovered, { ok: true, outcome: "completed" });
     await assert.rejects(
       repo.prepare(await next(), "new-boot", { action: "observe" }),
-      /reopen_required/,
+      /recovery_required/,
     );
-    const replacement = await repo.prepare(await next(), "new-boot", {
-      action: "open",
-    });
-    assert.notEqual(replacement.generation, r.generation);
-    assert.notEqual(replacement.session_id, r.session_id);
-    await repo.complete(replacement, { ok: true, outcome: "completed" });
-    // Each private state blocks the same boot but cannot hold a dead browser
-    // hostage after a confirmed daemon restart. Keep old privacy metadata intact.
-    let live = replacement;
-    let liveBoot = "new-boot";
+    await assert.rejects(repo.prepare(await next(), "new-boot", { action: "open" }), /recovery_required/);
+    assert.equal((await controls.list("alice", thread))[0].id, r.session_id);
+    const beforeRecovery = await controls.get("alice", r.session_id);
+    await assert.rejects(controls.prepare("bob",r.session_id,"new-boot",beforeRecovery.revision,
+      "recover",{action:"control",operation:"pause"},"paused"), /not_found/);
+    const recovering = await controls.prepare("alice",r.session_id,"new-boot",beforeRecovery.revision,
+      "recover",{action:"control",operation:"pause"},"paused");
+    assert.equal(recovering.session.id,r.session_id);
+    assert.notEqual(recovering.session.generation,r.generation);
+    assert.equal(recovering.session.boot_id,"new-boot");
+    await repo.complete(recovered,{ok:true,outcome:"completed"});
+    assert.equal((await controls.get("alice",r.session_id)).generation,recovering.session.generation);
+    const replacement = recovering.request;
+    // Restart cannot release the browser-wide private latch. Only explicit
+    // takeover of the new process and acknowledged return can resume agents.
+    const live = replacement;
+    const liveBoot = "new-boot";
     for (const state of ["paused", "human_private", "resume_pending"]) {
-      await pool.query("update browser_session set control_state=$1,private_content=true where id=$2", [state, live.session_id]);
-      await assert.rejects(repo.prepare(await next(), liveBoot, { action: "open" }), /private_or_paused/);
-      const prior = live;
-      liveBoot += "-next";
-      live = await repo.prepare(await next(), liveBoot, { action: "open" });
-      assert.notEqual(live.session_id, prior.session_id);
-      assert.notEqual(live.generation, prior.generation);
-      const old = (await pool.query("select * from browser_session where id=$1", [prior.session_id])).rows[0];
-      assert.ok(old.closed_at);
-      assert.equal(old.private_content, true);
-      assert.equal(old.control_state, state);
-      assert.equal((await controls.get("alice", live.session_id)).private_content, false);
-      await repo.complete(live, { ok: true, outcome: "completed" });
+      await pool.query("update browser_resource set control_state=$1,private_content=true,control_session_id=$2", [state,live.session_id]);
+      await assert.rejects(repo.prepare(await next(), liveBoot, { action:"open" }), /private_or_paused/);
+      await assert.rejects(repo.prepare(await next(), "restarted", { action:"open" }), /private_or_paused/);
+      assert.equal((await controls.get("alice",live.session_id)).private_content,true);
     }
+    // Isolate the cleanup assertions from the separately tested return handshake.
+    await pool.query("update browser_resource set control_state='agent',private_content=false");
     const current = await controls.get("alice", live.session_id);
     await assert.rejects(
       controls.requestClose("bob", live.session_id, current.revision),
@@ -263,7 +270,7 @@ test(
       current.revision,
     );
     assert.equal(closing.session.desired_state, "closed");
-    assert.deepEqual(closing.invocations, ["inv"]);
+    assert.deepEqual(closing.invocations, []);
     await assert.rejects(
       controls.requestClose("alice", live.session_id, current.revision),
       /revision_conflict/,
@@ -275,11 +282,15 @@ test(
     );
     const candidates = await repo.cleanupCandidates();
     assert.equal(candidates.length, 1);
-    const close = await repo.prepareCleanup(candidates[0], liveBoot);
+    const close = await repo.prepareCleanup(candidates[0], "another-boot");
     assert.ok(close);
     assert.ok(close.control_epoch > r.control_epoch);
     await repo.complete(close, { ok: true, outcome: "completed" });
     assert.equal((await repo.cleanupCandidates()).length, 0);
+    // Claim rotation quarantines even the same owner's existing profile.
+    const oldResource = (await pool.query("select browser_id from browser_session where id=$1", [r.session_id])).rows[0].browser_id;
+    await pool.query("update bud set device_secret='replacement' where bud_id='bud'");
+    assert.ok((await pool.query("select retired_at from browser_resource where id=$1", [oldResource])).rows[0].retired_at);
     assert.equal(
       (await pool.query("select tenant_id,closed_at from browser_session"))
         .rows[0].tenant_id,

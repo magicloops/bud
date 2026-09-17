@@ -24,24 +24,5 @@ async fn daemon_main() -> Result<()> {
     setup_tracing();
     let args = BudArgs::parse();
     let local = LocalSet::new();
-    let running = local.run_until(run(args));
-    // Drop managed browser children on normal daemon shutdown. Detached
-    // terminal holders retain their separate lifetime contract.
-    #[cfg(unix)]
-    {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {
-            result = running => result,
-            result = tokio::signal::ctrl_c() => result.map_err(Into::into),
-            _ = terminate.recv() => Ok(()),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::select! {
-            result = running => result,
-            result = tokio::signal::ctrl_c() => result.map_err(Into::into),
-        }
-    }
+    local.run_until(run(args)).await
 }

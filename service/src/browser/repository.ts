@@ -1,3 +1,4 @@
+import { BrowserResourceRepository, type BrowserResource } from "./resource-repository.js";
 import { settledWorkDurationSql } from "../agent/invocation-timing.js";
 import { ulid } from "ulid";
 import type { Pool } from "pg";
@@ -16,12 +17,11 @@ export class BrowserError extends Error {
 }
 type Session = {
   id: string;
+  browser_id: string;
   generation: string;
   boot_id: string;
   state: string;
   desired_state: string;
-  control_state: string;
-  private_content: boolean;
   control_epoch: number;
   sequence: number;
   invocation_id: string | null;
@@ -50,9 +50,21 @@ export class BrowserRepository {
     const identity = context.invocation;
     if (!identity || !context.callId)
       throw new BrowserError("browser_invocation_required");
+    await new BrowserResourceRepository(this.database).ensure(context.ownerUserId, context.budId);
     const client = await this.database.connect();
     try {
       await client.query("begin");
+      await client.query("select bud_id from bud where bud_id=$1 and created_by_user_id=$2 for update", [context.budId, context.ownerUserId]);
+      let resource = (await client.query<BrowserResource>(`select r.* from browser_resource r join bud b on b.bud_id=r.bud_id
+        where r.bud_id=$1 and r.created_by_user_id=$2 and b.created_by_user_id=$2 and r.retired_at is null for update of r`,
+        [context.budId, context.ownerUserId])).rows[0];
+      if (!resource) throw new BrowserError("browser_not_found");
+      if (resource.desired_state === "stopped" && command.action === "open") {
+        resource = (await client.query<BrowserResource>(`update browser_resource set desired_state='open',
+          control_state=case when private_content then 'paused' else 'agent' end,
+          control_epoch=control_epoch+1,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id])).rows[0];
+      }
+      if (resource.desired_state !== "open") throw new BrowserError("browser_stopped");
       // Admission locks the thread before the invocation. Follow that order;
       // this dispatch validates the existing lease and never acquires one.
       await client.query(
@@ -99,9 +111,8 @@ export class BrowserRepository {
           [context.threadId, context.ownerUserId, context.budId],
         )
       ).rows[0];
-      // A different authenticated daemon boot has destroyed the old ephemeral
-      // browser. Retire that identity before applying live private-control rules.
-      if (session && session.boot_id !== bootId) {
+      // Workspace identity survives restart. Only a retired resource invalidates it.
+      if (session && session.browser_id !== resource.id) {
         await client.query(
           "update browser_session set state='interrupted',desired_state='closed',closed_at=now(),updated_at=now() where id=$1",
           [session.id],
@@ -112,7 +123,28 @@ export class BrowserRepository {
           throw new BrowserError("browser_interrupted_reopen_required");
         }
       }
-      if (session && (session.control_state !== "agent" || session.private_content)) {
+      if (!session) {
+        if (command.action !== "open")
+          throw new BrowserError("browser_not_open");
+        session = (
+          await client.query<Session>(
+            `insert into browser_session
+          (id,thread_id,bud_id,created_by_user_id,tenant_id,generation,boot_id,browser_id)
+          values($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+            [
+              `browser_${ulid()}`,
+              context.threadId,
+              context.budId,
+              context.ownerUserId,
+              authority.rows[0].tenant_id,
+              ulid(),
+              bootId,
+              resource.id,
+            ],
+          )
+        ).rows[0];
+      }
+      if (resource.control_state !== "agent" || resource.private_content) {
         if (!context.waitClientId || session.desired_state !== "open" || session.state === "interrupted")
           throw new BrowserError("browser_private_or_paused");
         const handoffId = ulid();
@@ -130,26 +162,8 @@ export class BrowserRepository {
         await client.query("commit");
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });
       }
-      if (!session) {
-        if (command.action !== "open")
-          throw new BrowserError("browser_not_open");
-        session = (
-          await client.query<Session>(
-            `insert into browser_session
-          (id,thread_id,bud_id,created_by_user_id,tenant_id,generation,boot_id)
-          values($1,$2,$3,$4,$5,$6,$7) returning *`,
-            [
-              `browser_${ulid()}`,
-              context.threadId,
-              context.budId,
-              context.ownerUserId,
-              authority.rows[0].tenant_id,
-              ulid(),
-              bootId,
-            ],
-          )
-        ).rows[0];
-      }
+      if (session.boot_id !== bootId && command.action !== "close")
+        throw new BrowserError("browser_recovery_required");
       if (session.pending_until && session.pending_until.getTime() > Date.now())
         throw new BrowserError("browser_busy");
       if (session.desired_state === "closed" && command.action !== "close")
@@ -174,6 +188,10 @@ export class BrowserRepository {
       ).rows[0];
       await client.query("commit");
       return {
+        browser_id: resource.id,
+        browser_epoch: resource.control_epoch,
+        private_content: resource.private_content,
+        browser_paused: resource.control_state !== "agent",
         request_id: ulid(),
         session_id: updated.id,
         generation: updated.generation,
@@ -225,12 +243,13 @@ export class BrowserRepository {
   /** A takeover may commit after dispatch but before the daemon receives its fence. */
   async evidenceAllowed(request: BrowserCommand): Promise<boolean> {
     const result = await this.database.query(
-      `select s.id from browser_session s
+      `select s.id from browser_session s join browser_resource r on r.id=s.browser_id
       join thread t on t.thread_id=s.thread_id join bud b on b.bud_id=s.bud_id
       join agent_invocation i on i.id=$5 and i.thread_id=t.thread_id
       where s.id=$1 and s.generation=$2 and s.control_epoch=$3
         and s.created_by_user_id=$4 and t.created_by_user_id=$4 and b.created_by_user_id=$4
-        and t.deleted_at is null and s.control_state='agent' and not s.private_content
+        and t.deleted_at is null and r.control_state='agent' and not r.private_content
+        and r.id=$7 and r.control_epoch=$8 and r.retired_at is null and r.desired_state='open'
         and s.closed_at is null and i.fence=$6 and i.status='running'
         and i.lease_expires_at>clock_timestamp() and i.cancel_requested_at is null`,
       [
@@ -240,6 +259,8 @@ export class BrowserRepository {
         request.owner_user_id,
         request.invocation_id,
         request.invocation_fence,
+        request.browser_id,
+        request.browser_epoch,
       ],
     );
     return Boolean(result.rowCount);
@@ -264,7 +285,8 @@ export class BrowserRepository {
     session: Session,
     bootId: string,
   ): Promise<BrowserCommand | null> {
-    if (session.boot_id !== bootId) {
+    const resource = await new BrowserResourceRepository(this.database).get(session.created_by_user_id, session.bud_id);
+    if (!resource || session.browser_id !== resource.id) {
       await this.database.query(
         `update browser_session set state='closed',closed_at=now(),updated_at=now()
         where id=$1 and generation=$2 and closed_at is null`,
@@ -272,6 +294,7 @@ export class BrowserRepository {
       );
       return null;
     }
+    if (session.desired_state !== "closed") return null;
     const expires = Date.now() + 30_000;
     const claimed = (
       await this.database.query<Session>(
@@ -283,6 +306,10 @@ export class BrowserRepository {
     ).rows[0];
     if (!claimed) return null;
     return {
+      browser_id: resource.id,
+      browser_epoch: resource.control_epoch,
+      private_content: resource.private_content,
+      browser_paused: resource.control_state !== "agent",
       request_id: ulid(),
       session_id: claimed.id,
       generation: claimed.generation,

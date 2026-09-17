@@ -30,6 +30,7 @@ pub struct Authority {
     paused_controller: Option<String>,
     expires: Option<Instant>,
     private: bool,
+    workspace: Option<String>,
     // Remembers privacy transitions even if media misses takeover and return.
     // Advancing only the agent command epoch does not invalidate passive media.
     media_fence: u64,
@@ -44,12 +45,38 @@ impl Default for Authority {
             paused_controller: None,
             expires: None,
             private: false,
+            workspace: None,
             media_fence: 0,
         }
     }
 }
 
 impl Authority {
+    pub fn restore(&mut self, private: bool, paused: bool) {
+        self.private = private;
+        if private || paused {
+            self.pause();
+        }
+    }
+
+    pub fn resume_after_stop(&mut self, epoch: u64) {
+        self.mode = Mode::Agent;
+        self.private = false;
+        self.epoch = epoch;
+        self.controller = None;
+        self.paused_controller = None;
+        self.workspace = None;
+        self.expires = None;
+        self.media_fence += 1;
+    }
+
+    pub fn set_workspace(&mut self, workspace: String) {
+        self.workspace = Some(workspace);
+    }
+    pub fn workspace_allowed(&self, workspace: &str) -> bool {
+        self.workspace.as_deref() == Some(workspace)
+    }
+
     pub fn expire(&mut self) {
         if self.expires.is_some_and(|time| time <= Instant::now()) {
             self.pause();

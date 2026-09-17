@@ -16,6 +16,9 @@ pub enum Action {
     Open {
         url: Option<String>,
     },
+    ReopenPages {
+        controller_id: String,
+    },
     Observe {
         target_id: Option<String>,
     },
@@ -78,6 +81,9 @@ pub enum Action {
     Control {
         control: ControlCommand,
     },
+    Lifecycle {
+        reset: bool,
+    },
     Close,
     Cancel,
 }
@@ -87,6 +93,7 @@ impl Action {
     fn diagnostic_name(&self) -> &'static str {
         match self {
             Self::Open { .. } => "open",
+            Self::ReopenPages { .. } => "reopen_pages",
             Self::Observe { .. } => "observe",
             Self::Capture { .. } => "capture",
             Self::Inspect { .. } => "inspect",
@@ -99,6 +106,7 @@ impl Action {
             Self::FitViewport { .. } => "fit_viewport",
             Self::MediaAttach { .. } => "media_attach",
             Self::Control { .. } => "control",
+            Self::Lifecycle { .. } => "lifecycle",
             Self::Close => "close",
             Self::Cancel => "cancel",
         }
@@ -122,6 +130,10 @@ pub struct Request {
     pub generation: String,
     pub thread_id: String,
     pub owner_user_id: String,
+    pub browser_id: String,
+    pub browser_epoch: u64,
+    pub private_content: bool,
+    pub browser_paused: bool,
     pub control_epoch: u64,
     pub sequence: u64,
     pub expires_at_ms: u64,
@@ -161,7 +173,8 @@ pub(super) struct Slot {
     generation: String,
     cancel: watch::Sender<Option<String>>,
     pub(super) state: AsyncMutex<Entry>,
-    pub(super) authority: Mutex<Authority>,
+    pub(super) authority: Arc<Mutex<Authority>>,
+    pub(super) page_lock: Arc<AsyncMutex<()>>,
     pub(super) media: std::sync::atomic::AtomicBool,
     pub(super) refresh: watch::Sender<u64>,
 }
@@ -184,6 +197,12 @@ pub struct BrowserManager {
     boot_id: String,
     entries: Arc<Mutex<HashMap<String, Arc<Slot>>>>,
     connection: watch::Sender<Option<String>>,
+    root: Arc<AsyncMutex<Option<Browser>>>,
+    authority: Arc<Mutex<Authority>>,
+    page_lock: Arc<AsyncMutex<()>>,
+    binding: Arc<Mutex<Option<(String, String)>>>,
+    persistent: Option<(PathBuf, String)>,
+    lifecycle_receipt: Arc<Mutex<Option<String>>>,
 }
 
 impl BrowserManager {
@@ -193,13 +212,31 @@ impl BrowserManager {
             boot_id: ulid::Ulid::new().to_string(),
             entries: Arc::default(),
             connection: watch::channel(None).0,
+            root: Arc::default(),
+            authority: Arc::default(),
+            page_lock: Arc::default(),
+            binding: Arc::default(),
+            persistent: None,
+            lifecycle_receipt: Arc::default(),
         }
+    }
+
+    pub async fn configured_for(base: PathBuf, environment: String) -> Self {
+        let mut manager = Self::configured().await;
+        manager.persistent = Some((base, environment));
+        if manager.executable.is_some() {
+            if let Err(error) = super::profile::secure_storage_ready() {
+                tracing::warn!(reason = %error, "Persistent browser unavailable");
+                manager.executable = None;
+            }
+        }
+        manager
     }
 
     pub async fn configured() -> Self {
         let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").map(PathBuf::from);
         if let Some(path) = &executable {
-            match Browser::launch(path).await {
+            match Browser::launch_probe(path).await {
                 Ok(mut browser) => {
                     let ready = browser.version().await.is_ok();
                     let closed = browser.close().await.is_ok();
@@ -214,9 +251,46 @@ impl BrowserManager {
         Self::new(None)
     }
 
+    /// Stop capture/admission before draining page work and flushing Chrome's profile.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        self.disconnect();
+        let _page = self.page_lock.lock().await;
+        // Capture last native/private navigation without persisting page contents.
+        let live: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
+        for slot in live {
+            let mut entry = slot.state.lock().await;
+            let selected = entry.target.clone();
+            if let Some(browser) = &mut entry.browser {
+                if browser.save_pages(selected.as_deref()).await.is_err() {
+                    tracing::warn!("Browser page recovery checkpoint unavailable");
+                }
+            }
+        }
+        self.close_root().await?;
+        let slots: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
+        for slot in slots {
+            slot.state.lock().await.browser = None;
+        }
+        self.entries.lock().unwrap().clear();
+        *self.binding.lock().unwrap() = None;
+        *self.authority.lock().unwrap() = Authority::default();
+        Ok(())
+    }
+
+    // Keep ownership after an unconfirmed shutdown, so a retry cannot acknowledge
+    // stop/reset merely because the previous attempt dropped the process handle.
+    async fn close_root(&self) -> anyhow::Result<()> {
+        let mut root = self.root.lock().await;
+        if let Some(browser) = root.as_mut() {
+            browser.close().await?;
+        }
+        *root = None;
+        Ok(())
+    }
+
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
-            "managed":true, "profile_mode":"ephemeral", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
+            "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
             "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":2})
     }
 
@@ -238,11 +312,13 @@ impl BrowserManager {
         let now = crate::util::now_millis() as u64;
         if (request.expires_at_ms <= now && !matches!(request.command, Action::Cancel))
             || request.expires_at_ms > now + 45_000
+            || request.browser_epoch == 0
             || request.control_epoch == 0
             || request.sequence == 0
             || request.invocation_fence == 0
             || !valid_action(&request.command)
             || [
+                &request.browser_id,
                 &request.request_id,
                 &request.device_session_id,
                 &request.session_id,
@@ -263,6 +339,61 @@ impl BrowserManager {
         let Some(executable) = &self.executable else {
             return Reply::error(&request, "browser_not_configured", false);
         };
+        {
+            let mut binding = self.binding.lock().unwrap();
+            let identity = (request.browser_id.clone(), request.owner_user_id.clone());
+            if let Some(current) = binding.as_ref() {
+                if current != &identity {
+                    return Reply::error(
+                        &request,
+                        "browser_resource_changed_restart_required",
+                        false,
+                    );
+                }
+            } else {
+                *binding = Some(identity);
+                self.authority
+                    .lock()
+                    .unwrap()
+                    .restore(request.private_content, request.browser_paused);
+            }
+        }
+        if let Action::Lifecycle { reset } = request.command {
+            return match self.lifecycle(&request, reset).await {
+                Ok(()) => Reply {
+                    request_id: request.request_id,
+                    session_id: request.session_id,
+                    generation: request.generation,
+                    ok: true,
+                    outcome: "completed",
+                    error: None,
+                    data: json!({"lifecycle_acknowledged":true}),
+                },
+                Err(_) => Reply::error(&request, "browser_lifecycle_unconfirmed", true),
+            };
+        }
+        // Only a newer explicit open after acknowledged stop can release its
+        // nonprivate pause. Private intent always requires human control/return.
+        if matches!(request.command, Action::Open { .. })
+            && self.lifecycle_receipt.lock().unwrap().is_some()
+            && !request.private_content
+            && !request.browser_paused
+        {
+            let mut authority = self.authority.lock().unwrap();
+            if request.browser_epoch > authority.epoch {
+                authority.resume_after_stop(request.browser_epoch);
+                *self.lifecycle_receipt.lock().unwrap() = None;
+            }
+        }
+        if matches!(request.command, Action::Open { .. })
+            && !self
+                .authority
+                .lock()
+                .unwrap()
+                .agent_allowed(request.browser_epoch)
+        {
+            return Reply::error(&request, "browser_private_or_paused", false);
+        }
         let entry = {
             let mut entries = self.entries.lock().unwrap();
             // Closed tombstones outlive every admitted request's deadline.
@@ -279,7 +410,14 @@ impl BrowserManager {
             if let Some(entry) = entries.get(&request.session_id) {
                 entry.clone()
             } else {
-                if !matches!(request.command, Action::Open { .. }) {
+                if !matches!(
+                    request.command,
+                    Action::Open { .. }
+                        | Action::Close
+                        | Action::Control {
+                            control: ControlCommand::Pause
+                        }
+                ) {
                     return Reply::error(&request, "browser_interrupted", false);
                 }
                 let active = entries
@@ -292,17 +430,21 @@ impl BrowserManager {
                             .unwrap_or(true)
                     })
                     .count();
-                if active >= 2 || entries.len() >= 128 {
+                if (active >= 2 && !matches!(request.command, Action::Close))
+                    || entries.len() >= 128
+                {
                     return Reply::error(&request, "browser_session_limit", false);
                 }
-                if entries.values().any(|entry| {
-                    entry.thread == request.thread_id
-                        && entry
-                            .state
-                            .try_lock()
-                            .map(|e| e.closed_at.is_none())
-                            .unwrap_or(true)
-                }) {
+                if !matches!(request.command, Action::Close)
+                    && entries.values().any(|entry| {
+                        entry.thread == request.thread_id
+                            && entry
+                                .state
+                                .try_lock()
+                                .map(|e| e.closed_at.is_none())
+                                .unwrap_or(true)
+                    })
+                {
                     return Reply::error(&request, "browser_thread_already_open", false);
                 }
                 let entry = Arc::new(Slot {
@@ -311,7 +453,8 @@ impl BrowserManager {
                     generation: request.generation.clone(),
                     cancel: watch::channel(None).0,
                     refresh: watch::channel(0).0,
-                    authority: Mutex::new(Authority::default()),
+                    authority: self.authority.clone(),
+                    page_lock: self.page_lock.clone(),
                     media: std::sync::atomic::AtomicBool::new(false),
                     state: AsyncMutex::new(Entry {
                         epoch: 0,
@@ -333,6 +476,26 @@ impl BrowserManager {
         {
             return Reply::error(&request, "browser_scope_mismatch", false);
         }
+        if !entry
+            .authority
+            .lock()
+            .unwrap()
+            .workspace_allowed(&request.session_id)
+            && matches!(
+                request.command,
+                Action::ReopenPages { .. }
+                    | Action::HumanInput { .. }
+                    | Action::ResizeViewport { .. }
+                    | Action::Control {
+                        control: ControlCommand::Renew { .. }
+                            | ControlCommand::PrepareReturn { .. }
+                            | ControlCommand::Release { .. }
+                            | ControlCommand::FinishReturn
+                    }
+            )
+        {
+            return Reply::error(&request, "browser_control_workspace_mismatch", false);
+        }
         // Renewal authenticates only the existing controller/epoch. It must not
         // queue behind CDP or advance the page-operation sequence.
         if let Action::Control {
@@ -343,7 +506,7 @@ impl BrowserManager {
                 .authority
                 .lock()
                 .unwrap()
-                .transition(request.control_epoch, command)
+                .transition(request.browser_epoch, command)
             {
                 return Reply::error(&request, code, false);
             }
@@ -370,7 +533,10 @@ impl BrowserManager {
         {
             let media_fence = {
                 let mut authority = entry.authority.lock().unwrap();
-                if !authority.viewer_allowed(request.control_epoch, controller_id.as_deref()) {
+                if !authority.viewer_allowed(request.browser_epoch, controller_id.as_deref())
+                    || (controller_id.is_some()
+                        && !authority.workspace_allowed(&request.session_id))
+                {
                     return Reply::error(&request, "browser_private_or_paused", false);
                 }
                 controller_id.is_none().then(|| authority.media_fence())
@@ -383,7 +549,7 @@ impl BrowserManager {
                 entry,
                 connection,
                 request.device_session_id.clone(),
-                request.control_epoch,
+                request.browser_epoch,
                 controller_id.clone(),
                 endpoint.clone(),
                 ticket.clone(),
@@ -409,17 +575,18 @@ impl BrowserManager {
         };
         if let Some(ControlCommand::Pause) = control {
             let mut authority = entry.authority.lock().unwrap();
-            if let Err(code) = authority.transition(request.control_epoch, control.unwrap()) {
+            if let Err(code) = authority.transition(request.browser_epoch, control.unwrap()) {
                 return Reply::error(&request, code, false);
             }
         } else if let Action::HumanInput { controller_id, .. }
+        | Action::ReopenPages { controller_id }
         | Action::ResizeViewport { controller_id, .. } = &request.command
         {
             if !entry
                 .authority
                 .lock()
                 .unwrap()
-                .human_allowed(request.control_epoch, controller_id)
+                .human_allowed(request.browser_epoch, controller_id)
             {
                 return Reply::error(&request, "browser_control_expired", false);
             }
@@ -428,7 +595,7 @@ impl BrowserManager {
                 .authority
                 .lock()
                 .unwrap()
-                .agent_allowed(request.control_epoch)
+                .agent_allowed(request.browser_epoch)
             {
                 return Reply::error(&request, "browser_private_or_paused", false);
             }
@@ -441,7 +608,12 @@ impl BrowserManager {
         // Bound the FIFO wait for page operations, captures and fitting. This
         // avoids rejecting agent work merely because a viewer resize won the lock.
         let wait_started = Instant::now();
-        let acquired = tokio::time::timeout(Duration::from_secs(4), entry.state.lock()).await;
+        let acquired = tokio::time::timeout(Duration::from_secs(4), async {
+            let page = entry.page_lock.lock().await;
+            let state = entry.state.lock().await;
+            (page, state)
+        })
+        .await;
         let wait_ms = wait_started.elapsed().as_millis() as u64;
         if wait_ms >= 250 || acquired.is_err() {
             tracing::info!(component = "browser_timing", event = "page_lock_wait",
@@ -449,7 +621,7 @@ impl BrowserManager {
                 epoch = request.control_epoch, action = request.command.diagnostic_name(),
                 wait_ms, timed_out = acquired.is_err(), "Browser page lock wait");
         }
-        let mut entry = match acquired {
+        let (_page, mut entry) = match acquired {
             Ok(guard) => guard,
             Err(_) => return Reply::error(&request, "browser_busy", false),
         };
@@ -466,7 +638,7 @@ impl BrowserManager {
                     .authority
                     .lock()
                     .unwrap()
-                    .viewer_allowed(request.control_epoch, None)
+                    .viewer_allowed(request.browser_epoch, None)
             {
                 return Reply::error(&request, "browser_stale_request", false);
             }
@@ -498,35 +670,35 @@ impl BrowserManager {
                     .authority
                     .lock()
                     .unwrap()
-                    .transition(request.control_epoch, command)
+                    .transition(request.browser_epoch, command)
                 {
                     return Reply::error(&request, code, false);
                 }
             }
         } else if let Action::HumanInput { controller_id, .. }
+        | Action::ReopenPages { controller_id }
         | Action::ResizeViewport { controller_id, .. } = &request.command
         {
             if !slot
                 .authority
                 .lock()
                 .unwrap()
-                .human_allowed(request.control_epoch, controller_id)
+                .human_allowed(request.browser_epoch, controller_id)
             {
                 return Reply::error(&request, "browser_control_expired", false);
             }
         } else if !matches!(request.command, Action::Close) {
             let mut authority = slot.authority.lock().unwrap();
-            if !authority.agent_allowed(request.control_epoch) {
+            if !authority.agent_allowed(request.browser_epoch) {
                 return Reply::error(&request, "browser_private_or_paused", false);
             }
-            authority.epoch = request.control_epoch;
+            authority.epoch = request.browser_epoch;
         }
-        if matches!(request.command, Action::Close) {
-            let mut authority = slot.authority.lock().unwrap();
-            if request.control_epoch < authority.epoch {
-                return Reply::error(&request, "browser_stale_control", false);
-            }
-            authority.pause();
+        if matches!(control, Some(ControlCommand::Acquire { .. })) {
+            slot.authority
+                .lock()
+                .unwrap()
+                .set_workspace(request.session_id.clone());
         }
         if !passive_fit {
             entry.invocation = Some((request.invocation_id.clone(), request.invocation_fence));
@@ -542,7 +714,29 @@ impl BrowserManager {
             _ = connection.changed() => Err(anyhow::anyhow!("browser_connection_lost")),
             _ = async { loop { if cancellation.changed().await.is_err() || cancellation.borrow_and_update().as_deref() == Some(&request.request_id) { break; } } } => Err(anyhow::anyhow!("browser_canceled")),
             result = tokio::time::timeout(Duration::from_millis(request.expires_at_ms.saturating_sub(crate::util::now_millis() as u64)),
-                perform(&mut entry, executable, &request.command)) => {
+                async {
+                    let result = self.perform(&mut entry, executable, &request).await;
+                    if result.is_ok()
+                        && matches!(
+                            request.command,
+                            Action::Open { .. }
+                                | Action::Navigate { .. }
+                                | Action::Observe { .. }
+                                | Action::Inspect { .. }
+                                | Action::Click { .. }
+                                | Action::HumanInput { .. }
+                                | Action::ReopenPages { .. }
+                        )
+                    {
+                        let selected = entry.target.clone();
+                        if let Some(browser) = &mut entry.browser {
+                            if browser.save_pages(selected.as_deref()).await.is_err() {
+                                tracing::warn!("Browser page recovery checkpoint unavailable");
+                            }
+                        }
+                    }
+                    result
+                }) => {
                 result.unwrap_or_else(|_| Err(anyhow::anyhow!("browser_deadline")))
             }
         };
@@ -556,13 +750,16 @@ impl BrowserManager {
         if control.is_none()
             && !matches!(
                 request.command,
-                Action::Close | Action::HumanInput { .. } | Action::ResizeViewport { .. }
+                Action::Close
+                    | Action::ReopenPages { .. }
+                    | Action::HumanInput { .. }
+                    | Action::ResizeViewport { .. }
             )
             && !slot
                 .authority
                 .lock()
                 .unwrap()
-                .agent_allowed(request.control_epoch)
+                .agent_allowed(request.browser_epoch)
         {
             return Reply::error(&request, "browser_private_or_paused", true);
         }
@@ -592,7 +789,7 @@ impl BrowserManager {
                     .authority
                     .lock()
                     .unwrap()
-                    .agent_allowed(request.control_epoch)
+                    .agent_allowed(request.browser_epoch)
             {
                 return Reply::error(&request, "browser_private_or_paused", true);
             }
@@ -628,7 +825,17 @@ impl BrowserManager {
                 data,
             },
             Err(error) => {
+                if entry.browser.is_none() {
+                    entry.closed_at = Some(Instant::now());
+                }
                 const REJECTED: &[&str] = &[
+                    "browser_recovery_unavailable",
+                    "browser_profile_in_use",
+                    "browser_profile_permissions",
+                    "browser_profile_recovery_required",
+                    "browser_secure_storage_unavailable",
+                    "browser_secure_storage_locked",
+                    "browser_secure_storage_unsupported",
                     "browser_locator_ambiguous",
                     "browser_locator_not_found",
                     "browser_observation_limit",
@@ -649,164 +856,252 @@ impl BrowserManager {
                 }
                 // Detailed CDP errors can include page data. Keep them local to
                 // the adapter; conservatively classify admitted failures unknown.
-                if entry.browser.is_none() {
-                    entry.closed_at = Some(Instant::now());
-                }
                 Reply::error(&request, "browser_outcome_unknown", true)
             }
         }
     }
-}
 
-async fn perform(
-    entry: &mut Entry,
-    executable: &std::path::Path,
-    action: &Action,
-) -> anyhow::Result<Value> {
-    if let Action::Control { control } = action {
-        let browser = entry
-            .browser
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
-        // A lease acknowledgement must not imply that a permanently interrupted
-        // Chrome channel can produce frames. Pause/close remain available.
-        if matches!(control, ControlCommand::Acquire { .. }) && browser.interrupted() {
+    async fn lifecycle(&self, request: &Request, reset: bool) -> anyhow::Result<()> {
+        {
+            let mut authority = self.authority.lock().unwrap();
+            if request.browser_epoch < authority.epoch
+                || (request.browser_epoch == authority.epoch
+                    && self.lifecycle_receipt.lock().unwrap().as_deref()
+                        != Some(&request.request_id))
+            {
+                anyhow::bail!("browser_stale_control");
+            }
+            authority.pause();
+            authority.epoch = request.browser_epoch;
+            *self.lifecycle_receipt.lock().unwrap() = Some(request.request_id.clone());
+        }
+        let _page = tokio::time::timeout(Duration::from_secs(20), self.page_lock.lock()).await?;
+        if self.authority.lock().unwrap().epoch != request.browser_epoch {
+            anyhow::bail!("browser_stale_control");
+        }
+        self.close_root().await?;
+        let slots: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
+        for slot in slots {
+            let mut entry = slot.state.lock().await;
+            entry.browser = None;
+            entry.closed_at = Some(Instant::now());
+        }
+        // Workspace handles share the profile lock. Drop them before opening
+        // the profile exclusively to reset; never remove Chrome singleton locks.
+        if reset {
+            if let Some((base, environment)) = &self.persistent {
+                super::profile::Profile::acquire(
+                    base,
+                    environment,
+                    &request.browser_id,
+                    &request.owner_user_id,
+                )?
+                .reset()?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn perform(
+        &self,
+        entry: &mut Entry,
+        executable: &std::path::Path,
+        request: &Request,
+    ) -> anyhow::Result<Value> {
+        let action = &request.command;
+        if !matches!(action, Action::Close) {
+            if entry.browser.is_none() {
+                if !matches!(
+                    action,
+                    Action::Open { .. }
+                        | Action::Control {
+                            control: ControlCommand::Pause
+                        }
+                ) {
+                    anyhow::bail!("browser_interrupted");
+                }
+                let mut root = self.root.lock().await;
+                if root.is_none() {
+                    *root = Some(if let Some((base, environment)) = &self.persistent {
+                        let profile = super::profile::Profile::acquire(
+                            base,
+                            environment,
+                            &request.browser_id,
+                            &request.owner_user_id,
+                        )?;
+                        Browser::launch_persistent(executable, profile).await?
+                    } else {
+                        Browser::launch(executable).await?
+                    });
+                }
+                entry.browser = Some(
+                    root.as_mut()
+                        .unwrap()
+                        .workspace(&request.session_id)
+                        .await?,
+                );
+            }
+        }
+        if let Action::Control { control } = action {
+            let browser = entry
+                .browser
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
+            // A lease acknowledgement must not imply that a permanently interrupted
+            // Chrome channel can produce frames. Pause/close remain available.
+            if matches!(control, ControlCommand::Acquire { .. }) && browser.interrupted() {
+                anyhow::bail!("browser_interrupted");
+            }
+            if !matches!(control, ControlCommand::Renew { .. }) {
+                browser.invalidate_references();
+            }
+            if matches!(control, ControlCommand::PrepareReturn { .. }) {
+                let targets = browser.targets().await?;
+                let target = entry
+                    .target
+                    .as_ref()
+                    .filter(|id| targets.iter().any(|t| &t.target_id == *id))
+                    .or_else(|| targets.first().map(|t| &t.target_id))
+                    .ok_or_else(|| anyhow::anyhow!("browser_target_not_found"))?;
+                // Validate that a fresh nonprivate observation can be obtained;
+                // its contents are not a control acknowledgement or audit payload.
+                browser.observe(target).await?;
+            }
+            return Ok(json!({"control_acknowledged":true}));
+        }
+        if matches!(action, Action::Close) {
+            if let Some(browser) = entry.browser.as_mut() {
+                browser.close().await?;
+            } else if let Some(root) = self.root.lock().await.as_mut() {
+                root.forget_workspace(&request.session_id)?;
+            } else if let Some((base, environment)) = &self.persistent {
+                let profile = super::profile::Profile::acquire(
+                    base,
+                    environment,
+                    &request.browser_id,
+                    &request.owner_user_id,
+                )?;
+                super::recovery::Recovery::load(Some(&profile.path))
+                    .save(&request.session_id, None)?;
+            }
+            entry.browser = None;
+            entry.closed_at = Some(Instant::now());
+            return Ok(json!({"state":"closed", "profile_mode":"persistent"}));
+        }
+        let browser = entry.browser.as_mut().unwrap();
+        if browser.interrupted() {
             anyhow::bail!("browser_interrupted");
         }
-        if !matches!(control, ControlCommand::Renew { .. }) {
-            browser.invalidate_references();
+        if matches!(action, Action::ReopenPages { .. }) {
+            entry.target = Some(browser.reopen_pages().await?);
+            return Ok(json!({"pages_reopened":true,"history_restored":false}));
         }
-        if matches!(control, ControlCommand::PrepareReturn { .. }) {
-            let targets = browser.targets().await?;
-            let target = entry
-                .target
-                .as_ref()
-                .filter(|id| targets.iter().any(|t| &t.target_id == *id))
-                .or_else(|| targets.first().map(|t| &t.target_id))
-                .ok_or_else(|| anyhow::anyhow!("browser_target_not_found"))?;
-            // Validate that a fresh nonprivate observation can be obtained;
-            // its contents are not a control acknowledgement or audit payload.
-            browser.observe(target).await?;
-        }
-        return Ok(json!({"control_acknowledged":true}));
-    }
-    if matches!(action, Action::Close) {
-        if let Some(browser) = entry.browser.take() {
-            browser.close().await?;
-        }
-        entry.closed_at = Some(Instant::now());
-        return Ok(json!({"state":"closed", "profile_mode":"ephemeral"}));
-    }
-    if entry.browser.is_none() {
-        if !matches!(action, Action::Open { .. }) {
-            anyhow::bail!("browser_interrupted");
-        }
-        entry.browser = Some(Browser::launch(executable).await?);
-    }
-    let browser = entry.browser.as_mut().unwrap();
-    if browser.interrupted() {
-        anyhow::bail!("browser_interrupted");
-    }
-    let targets = browser.targets().await?;
-    let requested = match action {
-        Action::Navigate { target_id, .. }
-        | Action::Observe { target_id }
-        | Action::Inspect { target_id, .. }
-        | Action::Capture { target_id, .. } => target_id.as_ref(),
-        Action::ResizeViewport { target_id, .. } | Action::FitViewport { target_id, .. } => {
-            Some(target_id)
-        }
-        _ => None,
-    };
-    let target = requested
-        .or(entry.target.as_ref())
-        .filter(|id| targets.iter().any(|target| &target.target_id == *id))
-        .or_else(|| {
-            if requested.is_none() {
-                targets.first().map(|target| &target.target_id)
-            } else {
-                None
+        let targets = browser.targets().await?;
+        let requested = match action {
+            Action::Navigate { target_id, .. }
+            | Action::Observe { target_id }
+            | Action::Inspect { target_id, .. }
+            | Action::Capture { target_id, .. } => target_id.as_ref(),
+            Action::ResizeViewport { target_id, .. } | Action::FitViewport { target_id, .. } => {
+                Some(target_id)
             }
-        })
-        .ok_or_else(|| anyhow::anyhow!("browser_target_not_found"))?
-        .clone();
-    entry.target = Some(target.clone());
-    match action {
-        Action::Open { url } => {
-            if let Some(url) = url {
-                browser.navigate(&target, url).await?;
-            }
-            Ok(
-                json!({"state":"ready", "profile_mode":"ephemeral", "target_id":target,
+            _ => None,
+        };
+        let target = requested
+            .or(entry.target.as_ref())
+            .filter(|id| targets.iter().any(|target| &target.target_id == *id))
+            .or_else(|| {
+                if requested.is_none() {
+                    targets.first().map(|target| &target.target_id)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("browser_target_not_found"))?
+            .clone();
+        entry.target = Some(target.clone());
+        match action {
+            Action::Open { url } => {
+                if let Some(url) = url {
+                    browser.navigate(&target, url).await?;
+                }
+                Ok(
+                    json!({"state":"ready", "profile_mode":"persistent", "target_id":target,
                 "navigation_requested":url.is_some(), "targets":browser.targets().await?}),
-            )
-        }
-        Action::Capture { .. } => browser.capture_scaled(&target, Some(1.0)).await,
-        Action::Inspect {
-            compact,
-            operation,
-            continuation,
-            scope,
-            observation_id,
-            reference,
-            locator,
-            text,
-            delta_y,
-            ..
-        } => {
-            let data = browser.inspect(&target, json!({"compact":compact,"operation":operation,"continuation":continuation,
+                )
+            }
+            Action::Capture { .. } => browser.capture_scaled(&target, Some(1.0)).await,
+            Action::Inspect {
+                compact,
+                operation,
+                continuation,
+                scope,
+                observation_id,
+                reference,
+                locator,
+                text,
+                delta_y,
+                ..
+            } => {
+                let data = browser.inspect(&target, json!({"compact":compact,"operation":operation,"continuation":continuation,
                 "scope":scope,"observation_id":observation_id,"reference":reference,"locator":locator,
                 "text":text,"delta_y":delta_y})).await?;
-            Ok(json!({"observation":data}))
-        }
-        Action::Observe { .. } => {
-            Ok(json!({"targets":targets, "observation":browser.observe(&target).await?}))
-        }
-        Action::Navigate { url, .. } => {
-            browser.navigate(&target, url).await?;
-            Ok(json!({"navigation_requested":true}))
-        }
-        Action::Focus { reference } => {
-            browser.focus(reference).await?;
-            Ok(json!({}))
-        }
-        Action::Click { reference } => {
-            browser.click(reference).await?;
-            Ok(json!({}))
-        }
-        Action::HumanInput {
-            target_id,
-            document_id,
-            frame_token,
-            input,
-            ..
-        } => {
-            browser
-                .human_input(target_id, document_id, frame_token, input)
-                .await
-        }
-        Action::ResizeViewport {
-            document_id,
-            width,
-            height,
-            ..
-        }
-        | Action::FitViewport {
-            document_id,
-            width,
-            height,
-            ..
-        } => {
-            browser
-                .resize_viewport(&target, document_id, *width, *height)
-                .await
-        }
-        Action::InsertText { text } => {
-            browser.insert_text(text).await?;
-            Ok(json!({}))
-        }
-        Action::Close | Action::Cancel | Action::Control { .. } | Action::MediaAttach { .. } => {
-            unreachable!()
+                Ok(json!({"observation":data}))
+            }
+            Action::Observe { .. } => {
+                Ok(json!({"targets":targets, "observation":browser.observe(&target).await?}))
+            }
+            Action::Navigate { url, .. } => {
+                browser.navigate(&target, url).await?;
+                Ok(json!({"navigation_requested":true}))
+            }
+            Action::Focus { reference } => {
+                browser.focus(reference).await?;
+                Ok(json!({}))
+            }
+            Action::Click { reference } => {
+                browser.click(reference).await?;
+                Ok(json!({}))
+            }
+            Action::HumanInput {
+                target_id,
+                document_id,
+                frame_token,
+                input,
+                ..
+            } => {
+                browser
+                    .human_input(target_id, document_id, frame_token, input)
+                    .await
+            }
+            Action::ResizeViewport {
+                document_id,
+                width,
+                height,
+                ..
+            }
+            | Action::FitViewport {
+                document_id,
+                width,
+                height,
+                ..
+            } => {
+                browser
+                    .resize_viewport(&target, document_id, *width, *height)
+                    .await
+            }
+            Action::InsertText { text } => {
+                browser.insert_text(text).await?;
+                Ok(json!({}))
+            }
+            Action::Lifecycle { .. }
+            | Action::ReopenPages { .. }
+            | Action::Close
+            | Action::Cancel
+            | Action::Control { .. }
+            | Action::MediaAttach { .. } => {
+                unreachable!()
+            }
         }
     }
 }
@@ -880,6 +1175,7 @@ fn valid_action(action: &Action) -> bool {
                 && text.as_ref().is_none_or(|t| t.len() <= 8192)
                 && delta_y.is_none_or(|d| (-10000..=10000).contains(&d))
         }
+        Action::ReopenPages { controller_id } => id(controller_id),
         Action::Observe { target_id } => target(target_id),
         Action::Focus { reference } | Action::Click { reference } => id(reference),
         Action::HumanInput {
@@ -943,7 +1239,7 @@ fn valid_action(action: &Action) -> bool {
                 })
         }
         Action::InsertText { text } => !text.is_empty() && text.len() <= 8192,
-        Action::Close | Action::Cancel | Action::Control { .. } => true,
+        Action::Lifecycle { .. } | Action::Close | Action::Cancel | Action::Control { .. } => true,
     }
 }
 
@@ -972,6 +1268,10 @@ mod tests {
             generation: "generation".into(),
             thread_id: "thread".into(),
             owner_user_id: "alice".into(),
+            browser_id: "resource".into(),
+            browser_epoch: 1,
+            private_content: false,
+            browser_paused: false,
             control_epoch: 1,
             sequence,
             expires_at_ms: crate::util::now_millis() as u64 + 30_000,
@@ -979,6 +1279,24 @@ mod tests {
             invocation_fence: 1,
             command,
         }
+    }
+
+    async fn fixture() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let body =
+                        "<html><body><h1>Fixture</h1><button>Continue</button></body></html>";
+                    let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(),body).as_bytes()).await;
+                });
+            }
+        });
+        (url, task)
     }
 
     #[tokio::test]
@@ -1225,6 +1543,7 @@ mod tests {
         let command = |sequence, epoch, control| {
             let mut r = request(sequence, Action::Control { control });
             r.control_epoch = epoch;
+            r.browser_epoch = epoch;
             r
         };
         assert!(
@@ -1295,6 +1614,7 @@ mod tests {
             },
         );
         attach.control_epoch = 3;
+        attach.browser_epoch = 3;
         assert!(manager.execute(attach).await.ok);
         let (socket, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
             .await
@@ -1331,6 +1651,7 @@ mod tests {
                 },
             );
             r.control_epoch = epoch;
+            r.browser_epoch = epoch;
             r
         };
         assert_eq!(
@@ -1398,9 +1719,11 @@ mod tests {
         );
         let mut observe = request(10, Action::Observe { target_id: None });
         observe.control_epoch = 5;
+        observe.browser_epoch = 5;
         assert!(manager.execute(observe).await.ok);
         let mut close = request(11, Action::Close);
         close.control_epoch = 5;
+        close.browser_epoch = 5;
         assert!(manager.execute(close).await.ok);
     }
 
@@ -1409,14 +1732,17 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
+        let (url, server) = fixture().await;
         let manager = BrowserManager::new(Some(executable.into()));
         manager.connect("device".into());
         assert!(
             manager
-                .execute(request(1, Action::Open { url: None }))
+                .execute(request(1, Action::Open { url: Some(url) }))
                 .await
                 .ok
         );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.abort();
         let observed = manager
             .execute(request(2, Action::Observe { target_id: None }))
             .await;
@@ -1467,14 +1793,17 @@ mod tests {
             },
         );
         pause.control_epoch = 2;
+        pause.browser_epoch = 2;
         assert!(manager.execute(pause).await.ok);
         fit.control_epoch = 2;
+        fit.browser_epoch = 2;
         assert_eq!(
             manager.execute(fit).await.error,
             Some("browser_private_or_paused")
         );
         let mut close = request(6, Action::Close);
         close.control_epoch = 2;
+        close.browser_epoch = 2;
         assert!(manager.execute(close).await.ok);
     }
 
@@ -1503,18 +1832,21 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
+        let (url, server) = fixture().await;
         let manager = BrowserManager::new(Some(executable.into()));
         manager.connect("device".into());
         assert!(
             manager
-                .execute(request(1, Action::Open { url: None }))
+                .execute(request(1, Action::Open { url: Some(url) }))
                 .await
                 .ok
         );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.abort();
         let first = manager
             .execute(request(2, Action::Observe { target_id: None }))
             .await;
-        assert!(first.ok);
+        assert!(first.ok, "{first:?}");
         let reference = first.data["observation"]["elements"][0]["reference"]
             .as_str()
             .unwrap()
@@ -1562,6 +1894,7 @@ mod tests {
             },
         );
         pause.control_epoch = 2;
+        pause.browser_epoch = 2;
         assert!(manager.execute(pause).await.ok);
         let mut acquire = request(
             8,
@@ -1572,20 +1905,130 @@ mod tests {
             },
         );
         acquire.control_epoch = 3;
+        acquire.browser_epoch = 3;
         assert_eq!(
             manager.execute(acquire).await.error,
             Some("browser_interrupted")
         );
         let mut close = request(9, Action::Close);
         close.control_epoch = 3;
+        close.browser_epoch = 3;
         assert!(manager.execute(close).await.ok);
         let mut reopen = request(1, Action::Open { url: None });
         reopen.session_id = "replacement".into();
         reopen.generation = "replacement-generation".into();
-        assert!(manager.execute(reopen.clone()).await.ok);
-        reopen.sequence = 2;
-        reopen.command = Action::Close;
-        assert!(manager.execute(reopen).await.ok);
+        assert_eq!(
+            manager.execute(reopen).await.error,
+            Some("browser_private_or_paused")
+        );
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_global_privacy_and_lifecycle() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let manager = BrowserManager::new(Some(executable.into()));
+        manager.connect("device".into());
+        let workspace = |id: &str, sequence, epoch, command| {
+            let mut r = request(sequence, command);
+            r.session_id = id.into();
+            r.thread_id = id.into();
+            r.browser_epoch = epoch;
+            r.control_epoch = sequence;
+            r.request_id = format!("{id}-{sequence}-{epoch}");
+            r
+        };
+        for id in ["a", "b"] {
+            assert!(
+                manager
+                    .execute(workspace(id, 1, 1, Action::Open { url: None }))
+                    .await
+                    .ok
+            );
+        }
+        assert!(
+            manager
+                .execute(workspace(
+                    "a",
+                    2,
+                    2,
+                    Action::Control {
+                        control: ControlCommand::Pause
+                    }
+                ))
+                .await
+                .ok
+        );
+        assert!(
+            manager
+                .execute(workspace(
+                    "a",
+                    3,
+                    3,
+                    Action::Control {
+                        control: ControlCommand::Acquire {
+                            controller_id: "viewer".into()
+                        }
+                    }
+                ))
+                .await
+                .ok
+        );
+        assert_eq!(
+            manager
+                .execute(workspace("b", 2, 3, Action::Observe { target_id: None }))
+                .await
+                .error,
+            Some("browser_private_or_paused")
+        );
+        for (workspace_id, controller, expected) in [
+            ("a", "other", "browser_control_expired"),
+            ("b", "viewer", "browser_control_workspace_mismatch"),
+        ] {
+            assert_eq!(
+                manager
+                    .execute(workspace(
+                        workspace_id,
+                        4,
+                        3,
+                        Action::ReopenPages {
+                            controller_id: controller.into()
+                        }
+                    ))
+                    .await
+                    .error,
+                Some(expected)
+            );
+        }
+        assert!(!manager.authority.lock().unwrap().workspace_allowed("b"));
+        assert!(!manager.authority.lock().unwrap().viewer_allowed(3, None));
+        // Stop is globally fenced, acknowledged only after process exit, and
+        // retrying its exact receipt is safe. It never clears private intent.
+        let mut stop = workspace("resource", 4, 4, Action::Lifecycle { reset: false });
+        stop.private_content = true;
+        stop.browser_paused = true;
+        assert!(manager.execute(stop.clone()).await.ok);
+        assert!(manager.root.lock().await.is_none());
+        assert!(manager.execute(stop).await.ok);
+        let mut forbidden = workspace("c", 1, 5, Action::Open { url: None });
+        forbidden.private_content = true;
+        forbidden.browser_paused = true;
+        assert_eq!(
+            manager.execute(forbidden).await.error,
+            Some("browser_private_or_paused")
+        );
+        let reset = workspace("resource", 5, 6, Action::Lifecycle { reset: true });
+        assert!(manager.execute(reset).await.ok);
+        // Service clears the durable private latch only on reset acknowledgement.
+        assert!(
+            manager
+                .execute(workspace("d", 1, 7, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        manager.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -1608,7 +2051,7 @@ mod tests {
         foreign.owner_user_id = "bob".into();
         assert_eq!(
             manager.execute(foreign).await.error,
-            Some("browser_scope_mismatch")
+            Some("browser_resource_changed_restart_required")
         );
         let mut second = request(1, Action::Open { url: None });
         second.session_id = "second".into();

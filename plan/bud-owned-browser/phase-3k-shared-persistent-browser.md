@@ -1,6 +1,65 @@
 # Phase 3k: One persistent browser per Bud
 
-Status: **Scoped; not implemented.** Follow with [3l: tab recovery](phase-3l-tab-and-history-recovery.md).
+Status: **Shared persistent runtime implemented for macOS; acceptance gates below remain.**
+Exact live-tab/back-forward restoration remains [Phase 3l](phase-3l-tab-and-history-recovery.md).
+
+## Implementation checkpoint
+
+- Production daemon uses one owner/environment/resource-bound persistent profile
+  and Chrome process, with separate per-thread CDP/helper workspaces. Cookies/site
+  storage are shared; observations, target references, fitting and assigned tabs
+  are scoped. Verified opener popups inherit ownership; unknown native tabs stay hidden.
+- Service `browser_resource` owns global private intent and authority, separate
+  from per-workspace invocation ordering. Takeover fences both threads and all
+  passive media. Explicit acknowledged return resumes eligible durable waits;
+  canceled/deleted/retired work remains terminal. Chat and terminal remain usable.
+- Graceful shutdown drains page work and confirms owned process exit. Profile lock
+  and contents survive/release appropriately. Existing Chrome singleton locks are
+  not removed; uncertain surviving processes require explicit recovery.
+- Bud-level Stop/Reset is exposed in the viewer menu and ended state. Intent stays
+  pending offline until exact daemon acknowledgement. Stop retains profile/privacy;
+  Reset deletes stored data only after confirmed exit and explicit confirmation.
+- Claim/owner/device-secret changes retire the resource, including same-owner
+  reclaim; subsequent resource identity selects a fresh profile. Old data is quarantined.
+- Migrations 0044–0046 are generated and applied locally. 0046 retires old ephemeral
+  sessions and removes copied workspace privacy/control/profile fields. Unused groundwork control/binding APIs were removed; fixtures now use the
+  production control repository. No import
+  or backward compatibility is needed for this unreleased browser feature.
+- Concrete bounds: two active workspaces, 128 identities/tombstones, 16 returned
+  target entries per workspace, one shared FIFO page-operation/capture lock;
+  existing bounded media groups/viewers/credit remain. Returned inventory is bounded;
+  website-created popup count is not currently a hard process resource quota.
+
+## Validation
+
+- Service browser suite: 28 passing tests, including isolated PostgreSQL lifecycle,
+  ownership, continuation and migration fixtures; schema metadata test passes.
+- Real disposable Chrome fixtures pass shared cookie/tab/helper isolation,
+  workspace-only close, global private fencing and acknowledged stop/reset. Existing
+  live manager coverage passes cancellation/reconnect/media/renewal cases.
+- Web browser render tests pass, including lifecycle reset confirmation, pending
+  status versus stale polls and discarded late responses after Bud switch.
+- Service TypeScript, web production build and daemon build pass. Web retains its
+  existing large-chunk warning. See [validation notes](../../debug/bud-browser-phase-3k-schema.md).
+
+## Remaining acceptance gates
+
+These are not claimed complete by the disposable-profile tests:
+
+- Real macOS sign-in: thread A logs in, B uses the same sign-in, graceful daemon
+  restart retains it. Verify normal Chrome native credential-store behavior with
+  denied/locked keychain and unattended launch before real-account rollout.
+- Linux persistent runtime remains explicitly unavailable until Secret Service /
+  native-store support and failure behavior are implemented and validated. There
+  is no silent basic/plaintext fallback.
+- Real two-account cookie-auth/Origin checks, offline reset UI and takeover during
+  concurrent agent activity; synthetic ownership/privacy fixtures already pass.
+- Disk-full/profile corruption/Chrome upgrade and hard-crash surviving-process
+  recovery require host acceptance; no blind process attachment is implemented.
+
+Use updated service and rebuilt daemon together. Existing local ephemeral sessions
+are closed by the migration; open a new workspace and sign in to the new profile.
+The running user's daemon and native Chrome were not restarted by these tests.
 
 ## Product decision
 
@@ -11,8 +70,7 @@ logout, account selection, site permissions and site storage are intentional.
 This does not attach to or import the user's personal Chrome profile.
 
 This plan supersedes earlier per-thread/ephemeral profile defaults in the
-[parent design](README.md). The current implementation stays unchanged until
-implementation. The unreleased browser feature does not need compatibility
+[parent design](README.md). The unreleased browser feature does not need compatibility
 branches; service, daemon/helper and web change together.
 
 Related specs: [daemon](../../bud/src/browser/browser.spec.md),
@@ -177,7 +235,7 @@ before resource access, and all media/dispatch rechecks authority.
 
 Specs to update on implementation: root/daemon/browser/helper, service browser/
 agent/DB/migration specs, web browser, docs/proto.md and auth validation checklist.
-No schema, daemon, service or UI change is made by this plan.
+The implementation and outstanding host acceptance are recorded above.
 
 ## Won't-dos
 

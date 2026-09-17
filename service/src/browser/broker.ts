@@ -1,3 +1,5 @@
+import { BrowserLifecycle } from "./lifecycle.js";
+import { BrowserResourceRepository } from "./resource-repository.js";
 import { beginAgentCapture } from "./agent-capture.js";
 import { providerRegistry } from "../llm/index.js";
 import type {
@@ -22,8 +24,8 @@ export class BrowserBroker implements BrowserAgentBackend {
   ) {}
   async handoffAvailable(context: BrowserAgentContext): Promise<boolean> {
     if (!browserCarrier(context.budId)?.handoff) return false;
-    const sessions = await this.control.repository.list(context.ownerUserId, context.threadId);
-    return sessions.every(session => session.control_state === "agent" && !session.private_content);
+    const resource = await new BrowserResourceRepository().get(context.ownerUserId,context.budId);
+    return !resource || resource.desired_state === "open" && resource.control_state === "agent" && !resource.private_content;
   }
   async park(context: BrowserHandoffContext) {
     return this.control.park(context);
@@ -112,6 +114,7 @@ export class BrowserBroker implements BrowserAgentBackend {
     await this.cleaning;
   }
   private async cleanup(): Promise<void> {
+    await new BrowserLifecycle(this.control).reconcile(this.shutdown.signal);
     for (const session of await this.repository.cleanupCandidates()) {
       if (this.shutdown.signal.aborted) return;
       const carrier = browserCarrier(session.bud_id);

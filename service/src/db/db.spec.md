@@ -487,17 +487,21 @@ and existing agent_invocation model/effort columns, avoiding duplicate storage.
 
 ## Browser sessions
 
-`browserSessionTable` / `browser_session` stores owned thread/Bud identity, tenant,
-generation and daemon boot identity, ephemeral profile mode, lifecycle/desired
-state, control epoch/sequence, current invocation/fence, pending deadline and
-closure timestamps. Composite thread/Bud/owner FK and a unique active-thread
-partial index prevent cross-scope reuse and concurrent default sessions. No DOM,
-CDP endpoints or profile credentials are stored. Migration: `0039_tiny_loners.sql`.
-See [browser repository](../browser/browser.spec.md).
+Phase 3k uses `browserResourceTable` / `browser_resource` as the durable owner/Bud
+root: global privacy/authority, profile generation, revision and exact lifecycle
+receipts. `browserSessionTable` is a thread workspace with invocation sequence,
+boot/generation and desired lifecycle. Its composite resource/Bud/owner FK rejects
+foreign bindings; open workspaces must have a resource. Migrations 0044–0046 add
+the resource, retire old unlinked ephemeral sessions and remove superseded workspace
+privacy/control/profile columns. No cookies or credentials enter the database.
+A migration-owned trigger retires the active resource when Bud ownership or device
+secret changes, including same-owner reclaims. Future schema pushes must preserve
+this SQL trigger. Browser admission must use the new resource after reclaim; the
+old on-disk profile stays quarantined. Reviewed SQL was applied locally after
+canceling db:push's unrelated invocation constraint recreation prompt.
 
-Phase 2 adds `control_state`, optimistic `revision`, `control_request_id` and a
-`private_content` latch independent of paused/agent lifecycle. Controller leases
-remain process-local; restart does not expose a formerly private page.
+Controller leases remain process-local; durable browser private intent survives
+restart and can only clear after explicit acknowledged return or reset.
 `browserHandoffTable` / `browser_handoff` binds session/thread/Bud/owner/tenant to
 an optional invocation and call/client ID, reason, agent/user kind and pending/
 returned/canceled decision. Owner-context FKs, invocation/call uniqueness and one

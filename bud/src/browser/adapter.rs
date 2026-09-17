@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     path::Path,
     process::Stdio,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -76,15 +77,25 @@ async fn timed<T>(elapsed: &mut u64, operation: impl std::future::Future<Output 
     result
 }
 
-/// One owner, one serial command boundary; callers cannot clone the CDP handle.
-/// Fresh TempDir profiles avoid ever attaching to a user's personal Chrome.
+struct Process {
+    child: Child,
+    _temporary: Option<TempDir>,
+    _persistent: Option<super::profile::Profile>,
+}
+
+/// One serial CDP/observation handle per workspace. A lifecycle handle owns Chrome.
+/// Workspaces share one persistent process/profile and global privacy authority.
 pub struct Browser {
     cdp: Cdp,
     semantic: super::semantic::Semantic,
     semantic_dirty: bool,
     semantic_target: Option<String>,
-    child: Child,
-    _profile: TempDir,
+    process: Arc<Mutex<Process>>,
+    endpoint: String,
+    workspace: String,
+    ownership: Arc<Mutex<HashMap<String, String>>>,
+    recovery: Arc<Mutex<super::recovery::Recovery>>,
+    saved_pages: Option<super::recovery::Pages>,
     sessions: HashMap<String, String>,
     observation_id: u64,
     focus: Option<Focus>,
@@ -95,6 +106,11 @@ pub struct Browser {
 }
 
 impl Browser {
+    /// Startup readiness must not open a window, even for headed browsing.
+    pub(super) async fn launch_probe(executable: &Path) -> Result<Self> {
+        Self::launch_mode(executable, false).await
+    }
+
     pub async fn launch(executable: &Path) -> Result<Self> {
         let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
         Self::launch_mode(executable, headed).await
@@ -102,15 +118,42 @@ impl Browser {
 
     async fn launch_mode(executable: &Path, headed: bool) -> Result<Self> {
         let profile = tempfile::Builder::new().prefix("bud-browser-").tempdir()?;
+        Self::launch_profile(executable, headed, Some(profile), None).await
+    }
+
+    pub(super) async fn launch_persistent(
+        executable: &Path,
+        profile: super::profile::Profile,
+    ) -> Result<Self> {
+        super::profile::secure_storage_ready()?;
+        let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
+        Self::launch_profile(executable, headed, None, Some(profile)).await
+    }
+
+    async fn launch_profile(
+        executable: &Path,
+        headed: bool,
+        temporary: Option<TempDir>,
+        persistent: Option<super::profile::Profile>,
+    ) -> Result<Self> {
+        let path = temporary
+            .as_ref()
+            .map(|p| p.path())
+            .or_else(|| persistent.as_ref().map(|p| p.path.as_path()))
+            .unwrap();
+        let recovery = Arc::new(Mutex::new(super::recovery::Recovery::load(
+            persistent.as_ref().map(|p| p.path.as_path()),
+        )));
+        let ephemeral = temporary.is_some();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(profile.path(), std::fs::Permissions::from_mode(0o700))
-                .await?;
+            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
         }
         // Reserve an available port while building the command. Chrome must bind
         // it after release; a competing bind fails startup, never attaches by port.
-        let reservation = headed
+        let owned_discovery = headed || !ephemeral;
+        let reservation = owned_discovery
             .then(|| std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
             .transpose()?;
         let port = reservation
@@ -122,28 +165,35 @@ impl Browser {
         if !headed {
             command.arg("--headless=new");
         }
+        if ephemeral {
+            command.args(["--use-mock-keychain", "--password-store=basic"]);
+        }
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-            .env("HOME", profile.path())
+            .env(
+                "HOME",
+                if ephemeral {
+                    path.to_path_buf()
+                } else {
+                    std::env::var_os("HOME")
+                        .map(std::path::PathBuf::from)
+                        .context("browser_home_unavailable")?
+                },
+            )
             .arg("--remote-debugging-address=127.0.0.1")
             .arg(format!("--remote-debugging-port={port}"))
-            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .arg(format!("--user-data-dir={}", path.display()))
             .args([
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-background-networking",
-                // Explicitly ephemeral development profiles must not touch the user's OS
-                // credential store. Do not copy this policy to persistent
-                // profiles: their encryption policy is a separate gate.
-                "--use-mock-keychain",
-                "--password-store=basic",
                 "--window-size=1024,768",
-                "about:blank",
+                "--no-startup-window",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(if headed {
+            .stderr(if owned_discovery {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -173,7 +223,7 @@ impl Browser {
                 if child.try_wait()?.is_some() {
                     bail!("browser_exited_before_ready");
                 }
-                let endpoint = if headed {
+                let endpoint = if owned_discovery {
                     match endpoint_receiver.try_recv() {
                         Ok(endpoint) => {
                             let parsed = url::Url::parse(&endpoint)?;
@@ -192,7 +242,7 @@ impl Browser {
                         Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
                     }
                 } else {
-                    tokio::fs::read_to_string(profile.path().join("DevToolsActivePort"))
+                    tokio::fs::read_to_string(path.join("DevToolsActivePort"))
                         .await
                         .ok()
                         .and_then(|text| discovery_endpoint(&text))
@@ -207,13 +257,13 @@ impl Browser {
                         bail!("browser_invalid_targets");
                     }
                     let semantic = super::semantic::Semantic::connect(&endpoint).await?;
-                    return Ok((cdp, semantic));
+                    return Ok((cdp, semantic, endpoint));
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         })
         .await;
-        let (cdp, semantic) = match ready {
+        let (cdp, semantic, endpoint) = match ready {
             Ok(Ok(cdp)) => cdp,
             Ok(Err(error)) => {
                 let _ = child.kill().await;
@@ -224,13 +274,26 @@ impl Browser {
                 return Err(anyhow::Error::new(error).context("browser_startup_timeout"));
             }
         };
+        let mut cdp = cdp;
+        if ephemeral {
+            cdp.call(None, "Target.createTarget", json!({"url":"about:blank"}))
+                .await?;
+        }
         Ok(Self {
             cdp,
             semantic,
             semantic_dirty: false,
             semantic_target: None,
-            child,
-            _profile: profile,
+            process: Arc::new(Mutex::new(Process {
+                child,
+                _temporary: temporary,
+                _persistent: persistent,
+            })),
+            endpoint,
+            workspace: String::new(),
+            ownership: Arc::default(),
+            recovery,
+            saved_pages: None,
             sessions: HashMap::new(),
             observation_id: 0,
             focus: None,
@@ -252,11 +315,44 @@ impl Browser {
 
     pub async fn targets(&mut self) -> Result<Vec<Target>> {
         let result = self.cdp.call(None, "Target.getTargets", json!({})).await?;
+        let infos = result["targetInfos"]
+            .as_array()
+            .context("browser_invalid_targets")?;
+        let mut owners = self.ownership.lock().unwrap();
+        owners.retain(|id, _| infos.iter().any(|t| t["targetId"].as_str() == Some(id)));
+        for _ in 0..infos.len() {
+            let mut changed = false;
+            for target in infos.iter().filter(|t| t["type"] == "page") {
+                let Some(id) = target["targetId"].as_str() else {
+                    continue;
+                };
+                if owners.contains_key(id) {
+                    continue;
+                }
+                if let Some(owner) = target["openerId"]
+                    .as_str()
+                    .and_then(|id| owners.get(id))
+                    .cloned()
+                {
+                    owners.insert(id.to_owned(), owner);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         Ok(result["targetInfos"]
             .as_array()
             .context("browser_invalid_targets")?
             .iter()
-            .filter(|target| target["type"] == "page")
+            .filter(|target| {
+                target["type"] == "page"
+                    && (self.workspace.is_empty()
+                        || target["targetId"]
+                            .as_str()
+                            .is_some_and(|id| owners.get(id) == Some(&self.workspace)))
+            })
             .take(16)
             .map(|target| Target {
                 target_id: target["targetId"].as_str().unwrap_or_default().into(),
@@ -267,6 +363,11 @@ impl Browser {
     }
 
     async fn session(&mut self, target: &str) -> Result<String> {
+        if !self.workspace.is_empty()
+            && !self.targets().await?.iter().any(|t| t.target_id == target)
+        {
+            bail!("browser_target_not_found");
+        }
         if let Some(session) = self.sessions.get(target) {
             return Ok(session.clone());
         }
@@ -304,6 +405,7 @@ impl Browser {
     }
 
     pub async fn navigate(&mut self, target: &str, url: &str) -> Result<()> {
+        self.saved_pages = None;
         let parsed = url::Url::parse(url).map_err(|_| anyhow::anyhow!("browser_invalid_url"))?;
         if !matches!(parsed.scheme(), "http" | "https")
             || !parsed.username().is_empty()
@@ -328,6 +430,11 @@ impl Browser {
         target: &str,
         mut command: serde_json::Value,
     ) -> Result<serde_json::Value> {
+        if !self.workspace.is_empty()
+            && !self.targets().await?.iter().any(|t| t.target_id == target)
+        {
+            bail!("browser_target_not_found");
+        }
         if self.semantic_dirty {
             self.semantic
                 .call(json!({"operation":"invalidate"}))
@@ -828,6 +935,71 @@ impl Browser {
         Ok(json!({"focus_token":self.remember_human_focus(target,&session,document).await?}))
     }
 
+    pub(super) fn forget_workspace(&mut self, workspace: &str) -> Result<()> {
+        self.recovery.lock().unwrap().save(workspace, None)
+    }
+
+    /// Checkpoint only at operation/shutdown boundaries; identical hints do not write.
+    pub(super) async fn save_pages(&mut self, selected: Option<&str>) -> Result<()> {
+        if self.workspace.is_empty() || self.saved_pages.is_some() {
+            return Ok(());
+        }
+        let mut targets = self.targets().await?;
+        targets.retain(|t| super::recovery::eligible(&t.url));
+        targets.sort_by(|a, b| a.target_id.cmp(&b.target_id));
+        let pages = (!targets.is_empty()).then(|| super::recovery::Pages {
+            selected: targets
+                .iter()
+                .position(|t| Some(t.target_id.as_str()) == selected)
+                .unwrap_or(0),
+            urls: targets.into_iter().map(|t| t.url).collect(),
+        });
+        self.recovery.lock().unwrap().save(&self.workspace, pages)
+    }
+
+    /// Explicit human recovery only, after private authority is established.
+    /// Consume hints before creating targets: interruption cannot replay recovery.
+    pub(super) async fn reopen_pages(&mut self) -> Result<String> {
+        let pages = self
+            .saved_pages
+            .take()
+            .context("browser_recovery_unavailable")?;
+        self.recovery.lock().unwrap().save(&self.workspace, None)?;
+        let blanks = self.targets().await?;
+        if blanks.len() != 1 || blanks[0].url != "about:blank" {
+            bail!("browser_recovery_unavailable");
+        }
+        let mut selected = None;
+        for (index, url) in pages.urls.iter().enumerate() {
+            let result = self
+                .cdp
+                .call(
+                    None,
+                    "Target.createTarget",
+                    json!({"url":url,"background":true}),
+                )
+                .await?;
+            let target = result["targetId"]
+                .as_str()
+                .context("browser_target_not_found")?
+                .to_owned();
+            self.ownership
+                .lock()
+                .unwrap()
+                .insert(target.clone(), self.workspace.clone());
+            if index == pages.selected {
+                selected = Some(target);
+            }
+        }
+        let blank = &blanks[0].target_id;
+        self.cdp
+            .call(None, "Target.closeTarget", json!({"targetId":blank}))
+            .await?;
+        self.ownership.lock().unwrap().remove(blank);
+        self.invalidate_references();
+        selected.context("browser_recovery_unavailable")
+    }
+
     pub fn invalidate_references(&mut self) {
         self.semantic_dirty = true;
         self.focus = None;
@@ -838,15 +1010,114 @@ impl Browser {
     pub fn interrupted(&mut self) -> bool {
         self.cdp.interrupted()
             || self.semantic.interrupted()
-            || !matches!(self.child.try_wait(), Ok(None))
+            || !matches!(self.process.lock().unwrap().child.try_wait(), Ok(None))
     }
 
-    pub async fn close(mut self) -> Result<()> {
-        // Own only this child. Never kill processes found by name or port.
-        if self.child.try_wait()?.is_none() {
-            self.child.kill().await.context("browser_close_failed")?;
+    /// Only lifecycle ownership may stop Chrome; closing a workspace closes its pages.
+    pub async fn close(&mut self) -> Result<()> {
+        if self.workspace.is_empty() {
+            let _ = self.cdp.call(None, "Browser.close", json!({})).await;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if self.process.lock().unwrap().child.try_wait()?.is_some() {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            self.process.lock().unwrap().child.start_kill()?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if self.process.lock().unwrap().child.try_wait()?.is_some() {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    bail!("browser_close_unconfirmed");
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        } else {
+            self.recovery.lock().unwrap().save(&self.workspace, None)?;
+            self.saved_pages = None;
+            // Closing known owned tabs uses a fresh read/close channel after an
+            // interrupted page call; no uncertain page mutation is replayed.
+            if self.cdp.interrupted() {
+                self.cdp = Cdp::connect(&self.endpoint).await?;
+            }
+            // Refresh popup ownership, then close every owned target, including
+            // targets beyond the bounded inventory returned to the caller.
+            self.targets().await?;
+            let targets: Vec<String> = self
+                .ownership
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, owner)| *owner == &self.workspace)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for target in targets {
+                let result = self
+                    .cdp
+                    .call(None, "Target.closeTarget", json!({"targetId":target}))
+                    .await?;
+                if result["success"] != true {
+                    bail!("browser_close_unconfirmed");
+                }
+                self.ownership.lock().unwrap().remove(&target);
+            }
         }
         Ok(())
+    }
+
+    pub(super) async fn workspace(&mut self, id: &str) -> Result<Self> {
+        if id.is_empty() || id.len() > 128 || !self.workspace.is_empty() {
+            bail!("browser_invalid_workspace");
+        }
+        if self
+            .ownership
+            .lock()
+            .unwrap()
+            .values()
+            .any(|owner| owner == id)
+        {
+            bail!("browser_workspace_exists");
+        }
+        let cdp = Cdp::connect(&self.endpoint).await?;
+        let semantic = super::semantic::Semantic::connect(&self.endpoint).await?;
+        let target = self
+            .cdp
+            .call(
+                None,
+                "Target.createTarget",
+                json!({"url":"about:blank", "background":true}),
+            )
+            .await?;
+        let target = target["targetId"]
+            .as_str()
+            .context("browser_target_not_found")?
+            .to_owned();
+        self.ownership.lock().unwrap().insert(target, id.to_owned());
+        Ok(Self {
+            cdp,
+            semantic,
+            semantic_dirty: false,
+            semantic_target: None,
+            process: self.process.clone(),
+            endpoint: self.endpoint.clone(),
+            workspace: id.to_owned(),
+            ownership: self.ownership.clone(),
+            recovery: self.recovery.clone(),
+            saved_pages: self.recovery.lock().unwrap().get(id),
+            sessions: HashMap::new(),
+            observation_id: 0,
+            focus: None,
+            viewport: None,
+            viewport_id: None,
+            fitted_sizes: HashMap::new(),
+            last_wheel: None,
+        })
     }
 }
 
@@ -948,3 +1219,7 @@ mod launch_tests {
 #[cfg(test)]
 #[path = "viewer_tests.rs"]
 mod viewer_tests;
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod workspace_tests;

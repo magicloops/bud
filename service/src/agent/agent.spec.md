@@ -1400,3 +1400,11 @@ contexts omit browser tools, and discovery never dispatches. `getContextTools`
 forwards live invocation context and gates browser eligibility on execution hooks
 (or durable configuration for read-only previews). Runtime capability discovery
 must not require an invented invocation for idle meter reads.
+
+## Shared browser authority (Phase 3k)
+
+Invocation browser waits join the owner-bound `browser_resource` through the
+thread workspace. Claim requires acknowledged global agent authority; private
+control does not reserve unrelated chat. Recovery cancels waits for canceled
+handoffs, closed/deleted workspaces or retired resources (including same-owner
+Bud reclaim). No new scheduler is introduced. See [browser broker](../browser/browser.spec.md).

@@ -1,3 +1,5 @@
+import { BrowserLifecycle } from "./lifecycle.js";
+import { BrowserResourceRepository } from "./resource-repository.js";
 import { registerAgentCaptures } from "./agent-capture.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -10,6 +12,7 @@ import {
   requireViewer,
   getOptionalViewer,
   getAuthorizedThread,
+  getAuthorizedBud,
   type Viewer,
 } from "../auth/session.js";
 import { BrowserControl } from "./control.js";
@@ -77,7 +80,9 @@ const publicSession = (s: BrowserSession, canResize = false, canCapture = false,
   generation: s.generation,
   state: s.desired_state === "closed" ? "closing" : s.state,
   control_state: s.control_state,
-  control_epoch: s.control_epoch,
+  control_epoch: s.browser_epoch,
+  browser_id: s.browser_id,
+  control_session_id: s.control_session_id,
   revision: s.revision,
   can_view:
     runtimeStatus === "available" &&
@@ -180,6 +185,26 @@ export async function registerBrowserRoutes(
         )
         .send({ error: code });
     });
+    // Bud owns the shared profile; actor and owner are resolved before resource I/O.
+    routes.get("/api/buds/:bud_id/browser", async (request, reply) => {
+      const actor = await viewer(request, reply);
+      if (!actor) return;
+      const { bud_id } = z.object({ bud_id: id }).parse(request.params);
+      if (!(await getAuthorizedBud(actor, bud_id))) throw new BrowserError("browser_not_found");
+      const resource = await new BrowserResourceRepository().get(actor.userId, bud_id);
+      return { browser: resource && { browser_id: resource.id, revision: resource.revision,
+        desired_state: resource.desired_state, control_state: resource.control_state } };
+    });
+    routes.post("/api/buds/:bud_id/browser/lifecycle", { bodyLimit: 1024 }, async (request, reply) => {
+      const actor = await viewer(request, reply);
+      if (!actor) return;
+      const { bud_id } = z.object({ bud_id: id }).parse(request.params);
+      if (!(await getAuthorizedBud(actor, bud_id))) throw new BrowserError("browser_not_found");
+      const body = z.object({ revision: z.number().int().nonnegative(), operation: z.enum(["stop", "reset"]),
+        confirmed: z.boolean().default(false) }).strict().parse(request.body);
+      const resource = await new BrowserLifecycle(control).request(actor.userId, bud_id, body.revision, body.operation, body.confirmed);
+      return reply.code(202).send({ browser_id: resource.id, desired_state: resource.desired_state, revision: resource.revision });
+    });
     routes.get(
       "/api/threads/:thread_id/browser-sessions",
       async (request, reply) => {
@@ -207,10 +232,7 @@ export async function registerBrowserRoutes(
         ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
         ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
-        can_take_control: control.runtimeStatus(session) === "available" && !(await control.repository.hasRunningInvocation(
-          actor.userId,
-          id,
-        )),
+        can_take_control: ["available", "daemon_restarted"].includes(control.runtimeStatus(session)),
       };
     });
     routes.post(
@@ -231,6 +253,7 @@ export async function registerBrowserRoutes(
               "return",
               "close",
               "recover",
+              "reopen",
             ]),
           })
           .strict()
@@ -249,8 +272,8 @@ export async function registerBrowserRoutes(
                 sessionId(request),
                 body.revision,
               )
-            : body.operation === "acquire"
-              ? await control.acquire(...args, body.revision)
+            : body.operation === "acquire" || body.operation === "reopen"
+              ? await control.acquire(...args, body.revision, body.operation === "reopen")
               : body.operation === "renew"
                 ? await control.renew(...args)
                 : body.operation === "release"

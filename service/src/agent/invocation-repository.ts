@@ -1,5 +1,5 @@
 import { beginWorkTiming, settleWorkTiming, invalidateWorkTiming, settledTurnTiming, recordSettledTiming, invocationTimingTransaction } from "./invocation-timing.js";
-import { browserHandoffTable as browserHandoff, browserSessionTable as browserSession } from "../db/schema.js";
+import { browserHandoffTable as browserHandoff, browserSessionTable as browserSession, browserResourceTable as browserResource } from "../db/schema.js";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
@@ -240,8 +240,10 @@ export class InvocationRepository {
               select 1 from agent_invocation_action a join browser_handoff h
                 on h.id=a.evidence->>'browser_handoff_id'
               join browser_session s on s.id=h.session_id and s.created_by_user_id=h.created_by_user_id
+              join browser_resource r on r.id=s.browser_id and r.created_by_user_id=h.created_by_user_id
               where a.invocation_id=agent_invocation.id and a.status='waiting_for_user'
-                and h.status='returned' and s.control_state='agent' and s.closed_at is null
+                and h.status='returned' and r.control_state='agent' and not r.private_content
+                and r.retired_at is null and r.desired_state='open' and s.closed_at is null
                 and h.invocation_id=${inv.id} and h.created_by_user_id=${inv.createdByUserId}
             ))))`,
           sql`${inv.nextAttemptAt} <= clock_timestamp()`,
@@ -458,9 +460,10 @@ export class InvocationRepository {
       const row = await this.lockedLease(tx, lease, ["running"]);
       const [handoff] = await tx.select().from(browserHandoff)
         .innerJoin(browserSession, eq(browserSession.id,browserHandoff.sessionId))
+        .innerJoin(browserResource, eq(browserResource.id,browserSession.browserId))
         .where(and(eq(browserHandoff.id,handoffId),eq(browserHandoff.invocationId,row.id),
           eq(browserHandoff.callId,callId),eq(browserHandoff.createdByUserId,row.createdByUserId),
-          eq(browserHandoff.status,"pending"),eq(browserSession.controlState,"paused"))).limit(1);
+          eq(browserHandoff.status,"pending"),eq(browserResource.controlState,"paused"))).limit(1);
       if (!handoff) throw new InvocationError("browser_handoff_not_available");
       const [intent] = await tx.update(action).set({status:"waiting_for_user",fence:lease.fence+1,
         evidence:{browser_handoff_id:handoffId}}).where(and(eq(action.invocationId,row.id),
@@ -476,9 +479,10 @@ export class InvocationRepository {
       const row=await this.lockedLease(tx,lease,["running"]);
       const [handoff]=await tx.select({handoff:browserHandoff}).from(browserHandoff)
         .innerJoin(browserSession,eq(browserSession.id,browserHandoff.sessionId))
+        .innerJoin(browserResource,eq(browserResource.id,browserSession.browserId))
         .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.createdByUserId,row.createdByUserId),
           eq(browserHandoff.kind,"user"),eq(browserHandoff.status,"pending"),isNull(browserHandoff.callId),
-          sql`${browserSession.controlState}<>'agent'`)).limit(1);
+          sql`${browserResource.controlState}<>'agent'`)).limit(1);
       if(!handoff)return null;
       const callId=nextCall?.callId??`browser-user-${handoff.handoff.id}`;
       await tx.insert(action).values({id:ulid(),invocationId:row.id,callId,kind:nextCall?.tool??"browser_user_handoff",
@@ -784,9 +788,10 @@ export class InvocationRepository {
         ownerFilter ? eq(inv.createdByUserId,ownerFilter) : undefined,
         sql`exists (select 1 from browser_handoff h join browser_session s on s.id=h.session_id
           join thread t on t.thread_id=h.thread_id join bud b on b.bud_id=h.bud_id
+          left join browser_resource r on r.id=s.browser_id
           where h.invocation_id=agent_invocation.id and h.created_by_user_id=agent_invocation.created_by_user_id
-          and h.status in ('pending','returned') and (s.closed_at is not null or s.desired_state='closed'
-            or s.state='interrupted' or t.deleted_at is not null
+          and h.status in ('pending','returned','canceled') and (h.status='canceled' or s.closed_at is not null or s.desired_state='closed'
+            or s.state='interrupted' or t.deleted_at is not null or r.id is null or r.retired_at is not null
             or t.created_by_user_id is distinct from h.created_by_user_id
             or b.created_by_user_id is distinct from h.created_by_user_id))`
       )).for("update",{skipLocked:true}).limit(100);

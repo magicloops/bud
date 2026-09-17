@@ -237,7 +237,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0041` currently)
+- Snapshot files for each migration (`0000` through `0046` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -448,3 +448,26 @@ timestamptz without defaults/backfill. Generated SQL/journal/snapshot are checke
 in together. Applied the exact SQL locally transactionally after canceling
 `db:push`'s unrelated invocation-dedupe recreation/truncate prompt. Isolated-schema
 migration and lifecycle tests pass. Deploy migration before updated service startup.
+
+### `0044_dry_princess_powerful.sql` / `0045_gorgeous_luke_cage.sql`
+
+Phase 3k adds the owner/Bud browser resource, one-active-resource uniqueness,
+global control/private intent, profile generation and acknowledged lifecycle
+state. The nullable workspace relationship uses a composite resource/Bud/owner
+FK; existing ephemeral sessions remain unlinked. The second migration records
+which control operation owns the receipt so a prepare-return acknowledgement
+cannot unlock private access. Generated SQL and metadata are checked in together.
+Both execute against pre-change tables in the PostgreSQL repository fixture and
+were applied locally transactionally after canceling db:push's unrelated invocation
+constraint prompt. No deployment performed; 0046 completes the coordinated runtime cutover.
+
+### `0046_tired_johnny_blaze.sql`
+
+Retires unlinked ephemeral sessions, drops their obsolete profile/control/privacy
+columns, and requires every live workspace to reference a browser resource. Adds
+a migration-owned Bud owner/device-secret update trigger that quarantines the old
+resource on unclaim/reclaim, including same-owner reclaim. Generated snapshot and
+journal accompany reviewed SQL; the trigger is an explicit SQL addition, not a
+Drizzle schema field. Applied locally transactionally and exercised by repository
+migration/claim tests. Deploy 0044–0046 before the updated service; no rollback to
+old browser code or legacy profile import is supported for this unreleased cutover.

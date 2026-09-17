@@ -448,3 +448,43 @@ page lookup additionally filters invocation owner and thread in SQL.
 
 No resource or row-stamping changes. Existing authenticated browser-session,
 thread and Bud ownership gates protect metadata, attachment, idle checks and delivery.
+
+## Shared persistent browser (Phase 3k)
+
+- [x] PostgreSQL fixtures reject foreign resource ownership/workspace links,
+  serialize concurrent resource creation and validate exact lifecycle receipts.
+- [x] Bud owner and same-owner device-secret change retires the old resource;
+  its profile identity cannot be reused by a subsequent claim.
+- [x] Live disposable Chrome tests block cross-workspace targets/observations and
+  passive media during global private control; stop/reset retain or clear privacy
+  as specified. Existing media tests fence delayed delivery by resource identity.
+- [ ] Real cookie sessions: GET `/api/buds/:bud_id/browser` and POST lifecycle
+  return 401 anonymously, 404 for another owner's Bud, and reject untrusted Origin
+  before writes. Reset without confirmation and stale revision cannot dispatch.
+- [ ] Two real signed-in threads: private takeover fences both agents/viewers;
+  return wakes only eligible waits, while chat/terminal continue.
+- [ ] Offline Stop/Reset stays pending until the matching daemon acknowledges;
+  account switch, unclaim and viewer loss cannot restore old private content.
+
+Resources inherit Bud owner/tenant; workspaces inherit matching thread/Bud owner.
+Lifecycle requests stamp `requested_by_user_id` from the authenticated viewer.
+All new routes resolve live cookie auth and owned Bud before resource SQL or I/O.
+Native secure-store and real-account restart acceptance is tracked in Phase 3k.
+
+## Explicit browser page recovery (Phase 3l)
+
+- [x] Controller/DB fixtures reject foreign ownership before recovery, rotate old
+  runtime generations, reject stale completion, and preserve close/deletion intent.
+- [x] Disposable Chrome fixture binds duplicate URLs to their original workspace,
+  rejects old/cross-workspace target IDs and repeated recovery.
+- [x] Recovery dispatch follows acknowledged private takeover; failed/unknown
+  execution stays private without automatic mutation retry or agent return.
+- [x] Mounted viewer test verifies metadata alone never posts recovery.
+- [ ] Real two-account cookie/Origin checks for `control operation:reopen`, copied
+  session/viewer IDs, deleted threads and account switching during recovery.
+- [ ] Two real threads after daemon restart: correct eligible pages/login, private
+  content hidden from agents/other viewers until explicit return; old proofs denied.
+
+No new rows or grants. Existing session/thread/Bud owner authorization protects the
+control route; daemon-local hints inherit profile owner/environment binding and
+never authorize offline access or appear in service inventory.

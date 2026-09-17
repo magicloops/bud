@@ -254,7 +254,7 @@ after `mkcert -install`.
 
 ## Managed browser capability (Phases 1–2)
 
-The daemon can launch isolated ephemeral Chrome for Testing browsers for ordinary
+The daemon can launch one owner-bound persistent Chrome with thread tab workspaces for ordinary
 agent chats. Configure `BUD_BROWSER_EXECUTABLE` with the full executable path,
 run `bud doctor`, then restart the daemon. The probe must succeed before browser
 availability is advertised. Two concurrent thread sessions are supported; terminal
@@ -266,3 +266,8 @@ Profile persistence and mobile viewer support remain later phases. See
 [browser runtime](./src/browser/browser.spec.md),
 [setup/validation](../plan/bud-owned-browser/phase-1-agent-browser.md), and
 [private handoff](../plan/bud-owned-browser/phase-2-private-handoff.md).
+
+Shared browser shutdown drains page work and confirms owned Chrome exit before
+releasing the profile lock. Persistent native-store support is currently macOS-only;
+probes/tests retain disposable profiles. See the browser runtime spec for privacy,
+stop/reset and surviving-process recovery limits.

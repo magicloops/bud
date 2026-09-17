@@ -43,7 +43,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
       command: (_session: unknown, command: unknown) => ({ command }),
     },
     mediaAuthority: async () => ({
-      session: { id: "browser", generation: "generation", control_epoch: 1 },
+      session: { id: "browser", browser_id: "shared", generation: "generation", control_epoch: 1, browser_epoch: 1 },
       carrier,
     }),
   } as unknown as BrowserControl;
@@ -130,7 +130,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
   });
   await once(slow, "open");
   await until(() => slowFrames === 1 && fastFrames >= 5);
-  const session = { id: "browser", generation: "generation", control_epoch: 1 } as BrowserSession;
+  const session = { id: "browser", browser_id: "shared", generation: "generation", control_epoch: 1, browser_epoch: 1 } as BrowserSession;
   assert.equal(control.isSizingViewer("alice", session, "/fast"), true);
   assert.equal(control.isSizingViewer("alice", session, "/slow"), false);
   assert.equal(control.isSizingViewer("bob", session, "/fast"), false);
@@ -149,7 +149,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
   assert.equal(control.isSizingViewer("alice", session, "/slow"), true);
   // The slow client has no credit. Explicit fence clears its already displayed
   // content and stops the capture task as well.
-  control.onFence("browser");
+  control.onFence("shared");
   await until(() => slow.readyState === WebSocket.CLOSED);
   const count = captures;
   await new Promise((r) => setTimeout(r, 80));
@@ -163,7 +163,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   assert.ok(address && typeof address === 'object');
   const endpoint = `ws://127.0.0.1:${address.port}`;
   const sockets = new Set<WebSocket>();
-  const session = { id: 'browser', generation: 'gen', control_epoch: 1 } as BrowserSession;
+  const session = { id: 'browser', browser_id: 'shared', generation: 'gen', control_epoch: 1, browser_epoch: 1 } as BrowserSession;
   const carrier = { operationDrivenMedia: true, current: () => true } as BrowserCarrier;
   let daemon!: WebSocket, attachments = 0, frames = 0, pending = false;
   let unblock: (() => void) | undefined;
@@ -223,7 +223,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   daemon.send('{"refresh":true}');
   await until(() => Boolean(unblock));
   const before = frames;
-  control.onFence('browser'); // Takeover while authorization is awaiting IO.
+  control.onFence('shared'); // Browser-wide takeover while authorization is awaiting IO.
   pending = false;
   unblock!();
   await until(() => first.readyState === WebSocket.CLOSED && second.readyState === WebSocket.CLOSED);

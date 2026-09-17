@@ -16,7 +16,7 @@ const capability = z.object({
   available: z.literal(true),
   boot_id: z.string().min(1).max(128),
   managed: z.literal(true),
-  profile_mode: z.literal("ephemeral"),
+  profile_mode: z.literal("persistent"),
   handoff: z.boolean().optional(),
   viewport_resize: z.boolean().optional(),
   agent_viewport_resize: z.boolean().optional(),
@@ -47,6 +47,10 @@ export type BrowserCommand = {
   generation: string;
   thread_id: string;
   owner_user_id: string;
+  browser_id: string;
+  browser_epoch: number;
+  private_content: boolean;
+  browser_paused: boolean;
   control_epoch: number;
   sequence: number;
   expires_at_ms: number;

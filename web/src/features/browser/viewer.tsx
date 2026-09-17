@@ -1,3 +1,4 @@
+import { BrowserLifecycle } from "./lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetchJson, buildAbsoluteApiUrl, isApiError } from "@/lib/transport";
 import { ArrowLeft, SlidersHorizontal } from "lucide-react";
@@ -28,6 +29,8 @@ type Session = {
 const button =
   "rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
 const controlErrors: Record<string, string> = {
+  browser_recovery_unavailable: "No eligible saved pages are available. Take control to use the blank workspace; saved sign-ins remain.",
+  browser_recovery_uncertain: "Page reopening was not confirmed and has not been retried. Take control to inspect the browser; some pages may have opened.",
   browser_revision_conflict: "Browser status changed. Wait for status to refresh, then try again.",
   browser_controller_exists: "Another viewer has control. Pause it there or close it and wait for its control lease to expire.",
   browser_control_expired: "Private control expired. Take control again to reconnect.",
@@ -165,7 +168,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     };
   }, [base, failPrivate]);
   const control = useCallback(
-    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover") => {
+    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "reopen") => {
       if (!session) return;
       if (changingControl.current) return;
       if (operation === "recover" && !recoveryTicket.current) return;
@@ -199,7 +202,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           }),
         });
         if (!mounted.current) {
-          if ((operation === "acquire" || operation === "recover") && data.control_state === "human_private")
+          if ((operation === "acquire" || operation === "recover" || operation === "reopen") && data.control_state === "human_private")
             void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ operation: "release", revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
           return;
@@ -213,7 +216,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         if (!failurePriority.current) setError("");
         if (operation !== "renew") {
           const acquired =
-            (operation === "acquire" || operation === "recover") && data.control_state === "human_private";
+            (operation === "acquire" || operation === "recover" || operation === "reopen") && data.control_state === "human_private";
           ownsRef.current = acquired;
           setOwns(acquired);
           recoveryPending.current = false;
@@ -508,12 +511,16 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   }, [send, owns, working, connected]);
   if (ended) return (
     <main className={`flex min-h-0 flex-col items-start justify-center gap-3 bg-background p-6 text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
-      <h1 className="font-semibold">Browser session ended</h1>
+      <h1 className="font-semibold">{session?.runtime_status === "daemon_restarted" ? "Recover browser pages" : "Browser session ended"}</h1>
       <p className="text-sm text-muted-foreground">{session?.runtime_status === "daemon_restarted" && !missing
-        ? "Bud restarted, so this browser and its temporary profile are no longer available."
+        ? "Bud restarted. Saved sign-ins remain, but the previous tabs have not been restored."
         : "This browser session is no longer available."}</p>
-      <p className="text-sm text-muted-foreground">Ask Bud to open a new browser in the conversation. Reconnecting cannot restore the previous pages or sign-in state.</p>
-      {!missing && session?.state !== "closing" && <button className={button} disabled={working} onClick={() => void control("close")}>Close browser and stop run</button>}
+      <p className="text-sm text-muted-foreground">Reopen this thread’s saved page addresses in private control, or start with a blank page. Back history and unsaved edits are not restored. Pages load again; form submissions are not replayed. URLs with query strings, fragments or authentication callbacks are excluded.</p>
+      {!missing && session?.runtime_status === "daemon_restarted" && session.can_take_control && <button className={button} disabled={working} onClick={() => void control("reopen")}>{working ? "Reopening pages…" : "Reopen saved pages"}</button>}
+      {!missing && session?.can_take_control && <button className={button} disabled={working} onClick={() => void control("acquire")}>Start blank workspace</button>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {session && <BrowserLifecycle budId={session.bud_id} />}
+      {!missing && session?.state !== "closing" && <button className={button} disabled={working} onClick={() => void control("close")}>Close this thread’s tabs</button>}
       {embedded ? <button className={button} onClick={onDismiss}>Dismiss browser pane</button> : <a className={button} href={session ? `/${session.bud_id}/${session.thread_id}` : "/"}>Conversation</a>}
     </main>
   );
@@ -696,8 +703,8 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       )}
       <p className="mb-3 text-sm text-muted-foreground">
         {owns
-          ? "Only this viewer receives private page content. Return to agent allows the agent to see the resulting page."
-          : "Take control to interact. Closing the viewer leaves private work paused."}
+          ? "Browser work in every thread on this Bud is paused. Only this viewer receives private content. Return to agent resumes browser work across threads."
+          : "Take control to interact and pause browser work across this Bud. Closing the viewer leaves private work paused."}
       </p>
       {error && (
         <p role="alert" className="mb-3 text-sm text-destructive">
@@ -747,8 +754,9 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         disabled={!session || working || resizing || session.state === "closing"}
         onClick={() => void control("close")}
       >
-        Close browser and stop run
+        Close this thread’s tabs
       </button>
+      {session && <BrowserLifecycle budId={session.bud_id} />}
         </section>
         </div>
       </div>

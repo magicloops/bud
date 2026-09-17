@@ -22,6 +22,10 @@ const request = (): BrowserCommand => ({
   generation: "generation",
   thread_id: "thread",
   owner_user_id: "alice",
+  browser_id: "managed_fixture",
+  browser_epoch: 1,
+  private_content: false,
+  browser_paused: false,
   control_epoch: 1,
   sequence: 1,
   invocation_id: "invocation",
@@ -45,7 +49,7 @@ const capability = {
   available: true,
   boot_id: "boot",
   managed: true,
-  profile_mode: "ephemeral",
+  profile_mode: "persistent",
 };
 function fixture() {
   const tracker = {

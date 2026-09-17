@@ -21,6 +21,7 @@ type Viewer = {
 };
 type Group = {
   key: string;
+  browserId: string;
   owner: string;
   sessionId: string;
   epoch: number;
@@ -79,7 +80,7 @@ export class BrowserMedia {
   ) {
     control.onFence = (id) => this.closeSession(id);
     control.isSizingViewer = (owner, session, viewerId) => {
-      const group = this.groups.get(groupKey(session.id, session.generation, session.control_epoch));
+      const group = this.groups.get(groupKey(session.id, session.generation, session.browser_epoch));
       if (!group || group.closed || group.owner !== owner || !group.carrier.current()) return false;
       const first = [...group.viewers].find(viewer => viewer.socket.readyState === WebSocket.OPEN &&
         (group.operationDriven
@@ -107,7 +108,7 @@ export class BrowserMedia {
   }
   closeSession(id: string) {
     for (const group of this.groups.values())
-      if (group.sessionId === id) this.close(group, "control_fence");
+      if (group.browserId === id || group.sessionId === id) this.close(group, "control_fence");
   }
   stop() {
     clearInterval(this.timer);
@@ -160,7 +161,7 @@ export class BrowserMedia {
     return !group.closed && group.carrier.current()
       && permitted.carrier.tracker === group.carrier.tracker
       && permitted.session.generation === group.generation
-      && (group.controllerId === undefined || permitted.session.control_epoch === group.epoch)
+      && (group.controllerId === undefined || permitted.session.browser_epoch === group.epoch)
       && permitted.controllerId === group.controllerId;
   }
   private demand(group: Group) {
@@ -189,7 +190,7 @@ export class BrowserMedia {
     const { session, carrier, controllerId } =
       await this.control.mediaAuthority(owner, sessionId, viewerId);
     if (socket.readyState !== WebSocket.OPEN) return;
-    const key = groupKey(session.id, session.generation, session.control_epoch, controllerId);
+    const key = groupKey(session.id, session.generation, session.browser_epoch, controllerId);
     let group = this.groups.get(key);
     if (group && (!group.carrier.current() || group.carrier.tracker !== carrier.tracker)) { this.close(group, "carrier_changed"); group = undefined; }
     if (!group) {
@@ -197,9 +198,10 @@ export class BrowserMedia {
         throw new BrowserError("browser_media_capacity");
       group = {
         key,
+        browserId: session.browser_id,
         owner,
         sessionId,
-        epoch: session.control_epoch,
+        epoch: session.browser_epoch,
         controllerId,
         generation: session.generation,
         carrier,

@@ -1,6 +1,6 @@
 # Browser runtime
 
-The daemon owns one isolated Chrome process per active thread browser. Chrome for
+The daemon owns one persistent Chrome process per Bud, with thread-owned tab workspaces. Chrome for
 Testing remains the default development runtime.
 The service owns durable session identity and invocation authority; this module
 owns admission, live CDP state and process lifetime. No personal browser attachment.
@@ -12,9 +12,20 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   bounded concurrent admission, cancellation and deadline handling. Includes live
   Chrome regressions for isolation, stale references, cancellation and reconnect,
   plus continuous private capture through two five-second renewals.
+- `profile.rs`: Persistent-profile ownership: owner/environment/resource
+  identity, private-directory checks, exclusive ownership lock, reset primitive and
+  macOS secure-store preflight. Used by production admission; non-macOS
+  persistent launch is explicitly unsupported pending credential-store acceptance.
+- `recovery.rs`: bounded, private, atomic per-workspace URL hints; corrupt/symlinked data fails closed without modifying the profile.
+- `workspace_tests.rs`: opt-in disposable Chrome fixture proving shared cookies,
+  separate target/observation ownership, opener inheritance and workspace-only close.
 - `adapter.rs`: concrete private Chromium launcher, target inventory, private semantic-helper observations and document-bound
   opaque references, guarded focus/text/click,
-  navigation and owned-child close. Partial discovery files are retried.
+  navigation and owned-child close. Partial discovery files are retried. Supports
+  lifecycle-owned Chrome and separate workspace handles backed by the shared persistent profile. Workspace target checks precede CDP
+  attachment and semantic calls; native targets without a verified opener remain
+  unassigned. Persistent launch uses owned-child stderr discovery. Close waits for
+  graceful child exit, with bounded escalation to killing only its owned child.
 - `cdp.rs`: serial private loopback CDP connection; 24 MiB frame cap (bounded PNG before downscaling), 10-second call
   timeout, poison after interrupted calls. Failure diagnostics include only the
   internal method, category and timing, never params or raw errors. No raw CDP/JS surface for the model.
@@ -32,7 +43,7 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   dispatch; a screenshot alone does not mean Chrome's renderer is active.
 
 ## Limits and lifetime
-Two active browsers per Bud; one per thread. Page operations (including agent
+Two active workspaces per Bud, one per thread, sharing one process and one FIFO page lock. Page operations (including agent
 work, private input and fitting) wait at most four seconds for the FIFO serial
 CDP lock. Expired requests reject before page access after waiting.
 Requests expire within 45 seconds (service sends at most 30 seconds,
@@ -45,25 +56,33 @@ Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
 
 `BUD_BROWSER_EXECUTABLE` must explicitly name an installed Chrome-compatible
-executable. Startup probes launch/version/close before advertising availability.
-Profiles are ephemeral private TempDirs (0700), with mock/basic credential storage
-only for this development mode. No OS keychain access, personal-profile reuse,
-implicit downloads, or disabled Chromium sandbox. `tempfile` is a runtime dependency.
+executable. Startup probes launch/version/close headlessly before advertising availability,
+even when `BUD_BROWSER_HEADED=1`; actual browser launches still honor that setting.
+The probe validates connectivity, not headed-specific startup behavior.
+Production profiles live under the persistent Bud base directory with 0700 permissions,
+a hashed service/resource/owner identity and an exclusive file lock. Persistent
+launch requires macOS native keychain preflight and omits mock/basic storage flags.
+Probes and disposable tests alone use temporary profiles and mock storage.
+Empty persistent profiles are seeded before Chrome launch with name `Bud Browser`,
+built-in avatar 44 and magenta theme seed `#FF00FF` (color variant 1).
+Chrome derives highlight colors. Existing profiles/customizations are never rewritten;
+explicit Reset makes the next launch eligible for defaults again. Preferences are
+published via an atomic directory rename under the profile lock, with private permissions.
+No personal-profile reuse, implicit downloads or disabled Chromium sandbox.
 
 Set `BUD_BROWSER_HEADED=1` to try a visible window with a nonzero loopback debugging
 port. Default mode remains headless with port-zero discovery. Visible mode reads
 the endpoint only from the owned child's bounded startup stderr, then drains
 stderr without logging it; binding failure does not fall back to another browser.
-Both modes retain isolated ephemeral profiles and the semantic helper. Take private
+Both modes use the same persistent profile and workspace-specific semantic helpers. Take private
 control before direct native-window input: OS input bypasses Bud's admission checks.
 This option does not promise site acceptance. See [experiment](../../../debug/bud-visible-chrome.md).
 
 A turn ending or control disconnect preserves the browser. Reconnect invalidates
-references; interrupted CDP work requires explicit close/open. SIGINT/SIGTERM drops
-the app's LocalSet and owned children while detached terminal holders survive.
+references; interrupted CDP work requires explicit close/open. SIGINT/SIGTERM drains browser page work and requests graceful Chrome exit before
+releasing the profile lock; detached terminal holders survive.
 Hard SIGKILL/power-loss orphan scavenging is still release work: never recover by
-blindly attaching to a stored PID or debugging port. Ephemeral does not promise
-secure erasure or crash-surviving page state.
+blindly attaching to a stored PID or debugging port. Surviving Chrome singleton locks require explicit recovery. Phase 3l offers explicit URL reopening, not exact tab/history restoration.
 
 See [Phase 1](../../../plan/bud-owned-browser/phase-1-agent-browser.md) and
 [protocol](../../../docs/proto.md#bud-owned-browser-control-version-1).
@@ -238,3 +257,37 @@ still requires exact epoch; private attachments remain exact-epoch/controller-bo
 Idle, pre/post-lock and delivery checks retain connection/privacy fences. No new
 capability or request field: this unreleased feature has no compatibility branch.
 Authority and real Chrome tests cover epoch continuity and stale-command rejection.
+
+## Shared persistent runtime (Phase 3k)
+
+`configured_for` enables owner-bound persistent runtime and advertises
+`profile_mode:persistent`; unsupported secure storage disables availability.
+`browser_epoch` fences shared authority while workspace `control_epoch` and
+sequence retain invocation ordering. Every workspace uses the same authority and
+page lock, but separate CDP/helper observations, target membership and fitting.
+Private takeover revokes passive media and agent access across all workspaces.
+Restart restores durable private intent before any page operation. Only explicit
+acknowledged return releases it; Stop retains privacy and Reset clears it.
+
+Bud-level `lifecycle {reset}` uses the existing request receipt and global epoch.
+It drains page work, closes the owned process and confirms exit before releasing
+workspace handles or deleting profile contents. A failed close retains ownership;
+retry acknowledges the same receipt. Workspace close deletes only owned targets,
+including opener-owned popups. Foreign/unassigned targets remain inaccessible.
+Resource/owner changes require daemon restart and a new profile identity.
+
+Native secure-store and real-account restart acceptance remains documented in
+[Phase 3k](../../../plan/bud-owned-browser/phase-3k-shared-persistent-browser.md).
+Linux persistent launch is explicitly unavailable pending secure-store support.
+
+## Explicit page recovery (Phase 3l)
+
+Persistent launch uses `--no-startup-window`; workspace creation owns its placeholder.
+`save_pages` checkpoints eligible HTTP(S) URLs and selection after successful page
+operations and graceful shutdown, not during capture. Identical hints skip writes.
+`reopen_pages {controller_id}` requires the exact workspace/private controller both
+before and after the page lock. Hints are consumed before tab creation; newly
+created target IDs bind directly to the workspace. No history replay or native-tab
+adoption. Close removes hints, including service cleanup on a new boot; reset
+removes the profile. Limits and exclusions are in
+[Phase 3l](../../../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md).

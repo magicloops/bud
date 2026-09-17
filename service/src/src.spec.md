@@ -435,7 +435,8 @@ See [rollout plan](../../plan/rolled-out-capability-defaults.md).
 
 `browser/` ([spec](./browser/browser.spec.md)) provides the production broker,
 fenced repository, bounded transport correlation and owned cleanup. `server.ts`
-checks the additive browser table before starting the invocation worker, supplies
+checks workspace identity/order on `browser_session` and shared authority/lifecycle
+on `browser_resource` before starting the invocation worker, supplies
 `BrowserToolExecutor` with that broker, starts cleanup and stops it during close.
 No prototype host/relay is involved. Phase 2 also composes control recovery,
 authorized viewer routes and a separate bounded media WebSocket relay before

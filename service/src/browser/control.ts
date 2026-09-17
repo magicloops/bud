@@ -15,6 +15,7 @@ import { BrowserRecoveryTickets } from "./recovery-ticket.js";
 
 type Controller = {
   owner: string;
+  browser: string;
   viewer: string;
   id: string;
   expires: number;
@@ -40,12 +41,12 @@ export class BrowserControl {
   expireControllers() {
     for (const [id, control] of this.controllers) {
       if (
-        this.busy.has(id) ||
+        this.busy.has(control.browser) ||
         (control.expires > Date.now() && control.carrier.current())
       )
         continue;
       this.controllers.delete(id);
-      this.onFence(id);
+      this.onFence(control.browser);
       void this.repository
         .pauseAfterFailure(control.owner, id, control.revision)
         .catch(() => {});
@@ -53,21 +54,23 @@ export class BrowserControl {
   }
 
   private async exclusive<T>(
+    owner: string,
     id: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    if (this.busy.has(id)) throw new BrowserError("browser_busy");
-    this.busy.add(id);
+    const key = (await this.repository.get(owner,id)).browser_id;
+    if (this.busy.has(key)) throw new BrowserError("browser_busy");
+    this.busy.add(key);
     try {
       return await operation();
     } finally {
-      this.busy.delete(id);
+      this.busy.delete(key);
     }
   }
 
-  private carrier(session: BrowserSession): BrowserCarrier {
+  private carrier(session: BrowserSession, recover = false): BrowserCarrier {
     const carrier = this.carrierFor(session.bud_id);
-    if (!carrier?.handoff || carrier.bootId !== session.boot_id)
+    if (!carrier?.handoff || (!recover && carrier.bootId !== session.boot_id))
       throw new BrowserError("browser_handoff_unavailable");
     return carrier;
   }
@@ -79,8 +82,8 @@ export class BrowserControl {
     signal: AbortSignal,
     controllerId?: string,
   ): Promise<BrowserSession> {
-    const carrier = this.carrier(session);
-    if (operation !== "renew") this.onFence(session.id);
+    const carrier = this.carrier(session, operation === "pause");
+    if (operation !== "renew") this.onFence(session.browser_id);
     const { session: next, request } = await this.repository.prepare(
       session.created_by_user_id,
       session.id,
@@ -94,6 +97,7 @@ export class BrowserControl {
       },
       nextState,
     );
+    if (operation !== "renew") this.onFence(session.browser_id);
     const result = await this.dispatch(carrier, request, signal);
     if (!result.ok || result.data?.control_acknowledged !== true) {
       this.onDiagnostic({ session_id: session.id, event: "control_transition_failed", operation, outcome: result.outcome, acknowledged: result.data?.control_acknowledged === true });
@@ -146,7 +150,7 @@ export class BrowserControl {
     if (!context.parkDurably)
       throw new BrowserError("browser_durable_handoff_required");
     const { session, id } = await this.repository.requestAgent(context);
-    await this.exclusive(session.id, async () => {
+    await this.exclusive(session.created_by_user_id, session.id, async () => {
       await this.pause(session, context.signal);
       await context.parkDurably!(context.directive.callId, id);
     });
@@ -158,33 +162,51 @@ export class BrowserControl {
     sessionId: string,
     viewer: string,
     revision: number,
+    reopenPages = false,
   ) {
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       let session = await this.repository.get(owner, sessionId);
       if (session.revision !== revision)
         throw new BrowserError("browser_revision_conflict");
       const current = this.controllers.get(sessionId);
       if (current && current.expires > Date.now() && current.carrier.current())
         throw new BrowserError("browser_controller_exists");
-      // Agent-requested handoff must finish parking before private input starts.
-      if (await this.repository.hasRunningInvocation(owner, sessionId)) {
-        const takeover = await this.repository.requestUser(owner, sessionId);
-        if (takeover.created)
-          await this.pause(takeover.session, AbortSignal.timeout(35_000));
-        return this.repository.get(owner, sessionId);
-      }
-      return this.acquireSession(session, viewer);
+      if ([...this.controllers.values()].some(c => c.browser === session.browser_id && c.expires > Date.now() && c.carrier.current()))
+        throw new BrowserError("browser_controller_exists");
+      return this.acquireSession(session, viewer, undefined, reopenPages);
     });
   }
 
-  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string) {
+  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string, reopenPages = false) {
     this.controllers.delete(session.id);
     const signal = AbortSignal.timeout(35_000);
     session = await this.pause(session, signal);
     const id = randomUUID();
     session = await this.transition(session, "acquire", "human_private", signal, id);
+    if (reopenPages) {
+      // Explicit human recovery after acknowledged private takeover. No automatic
+      // replay from metadata polling, signed recovery tickets, or agent calls.
+      const prepared = await this.repository.prepare(session.created_by_user_id, session.id,
+        this.carrier(session).bootId, session.revision, randomUUID(),
+        { action: "reopen_pages", controller_id: id }, "human_private");
+      const result = await this.dispatch(this.carrier(session), prepared.request, AbortSignal.timeout(10_000));
+      if (!result.ok || result.data?.pages_reopened !== true) {
+        await this.repository.pauseAfterFailure(session.created_by_user_id, session.id, prepared.session.revision);
+        this.onFence(session.browser_id);
+        throw new BrowserError(result.outcome === "rejected" && result.error === "browser_recovery_unavailable"
+          ? result.error : "browser_recovery_uncertain");
+      }
+      session = prepared.session;
+      // Start the visible controller lease after recovery, not before page creation.
+      const renewed = await this.dispatch(this.carrier(session), this.repository.command(session,
+        { action: "control", operation: "renew", controller_id: id }), AbortSignal.timeout(5000));
+      if (!renewed.ok || renewed.data?.control_acknowledged !== true) {
+        await this.repository.pauseAfterFailure(session.created_by_user_id, session.id, session.revision);
+        throw new BrowserError("browser_control_uncertain");
+      }
+    }
     this.controllers.set(session.id, {
-      owner: session.created_by_user_id, viewer, id, recoveredTicket,
+      owner: session.created_by_user_id, browser: session.browser_id, viewer, id, recoveredTicket,
       expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
     });
     return session;
@@ -197,7 +219,7 @@ export class BrowserControl {
 
   async recoverViewer(owner: string, sessionId: string, viewer: string, ticket: string) {
     await this.repository.get(owner, sessionId);
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const session = await this.repository.get(owner, sessionId);
       const claims = this.recoveryTickets.verify(ticket, session, viewer);
       if (this.runtimeStatus(session) !== "available") throw new BrowserError("browser_handoff_unavailable");
@@ -206,11 +228,11 @@ export class BrowserControl {
         if (current.owner !== owner || current.viewer !== viewer) throw new BrowserError("browser_controller_exists");
         if (current.recoveredTicket === ticket) return session;
       }
+      if ([...this.controllers.values()].some(c => c.browser === session.browser_id && c !== current && c.expires > Date.now() && c.carrier.current()))
+        throw new BrowserError("browser_controller_exists");
       if (claims.epoch !== session.control_epoch || !session.private_content ||
           !["paused", "human_private"].includes(session.control_state))
         throw new BrowserError("browser_recovery_invalid");
-      if (await this.repository.hasRunningInvocation(owner, sessionId))
-        throw new BrowserError("browser_agent_still_running");
       return this.acquireSession(session, viewer, ticket);
     });
   }
@@ -266,7 +288,7 @@ export class BrowserControl {
   private async failController(owner: string, sessionId: string, control: Controller, revision: number) {
     if (this.controllers.get(sessionId) !== control) return;
     this.controllers.delete(sessionId);
-    this.onFence(sessionId);
+    this.onFence(control.browser);
     await this.repository.pauseAfterFailure(owner, sessionId, revision);
   }
 
@@ -276,7 +298,7 @@ export class BrowserControl {
     viewer: string,
     input: Record<string, unknown>,
   ) {
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const control = this.controller(owner, sessionId, viewer);
       const session = await this.repository.get(owner, sessionId);
       if (session.control_state !== "human_private")
@@ -316,10 +338,11 @@ export class BrowserControl {
   }
 
   runtimeStatus(session: BrowserSession): "available" | "disconnected" | "daemon_restarted" | "ended" {
-    if (session.desired_state === "closed" || ["closed", "interrupted"].includes(session.state)) return "ended";
+    if (session.desired_state === "closed" || session.state === "closed") return "ended";
     const carrier = this.carrierFor(session.bud_id);
     if (!carrier?.current()) return "disconnected";
-    return carrier.bootId === session.boot_id ? "available" : "daemon_restarted";
+    if (carrier.bootId !== session.boot_id) return "daemon_restarted";
+    return session.state === "interrupted" ? "ended" : "available";
   }
 
   historyAvailable(session: BrowserSession): boolean {
@@ -346,7 +369,7 @@ export class BrowserControl {
     viewport: { target_id: string; document_id: string; width: number; height: number }) {
     // Do not expose coordinator occupancy to a foreign viewer. Recheck inside the operation.
     await this.repository.get(owner, sessionId);
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const session = await this.repository.get(owner, sessionId);
       if (session.control_state === "agent" && !session.private_content && session.desired_state === "open") {
         const carrier = this.carrier(session);
@@ -395,11 +418,11 @@ export class BrowserControl {
     // A short input request may own the coordinator. Heartbeats can wait for
     // that known operation; they never queue or replay a page mutation.
     const deadline = Date.now() + 5000;
-    while (this.busy.has(sessionId) && Date.now() < deadline) {
+    while (this.busy.has(existing.browser) && Date.now() < deadline) {
       this.controller(owner, sessionId, viewer);
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const control = this.controller(owner, sessionId, viewer);
       const session = await this.repository.get(owner, sessionId);
       const next = await this.transition(
@@ -415,7 +438,7 @@ export class BrowserControl {
   }
 
   async release(owner: string, sessionId: string, viewer: string) {
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       this.controller(owner, sessionId, viewer);
       this.controllers.delete(sessionId);
       return this.pause(
@@ -431,7 +454,7 @@ export class BrowserControl {
     viewer: string,
     revision: number,
   ) {
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const control = this.controller(owner, sessionId, viewer);
       let session = await this.repository.get(owner, sessionId);
       if (session.revision !== revision)
@@ -461,14 +484,16 @@ export class BrowserControl {
   }
 
   async close(owner: string, sessionId: string, revision: number) {
-    return this.exclusive(sessionId, async () => {
+    return this.exclusive(owner, sessionId, async () => {
       const { session, invocations } = await this.repository.requestClose(
         owner,
         sessionId,
         revision,
       );
+      const controlling = this.controllers.has(sessionId);
       this.controllers.delete(sessionId);
-      this.onFence(sessionId);
+      this.onFence(controlling ? session.browser_id : sessionId);
+      if (controlling) await this.repository.pauseAfterFailure(owner, sessionId, session.revision);
       for (const id of invocations)
         await new InvocationRepository().requestCancel(owner, id);
       // The broker's existing bounded cleanup loop owns offline close delivery.

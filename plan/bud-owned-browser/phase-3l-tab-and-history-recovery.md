@@ -1,6 +1,82 @@
 # Phase 3l: Recover tabs and history in the Bud-owned browser
 
-Status: **Scoped; not implemented.** Depends on [3k](phase-3k-shared-persistent-browser.md).
+Status: **Explicit URL recovery implemented; two-thread page recovery user-confirmed.**
+Depends on [3k](phase-3k-shared-persistent-browser.md).
+
+## Implemented decision (2026-09-17)
+
+The native-restore ownership gate failed: Chrome restored duplicate-URL tabs and
+Back/Forward history after clean exit, but changed every target ID and reordered
+the tabs without exposing a durable workspace identity. See
+[experiment and validation](../../debug/browser-tab-recovery.md).
+We therefore implemented the bounded URL fallback below. The native restoration
+requirements in the original scope remain future goals, not shipped guarantees.
+
+- The service preserves authorized workspace IDs across daemon boots. Agent calls
+  receive `browser_recovery_required`; metadata reads never launch Chrome.
+- The pane offers **Reopen saved pages**, **Start blank workspace**, and Close.
+  Reopening first acknowledges browser-wide private takeover, rotates the old
+  workspace generation, then loads that workspace's saved addresses. It never
+  releases private control or resumes the agent automatically.
+- `bud-pages.json` lives inside the owner/resource/environment-bound profile,
+  written atomically with private permissions. Version 1 stores workspace IDs,
+  eligible URLs and selected index only. Maximum: 256 KiB, 32 workspaces,
+  16 pages per workspace, 2048 bytes per URL. No content, titles, form values,
+  history stacks or credentials; no new database table.
+- URLs must be HTTP(S), with no userinfo, query or fragment; common callback,
+  OAuth and logout path segments are excluded. This is conservative filtering,
+  not a guarantee that arbitrary GETs have no side effects. Reopening is explicit
+  and the UI explains that pages load again.
+- Checkpoints follow successful page operations and graceful shutdown, within
+  existing page serialization. Identical hints do not rewrite disk. No media-frame
+  checkpoint, timer or event ledger. An immediate navigation ACK is not a load
+  guarantee: recovery uses the last observed eligible address.
+- Recovery consumes the hint before creating tabs. Uncertain outcomes are not
+  retried automatically. Newly created targets are assigned directly to the
+  authorized workspace, never matched by URL/title/order. Closed workspace hints
+  are removed, including cleanup after offline deletion; reset removes the profile.
+- Chrome starts without an unsolicited blank window. Only explicit workspace
+  allocation creates a blank tab; successful recovery replaces that placeholder.
+
+### Scope refinements and remaining limits
+
+Native tab order, Back/Forward, scroll, unsaved edits and session storage are not
+restored. Chrome's profile/history database stays intact, but is not imported into
+new tabs. Query-bearing pages (including many search/article URLs) are intentionally
+omitted. Reopening is per thread, not an automatic recreation of all workspaces at
+startup. Old sessions without recorded hints can only start blank.
+
+No logical-tab-ID mapping or saved runtime generation is needed for this fallback:
+every reopened target is new, service authorization chooses the workspace, and
+profile identity supplies the owner binding. Removal plus durable service close
+intent replaces a native-restore tombstone ledger because no native tabs are adopted.
+Corrupt hints remain untouched and unavailable; profile/site data is preserved.
+
+Forced daemon exit with a surviving Chrome singleton still requires explicit
+operator recovery; there is no process adoption/supervisor. Browser crash/reboot,
+interrupted recovery at each boundary remain manual acceptance gates. Native history recovery would need a separately
+validated ownership strategy.
+
+### Local validation and remaining acceptance
+
+Passed: manifest bounds/corruption/symlink tests; disposable Chrome duplicate-URL
+workspace recovery, old-target rejection and no duplicate reopen; headed zero-page
+startup followed by explicit tab creation; service controller tests; isolated DB
+ownership/generation/deletion/continuation tests; mounted viewer recovery tests;
+Rust build, service build and web TypeScript checks.
+
+User confirmation (2026-09-17): both tabs reopened correctly in the real app.
+Earlier Phase 3k checks confirmed shared sign-in and retained login after restart.
+This confirms the normal recovery flow, not the crash/privacy race matrix.
+
+Repeatable check: run the updated daemon, browse eligible addresses in two threads, then
+stop it gracefully and restart. Open each pane and choose Reopen saved pages
+without sending a chat message; verify the correct page and retained login,
+then explicitly Return to agent. Also check private takeover, Close while offline,
+and missing hints. Merely upgrading cannot create hints for pages an older daemon
+never saved. This unreleased feature requires updated service/web/daemon together;
+there is no compatibility branch or new migration for 3l.
+
 
 ## Objective and explicit guarantees
 

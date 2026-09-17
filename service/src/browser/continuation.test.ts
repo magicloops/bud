@@ -8,6 +8,7 @@ import * as schema from "../db/schema.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
 import { BrowserRepository } from "./repository.js";
 import { BrowserToolWait } from "../agent/browser-tool-executor.js";
+import { BrowserResourceRepository } from "./resource-repository.js";
 import { BrowserControlRepository } from "./control-repository.js";
 
 test(
@@ -57,12 +58,12 @@ test(
       "ds4",
       "cancel",
       "user-tool",
-      "user-idle",
       "return-control",
+      "stop-browser",
     ]) {
-      const returnControl = provider === "return-control";
-      const userTakeover = provider.startsWith("user-") || returnControl;
-      const idle = provider === "user-idle";
+      const returnControl = provider === "return-control" || provider === "user-tool";
+      const userTakeover = returnControl;
+      const idle = false;
       const thread = randomUUID();
       await database
         .insert(schema.threadTable)
@@ -86,7 +87,10 @@ test(
         sessionId = `browser_${randomUUID()}`;
       if (!userTakeover)
         await repo.recordAction(lease, callId, "browser_request_handoff");
+      const resources = new BrowserResourceRepository(pool);
+      const resource = await resources.ensure("alice", "bud");
       await database.insert(schema.browserSessionTable).values({
+        browserId: resource.id,
         id: sessionId,
         threadId: thread,
         budId: "bud",
@@ -94,6 +98,7 @@ test(
         generation: "generation",
         bootId: "boot",
       });
+
       await database.insert(schema.llmCallTable).values({
         llmCallId: llmId,
         threadId: thread,
@@ -132,16 +137,14 @@ test(
           })),
         );
       if (returnControl) {
-        await pool.query("update browser_session set control_state='human_private',private_content=true where id=$1",[sessionId]);
+        await pool.query("update browser_resource set control_state='human_private',private_content=true,control_session_id=$1 where bud_id='bud'",[sessionId]);
         await repo.recordAction(lease,callId,"browser_observe");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
           callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"observe"}),BrowserToolWait);
         assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
       }
-      const handoff = returnControl ? null : userTakeover
-        ? await controls.requestUser("alice", sessionId)
-        : await controls.requestAgent({
+      const handoff = returnControl ? null : await controls.requestAgent({
             ownerUserId: "alice",
             threadId: thread,
             budId: "bud",
@@ -167,7 +170,7 @@ test(
         "alice",
         sessionId,
         "boot",
-        0,
+        (await controls.get("alice", sessionId)).revision,
         "pause",
         { action: "control", operation: "pause" },
         "paused",
@@ -202,7 +205,7 @@ test(
         null,
       );
       assert.ok(await controls.pending("alice", sessionId));
-      if (provider === "openai") {
+      {
         paused = await controls.prepare("alice", sessionId, "boot", paused.session.revision,
           "acquire", { action: "control", operation: "acquire" }, "human_private");
       }
@@ -229,7 +232,17 @@ test(
       assert.deepEqual(await repo.prepareQuestionContinuation(chatting), []);
       assert.equal(await repo.claim("concurrent", "alice"), null);
       if (provider === "cancel") await repo.requestCancel("alice", lease.id);
-      const returning = await controls.prepare(
+      if (provider === "stop-browser") {
+        const current = (await resources.get("alice", "bud"))!;
+        const stopping = await resources.requestLifecycle("alice", "bud", current.revision, "stop");
+        await resources.acknowledgeLifecycle(stopping);
+        await repo.recoverExpired("alice");
+        assert.equal((await repo.findForThread("alice", thread, lease.id))?.status, "canceled", "stop stranded a browser wait");
+        assert.equal((await repo.findForThread("alice", thread, chatting.id))?.status, "running", "stop canceled unrelated chat");
+        await repo.finish(chatting, "succeeded", "done");
+        continue;
+      }
+      let returning = await controls.prepare(
         "alice",
         sessionId,
         "boot",
@@ -238,6 +251,8 @@ test(
         { action: "control", operation: "prepare_return" },
         "resume_pending",
       );
+      returning = await controls.prepare("alice", sessionId, "boot", returning.session.revision,
+        "finish", { action: "control", operation: "finish_return" }, "resume_pending");
       await controls.returned(
         "alice",
         sessionId,

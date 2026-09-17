@@ -18,7 +18,10 @@ or CDP is accepted. The Rust browser manager owns serialization and authority.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
 - `package.json` / `package-lock.json`: reproducible runtime dependency.
 
-One snapshot per browser, 60-second lifetime, 2 MiB retained nodes. Negotiated
+One snapshot per thread workspace/helper, 60-second lifetime, 2 MiB retained nodes.
+Phase 3k workspaces share one regular Chrome context for cookies/site storage but
+have independent helpers/reference maps. Rust checks target ownership before every
+helper call; observing in one thread cannot invalidate another thread’s snapshot. Negotiated
 compact snapshots return text only; visible DOM returns nodes/boxes only. The full
 helper observation is limited to 32 KiB, reserving space for the service envelope.
 Legacy requests retain 24 KiB node pages plus text through the same engine.

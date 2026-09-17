@@ -130,8 +130,7 @@ same-size fits are daemon no-ops, avoiding unnecessary observation invalidation.
 Owner-authorized metadata adds runtime_status (available, disconnected,
 daemon_restarted, ended). Compare the current capable carrier boot with the
 stored session boot; absence alone never claims restart. The web pane clears
-stale private/media/page controls on confirmed end, explains lost ephemeral
-pages, and retains explicit close with its stop-run semantics. Missing-session
+stale private/media/page controls on confirmed end, explains lost live tabs while retaining saved website sign-ins, and retains explicit close with its stop-run semantics. Missing-session
 404 shows generic unavailable recovery; no automatic browser recreation or
 private resume. Temporary disconnects retain reconnect. No DB/wire migration.
 
@@ -201,3 +200,26 @@ and production web code stay unchanged. `media.test.ts` verifies retained idle
 pixels and immediate clearing on revocation, in addition to density/credit behavior.
 
 Temporary Vite development-only `browser-media` console diagnostics report connection-local IDs, UTC timestamps, first-frame arrival, frame counts/age, local cleanup/revocation/error and socket close code/cleanliness. No per-frame logging, URLs, page content, credentials or remote close text.
+
+## Shared persistent browser (Phase 3k)
+
+Threads own tabs while website sign-ins/storage belong to the Bud. The viewer
+states that private control pauses browser work across this Bud. Explicit recovery
+after a daemon restart is available without implicitly releasing the private latch.
+`lifecycle.tsx` supplies Bud-level Stop/Reset controls in the viewer menu and ended
+state, separately from closing a thread's tabs. Confirmation identifies all-thread
+impact; reset explicitly deletes stored site data. Owner-authorized resource status
+polls every three seconds while mounted. Pending intent remains visible until
+acknowledged completion, and older revisions cannot overwrite a newer response.
+`lifecycle.test.tsx` verifies explicit reset confirmation, pending-state revision
+ordering and discarded responses after a Bud switch. No screenshot or per-frame
+state is added to React.
+
+## Explicit page recovery (Phase 3l)
+
+Confirmed daemon restart offers Reopen saved pages or Start blank workspace without
+requiring a chat message. Only explicit activation posts `operation:reopen`; metadata
+polling never reopens pages. Recovery uses existing private-control/media/input paths
+and requires Return to agent afterward. The pane explains URL exclusions and loss
+of Back history/unsaved edits. Errors do not imply successful restoration. Mounted
+tests cover no mutation on restart metadata, explicit recovery and lease release.

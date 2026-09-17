@@ -133,6 +133,11 @@ impl BudApp {
             debug_enabled,
         };
         let device_name = args.device_name();
+        let browser_manager = crate::browser::BrowserManager::configured_for(
+            resolved_paths.base_dir,
+            args.server.clone(),
+        )
+        .await;
         Self {
             args,
             device_name,
@@ -149,12 +154,22 @@ impl BudApp {
             proxy_manager: ProxyManager::default(),
             file_manager: FileManager::new(default_cwd),
             local_llm_manager,
-            browser_manager: crate::browser::BrowserManager::configured().await,
+            browser_manager,
             debug_enabled,
         }
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let browser = self.browser_manager.clone();
+        let result = tokio::select! {
+            result = self.run_loop() => result,
+            result = shutdown_signal() => result,
+        };
+        browser.shutdown().await?;
+        result
+    }
+
+    async fn run_loop(mut self) -> Result<()> {
         self.installation_id = load_or_create_installation_id(&self.installation_id_path).await?;
         self.identity = load_identity(&self.identity_path).await?;
         if let Some(identity) = &self.identity {
@@ -1376,6 +1391,7 @@ impl BudApp {
     }
 
     async fn clear_identity(&mut self) -> Result<()> {
+        self.browser_manager.shutdown().await?;
         self.identity = None;
         clear_identity(&self.identity_path).await?;
         info!(path = %self.identity_path.display(), "Removed invalid bud identity");
@@ -1551,6 +1567,21 @@ impl BudApp {
         capabilities["browser"] = self.browser_manager.capability();
         capabilities
     }
+}
+
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await?;
+    Ok(())
 }
 
 fn grpc_error_allows_websocket_fallback(err: &anyhow::Error) -> bool {

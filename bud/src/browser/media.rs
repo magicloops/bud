@@ -127,8 +127,13 @@ pub(super) fn start(
                 // race during sustained wheel input. No CDP call is cancelled here.
                 phase = "wait_capture";
                 let wait_started = Instant::now();
-                let data = if let Ok(mut entry) =
-                    tokio::time::timeout(Duration::from_secs(1), slot.state.lock()).await
+                let data = if let Ok((_page, mut entry)) =
+                    tokio::time::timeout(Duration::from_secs(1), async {
+                        let page = slot.page_lock.lock().await;
+                        let state = slot.state.lock().await;
+                        (page, state)
+                    })
+                    .await
                 {
                     let wait_ms = wait_started.elapsed().as_millis() as u64;
                     let hold_started = Instant::now();

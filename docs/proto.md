@@ -2830,7 +2830,7 @@ Phase 2 adds a separate media WebSocket; chat reuses the existing SSE families.
 The active connection must advertise:
 
 ```json
-{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"ephemeral","handoff":true,"max_sessions":2}}
+{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"persistent","handoff":true,"max_sessions":2}}
 ```
 
 Absent/false/incompatible capability omits browser tools. A new daemon does not
@@ -2849,6 +2849,8 @@ Service -> Bud:
     "request_id":"01REQUEST...","device_session_id":"s_01DEVICE...",
     "session_id":"browser_01SESSION...","generation":"01GEN...",
     "thread_id":"owned-thread-uuid","owner_user_id":"owner",
+    "browser_id":"managed_01RESOURCE...","browser_epoch":3,
+    "private_content":false,"browser_paused":false,
     "control_epoch":2,"sequence":1,"expires_at_ms":1770000030000,
     "invocation_id":"01INVOCATION...","invocation_fence":1,
     "command":{"action":"open","url":"https://example.com"}
@@ -2881,7 +2883,7 @@ Bud -> service:
   "result":{
     "request_id":"01REQUEST...","session_id":"browser_01SESSION...","generation":"01GEN...",
     "ok":true,"outcome":"completed","error":null,
-    "data":{"state":"ready","profile_mode":"ephemeral","target_id":"opaque","navigation_requested":true,"targets":[]}
+    "data":{"state":"ready","profile_mode":"persistent","target_id":"opaque","navigation_requested":true,"targets":[]}
   }
 }
 ```
@@ -2909,7 +2911,7 @@ two active daemon sessions, 256 AX entries (64 KiB serialized element budget), 2
 2048-byte URLs and 8192-byte committed text. Whole CDP messages are capped at
 24 MiB (local PNG capture before bounded downscaling). CDP interruption poisons the connection; close/open is explicit recovery.
 Normal disconnect preserves live browsers, but outstanding commands are never
-replayed. A changed daemon boot invalidates durable session identity. Desired
+replayed. A changed daemon boot invalidates runtime authority; Phase 3l retains workspace identity for explicit recovery. Desired
 close persists across offline thread deletion/unclaim. See the
 [implementation evidence and limits](../plan/bud-owned-browser/phase-1-agent-browser.md).
 
@@ -3119,8 +3121,8 @@ tags, SSE family or migration; a daemon upgrade is required for this capability.
 Existing owner-authorized inventory/session/control responses add runtime_status:
 `available`, `disconnected`, `daemon_restarted`, or `ended`. A current capable
 carrier with a different boot proves restart; missing carrier reports disconnected.
-Closed/interrupted rows report ended. can_view and can_take_control are false
-when runtime is unavailable. No boot IDs or authority tokens are exposed. A 404
+Closed rows report ended; interrupted rows on a new boot allow explicit recovery.
+can_view requires a live runtime; can_take_control also permits confirmed daemon restart. No boot IDs or authority tokens are exposed. A 404
 remains non-disclosing and cannot prove restart. Old clients ignore the additive
 field; updated web hides ineffective reconnect/page controls for ended browsers.
 
@@ -3336,3 +3338,92 @@ than invocation epoch. Idle/delivery reauthorize; control fences close groups an
 tickets even during awaited authorization. Sizing uses the same identity. Web
 preserves canvas/socket across agent-only epochs, clearing on privacy, generation,
 permission or connection loss. Viewport fitting retains epoch cancellation.
+
+### Phase 3k shared persistent browser cutover
+
+One service-owned `browser_resource` maps to one owner/environment-bound daemon
+profile/process; `browser_session` identifies a thread's tab workspace. Production
+capability requires `profile_mode:"persistent"`. The unreleased browser feature
+uses coordinated service/daemon/helper/web versions; no old-browser compatibility
+path or cookie import is provided. Apply migrations 0044–0046 before service
+startup and rebuild/restart the daemon. Other terminal traffic is unchanged.
+
+Every command requires `browser_id`, `browser_epoch`, `private_content` and
+`browser_paused` from the durable resource. `browser_epoch` fences Bud-wide
+privacy/media/control. Workspace `control_epoch`, invocation fence and sequence
+continue ordering thread operations; changing a thread's invocation never grants
+access to another workspace. Initial daemon admission restores durable private
+intent before starting Chrome. Every target/helper/capture operation checks tab
+membership. Verified opener popups inherit their workspace; unassigned native
+tabs are hidden. Two workspaces share one FIFO page lock; one media worker per
+workspace, bounded by the existing relay credit and viewer limits.
+
+A private takeover revokes all passive media and blocks all agent browser work on
+the Bud. Explicit acknowledged return wakes eligible durable waits across those
+workspaces. Lease loss, service restart and daemon restart preserve private intent.
+Chat and terminal operations remain independent. Cookies/site state are shared
+intentionally; tab routing is not isolation from same-origin website behavior.
+
+Internal `command:{action:"lifecycle",reset:boolean}` carries the durable
+lifecycle receipt as `request_id`, resource ID in session/thread routing fields,
+and profile generation as `generation`; it bypasses workspace admission. The
+daemon fences work, drains the shared page lock and confirms owned Chrome exit.
+Reset additionally removes stored profile contents while holding the profile lock.
+Success returns `data:{lifecycle_acknowledged:true}`. Only an exact current
+receipt/global-epoch acknowledgement completes pending Stop/Reset; retries of
+these idempotent lifecycle requests never replay agent mutations. Stop retains
+private intent and stored data; Reset clears privacy and advances profile generation.
+
+Owner-authenticated GET `/api/buds/:bud_id/browser` returns the active resource's
+public status or null. Origin-checked POST `.../browser/lifecycle` accepts
+`{revision,operation:"stop"|"reset",confirmed:true}` (reset requires confirmation),
+stamps the acting user and returns 202 pending status. Offline intent stays pending.
+Session metadata includes `browser_id`, `control_session_id` and the resource's
+revision/authority epoch. No profile bytes, cookies or credentials enter these APIs.
+
+Persistent-profile errors include `browser_profile_in_use`,
+`browser_profile_permissions`, `browser_profile_recovery_required`, native-store
+`browser_secure_storage_unavailable|locked|unsupported`, and
+`browser_resource_changed_restart_required`. No unknown Chrome process is killed
+or attached, and native storage never falls back to basic/mock mode. macOS is the
+current persistent runtime; Linux is unavailable pending secure-store validation.
+Phase 3l below implements limited URL recovery; exact tab/Back history restoration remains deferred.
+
+### Phase 3l explicit saved-page recovery
+
+POST `/api/browser/sessions/:session_id/control` accepts `operation:"reopen"` with
+existing `viewer_id` and `revision`. Live cookie authentication, allowed Origin,
+owned Bud/thread/workspace and revision validation precede dispatch. No URL list or
+client-selected owner is accepted. No new rows or ownership stamps are introduced.
+
+Service preserves open workspaces across boot changes, including interrupted old
+runtimes. Closed/deleted/retired resources remain closed. Agent admission on an old
+boot rejects `browser_recovery_required` (or parks under existing private intent).
+Explicit pause on the new boot rotates workspace generation while retaining its ID;
+old controller proofs, targets and completions remain invalid. Metadata reads do
+not create pages. Temporary carrier absence remains disconnected, not restart.
+
+After acknowledged private pause/acquire, service dispatches:
+
+```json
+{"action":"reopen_pages","controller_id":"opaque"}
+```
+
+This command uses the existing browser envelope, owner/thread/generation, resource
+privacy epoch, sequence and bounded deadline. Daemon validates the exact private
+controller/workspace before and after page locking. It consumes bounded local hints
+before creating new owned tabs, returning
+`data:{pages_reopened:true,history_restored:false}` on success. It never imports
+history or replays forms/actions. Service renews the private lease before returning
+ordinary control metadata; explicit Return remains required for agent access.
+No saved URL list enters the HTTP/control response or service inventory.
+
+`browser_recovery_unavailable` means usable hints were unavailable; uncertain
+execution becomes `browser_recovery_uncertain`. Neither triggers automatic replay.
+Failed recovery remains private/paused. Close cleanup may reach an unallocated
+workspace on a fresh boot to remove its hints without opening Chrome.
+
+Updated daemon/service/web are a coordinated cutover for this unreleased feature,
+as authorized by the phase plan; no compatibility path or migration is added.
+Native restore and surviving-process adoption remain out of scope. See
+[Phase 3l](../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md).
