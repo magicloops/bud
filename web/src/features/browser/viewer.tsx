@@ -299,9 +299,12 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     setSelectedTarget("");
   }, [ended, resetInput]);
   const canView = !ended && (session?.can_view || owns);
-  // Handoff and later agent invocations fence the old passive stream even
-  // when can_view stays true. Private recovery always requires explicit control.
+  // Fitting follows invocation epochs even while the passive canvas survives.
   const passiveEpoch = owns ? undefined : session?.control_epoch;
+  // Agent media ignores invocation epochs. Fitting still fences
+  // using passiveEpoch; private/paused transitions retain their own identity.
+  const mediaEpoch = !owns && session?.control_state === "agent"
+    ? "agent-continuity" : passiveEpoch;
   useEffect(() => {
     setConnected(false);
     resetInput();
@@ -343,7 +346,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       if (media.current === client) media.current = null;
       client.close();
     };
-  }, [base, canView, mediaVersion, session?.generation, passiveEpoch, resetInput, failPrivate]);
+  }, [base, canView, mediaVersion, session?.generation, mediaEpoch, owns, resetInput, failPrivate]);
   useEffect(() => {
     const permitted = owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport;
     if (ended || !fit || !permitted || !connected || !selectedTarget || !surface.current) return;

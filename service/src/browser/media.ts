@@ -62,6 +62,9 @@ const frameSchema = z
   })
   .strict();
 
+const groupKey = (id: string, generation: string, epoch: number, controller?: string) =>
+  `${id}:${generation}:${controller === undefined ? "agent-view" : `${epoch}:${controller}`}`;
+
 /** Latest-only fan-out: slow viewers lose frames, never delay another viewer. */
 export class BrowserMedia {
   onDiagnostic: (fields: Record<string, string | number | boolean>) => void = () => {};
@@ -76,7 +79,7 @@ export class BrowserMedia {
   ) {
     control.onFence = (id) => this.closeSession(id);
     control.isSizingViewer = (owner, session, viewerId) => {
-      const group = this.groups.get(`${session.id}:${session.generation}:${session.control_epoch}:view`);
+      const group = this.groups.get(groupKey(session.id, session.generation, session.control_epoch));
       if (!group || group.closed || group.owner !== owner || !group.carrier.current()) return false;
       const first = [...group.viewers].find(viewer => viewer.socket.readyState === WebSocket.OPEN &&
         (group.operationDriven
@@ -155,8 +158,9 @@ export class BrowserMedia {
     if (!(await viewer.authorize())) return false;
     const permitted = await this.control.mediaAuthority(viewer.owner, viewer.sessionId, viewer.viewer);
     return !group.closed && group.carrier.current()
+      && permitted.carrier.tracker === group.carrier.tracker
       && permitted.session.generation === group.generation
-      && permitted.session.control_epoch === group.epoch
+      && (group.controllerId === undefined || permitted.session.control_epoch === group.epoch)
       && permitted.controllerId === group.controllerId;
   }
   private demand(group: Group) {
@@ -185,8 +189,9 @@ export class BrowserMedia {
     const { session, carrier, controllerId } =
       await this.control.mediaAuthority(owner, sessionId, viewerId);
     if (socket.readyState !== WebSocket.OPEN) return;
-    const key = `${session.id}:${session.generation}:${session.control_epoch}:${controllerId ?? "view"}`;
+    const key = groupKey(session.id, session.generation, session.control_epoch, controllerId);
     let group = this.groups.get(key);
+    if (group && (!group.carrier.current() || group.carrier.tracker !== carrier.tracker)) { this.close(group, "carrier_changed"); group = undefined; }
     if (!group) {
       if (this.groups.size >= 32)
         throw new BrowserError("browser_media_capacity");
@@ -385,7 +390,7 @@ export class BrowserMedia {
         viewer.socket.terminate();
         continue;
       }
-      if (viewer.socket.readyState !== WebSocket.OPEN) continue;
+      if (group.closed || !group.carrier.current() || viewer.socket.readyState !== WebSocket.OPEN) continue;
       if (viewer.socket.bufferedAmount > 1_410_000) {
         viewer.socket.terminate();
         continue;

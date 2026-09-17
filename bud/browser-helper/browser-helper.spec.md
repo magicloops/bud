@@ -54,3 +54,5 @@ are unchanged. Restart an already-running helper (or daemon) to load the fix.
 [measurements](../../debug/browser-snapshot-structure-compaction.md) document the
 serializer follow-up. Nested 30-story fixture drops from three pages to two;
 all-30-in-8-KiB is not claimed. Restart the helper/daemon to load this change.
+
+Temporary failure diagnostics (`diagnostics.mjs`, privacy regression in `diagnostics.test.mjs`) send only a fixed stage index and boolean Playwright error signals over private helper stdio. Rust logs these without returning diagnostics to the model; raw exception text is never emitted.

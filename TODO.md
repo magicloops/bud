@@ -34,6 +34,10 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **One persistent browser per Bud.** Implement [Phase 3k](./plan/bud-owned-browser/phase-3k-shared-persistent-browser.md) for shared sign-ins, thread-owned tabs and browser-wide private control, then [Phase 3l](./plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md) for verified tab/history recovery. Preserve the profile across daemon restarts; do not equate URL reopening with restored Back/Forward history or live form state.
+
+- [ ] **Browser keyboard, files and clipboard input.** Implement [design/browser-keyboard-files-and-clipboard.md](./design/browser-keyboard-files-and-clipboard.md): start with targeted page keys and explicit daemon-local file attachment, then private viewer file transfer and explicitly supplied clipboard payloads. Reuse browser authority and execution paths; exclude native OS picker automation and implicit system clipboard access.
+
 - [ ] **Simplify agent request building and tool discovery.** Implement [design/agent-request-building.md](./design/agent-request-building.md): select tools from configuration and owned Bud capabilities, prepare messages/tools once for invocation and accounting, and keep invocation/lease checks exclusively in execution. Remove preview-hook branching and duplicate preparation without adding another framework. See the [review](./review/agent-tools-and-context-building.md) for the browser-catalog regression and current architecture.
 
 - **Responsive web: real-device pass**

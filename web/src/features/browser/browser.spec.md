@@ -23,9 +23,10 @@ control, input and media; private input is not a transcript event.
   in flight plus the latest desired size; no automatic retry after uncertainty.
 
 Metadata polls every three seconds.
-Passive media reattaches when the authorized metadata's control_epoch changes
-(handoff pause or a later agent invocation), even if can_view stays true. Stable
-polls do not remount it. Private control is restored only with a signed proof from the same mounted viewer; a
+Agent-only epoch changes retain the same passive media socket/canvas by default.
+Private/paused transitions, generation changes, permission loss and network failure
+still clear/reconnect. Viewport-fit cancellation remains epoch-bound. Mounted tests
+cover continuity, handoff/private fencing and unchanged polls. Private control is restored only with a signed proof from the same mounted viewer; a
 private-content revocation closes passive viewing. New attachments clear stale
 connection/input state and must display fresh frames before enabling interaction.
 Image decode/draw and one-frame socket credit
@@ -198,3 +199,5 @@ browser operations; human control remains continuous. Existing native WebSocket
 pong support needs no app message or new client capability. Canvas frame/ACK shapes
 and production web code stay unchanged. `media.test.ts` verifies retained idle
 pixels and immediate clearing on revocation, in addition to density/credit behavior.
+
+Temporary Vite development-only `browser-media` console diagnostics report connection-local IDs, UTC timestamps, first-frame arrival, frame counts/age, local cleanup/revocation/error and socket close code/cleanliness. No per-frame logging, URLs, page content, credentials or remote close text.

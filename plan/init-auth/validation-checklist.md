@@ -433,3 +433,18 @@ and authenticated viewer binding govern attachment, idle checks and delivery.
 
 No new resource or owner stamping. Existing authorized thread APIs carry timing;
 page lookup additionally filters invocation owner and thread in SQL.
+
+## Agent viewer continuity (Phase 3j)
+
+- [x] Relay fixtures preserve the same passive group across agent epochs and retain
+  owner-bound first-viewer sizing; private media remains epoch/controller-bound.
+- [x] An authorization result arriving after a control fence delivers no frame.
+- [x] Daemon authority fixtures reject a pre-takeover attachment even after return;
+  stale agent commands and private controller checks retain exact authority.
+- [ ] Real two-account takeover during capture, sign-out/unclaim/thread deletion,
+  return and reconnect: no private pixels reach a passive or previous viewer.
+- [ ] Real agent follow-up turns preserve media connection IDs; private takeover
+  and return replace those connections and clear old pixels.
+
+No resource or row-stamping changes. Existing authenticated browser-session,
+thread and Bud ownership gates protect metadata, attachment, idle checks and delivery.

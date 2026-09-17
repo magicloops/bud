@@ -9,6 +9,12 @@ notes retain the evidence and limitations for each implementation.
 
 ## Current status and next sequence
 
+New product direction is scoped in **3k/3l**: one persistent browser/profile per
+Bud, thread-owned tabs and shared sign-ins. These plans supersede older ephemeral
+profile, thread-local private-control and restart/deletion assumptions in the
+historical phases below. They are not implemented. Browser persistence is distinct
+from optional attachment to a user's personal browser.
+
 | Phase | Current evidence / remaining work |
 | --- | --- |
 | 0 — experiment | Closed; continue through the actual agent, not the standalone prototype |
@@ -21,13 +27,17 @@ notes retain the evidence and limitations for each implementation.
 | 3f — compact observations | Automated checks and live compact output/pagination confirmed; reading quality tracked in 3g |
 | 3g — focused agent reliability | Next: investigate observed argument, freshness, viewport and reading-coverage issues |
 | 3h — operation-driven viewer | Implemented; idle/credit/authority and live Chrome tests pass; actual-agent acceptance pending |
+| 3j — agent viewer continuity | [Implemented locally](phase-3j-agent-viewer-continuity.md); automated continuity/privacy checks pass; real-agent follow-up acceptance pending |
+| 3k — shared persistent browser | [Scoped](phase-3k-shared-persistent-browser.md): one profile/process per Bud, thread tab ownership, shared sign-ins and browser-wide private control |
+| 3l — tab/history recovery | [Scoped](phase-3l-tab-and-history-recovery.md): validate native restoration and ownership mapping; retain profile/history without promising exact live-page restoration |
 | 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
 
-Sequence: **3g → 3h → 3b → 4**. Phase numbers reflect when slices were scoped, not a
-requirement to implement them in numerical order. Keep this pass narrow; it does
-not add a REPL, change browser ownership or expand the private-control lifecycle.
+Recommended next sequence: **finish 3j validation → 3k → 3l → 3b → 4**, retaining
+the outstanding 3g reliability checks. Phase numbers reflect scoping order.
+3k deliberately changes browser ownership/private-control scope; 3l separately
+validates recovery. Neither adds a REPL or personal-browser attachment.
 
 ## Phase 0 — risky vertical slice and decisions (closed)
 

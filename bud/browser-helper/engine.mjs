@@ -104,11 +104,13 @@ export class Engine {
       coverage: 'accessible_dom', limitations: ['Closed shadow roots and inaccessible embedded documents may be omitted.'] };
   }
   async execute(c) {
+    this.stage = 'resolve_page';
     if (c.operation === 'invalidate') { this.snapshot = null; return {}; }
     const page = await this.page(c.target_id);
     if (c.operation === 'page_info') return { target_id: c.target_id, document_id: await this.document(page), title: await page.title(), url: page.url() };
     if (c.operation === 'snapshot' || c.operation === 'visible_dom') {
       if (c.continuation) {
+        this.stage = 'validate_snapshot';
         const s = await this.current(page, c);
         const [id, raw] = c.continuation.split(':');
         const offset = Number(raw);
@@ -122,6 +124,7 @@ export class Engine {
         frame = current.refs.get(c.scope).frame;
       }
       const document = await this.document(page), navigation = this.navigation;
+      this.stage = 'snapshot';
       const raw = await root.ariaSnapshotJSON({ mode: 'ai', boxes: c.operation === 'visible_dom', timeout: 3000 });
       if (await this.document(page) !== document || this.navigation !== navigation) fail('browser_document_changed');
       const id = c.compact === true ? `${referenceNamespace}${(++observationSequence).toString(36)}` : randomUUID(), refs = new Map();
@@ -139,6 +142,7 @@ export class Engine {
         compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
       return { ...this.pageResult(this.snapshot, 0), viewport };
     }
+    this.stage = 'validate_snapshot';
     const s = await this.current(page, c);
     let locator;
     if (c.reference) locator = this.ref(s, c.reference);
@@ -151,13 +155,16 @@ export class Engine {
       return { scroll_requested: true };
     }
     if (!locator) fail('browser_invalid_arguments');
+    this.stage = 'resolve_element';
     const count = await locator.count();
     if (count !== 1) fail(count ? 'browser_locator_ambiguous' : 'browser_locator_not_found');
     // Resolve once; never reselect another matching node if the document changes.
     const handle = await locator.elementHandle({ timeout: 1000 });
     if (!handle) fail('browser_locator_not_found');
     try {
+      this.stage = 'validate_action';
       await this.current(page, c);
+      this.stage = c.operation;
       if (c.operation === 'click') await handle.click({ timeout: 3000 });
       else if (c.operation === 'fill') await handle.fill(c.text, { timeout: 3000 });
       else if (c.operation === 'focus') await handle.focus();

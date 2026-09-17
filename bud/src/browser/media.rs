@@ -30,11 +30,13 @@ pub(super) fn start(
     endpoint: String,
     ticket: String,
     operation_driven: bool,
+    media_fence: Option<u64>,
 ) {
     tokio::spawn(async move {
         let started = Instant::now();
         let mut phase = "connect";
         let mut frames = 0_u64;
+        let mut close_code: Option<u16> = None;
         let current_connection = connection.clone();
         let mut refresh = slot.refresh.subscribe();
         let run = async {
@@ -57,11 +59,11 @@ pub(super) fn start(
             loop {
                 // Idle sockets still process pings and revocation, without touching Chrome.
                 if current_connection.borrow().as_deref() != Some(&device)
-                    || !slot
-                        .authority
-                        .lock()
-                        .unwrap()
-                        .viewer_allowed(epoch, controller.as_deref())
+                    || !slot.authority.lock().unwrap().media_allowed(
+                        epoch,
+                        controller.as_deref(),
+                        media_fence,
+                    )
                 {
                     anyhow::bail!("browser_media_revoked");
                 }
@@ -86,7 +88,13 @@ pub(super) fn start(
                         continue;
                     }
                     Some(Ok(Message::Pong(_))) if operation_driven => continue,
-                    _ => anyhow::bail!("browser_media_closed"),
+                    Some(Ok(Message::Close(frame))) => {
+                        close_code = frame.map(|f| u16::from(f.code));
+                        anyhow::bail!("browser_media_peer_close");
+                    }
+                    None => anyhow::bail!("browser_media_eof"),
+                    Some(Err(error)) => return Err(error.into()),
+                    _ => anyhow::bail!("browser_media_unexpected_message"),
                 };
                 phase = "validate_demand";
                 let request: Capture = serde_json::from_str(&text)?;
@@ -107,11 +115,11 @@ pub(super) fn start(
                 tokio::time::sleep_until(next_capture).await;
                 phase = "authorize_capture";
                 if current_connection.borrow().as_deref() != Some(&device)
-                    || !slot
-                        .authority
-                        .lock()
-                        .unwrap()
-                        .viewer_allowed(epoch, controller.as_deref())
+                    || !slot.authority.lock().unwrap().media_allowed(
+                        epoch,
+                        controller.as_deref(),
+                        media_fence,
+                    )
                 {
                     anyhow::bail!("browser_media_revoked");
                 }
@@ -126,11 +134,11 @@ pub(super) fn start(
                     let hold_started = Instant::now();
                     phase = "authorize_capture";
                     if current_connection.borrow().as_deref() != Some(&device)
-                        || !slot
-                            .authority
-                            .lock()
-                            .unwrap()
-                            .viewer_allowed(epoch, controller.as_deref())
+                        || !slot.authority.lock().unwrap().media_allowed(
+                            epoch,
+                            controller.as_deref(),
+                            media_fence,
+                        )
                     {
                         anyhow::bail!("browser_media_revoked");
                     }
@@ -193,11 +201,11 @@ pub(super) fn start(
                 };
                 phase = "authorize_delivery";
                 if current_connection.borrow().as_deref() != Some(&device)
-                    || !slot
-                        .authority
-                        .lock()
-                        .unwrap()
-                        .viewer_allowed(epoch, controller.as_deref())
+                    || !slot.authority.lock().unwrap().media_allowed(
+                        epoch,
+                        controller.as_deref(),
+                        media_fence,
+                    )
                 {
                     anyhow::bail!("browser_media_revoked");
                 }
@@ -220,11 +228,25 @@ pub(super) fn start(
         // A control disconnect revokes delivery immediately, but must not drop
         // an in-flight CDP read: cancellation poisons the shared Chrome channel.
         // Drain bounded capture calls, then let authorize_delivery discard them.
-        let _ = run.await;
+        let result = run.await;
         let reason = if current_connection.borrow().as_deref() != Some(&device) {
             "connection_changed"
+        } else if let Err(error) = &result {
+            if error.is::<tokio::time::error::Elapsed>() {
+                "timeout"
+            } else if error.is::<tokio_tungstenite::tungstenite::Error>() {
+                "transport_error"
+            } else {
+                match error.to_string().as_str() {
+                    "browser_media_revoked" => "authority_revoked",
+                    "browser_media_peer_close" => "peer_close",
+                    "browser_media_eof" => "peer_eof",
+                    "browser_media_unexpected_message" => "unexpected_message",
+                    _ => "operation_error",
+                }
+            }
         } else {
-            "media_ended"
+            "completed"
         };
         let mut authority = slot.authority.lock().unwrap();
         let paused_control = controller
@@ -243,6 +265,8 @@ pub(super) fn start(
             frames,
             elapsed_ms = started.elapsed().as_millis() as u64,
             paused_control,
+            operation_driven,
+            close_code,
             "Browser media ended"
         );
         slot.media.store(false, Ordering::SeqCst);

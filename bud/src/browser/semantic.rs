@@ -60,6 +60,15 @@ impl Semantic {
         if self.interrupted() {
             bail!("browser_interrupted");
         }
+        let started = std::time::Instant::now();
+        let operation = match command["operation"].as_str() {
+            Some("click") => "click",
+            Some("fill") => "fill",
+            Some("focus") => "focus",
+            Some("snapshot") => "snapshot",
+            Some("visible_dom") => "visible_dom",
+            _ => "other",
+        };
         self.poisoned = true;
         let mut guard = KillOnCancel {
             child: &mut self.child,
@@ -85,6 +94,35 @@ impl Semantic {
         guard.armed = false;
         self.poisoned = false;
         if result["ok"] != true {
+            let d = &result["diagnostic"];
+            // Read only bounded numeric/boolean fields, never the raw helper error.
+            tracing::info!(
+                component = "browser_timing",
+                event = "semantic_failure",
+                helper_pid = guard.child.id(),
+                operation,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                stage = match d["stage"].as_u64() {
+                    Some(0) => "resolve_page",
+                    Some(1) => "validate_snapshot",
+                    Some(2) => "snapshot",
+                    Some(3) => "resolve_element",
+                    Some(4) => "validate_action",
+                    Some(5) => "click",
+                    Some(6) => "fill",
+                    Some(7) => "focus",
+                    _ => "unknown",
+                },
+                timeout = d["timeout"].as_bool().unwrap_or(false),
+                intercepted = d["intercepted"].as_bool().unwrap_or(false),
+                invisible = d["invisible"].as_bool().unwrap_or(false),
+                unstable = d["unstable"].as_bool().unwrap_or(false),
+                disabled = d["disabled"].as_bool().unwrap_or(false),
+                detached = d["detached"].as_bool().unwrap_or(false),
+                navigation_wait = d["navigation_wait"].as_bool().unwrap_or(false),
+                target_closed = d["target_closed"].as_bool().unwrap_or(false),
+                "Browser semantic operation failed"
+            );
             bail!(
                 "{}",
                 result["error"]

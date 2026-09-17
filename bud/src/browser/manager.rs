@@ -368,14 +368,13 @@ impl BrowserManager {
             operation_driven,
         } = &request.command
         {
-            if !entry
-                .authority
-                .lock()
-                .unwrap()
-                .viewer_allowed(request.control_epoch, controller_id.as_deref())
-            {
-                return Reply::error(&request, "browser_private_or_paused", false);
-            }
+            let media_fence = {
+                let mut authority = entry.authority.lock().unwrap();
+                if !authority.viewer_allowed(request.control_epoch, controller_id.as_deref()) {
+                    return Reply::error(&request, "browser_private_or_paused", false);
+                }
+                controller_id.is_none().then(|| authority.media_fence())
+            };
             if entry.media.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return Reply::error(&request, "browser_media_busy", false);
             }
@@ -389,6 +388,7 @@ impl BrowserManager {
                 endpoint.clone(),
                 ticket.clone(),
                 operation_driven == &Some(true) && controller_id.is_none(),
+                media_fence,
             );
             return Reply {
                 request_id: request.request_id,
@@ -1048,10 +1048,19 @@ mod tests {
             );
         }
         drop(page);
+        // A new invocation advances command authority but retains this socket.
+        let request = |sequence, command| {
+            let mut next = request(sequence, command);
+            next.control_epoch = 2;
+            next
+        };
         let observed = manager
             .execute(request(2, Action::Observe { target_id: None }))
             .await;
         assert!(observed.ok);
+        let mut stale = request(3, Action::Observe { target_id: None });
+        stale.control_epoch = 1;
+        assert!(!manager.execute(stale).await.ok);
         let refresh = tokio::time::timeout(Duration::from_secs(1), socket.next())
             .await
             .unwrap()

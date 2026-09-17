@@ -11,6 +11,20 @@ export type BrowserFrame = {
 /** The socket grants one frame of credit only after decoding and drawing. */
 export class BrowserCanvas {
   private socket: WebSocket;
+  private readonly diagnosticId = crypto.randomUUID();
+  private readonly startedAt = Date.now();
+  private frames = 0;
+  private lastFrameAt: number | null = null;
+  private closeReason = "none";
+  private diagnostic(event: string, details: Record<string, string | number | boolean | null> = {}) {
+    // Temporary local diagnostics. No URLs, frame bodies, tickets or input.
+    if (import.meta.env?.DEV) console.info("browser-media", {
+      at: new Date().toISOString(), connection: this.diagnosticId, event,
+      elapsed_ms: Date.now() - this.startedAt, frames: this.frames,
+      frame_age_ms: this.lastFrameAt === null ? null : Date.now() - this.lastFrameAt,
+      ...details,
+    });
+  }
   private disposed = false;
   private decoding = false;
   private canvas: HTMLCanvasElement;
@@ -34,19 +48,23 @@ export class BrowserCanvas {
     this.captureRatio = captureRatio;
     this.status = status;
     this.socket = new WebSocket(url);
-    this.socket.onopen = () =>
+    this.diagnostic("created");
+    this.socket.onopen = () => {
+      this.diagnostic("opened");
       this.socket.send(JSON.stringify({ viewer_id: viewerId }));
-    this.socket.onmessage = (event) => {
-      void this.draw(event.data).catch(() => this.close());
     };
-    this.socket.onclose = () => {
+    this.socket.onmessage = (event) => {
+      void this.draw(event.data).catch(() => this.close("frame_processing_failed"));
+    };
+    this.socket.onclose = (event) => {
+      this.diagnostic("socket_closed", { code: event.code, clean: event.wasClean, reason: this.closeReason });
       if (!this.disposed) {
         this.disposed = true;
         this.clear();
         this.status("unavailable");
       }
     };
-    this.socket.onerror = () => this.close();
+    this.socket.onerror = () => this.close("socket_error");
   }
   private clear() {
     this.frame = null;
@@ -60,7 +78,7 @@ export class BrowserCanvas {
       throw new Error("invalid frame");
     const data = JSON.parse(raw);
     if (data.type === "revoked") {
-      this.close();
+      this.close("server_revoked");
       return;
     }
     if (
@@ -107,6 +125,9 @@ export class BrowserCanvas {
         height: data.height,
         targets: data.targets,
       };
+      this.frames++;
+      this.lastFrameAt = Date.now();
+      if (this.frames === 1) this.diagnostic("first_frame");
       this.status("connected", data.targets);
       this.socket.send(JSON.stringify({ type: "ack", pixel_ratio: this.captureRatio() }));
     } finally {
@@ -118,8 +139,10 @@ export class BrowserCanvas {
     this.frame = null;
     this.socket.send(JSON.stringify({ type: "target", target_id: id }));
   }
-  close() {
+  close(reason = "viewer_cleanup") {
     if (this.disposed) return;
+    this.closeReason = reason;
+    this.diagnostic("closing", { reason });
     this.disposed = true;
     this.clear();
     this.socket.close();

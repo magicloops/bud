@@ -30,6 +30,9 @@ pub struct Authority {
     paused_controller: Option<String>,
     expires: Option<Instant>,
     private: bool,
+    // Remembers privacy transitions even if media misses takeover and return.
+    // Advancing only the agent command epoch does not invalidate passive media.
+    media_fence: u64,
 }
 
 impl Default for Authority {
@@ -41,6 +44,7 @@ impl Default for Authority {
             paused_controller: None,
             expires: None,
             private: false,
+            media_fence: 0,
         }
     }
 }
@@ -53,6 +57,7 @@ impl Authority {
     }
 
     pub fn pause(&mut self) {
+        self.media_fence += 1;
         self.mode = Mode::Paused;
         if self.controller.is_some() {
             self.paused_controller = self.controller.take();
@@ -80,6 +85,28 @@ impl Authority {
         match controller {
             Some(id) => self.human_allowed(epoch, id),
             None => !self.private && matches!(self.mode, Mode::Agent | Mode::Paused),
+        }
+    }
+
+    pub fn media_fence(&self) -> u64 {
+        self.media_fence
+    }
+
+    pub fn media_allowed(
+        &mut self,
+        epoch: u64,
+        controller: Option<&str>,
+        fence: Option<u64>,
+    ) -> bool {
+        match fence {
+            Some(fence) if controller.is_none() => {
+                self.expire();
+                fence == self.media_fence
+                    && !self.private
+                    && matches!(self.mode, Mode::Agent | Mode::Paused)
+            }
+            Some(_) => false,
+            None => self.viewer_allowed(epoch, controller),
         }
     }
 
@@ -138,6 +165,9 @@ impl Authority {
                 self.paused_controller = None;
             }
         }
+        if !matches!(command, ControlCommand::Renew { .. }) {
+            self.media_fence += 1;
+        }
         self.epoch = epoch;
         Ok(())
     }
@@ -146,6 +176,54 @@ impl Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn passive_continuity_survives_only_agent_epoch_changes() {
+        let mut state = Authority::default();
+        let fence = state.media_fence();
+        state.epoch = 2;
+        assert!(state.media_allowed(0, None, Some(fence)));
+        assert!(!state.agent_allowed(1));
+        state.transition(3, &ControlCommand::Pause).unwrap();
+        assert!(!state.media_allowed(0, None, Some(fence)));
+        let paused_fence = state.media_fence();
+        state
+            .transition(
+                4,
+                &ControlCommand::Acquire {
+                    controller_id: "one".into(),
+                },
+            )
+            .unwrap();
+        assert!(!state.media_allowed(4, None, Some(paused_fence)));
+        assert!(state.media_allowed(4, Some("one"), None));
+        state
+            .transition(
+                4,
+                &ControlCommand::Renew {
+                    controller_id: "one".into(),
+                },
+            )
+            .unwrap();
+        assert!(state.media_allowed(4, Some("one"), None));
+        state
+            .transition(
+                5,
+                &ControlCommand::PrepareReturn {
+                    controller_id: "one".into(),
+                },
+            )
+            .unwrap();
+        state.transition(6, &ControlCommand::FinishReturn).unwrap();
+        // Even a viewer that missed the entire private interval stays revoked.
+        assert!(!state.media_allowed(0, None, Some(fence)));
+        assert!(!state.media_allowed(3, None, Some(paused_fence)));
+        assert!(state.media_allowed(6, None, Some(state.media_fence())));
+        assert!(!state.media_allowed(4, Some("one"), None));
+        let returned_fence = state.media_fence();
+        state.pause();
+        assert!(!state.media_allowed(6, None, Some(returned_fence)));
+    }
+
     #[test]
     fn private_control_fences_reads_and_requires_explicit_return() {
         let mut state = Authority::default();

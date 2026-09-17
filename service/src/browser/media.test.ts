@@ -134,7 +134,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
   assert.equal(control.isSizingViewer("alice", session, "/fast"), true);
   assert.equal(control.isSizingViewer("alice", session, "/slow"), false);
   assert.equal(control.isSizingViewer("bob", session, "/fast"), false);
-  assert.equal(control.isSizingViewer("alice", { ...session, control_epoch: 2 }, "/fast"), false);
+  assert.equal(control.isSizingViewer("alice", { ...session, control_epoch: 2 }, "/fast"), true);
   assert.equal(slowFrames, 1);
   assert.equal(ratios.at(-1), undefined);
   const replay = new WebSocket(`${endpoint}/daemon`);
@@ -154,4 +154,78 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
   const count = captures;
   await new Promise((r) => setTimeout(r, 80));
   assert.equal(captures, count);
+});
+
+test(`agent epoch continuity and pending-delivery revocation`, async t => {
+  const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const endpoint = `ws://127.0.0.1:${address.port}`;
+  const sockets = new Set<WebSocket>();
+  const session = { id: 'browser', generation: 'gen', control_epoch: 1 } as BrowserSession;
+  const carrier = { operationDrivenMedia: true, current: () => true } as BrowserCarrier;
+  let daemon!: WebSocket, attachments = 0, frames = 0, pending = false;
+  let unblock: (() => void) | undefined;
+  const control = {
+    expireControllers() {}, onFence() {},
+    repository: { command: (_session: unknown, command: unknown) => ({ command }) },
+    mediaAuthority: async () => {
+      if (pending) await new Promise<void>(resolve => { unblock = resolve });
+      return { session: { ...session }, carrier };
+    },
+  } as unknown as BrowserControl;
+  const media = new BrowserMedia(control, `${endpoint}/daemon`, async (_, request) => {
+    attachments++;
+    daemon = new WebSocket(`${endpoint}/daemon`);
+    sockets.add(daemon);
+    daemon.on('error', () => {});
+    daemon.on('message', () => daemon.send(JSON.stringify({
+      target_id: 'page', document_id: 'doc', frame_token: 'frame', width: 800, height: 600, image: 'fixture', targets: [],
+    })));
+    await once(daemon, 'open');
+    daemon.send(JSON.stringify({ ticket: request.command.ticket }));
+    return { ok: true, outcome: 'completed', data: {} };
+  });
+  server.on('connection', (socket, request) => {
+    sockets.add(socket);
+    socket.on('error', () => {});
+    if (request.url === '/daemon') media.attachDaemon(socket);
+    else void media.attachViewer(socket, 'alice', 'browser', request.url!, async () => true).catch(() => socket.terminate());
+  });
+  t.after(async () => {
+    unblock?.(); media.stop();
+    for (const socket of sockets) socket.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+  const connect = async (name: string) => {
+    const socket = new WebSocket(`${endpoint}/${name}`);
+    sockets.add(socket);
+    socket.on('message', raw => {
+      if (JSON.parse(raw.toString()).type === 'frame') { frames++; socket.send('{"type":"ack"}'); }
+    });
+    await once(socket, 'open');
+    return socket;
+  };
+  const first = await connect('first');
+  await until(() => frames === 1);
+  session.control_epoch = 2;
+  daemon.send('{"refresh":true}');
+  await until(() => frames === 2);
+  assert.equal(first.readyState, WebSocket.OPEN);
+  assert.equal(control.isSizingViewer('alice', session, '/first'), true);
+  assert.equal(control.isSizingViewer('bob', session, '/first'), false);
+  const second = await connect('second');
+  await until(() => frames >= 4);
+  assert.equal(attachments, 1, 'new epoch joins the same daemon socket');
+  assert.equal(control.isSizingViewer('alice', session, '/second'), false);
+  pending = true;
+  daemon.send('{"refresh":true}');
+  await until(() => Boolean(unblock));
+  const before = frames;
+  control.onFence('browser'); // Takeover while authorization is awaiting IO.
+  pending = false;
+  unblock!();
+  await until(() => first.readyState === WebSocket.CLOSED && second.readyState === WebSocket.CLOSED);
+  assert.equal(frames, before, 'delayed authorization cannot deliver after the fence');
 });

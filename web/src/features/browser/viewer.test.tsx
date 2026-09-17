@@ -125,7 +125,7 @@ test('private fit fences input; input failure survives a late renewal and releas
   }
 })
 
-test('passive media follows handoff epochs without acquiring private control or reconnecting on unchanged polls', async () => {
+test(`passive media preserves agent epochs and fences handoffs`, async () => {
   const originalAnimationFrame = globalThis.requestAnimationFrame
   globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
   const originalFetch = globalThis.fetch
@@ -165,8 +165,15 @@ test('passive media follows handoff epochs without acquiring private control or 
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '' }) }) })
     assert.equal(clients.length, 1)
     await act(async () => clients[0].show())
+    metadata = { ...metadata, control_epoch: 3 }
+    await poll()
+    assert.equal(clients.length, 1)
+    assert.equal(clients[0].closed, false)
+    metadata = { ...metadata, control_epoch: 4 }
+    await poll()
+    assert.equal(clients.length, 1)
     // Service fences old media as the agent parks its handoff.
-    await act(async () => clients[0].close())
+    await act(async () => clients.at(-1)!.close())
     metadata = { ...metadata, control_state: 'paused', control_epoch: 3, revision: 2 }
     await poll()
     assert.ok(clients.length >= 2) // Retry and epoch refresh may overlap.

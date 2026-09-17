@@ -1,6 +1,7 @@
 // Private, serial stdio protocol. Never expose an evaluate/CDP surface to agents.
 import { createInterface } from 'node:readline';
 import { Engine } from './engine.mjs';
+import { failureDiagnostic } from './diagnostics.mjs';
 let engine;
 for await (const line of createInterface({ input: process.stdin })) {
   if (Buffer.byteLength(line) > 32 * 1024) process.exit(1);
@@ -17,7 +18,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     }
   } catch (error) {
     const code = /^browser_[a-z_]+$/.test(error.message) ? error.message : 'browser_outcome_unknown';
-    process.stdout.write(JSON.stringify({ ok: false, error: code }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: code, diagnostic: failureDiagnostic(error, engine?.stage) }) + '\n');
   }
 }
 process.exit(0);

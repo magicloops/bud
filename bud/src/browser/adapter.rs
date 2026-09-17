@@ -11,7 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
-use tokio::process::{Child, Command};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    process::{Child, Command},
+};
 
 #[derive(Debug, Serialize)]
 pub struct Target {
@@ -93,6 +96,11 @@ pub struct Browser {
 
 impl Browser {
     pub async fn launch(executable: &Path) -> Result<Self> {
+        let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
+        Self::launch_mode(executable, headed).await
+    }
+
+    async fn launch_mode(executable: &Path, headed: bool) -> Result<Self> {
         let profile = tempfile::Builder::new().prefix("bud-browser-").tempdir()?;
         #[cfg(unix)]
         {
@@ -100,13 +108,26 @@ impl Browser {
             tokio::fs::set_permissions(profile.path(), std::fs::Permissions::from_mode(0o700))
                 .await?;
         }
-        let mut child = Command::new(executable)
+        // Reserve an available port while building the command. Chrome must bind
+        // it after release; a competing bind fails startup, never attaches by port.
+        let reservation = headed
+            .then(|| std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
+            .transpose()?;
+        let port = reservation
+            .as_ref()
+            .map(|socket| socket.local_addr().map(|addr| addr.port()))
+            .transpose()?
+            .unwrap_or(0);
+        let mut command = Command::new(executable);
+        if !headed {
+            command.arg("--headless=new");
+        }
+        command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .env("HOME", profile.path())
-            .arg("--headless=new")
             .arg("--remote-debugging-address=127.0.0.1")
-            .arg("--remote-debugging-port=0")
+            .arg(format!("--remote-debugging-port={port}"))
             .arg(format!("--user-data-dir={}", profile.path().display()))
             .args([
                 "--no-first-run",
@@ -122,30 +143,71 @@ impl Browser {
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("browser_launch_failed")?;
+            .stderr(if headed {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .kill_on_drop(true);
+        drop(reservation);
+        let mut child = command.spawn().context("browser_launch_failed")?;
+        let (endpoint_sender, mut endpoint_receiver) = tokio::sync::oneshot::channel();
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let mut prefix = BufReader::new(stderr).take(64 * 1024);
+                let mut lines = (&mut prefix).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Some(endpoint) = line.strip_prefix("DevTools listening on ") {
+                        let _ = endpoint_sender.send(endpoint.to_owned());
+                        break;
+                    }
+                }
+                // Chrome can continue writing diagnostics after readiness. Never
+                // block its pipe or expose page/log content in daemon logs.
+                drop(lines);
+                let _ = tokio::io::copy(&mut prefix.into_inner(), &mut tokio::io::sink()).await;
+            });
+        }
         let ready = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
                 if child.try_wait()?.is_some() {
                     bail!("browser_exited_before_ready");
                 }
-                if let Ok(text) =
-                    tokio::fs::read_to_string(profile.path().join("DevToolsActivePort")).await
-                {
-                    if let Some(endpoint) = discovery_endpoint(&text) {
-                        let mut cdp = Cdp::connect(&endpoint).await?;
-                        // The DevTools listener starts before the browser main
-                        // thread is necessarily responsive. Prove readiness with
-                        // the same read-only inventory operation consumers need.
-                        let targets = cdp.call(None, "Target.getTargets", json!({})).await?;
-                        if !targets["targetInfos"].is_array() {
-                            bail!("browser_invalid_targets");
+                let endpoint = if headed {
+                    match endpoint_receiver.try_recv() {
+                        Ok(endpoint) => {
+                            let parsed = url::Url::parse(&endpoint)?;
+                            if parsed.scheme() != "ws"
+                                || parsed.host_str() != Some("127.0.0.1")
+                                || parsed.port() != Some(port)
+                                || !parsed.path().starts_with("/devtools/browser/")
+                            {
+                                bail!("browser_invalid_endpoint");
+                            }
+                            Some(endpoint)
                         }
-                        let semantic = super::semantic::Semantic::connect(&endpoint).await?;
-                        return Ok((cdp, semantic));
+                        Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                            bail!("browser_discovery_failed")
+                        }
+                        Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
                     }
+                } else {
+                    tokio::fs::read_to_string(profile.path().join("DevToolsActivePort"))
+                        .await
+                        .ok()
+                        .and_then(|text| discovery_endpoint(&text))
+                };
+                if let Some(endpoint) = endpoint {
+                    let mut cdp = Cdp::connect(&endpoint).await?;
+                    // The DevTools listener starts before the browser main
+                    // thread is necessarily responsive. Prove readiness with
+                    // the same read-only inventory operation consumers need.
+                    let targets = cdp.call(None, "Target.getTargets", json!({})).await?;
+                    if !targets["targetInfos"].is_array() {
+                        bail!("browser_invalid_targets");
+                    }
+                    let semantic = super::semantic::Semantic::connect(&endpoint).await?;
+                    return Ok((cdp, semantic));
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
@@ -822,6 +884,50 @@ fn discovery_endpoint(text: &str) -> Option<String> {
 #[cfg(test)]
 mod launch_tests {
     use super::discovery_endpoint;
+
+    #[tokio::test]
+    #[ignore = "launches a visible Chrome window; requires BUD_BROWSER_EXECUTABLE"]
+    async fn visible_chrome_supports_semantics_and_capture_without_webdriver() {
+        let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
+        let mut browser = super::Browser::launch_mode(std::path::Path::new(&executable), true)
+            .await
+            .expect("visible browser launch");
+        let target = browser.targets().await.unwrap().remove(0).target_id;
+        let session = browser.session(&target).await.unwrap();
+        browser.cdp.call(Some(&session), "Page.navigate", serde_json::json!({
+            "url": "data:text/html,<title>Bud visible browser check</title><h1>Browser ready</h1><button>Continue</button>"
+        })).await.unwrap();
+        let mut snapshot = serde_json::Value::Null;
+        for _ in 0..40 {
+            snapshot = browser
+                .inspect(
+                    &target,
+                    serde_json::json!({"operation":"snapshot", "compact":true}),
+                )
+                .await
+                .unwrap();
+            if snapshot.to_string().contains("Browser ready") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(snapshot.to_string().contains("Browser ready"));
+        let observed = browser
+            .cdp
+            .call(
+                Some(&session),
+                "Runtime.evaluate",
+                serde_json::json!({
+                    "expression":"navigator.webdriver", "returnByValue":true
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(observed["result"]["value"], false);
+        let frame = browser.capture(&target).await.unwrap();
+        assert!(!frame["image"].as_str().unwrap().is_empty());
+        browser.close().await.unwrap();
+    }
 
     #[test]
     fn discovery_waits_for_every_partial_write() {

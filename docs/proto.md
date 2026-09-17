@@ -3315,3 +3315,24 @@ on its last loaded completed work group; no artifact summation fallback. Late
 arrival must not restart activity or alter message identity. Page/state recover
 missed events. Old clients ignore additions; new clients against old service show
 plain Worked. No daemon changes. See [implementation/mobile handoff](../plan/service-owned-turn-timing.md).
+
+## Passive browser continuity across agent turns (Phase 3j)
+
+Passive media remains attached across agent-only invocation epoch changes by
+default. No new capability, request or metadata fields. This browser feature is
+not live; backward compatibility is explicitly out of scope for this change.
+Use updated daemon, service and web together; no database migration is required.
+
+Initial media attachment still requires the current epoch and device/owner/thread/
+generation authority. A local daemon media-fence revision changes on pause and
+control/privacy transitions, never on agent epoch advancement alone. Rapid takeover
+and return cannot revive an earlier attachment. Connection/session loss still
+revokes; checks run idle, before capture, after the page lock and before delivery.
+Private media remains exact-epoch/controller-bound, as do existing command/input
+checks. Existing image/ACK/refresh messages and capture cadence are unchanged.
+
+Service passive groups bind owner/session/generation and current carrier rather
+than invocation epoch. Idle/delivery reauthorize; control fences close groups and
+tickets even during awaited authorization. Sizing uses the same identity. Web
+preserves canvas/socket across agent-only epochs, clearing on privacy, generation,
+permission or connection loss. Viewport fitting retains epoch cancellation.

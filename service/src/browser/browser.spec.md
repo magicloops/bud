@@ -299,3 +299,13 @@ requiring an active invocation. AgentService gates catalog eligibility separatel
 and forwards actual invocation context during execution. Executor owner checks
 still precede availability reads; dispatch still requires the repository's real
 invocation lease/fence and action receipt. Idle accounting cannot execute a tool.
+
+## Agent viewer continuity (Phase 3j)
+
+Passive groups omit invocation epoch from identity, retaining owner/session,
+generation and the exact current carrier tracker. Private groups remain epoch and
+controller bound. Sizing uses the same group lookup. Idle/delivery authorization
+and control-fence closure remain mandatory; delayed checks cannot deliver after
+closure. No new capability, request or metadata flags. The unreleased browser
+feature uses updated daemon/service/web together. Relay tests cover multi-viewer
+reuse across epochs and delayed authorization after takeover.

@@ -1,5 +1,18 @@
 # Plan: Bud-owned browser sessions
 
+## Updated product direction: shared persistent browser
+
+The new target is **one persistent managed browser/profile per Bud, with
+thread-owned tab workspaces and shared site sign-ins**. Private control pauses
+agent browser access across the Bud. See [Phase 3k](phase-3k-shared-persistent-browser.md)
+for ownership, persistence and global handoff, then
+[Phase 3l](phase-3l-tab-and-history-recovery.md) for tab/history recovery.
+Both are scoped, not implemented. They supersede the older per-thread profile,
+thread-local privacy and restart/deletion recommendations below; those sections
+remain historical context for the current implementation, not the new target.
+For these unreleased browser changes, update the stack together without adding
+backward-compatibility branches. Personal-browser attachment remains separate.
+
 Status: **Phase 0 closed; Phases 1–2 and web Phases 3a/3c–3f implemented for
 local development.** Updated 2026-09-15. Actual-agent navigation, semantic
 observations, compact output/pagination, and local web handoff/pane interactions
@@ -10,8 +23,8 @@ Next: [Phase 3g focused agent reliability](phases.md#phase-3g--focused-agent-rel
 then [Phase 3h operation-driven viewing](phase-3h-operation-driven-viewer.md),
 Phase 3b iOS viewer, and Phase 4 release validation/cleanup. See the
 [status table and sequence](phases.md#current-status-and-next-sequence) for current
-priorities and evidence. Persistent profiles, optional personal-browser attachment
-and WebRTC remain future work.
+priorities and evidence. Persistent shared profiles and recovery are now scoped
+as 3k/3l; optional personal-browser attachment and WebRTC remain deferred.
 
 The sections below retain the broader product design. The detailed Phase-2 plan
 records the implemented simplifications: direct first-party cookie auth (native
@@ -52,10 +65,10 @@ remote-desktop framework.
 | Browser | Bud-managed Chromium with a dedicated profile on the Bud host |
 | Automation | Narrow Rust CDP adapter behind a daemon browser manager; promote selected Phase-0 operations with runtime lifecycle checks |
 | Initial consumer | Main Bud agent; delegated CLI/MCP clients are a later integration through the same broker |
-| Session scope | Owner + Bud + originating thread; default to that thread's browser, never another thread's active browser |
-| Profile | Persistent, dedicated per-thread profile by default, clearly labeled; optional ephemeral session |
+| Session scope | One owner/Bud browser; each thread owns its tab workspace (Phase 3k) |
+| Profile | One persistent dedicated profile per Bud; site sign-ins shared across threads (Phase 3k) |
 | Process lifetime | Independent of a single tool call, agent turn, viewer, and transport reconnect; daemon-process restart recovery is explicitly bounded below |
-| Human control | Explicit takeover, private by default, one controller; explicit Return to agent |
+| Human control | Browser-wide private pause, one controller; explicit Return to agent releases eligible browser waits across threads (Phase 3k) |
 | Media | On-demand, separate outbound daemon-to-service WebSocket and separate viewer WebSocket; bounded image frames |
 | Viewer | Shared first-party web viewer, embedded in iOS with a small native lifecycle/input bridge |
 | Existing app preview | Keep `web_view_*`, proxied-site URLs, iframe, and WKWebView app rendering intact |

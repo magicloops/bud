@@ -1,6 +1,7 @@
 # Browser runtime
 
-The daemon owns one isolated Chrome for Testing process per active thread browser.
+The daemon owns one isolated Chrome process per active thread browser. Chrome for
+Testing remains the default development runtime.
 The service owns durable session identity and invocation authority; this module
 owns admission, live CDP state and process lifetime. No personal browser attachment.
 
@@ -43,11 +44,19 @@ legacy consumers retain 24 KiB node pages plus text. URLs 2048 bytes, input 8192
 Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
 
-`BUD_BROWSER_EXECUTABLE` must explicitly name an installed Chrome for Testing
+`BUD_BROWSER_EXECUTABLE` must explicitly name an installed Chrome-compatible
 executable. Startup probes launch/version/close before advertising availability.
 Profiles are ephemeral private TempDirs (0700), with mock/basic credential storage
 only for this development mode. No OS keychain access, personal-profile reuse,
 implicit downloads, or disabled Chromium sandbox. `tempfile` is a runtime dependency.
+
+Set `BUD_BROWSER_HEADED=1` to try a visible window with a nonzero loopback debugging
+port. Default mode remains headless with port-zero discovery. Visible mode reads
+the endpoint only from the owned child's bounded startup stderr, then drains
+stderr without logging it; binding failure does not fall back to another browser.
+Both modes retain isolated ephemeral profiles and the semantic helper. Take private
+control before direct native-window input: OS input bypasses Bud's admission checks.
+This option does not promise site acceptance. See [experiment](../../../debug/bud-visible-chrome.md).
 
 A turn ending or control disconnect preserves the browser. Reconnect invalidates
 references; interrupted CDP work requires explicit close/open. SIGINT/SIGTERM drops
@@ -217,3 +226,15 @@ alive without Chrome work. Existing connection/epoch checks fence capture/delive
 Private or unnegotiated attachments retain continuous demand behavior. Live manager
 tests cover idle heartbeats, refresh, fit, rejection and disconnect. See
 [Phase 3h](../../../plan/bud-owned-browser/phase-3h-operation-driven-viewer.md).
+
+Semantic failures emit `browser_timing/semantic_failure` with helper PID, operation, stage, duration and boolean actionability/navigation signals. Media endings distinguish authority revocation, timeout, transport error and peer close/EOF, including numeric close code and operation-driven mode. No raw exception or close-reason text is logged.
+
+## Agent viewer continuity (Phase 3j)
+
+Passive media always captures the local authority's media-fence revision. Agent
+epoch advancement preserves that attachment; pause and control/privacy transitions
+invalidate it even when takeover/return complete between checks. Initial admission
+still requires exact epoch; private attachments remain exact-epoch/controller-bound.
+Idle, pre/post-lock and delivery checks retain connection/privacy fences. No new
+capability or request field: this unreleased feature has no compatibility branch.
+Authority and real Chrome tests cover epoch continuity and stale-command rejection.
