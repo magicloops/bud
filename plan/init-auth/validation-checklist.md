@@ -488,3 +488,30 @@ Native secure-store and real-account restart acceptance is tracked in Phase 3k.
 No new rows or grants. Existing session/thread/Bud owner authorization protects the
 control route; daemon-local hints inherit profile owner/environment binding and
 never authorize offline access or appear in service inventory.
+
+
+## Browser native windows — Phase 3m
+
+- [x] Coordinator tests: foreign owner cannot acquire/reveal; stale revision,
+  unsupported capability and another viewer reject before dispatch.
+- [x] Daemon fixture: wrong private controller/workspace and authority revoked
+  during the page-lock wait reject native reveal.
+- [x] Show first pauses/acquires globally; hide preserves private control; failed
+  hide never resumes browser waits and preserves the renewable controller.
+- [ ] Signed-in two-user HTTP check: control POST retains cookie/Origin validation,
+  foreign workspace 404, and only owned target IDs can be revealed.
+- [ ] Host acceptance: lifecycle/delete/reconnect while native Show is pending;
+  manually closed/fullscreen windows and native dialogs. No personal Chrome is
+  targeted. Window visibility never authorizes page reads or resumes an agent.
+
+
+## Browser launch color — Phase 3n
+
+- [x] Isolated PostgreSQL admission rejects foreign owners/Buds before color
+  dispatch; another owner's palette choice cannot affect the NULL fallback.
+- [x] Private recovery resolves changed Bud color after owned session admission;
+  ordinary observe/acquire omit color. No new viewer route or owner-stamped row.
+- [x] Strict daemon schema accepts color only as service envelope metadata, not
+  an open action argument; profile identity/ownership locks are unchanged.
+- [ ] Real two-account Bud settings and next-launch visual acceptance, including
+  reclaim/reset and installed-theme precedence. Existing settings auth applies.

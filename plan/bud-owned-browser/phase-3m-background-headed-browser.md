@@ -1,6 +1,6 @@
 # Phase 3m: Background headed browser and explicit native-window access
 
-Status: **Scoped; not implemented.**
+Status: **Implemented on macOS; automated checks pass and the user confirmed both thread browser panes capture correctly while minimized.**
 
 ## Context and objective
 
@@ -158,3 +158,57 @@ attachment, new browser process/profile, durable visibility DB state, new lease 
 scheduler, forced Chrome focus loop, WebRTC or exact tab/history restoration.
 Do not add a Linux/Windows abstraction before validating the macOS path; those
 platforms require their own support and acceptance work.
+
+
+## Implementation and validation (2026-09-17)
+
+Selected CDP minimization after disposable headed-Chrome validation. No native
+macOS helper/dependency was added. The apparent wheel restoration came from a
+preceding `Page.bringToFront`; removing that implicit activation passes fitted
+private-input coverage. Native Show remains the sole foreground activation path.
+
+The process tracks discovered owned target/window IDs and explicit Show intent;
+existing inventory handles new owned popup windows once. Show/Hide use the existing
+control endpoint/serialization. Return pre-hides with acknowledgement and retains
+the private controller if that fails; daemon prepare-return repeats the hide guard.
+No DB migration, new lease, model tool or continuous capture/polling was added.
+
+Evidence: [debug note](../../debug/browser-background-window.md), headed minimized
+adapter regression, daemon stale-controller/workspace/queued-reveal regression,
+service control tests and mounted viewer tests. The fixture verifies changed
+screenshot bytes and actual text/scroll results, not only successful dispatch.
+Thirty-second idle feasibility passed on synthetic content.
+
+Manual acceptance still required: your actual agent/pane/native Show/Hide/Return
+workflow, real-site long idle, native dialogs, fullscreen/Spaces and lifecycle
+races. Minimized is not fully hidden: Dock presence remains; first windows/popups
+can flash before existing inventory discovers them. No claim of invisible startup.
+Rebuild/restart the daemon to enable this; the live user daemon was not restarted.
+
+### Minimized navigation follow-up
+Chrome 153 can stall screenshots of its selected tab after navigation while
+minimized. Use a static process-owned Bud landing tab as the selected tab in the
+shared window; keep work tabs in the background. Exclude the landing tab by exact
+identity from workspace inventory and recovery, recreate it after native closure,
+and select it on Hide/Return. Explicit Show continues selecting the authorized
+work tab. No polling, agent API or transport changes. Headless behavior is unchanged.
+See the [investigation](../../debug/browser-media-target-reconnect.md).
+
+Automated acceptance: repeated two-workspace navigation with changed screenshots,
+Show/Return, idle-tab closure/recreation, ownership rejection, saved-page exclusion,
+and closing one workspace without closing the other. Separate native popup-window
+capture remains a limitation: one presentation tab does not fix selected-tab
+painting in every native window. Keep the existing popup Show/Hide checks.
+
+Follow-up implemented and tested on disposable Chrome 153. Idle creation/recovery
+finishes native restoration before minimizing to avoid delayed Chrome activation
+undoing minimization; this can briefly reveal the window at those boundaries.
+Repeated captures and repeated return preparation never restore it. Real-site
+acceptance remains pending; the live daemon was not restarted.
+
+### User acceptance update
+
+The user confirmed that both threads now open their web views correctly without
+the waiting-to-reconnect message after the static Bud landing-tab change. Broader
+native-dialog, popup-window, fullscreen/Spaces and lifecycle-race checks remain
+the manual acceptance items described above.

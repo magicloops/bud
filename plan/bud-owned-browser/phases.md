@@ -2,7 +2,7 @@
 
 Status: **Phase 0 closed; Phases 1–2 and web Phases 3a/3c–3f implemented for
 local development. Phase 3g reliability is in progress; Phase 3h viewing is implemented locally, with actual-agent acceptance pending before Phase 3b iOS.**
-Updated 2026-09-17. Local user validation and automated checks do not certify the
+Updated 2026-09-21. Local user validation and automated checks do not certify the
 remaining hosted, multi-client, privacy, device and release acceptance matrix.
 Contract and defaults: [README](./README.md). Detailed phase documents and debug
 notes retain the evidence and limitations for each implementation.
@@ -31,13 +31,13 @@ from optional attachment to a user's personal browser.
 | 3j — agent viewer continuity | [Implemented locally](phase-3j-agent-viewer-continuity.md); automated continuity/privacy checks pass; real-agent follow-up acceptance pending |
 | 3k — shared persistent browser | [Implemented locally for macOS](phase-3k-shared-persistent-browser.md): shared profile/process and browser-wide private control; native secure-store and host acceptance gates remain |
 | 3l — tab/history recovery | [Implemented locally](phase-3l-tab-and-history-recovery.md): explicit per-thread URL reopening in private control; native ownership mapping failed the gate, so Back/Forward and unsaved state are not restored; two-thread reopening user-confirmed, broader recovery matrix pending |
-| 3m — background headed browser | [Scoped](phase-3m-background-headed-browser.md): validate minimized capture/input, then explicit native Show/Hide under existing private control |
-| 3n — Bud color sync | [Scoped](phase-3n-bud-color-sync.md): apply the owning Bud's accent to new/existing Chrome profiles on process launch; no live edits or forced restart |
+| 3m — background headed browser | [Implemented locally on macOS](phase-3m-background-headed-browser.md): minimized capture/input and native Show/Hide under private control; user confirmed both thread views after the static idle-tab workaround, broader host matrix pending |
+| 3n — Bud color sync | [Implemented locally](phase-3n-bud-color-sync.md), with disposable Chrome restart validation: apply the owning Bud's accent to new/existing Chrome profiles on process launch; no live edits or forced restart |
 | 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
 
-Recommended next sequence: **3m feasibility → 3n color sync → 3b → 4**, retaining
+Recommended next sequence: **3n visual acceptance → 3b → 4**, retaining
 the remaining 3k/3l acceptance checks alongside
 the outstanding 3g reliability checks. Phase numbers reflect scoping order.
 3k deliberately changes browser ownership/private-control scope; 3l separately

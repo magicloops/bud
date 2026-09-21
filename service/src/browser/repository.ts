@@ -1,3 +1,4 @@
+import { resolveBrowserColor } from "./color.js";
 import { BrowserResourceRepository, type BrowserResource } from "./resource-repository.js";
 import { settledWorkDurationSql } from "../agent/invocation-timing.js";
 import { ulid } from "ulid";
@@ -186,8 +187,11 @@ export class BrowserRepository {
           ],
         )
       ).rows[0];
+      const browserColor = command.action === "open"
+        ? await resolveBrowserColor(client, context.ownerUserId, context.budId) : undefined;
       await client.query("commit");
       return {
+        ...(browserColor ? { browser_color: browserColor } : {}),
         browser_id: resource.id,
         browser_epoch: resource.control_epoch,
         private_content: resource.private_content,

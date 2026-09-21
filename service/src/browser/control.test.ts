@@ -36,6 +36,7 @@ function fixture() {
   let rejection: string | undefined;
   const requests: BrowserCommand[] = [];
   let fitReply: BrowserBackendResult | undefined;
+  let windowReply: BrowserBackendResult | undefined;
   let reopenReply: BrowserBackendResult | undefined;
   let inputReply: Promise<BrowserBackendResult> | undefined;
   let renewalReply: Promise<BrowserBackendResult> | undefined;
@@ -115,6 +116,7 @@ function fixture() {
   } as BrowserCarrier;
   const dispatch = async (_carrier: BrowserCarrier, request: BrowserCommand): Promise<BrowserBackendResult> => {
       requests.push(request);
+      if (request.command.action === "native_window" && windowReply) return windowReply;
       if (request.command.action === "reopen_pages" && reopenReply) return reopenReply;
       if (request.command.action === "fit_viewport" && fitReply) return fitReply;
       if (request.command.operation === "renew" && renewalReply) return renewalReply;
@@ -128,13 +130,14 @@ function fixture() {
       return {
         ok: true,
         outcome: "completed",
-        data: { pages_reopened: true, control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
+        data: { window_acknowledged: true, pages_reopened: true, control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
       };
     };
   const control = new BrowserControl(repository, () => carrier, dispatch);
   return {
     control,
     restart: () => new BrowserControl(repository, () => carrier, dispatch),
+    set windowReply(value: BrowserBackendResult) { windowReply = value; },
     set reopenReply(value: BrowserBackendResult) { reopenReply = value; },
     set fitReply(value: BrowserBackendResult) { fitReply = value; },
     set inputReply(value: Promise<BrowserBackendResult>) { inputReply = value; },
@@ -451,4 +454,43 @@ test("unknown or unavailable page recovery is not retried and leaves private sta
     assert.equal(f.control.ownsControl("alice","browser","viewer"),false);
     assert.equal(f.returned,0);
   }
+});
+
+
+test("native reveal takes private authority first; hide preserves it and return hides before releasing", async () => {
+  const f = fixture(); f.carrier.nativeWindow = true;
+  await assert.rejects(f.control.nativeWindow("bob","browser","viewer",1,true), /not_found/);
+  assert.equal(f.requests.length,0);
+  await f.control.nativeWindow("alice","browser","viewer",1,true,"page");
+  assert.deepEqual(f.requests.map(r=>r.command.operation ?? r.command.action),["pause","acquire","native_window"]);
+  assert.equal(f.requests.at(-1)?.command.target_id,"page");
+  assert.equal(f.session.private_content,true);
+  await assert.rejects(f.control.nativeWindow("alice","browser","other",f.session.revision,true), /controller_exists/);
+  await assert.rejects(f.control.nativeWindow("alice","browser","other",f.session.revision,false), /expired/);
+  await assert.rejects(f.control.nativeWindow("alice","browser","viewer",1,true), /revision_conflict/);
+  await f.control.nativeWindow("alice","browser","viewer",f.session.revision,false);
+  assert.equal(f.returned,0);
+  assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
+  await f.control.returnToAgent("alice","browser","viewer",f.session.revision);
+  assert.deepEqual(f.requests.slice(-3).map(r=>r.command.operation ?? r.command.action),["native_window","prepare_return","finish_return"]);
+  assert.equal(f.requests.at(-3)?.command.show,false);
+  assert.equal(f.returned,1);
+});
+
+test("failed native hide retains private lease and cannot resume waiting work", async () => {
+  const f = fixture(); f.carrier.nativeWindow = true;
+  await f.control.acquire("alice","browser","viewer",1);
+  f.windowReply = {ok:false,outcome:"unknown"};
+  await assert.rejects(f.control.returnToAgent("alice","browser","viewer",f.session.revision), /window_unconfirmed/);
+  assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
+  assert.equal(f.session.control_state,"human_private");
+  assert.equal(f.returned,0);
+  assert.ok(!f.requests.some(r=>r.command.operation === "prepare_return"));
+  await f.control.renew("alice","browser","viewer");
+});
+
+test("unsupported native windows cannot acquire control or dispatch", async () => {
+  const f = fixture();
+  await assert.rejects(f.control.nativeWindow("alice","browser","viewer",1,true), /window_unsupported/);
+  assert.equal(f.requests.length,0);
 });

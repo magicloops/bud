@@ -22,6 +22,7 @@ type Session = {
   can_capture_hidpi?: boolean;
   can_navigate_history?: boolean;
   can_take_control?: boolean;
+  can_show_window?: boolean;
   owns_control?: boolean;
   recovery_ticket?: string;
   handoff?: { reason: string } | null;
@@ -29,6 +30,8 @@ type Session = {
 const button =
   "rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
 const controlErrors: Record<string, string> = {
+  browser_window_unsupported: "Native window controls are unavailable on this Bud.",
+  browser_window_unconfirmed: "The browser window change was not confirmed. Browser work remains private. Try Hide browser window before returning to the agent.",
   browser_recovery_unavailable: "No eligible saved pages are available. Take control to use the blank workspace; saved sign-ins remain.",
   browser_recovery_uncertain: "Page reopening was not confirmed and has not been retried. Take control to inspect the browser; some pages may have opened.",
   browser_revision_conflict: "Browser status changed. Wait for status to refresh, then try again.",
@@ -168,7 +171,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     };
   }, [base, failPrivate]);
   const control = useCallback(
-    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "reopen") => {
+    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "reopen" | "show_window" | "hide_window") => {
       if (!session) return;
       if (changingControl.current) return;
       if (operation === "recover" && !recoveryTicket.current) return;
@@ -196,13 +199,14 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             operation,
+            ...(operation === "show_window" && selectedTarget ? { target_id: selectedTarget } : {}),
             revision: session.revision,
             viewer_id: viewerId.current,
             ...(operation === "recover" ? { recovery_ticket: recoveryTicket.current } : {}),
           }),
         });
         if (!mounted.current) {
-          if ((operation === "acquire" || operation === "recover" || operation === "reopen") && data.control_state === "human_private")
+          if ((operation === "acquire" || operation === "recover" || operation === "reopen" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private")
             void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ operation: "release", revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
           return;
@@ -216,13 +220,14 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         if (!failurePriority.current) setError("");
         if (operation !== "renew") {
           const acquired =
-            (operation === "acquire" || operation === "recover" || operation === "reopen") && data.control_state === "human_private";
+            (operation === "acquire" || operation === "recover" || operation === "reopen" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private";
+          const keptPrivateMedia = ownsRef.current && acquired && (operation === "show_window" || operation === "hide_window");
           ownsRef.current = acquired;
           setOwns(acquired);
           recoveryPending.current = false;
           setRecovering(false);
           setTakeoverPending(operation === "acquire" && !acquired);
-          setMediaVersion((v) => v + 1);
+          if (!keptPrivateMedia) setMediaVersion((v) => v + 1);
         }
       } catch (failure) {
         if (!mounted.current || (operation === "renew" && !ownsRef.current)) return;
@@ -231,6 +236,21 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
             (!code || ["browser_control_expired", "browser_control_uncertain", "browser_unavailable",
               "browser_handoff_unavailable", "browser_stale_connection", "browser_busy", "browser_agent_still_running"].includes(code))) {
           failPrivate("Reconnecting your private browser view…", 1, true);
+          return;
+        }
+        if (code === "browser_window_unconfirmed") {
+          failurePriority.current = 2;
+          setError(`${controlErrors[code]} (${operation})`);
+          // Show may have acquired private control before its window operation
+          // failed. Resolve ownership rather than losing the renewable lease.
+          try {
+            const current = await apiFetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`);
+            if (mounted.current) {
+              setSession(previous => previous && previous.revision > current.revision ? previous : current);
+              ownsRef.current = current.owns_control === true;
+              setOwns(ownsRef.current);
+            }
+          } catch { /* Keep the window-specific failure visible. */ }
           return;
         }
         recoveryTicket.current = null;
@@ -258,7 +278,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         }
       }
     },
-    [base, session, resetInput, failPrivate],
+    [base, session, selectedTarget, resetInput, failPrivate],
   );
   const latestControl = useRef(control);
   useEffect(() => {
@@ -711,6 +731,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           {error}
         </p>
       )}
+      {session?.can_show_window && <div className="mb-3 flex flex-wrap gap-2">
+        <button className={button} disabled={working || resizing} onClick={() => void control("show_window")}>Show browser window</button>
+        {owns && <button className={button} disabled={working || resizing} onClick={() => void control("hide_window")}>Hide browser window</button>}
+        <p className="text-xs text-muted-foreground">Opens on the Bud’s machine and takes private control. Hide keeps browser work paused.</p>
+      </div>}
       <div className="mb-2 flex items-center gap-2">
         <label className="text-sm">
           Page{" "}

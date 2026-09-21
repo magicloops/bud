@@ -4,6 +4,9 @@ Production bridge from `BrowserToolExecutor` to the selected Bud's authenticated
 control connection. It launches no service-local Chrome and imports no spike code.
 
 ## Files
+- `color.ts` / `color.test.ts`: owner-scoped effective Bud accent resolution using
+  the inventory fallback algorithm, plus validated OKLCH → clipped/rounded sRGB
+  seed conversion. Shared by authorized open and private-recovery pause admission.
 - `resource-repository.ts`: Durable owner/Bud authority used by live dispatch and control.
   Owner/Bud resource creation, durable global private intent, revision/epoch-fenced
   control receipts, eligible cross-workspace handoff return, pending stop/reset
@@ -350,3 +353,35 @@ then renews the private lease. Lost/failed recovery stays private and is not ret
 Old results/proofs cannot use the new generation. Local URL hints never enter the
 service. Existing cookie/Origin/owner checks and row ownership remain unchanged;
 no new migration. Updated unreleased service/daemon/web must run together.
+
+
+## Native browser window controls (Phase 3m)
+
+The existing cookie/Origin-checked control route accepts `show_window`/`hide_window`
+and optional owned `target_id`; metadata/control replies expose `can_show_window`
+from the current daemon's macOS/headed `native_window` capability. The acting viewer
+is the authenticated session plus viewer UUID. The Bud owns window presentation;
+SQL owner/Bud/thread authorization precedes coordinator lookup and dispatch.
+No new rows, audit table, visibility persistence or migration is added.
+
+Show acquires acknowledged browser-wide private control first unless this exact
+viewer already owns it. Other live controllers, stale revisions and unsupported
+runtimes reject before reveal. Hide preserves that authority. Return sends an
+acknowledged hide before prepare/finish return; failed hide keeps the controller
+renewable and cannot resolve browser waits. Window errors remain window-specific.
+The daemon repeats its hide guard at return preparation. No agent-facing tools,
+new lease, retry/replay path or media authority inference from visibility.
+This unreleased feature uses coordinated updated service/daemon/web.
+
+## Launch-time Bud color (Phase 3n)
+
+After existing owner/Bud/thread and invocation/control admission, ordinary open
+and control/pause attach optional envelope `browser_color:#RRGGBB`. The SQL reads
+only that owner's Buds, matching inventory fallback for NULL accents; no client or
+model color argument is accepted. Current values are resolved per dispatch, without
+new rows or runtime polling. Renewal/input/media and other actions do not query
+colors. The daemon applies the seed only when creating the persistent root process.
+No new route, migration or client work. Coordinated service/daemon update for this
+unreleased feature; old strict daemon request schemas do not accept this field.
+Repository tests cover foreign ownership, owner-only fallback, changed-color private
+recovery, and omission on observe/acquire; transport tests cover WS and gRPC.

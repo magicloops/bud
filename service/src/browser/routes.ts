@@ -229,6 +229,7 @@ export async function registerBrowserRoutes(
       const session = await control.repository.get(actor.userId, id);
       const { viewer_id } = z.object({ viewer_id: z.string().uuid().optional() }).parse(request.query);
       return {
+        can_show_window: control.windowAvailable(session),
         ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
         ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
@@ -245,6 +246,7 @@ export async function registerBrowserRoutes(
           .object({
             ...bodyBase,
             revision: z.number().int().nonnegative(),
+            target_id: id.optional(),
             recovery_ticket: z.string().min(1).max(2048).optional(),
             operation: z.enum([
               "acquire",
@@ -254,6 +256,8 @@ export async function registerBrowserRoutes(
               "close",
               "recover",
               "reopen",
+              "show_window",
+              "hide_window",
             ]),
           })
           .strict()
@@ -264,7 +268,9 @@ export async function registerBrowserRoutes(
           identity(actor, body.viewer_id),
         ] as const;
         const result =
-          body.operation === "recover"
+          body.operation === "show_window" || body.operation === "hide_window"
+            ? await control.nativeWindow(...args, body.revision, body.operation === "show_window", body.target_id)
+            : body.operation === "recover"
             ? await control.recoverViewer(...args, body.recovery_ticket ?? "")
             : body.operation === "close"
             ? await control.close(
@@ -279,7 +285,7 @@ export async function registerBrowserRoutes(
                 : body.operation === "release"
                   ? await control.release(...args)
                   : await control.returnToAgent(...args, body.revision);
-        return { ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
+        return { can_show_window: control.windowAvailable(result), ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
           recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)) };
       },
     );

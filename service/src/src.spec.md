@@ -115,7 +115,9 @@ derive muted/soft variants and black text stays legible). Mirrored in
 `web/src/lib/theme-colors.ts`; palette order and the first-free rule MUST
 stay in sync. Background:
 `debug/bud-accent-color-flips-between-chats.md`. Node-tested in
-`bud-accent.test.ts`.
+`bud-accent.test.ts`. Browser launch admission reuses the same owner-scoped
+fallback through `browser/color.ts`, which converts validated OKLCH to clipped,
+rounded sRGB for the daemon's launch-only Chrome theme seed.
 
 ### `config.ts`
 

@@ -3427,3 +3427,52 @@ Updated daemon/service/web are a coordinated cutover for this unreleased feature
 as authorized by the phase plan; no compatibility path or migration is added.
 Native restore and surviving-process adoption remain out of scope. See
 [Phase 3l](../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md).
+
+
+### Background headed browser windows (Phase 3m)
+
+The existing version-1 browser capability adds `native_window:boolean`: true only
+for the supported macOS headed runtime. Headless and unsupported platforms omit
+native UI via `can_show_window:false`; agent tools and media remain unchanged.
+The unreleased browser feature is a coordinated daemon/service/web cutover.
+
+A human-only command in the existing `browser_command.request.command` envelope:
+
+```json
+{"action":"native_window","controller_id":"opaque-controller","target_id":"owned-target","show":true}
+```
+
+`target_id` is optional (current workspace selection); `show:false` minimizes all
+owned workspace windows in the Bud's process. No external window ID/PID is accepted.
+All normal owner/thread/generation/connection/sequence checks apply, plus exact
+private controller, controlling workspace and browser epoch before and after the
+page lock. Success returns `data:{"window_acknowledged":true}`; unsupported/window
+failure reports `browser_window_unsupported`/`browser_window_unconfirmed`.
+Visibility is not browser authority, liveness or persisted state.
+
+The authenticated, Origin-checked existing session control POST accepts
+`operation:"show_window"|"hide_window"` with `viewer_id`, observed `revision`, and
+optional `target_id`. Show acquires acknowledged global private control before
+reveal. Hide preserves it. Return acknowledges hide before prepare/finish return;
+hide failure does not release the controller or resume waiting work. The daemon
+also hides at prepare-return. Owner-authorized session/control metadata adds
+`can_show_window`; no new DB/SSE/media payload or model tool is introduced.
+
+
+### Launch-time browser profile color (Phase 3n)
+
+Optional service-owned `browser_command.request.browser_color` is a normalized
+`#RRGGBB` string, outside `command` and never a model/client argument. Authorized
+`open` and `control/pause` dispatch resolve the owning Bud's current effective
+accent (owner-scoped NULL fallback), convert OKLCH to sRGB with channel clipping
+and 8-bit rounding, and attach it over existing WS/gRPC frame_json encodings.
+
+The daemon applies it only before launching the persistent root Chrome process,
+under profile ownership and surviving-process checks. Existing running processes,
+new workspaces, probes, renewal and media do not rewrite preferences. Absent or
+invalid seeds preserve appearance; cosmetic file failures retain original data
+and permit launch, while ownership/secure-store failures remain fatal. No color
+acknowledgement, extra message, capability, database field or live restart.
+This unreleased browser change requires coordinated updated service and daemon:
+old strict daemons reject the new request field; old services omit it and updated
+daemons retain existing appearance. No compatibility branch is provided.

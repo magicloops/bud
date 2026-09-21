@@ -111,7 +111,7 @@ export class BrowserControl {
         result.outcome === "rejected" &&
           ["browser_busy", "browser_control_expired", "browser_stale_request",
             "browser_stale_control", "browser_control_conflict", "browser_interrupted",
-            "browser_closed", "browser_stale_connection"].includes(result.error ?? "")
+            "browser_closed", "browser_stale_connection", "browser_window_unconfirmed"].includes(result.error ?? "")
           ? result.error!
           : "browser_control_uncertain",
       );
@@ -345,6 +345,39 @@ export class BrowserControl {
     return session.state === "interrupted" ? "ended" : "available";
   }
 
+  windowAvailable(session: BrowserSession): boolean {
+    const carrier = this.carrierFor(session.bud_id);
+    return carrier?.bootId === session.boot_id && carrier.current() && carrier.nativeWindow === true;
+  }
+
+  async nativeWindow(owner: string, sessionId: string, viewer: string, revision: number,
+    show: boolean, targetId?: string) {
+    return this.exclusive(owner, sessionId, async () => {
+      let session = await this.repository.get(owner, sessionId);
+      if (session.revision !== revision) throw new BrowserError("browser_revision_conflict");
+      if (!this.windowAvailable(session)) throw new BrowserError("browser_window_unsupported");
+      if (show && !this.ownsControl(owner, sessionId, viewer)) {
+        if ([...this.controllers.values()].some(c => c.browser === session.browser_id &&
+            c.expires > Date.now() && c.carrier.current())) throw new BrowserError("browser_controller_exists");
+        session = await this.acquireSession(session, viewer);
+      }
+      await this.setNativeWindow(session, this.controller(owner, sessionId, viewer), show, targetId);
+      return this.repository.get(owner, sessionId);
+    });
+  }
+
+  private async setNativeWindow(session: BrowserSession, control: Controller, show: boolean, targetId?: string) {
+    const prepared = await this.repository.prepare(session.created_by_user_id, session.id,
+      control.carrier.bootId, session.revision, randomUUID(),
+      { action: "native_window", controller_id: control.id, show, ...(targetId ? { target_id: targetId } : {}) },
+      "human_private");
+    const result = await this.dispatch(control.carrier, prepared.request, AbortSignal.timeout(5000));
+    if (!result.ok || result.data?.window_acknowledged !== true)
+      throw new BrowserError("browser_window_unconfirmed");
+    // Visibility is not authority. A failure never returns the agent or turns
+    // this into a media/lease failure; the same private controller can retry.
+  }
+
   historyAvailable(session: BrowserSession): boolean {
     const carrier = this.carrierFor(session.bud_id);
     return carrier?.bootId === session.boot_id && carrier.current() && carrier.historyNavigation === true;
@@ -459,6 +492,7 @@ export class BrowserControl {
       let session = await this.repository.get(owner, sessionId);
       if (session.revision !== revision)
         throw new BrowserError("browser_revision_conflict");
+      if (this.windowAvailable(session)) await this.setNativeWindow(session, control, false);
       this.controllers.delete(sessionId);
       session = await this.transition(
         session,

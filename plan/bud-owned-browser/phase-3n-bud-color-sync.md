@@ -1,6 +1,6 @@
 # Phase 3n: Sync Chrome's profile color to its Bud
 
-Status: **Scoped; not implemented.** Builds on
+Status: **Implemented locally; automated checks and disposable Chrome restart validation passed.** Builds on
 [Phase 3k](phase-3k-shared-persistent-browser.md) and
 [profile appearance defaults](profile-appearance-defaults.md).
 
@@ -48,7 +48,7 @@ Send a normalized `#RRGGBB` seed as optional service-owned
 converts that value to Chrome's opaque signed ARGB preference representation.
 
 Cover all commands that can create the root browser today: ordinary open and
-private recovery/pause. Future Phase 3l restoration must use the same launch
+private recovery/pause. Phase 3l restoration uses the same launch
 configuration path. Prefer a shared enrichment helper for these dispatch sites;
 do not query Bud colors on renewals, media frames or input gestures.
 
@@ -133,3 +133,43 @@ No live Chrome theme updates, automatic restart, color-change acknowledgements i
 chat, two-way Chrome-to-Bud sync, sync toggle, profile name/avatar synchronization,
 light/dark synchronization, theme-extension management, native window visibility,
 or tab/history restoration. Those do not belong in this small launch-time change.
+
+
+## Implementation and validation — 2026-09-21
+
+- `service/src/browser/color.ts` resolves owner-scoped inventory fallback and
+  converts validated OKLCH to uppercase sRGB. Agent open and private pause enrich
+  their existing authorized transaction result; other requests omit color.
+- `Profile::apply_color` executes only inside persistent root launch, after native
+  storage and surviving-Chrome checks. It preserves unrelated preferences and
+  theme variant, uses a flushed 0600 temporary file plus atomic rename, and skips
+  unchanged writes. Cosmetic errors produce a content-free warning and continue.
+- Focused service tests cover conversion/clipping, foreign-owner admission and
+  fallback isolation, changed-color private recovery, and both transport encodings.
+  Rust tests cover wire placement, profile preservation/reset, signed ARGB,
+  unchanged-file identity, unsafe/malformed paths and unwritable storage.
+- Disposable **headed Chrome 153.0.8010.48**, with mock keychain and no live-profile
+  data, was launched twice using the same temporary profile. Seed `#EE50E6`
+  (`-1158938`) then `#00BEB6` (`-16728394`) survived launch and graceful exit.
+  Chrome itself updated Local State `profile_color_seed` and changed the derived
+  `profile_highlight_color` from `-13952472` to `-16178142`. Custom profile name
+  and avatar 12 survived. No Local State edits were required; the fixture child
+  and directory were removed afterward.
+- Code-path review confirms a second workspace reuses the existing root and never
+  calls the preference writer; pause/reopen creation goes through the same launch
+  path. Current private fences, Stop/Reset and profile identity are unchanged.
+
+The existing live service/daemon/browser were not restarted for this validation.
+Use updated service and rebuilt daemon together; the next actual Chrome launch
+applies color. A visual preference check against the real Bud UI remains a user
+acceptance item: Chrome derives shades and an installed theme can override them.
+No migration, new dependency, mobile change or runtime color-sync loop.
+
+Validation commands: `pnpm --dir service build`;
+`BUD_DATA_DB_TEST=1 pnpm --dir service exec node --import tsx --test src/browser/color.test.ts src/browser/repository.test.ts src/browser/transport.test.ts src/browser/control.test.ts`
+(26 passed); `cargo test --manifest-path bud/Cargo.toml --lib browser::`
+(27 reported passed, five ignored; optional live tests without an executable
+return early, so this is not a live-browser suite claim);
+`cargo build --manifest-path bud/Cargo.toml`; `git diff --check`.
+The separate disposable headed Chrome experiment above provides the real-runtime
+color/cache restart evidence.

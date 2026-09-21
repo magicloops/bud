@@ -71,7 +71,7 @@ function fixture() {
 
 test("browser protobuf frames survive both control encodings", () => {
   for (const frame of [
-    { type: "browser_command", browser_version: 1, request: request() },
+    { type: "browser_command", browser_version: 1, request: { ...request(), browser_color: "#EB63DC", command: { action: "open" } } },
     { type: "browser_command", browser_version: 1, request: { ...request(), command: { action: "resize_viewport", controller_id: "controller", target_id: "page", document_id: "document", width: 640, height: 480 } } },
     { type: "browser_command", browser_version: 1, request: { ...request(), command: { action: "media_attach", endpoint: "wss://service.test/ws/browser-media", ticket: "fixture", controller_id: null, operation_driven: true } } },
     { type: "browser_result", ...reply(request()) },

@@ -1,3 +1,4 @@
+import { resolveBrowserColor } from "./color.js";
 import { BrowserResourceRepository } from "./resource-repository.js";
 import { ulid } from "ulid";
 import type { Pool } from "pg";
@@ -181,7 +182,11 @@ export class BrowserControlRepository {
         pending_until=case when boot_id<>$4 then null else pending_until end,
         boot_id=$4,state='ready',updated_at=now() where id=$1`, [id,`viewer_${id}`,Number(advance),boot,ulid()]);
       const session = (await client.query<BrowserSession>(`${owned} and s.id=$2`,[owner,id])).rows[0];
-      return {session,request:this.command(session,command,requestId)};
+      const request = this.command(session,command,requestId);
+      if (command.action === "control" && command.operation === "pause") {
+        request.browser_color = await resolveBrowserColor(client, owner, session.bud_id);
+      }
+      return {session,request};
     });
   }
   command(

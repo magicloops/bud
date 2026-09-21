@@ -223,3 +223,16 @@ polling never reopens pages. Recovery uses existing private-control/media/input 
 and requires Return to agent afterward. The pane explains URL exclusions and loss
 of Back history/unsaved edits. Errors do not imply successful restoration. Mounted
 tests cover no mutation on restart metadata, explicit recovery and lease release.
+
+
+## Native window escape hatch (Phase 3m)
+
+The existing overlay menu offers Show browser window on capable runtimes and Hide
+while this viewer owns private control. Copy identifies the Bud's machine, which
+may be remote. Show uses server-owned acquisition; Hide does not return the agent.
+Window-only changes preserve an existing private canvas connection. Failed window
+operations show a specific error and re-resolve ownership (Show may have acquired
+it before failing); an existing private lease and Return action remain available.
+No added metadata loop or inferred native visibility state. Return hides before
+resuming on the service/daemon path, including inline chat Return. Mounted tests
+cover canvas continuity and retained control following failed hide.

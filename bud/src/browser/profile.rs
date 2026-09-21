@@ -65,6 +65,72 @@ impl Profile {
         Ok(Self { path, _lock: lock })
     }
 
+    pub fn ensure_not_running(&self) -> Result<()> {
+        if std::fs::symlink_metadata(self.path.join("SingletonLock")).is_ok() {
+            bail!("browser_profile_recovery_required");
+        }
+        Ok(())
+    }
+
+    /// Launch-only cosmetic update under the profile lock. Never called for a
+    /// running process, workspace creation, renewal, or Reset acquisition.
+    pub fn apply_color(&self, color: Option<&str>) -> Result<()> {
+        use std::io::{Read, Write};
+        use std::os::unix::fs::OpenOptionsExt;
+        let Some(argb) = color.and_then(color_argb) else {
+            return Ok(());
+        };
+        self.ensure_not_running()?;
+        let directory = self.path.join("Default");
+        if !std::fs::symlink_metadata(&directory)?.is_dir() {
+            bail!("browser_profile_preferences_unavailable");
+        }
+        let path = directory.join("Preferences");
+        let mut preferences = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if !file.metadata()?.is_file() {
+                    bail!("browser_profile_preferences_unavailable");
+                }
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes)?;
+                serde_json::from_slice::<serde_json::Value>(&bytes)?
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(e.into()),
+        };
+        let original = preferences.clone();
+        let root = preferences
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("browser_profile_preferences_invalid"))?;
+        let browser = root
+            .entry("browser")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("browser_profile_preferences_invalid"))?;
+        let theme = browser
+            .entry("theme")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("browser_profile_preferences_invalid"))?;
+        theme.insert("user_color2".into(), serde_json::json!(argb));
+        theme
+            .entry("color_variant2")
+            .or_insert(serde_json::json!(1));
+        if preferences == original {
+            return Ok(());
+        }
+        // NamedTempFile is private (0600); rename replaces only after a full flush.
+        let mut staged = tempfile::NamedTempFile::new_in(&directory)?;
+        staged.write_all(&serde_json::to_vec(&preferences)?)?;
+        staged.as_file().sync_all()?;
+        staged.persist(&path)?;
+        Ok(())
+    }
+
     pub fn reset(self) -> Result<()> {
         // Only the caller holding the lifecycle lock may reset, after child exit.
         for entry in std::fs::read_dir(&self.path)? {
@@ -82,8 +148,20 @@ impl Profile {
     }
 }
 
+fn color_argb(color: &str) -> Option<i32> {
+    if color.len() != 7
+        || !color.starts_with('#')
+        || !color[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    u32::from_str_radix(&color[1..], 16)
+        .ok()
+        .map(|rgb| (0xff00_0000 | rgb) as i32)
+}
+
 /// Seed only an empty, exclusively owned profile, before Chrome can write it.
-/// Chrome owns these preferences after first launch, including user customization.
+/// Name/avatar remain user-owned; the Bud color is refreshed only before launch.
 fn seed_appearance(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     if std::fs::read_dir(path)?
@@ -205,5 +283,94 @@ mod tests {
         a.reset().unwrap();
         assert!(!a_path.join("persisted").exists());
         assert!(!b.path.join("persisted").exists());
+    }
+    #[test]
+    fn launch_color_preserves_preferences_and_skips_unchanged_writes() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let base = tempfile::tempdir().unwrap();
+        let profile = Profile::acquire(base.path(), "service", "resource", "alice").unwrap();
+        let path = profile.path.join("Default/Preferences");
+        let initial = serde_json::json!({"profile":{"name":"Custom","avatar_index":12},
+            "extensions":{"theme":{"id":"keep-installed-theme"}},
+            "browser":{"theme":{"color_variant2":3,"user_color2":-65281}},
+            "session":{"restore_on_startup":1}});
+        std::fs::write(&path, serde_json::to_vec(&initial).unwrap()).unwrap();
+        profile.apply_color(Some("#123456")).unwrap();
+        let mut expected = initial;
+        expected["browser"]["theme"]["user_color2"] = serde_json::json!(-15584170);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            expected
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        for color in [None, Some("#123456"), Some("bad"), Some("#GGGGGG")] {
+            profile.apply_color(color).unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+        }
+        profile.apply_color(Some("#ABCDEF")).unwrap();
+        assert_eq!(color_argb("#ABCDEF"), Some(-5517841));
+        assert_eq!(color_argb("#000000"), Some(-16777216));
+        assert_eq!(color_argb("#FFFFFF"), Some(-1));
+    }
+
+    #[test]
+    fn launch_color_never_overwrites_unsafe_or_malformed_preferences() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let base = tempfile::tempdir().unwrap();
+        let profile = Profile::acquire(base.path(), "service", "resource", "alice").unwrap();
+        let path = profile.path.join("Default/Preferences");
+        for contents in [
+            "not json",
+            "[]",
+            r#"{"browser":42}"#,
+            r#"{"browser":{"theme":null}}"#,
+        ] {
+            std::fs::write(&path, contents).unwrap();
+            assert!(profile.apply_color(Some("#123456")).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+        }
+        std::fs::remove_file(&path).unwrap();
+        let outside = base.path().join("outside");
+        std::fs::write(&outside, "private").unwrap();
+        symlink(&outside, &path).unwrap();
+        assert!(profile.apply_color(Some("#123456")).is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "private");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(profile.apply_color(Some("#123456")).is_err());
+        std::fs::remove_dir(&path).unwrap();
+        profile.apply_color(Some("#123456")).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::set_permissions(
+            profile.path.join("Default"),
+            std::fs::Permissions::from_mode(0o500),
+        )
+        .unwrap();
+        assert!(profile.apply_color(Some("#FFFFFF")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::set_permissions(
+            profile.path.join("Default"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        symlink("host-1234", profile.path.join("SingletonLock")).unwrap();
+        assert!(profile.apply_color(Some("#FFFFFF")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_file(profile.path.join("SingletonLock")).unwrap();
+        std::fs::rename(
+            profile.path.join("Default"),
+            profile.path.join("RealDefault"),
+        )
+        .unwrap();
+        symlink(
+            profile.path.join("RealDefault"),
+            profile.path.join("Default"),
+        )
+        .unwrap();
+        assert!(profile.apply_color(Some("#FFFFFF")).is_err());
     }
 }

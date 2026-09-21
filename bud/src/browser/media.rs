@@ -36,6 +36,7 @@ pub(super) fn start(
         let started = Instant::now();
         let mut phase = "connect";
         let mut frames = 0_u64;
+        let mut target_count: Option<usize> = None;
         let mut close_code: Option<u16> = None;
         let current_connection = connection.clone();
         let mut refresh = slot.refresh.subscribe();
@@ -158,6 +159,7 @@ pub(super) fn start(
                         .as_mut()
                         .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
                     phase = "list_targets";
+                    target_count = None;
                     let targets_result = browser.targets().await;
                     let targets_ms = hold_started.elapsed().as_millis() as u64;
                     if targets_result.is_err() && targets_ms >= 250 {
@@ -166,6 +168,8 @@ pub(super) fn start(
                             ok = false, phase = "list_targets", "Slow browser capture");
                     }
                     let targets = targets_result?;
+                    target_count = Some(targets.len());
+                    phase = "select_target";
                     let target = preferred
                         .filter(|id| targets.iter().any(|t| &t.target_id == id))
                         .or_else(|| targets.first().map(|t| t.target_id.clone()))
@@ -265,6 +269,8 @@ pub(super) fn start(
             session_id = %session_id,
             event = "ended",
             reason,
+            error_code = result.as_ref().err().map(media_error_code),
+            target_count,
             phase,
             epoch,
             frames,
@@ -276,4 +282,43 @@ pub(super) fn start(
         );
         slot.media.store(false, Ordering::SeqCst);
     });
+}
+
+// Return only internal constants, never arbitrary exception or page content.
+fn media_error_code(error: &anyhow::Error) -> &'static str {
+    match error.to_string().as_str() {
+        "browser_no_target" => "browser_no_target",
+        "browser_invalid_targets" => "browser_invalid_targets",
+        "browser_window_unconfirmed" => "browser_window_unconfirmed",
+        "browser_command_rejected" => "browser_command_rejected",
+        "browser_channel_interrupted" => "browser_channel_interrupted",
+        "browser_channel_closed" => "browser_channel_closed",
+        "browser_interrupted" => "browser_interrupted",
+        "browser_target_not_found" => "browser_target_not_found",
+        "browser_media_revoked" => "browser_media_revoked",
+        _ => "redacted",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::media_error_code;
+
+    #[test]
+    fn media_errors_never_emit_untrusted_details() {
+        assert_eq!(
+            media_error_code(&anyhow::anyhow!("browser_no_target")),
+            "browser_no_target"
+        );
+        assert_eq!(
+            media_error_code(&anyhow::anyhow!("browser_window_unconfirmed")),
+            "browser_window_unconfirmed"
+        );
+        for message in [
+            "https://private.example/token",
+            "browser_no_target https://private.example/token",
+        ] {
+            assert_eq!(media_error_code(&anyhow::anyhow!(message)), "redacted");
+        }
+    }
 }

@@ -61,6 +61,8 @@ test(
     }
     const thread = randomUUID();
     await pool.query("insert into bud values('bud','alice','tenant','secret');");
+    await pool.query("alter table bud add column accent_color text; alter table bud add column created_at timestamptz default now()");
+    await pool.query("insert into bud(bud_id,created_by_user_id,device_secret,accent_color) values('foreign','bob','secret','oklch(0.70 0.25 330)')");
     await pool.query(
       "insert into thread values($1,'bud','alice','tenant',null)",
       [thread],
@@ -99,6 +101,7 @@ test(
       );
     }
     const r = await repo.prepare(first, "boot", { action: "open" });
+    assert.equal(r.browser_color, "#EE50E6");
     await assert.rejects(
       repo.prepare(first, "boot", { action: "open" }),
       /already_dispatched/,
@@ -111,6 +114,7 @@ test(
     const second = await repo.prepare(await next(), "boot", {
       action: "observe",
     });
+    assert.equal(second.browser_color, undefined);
     assert.equal(second.session_id, r.session_id);
     assert.equal(second.sequence, r.sequence + 1);
     await repo.complete(second, { ok: true, outcome: "completed" });
@@ -187,6 +191,7 @@ test(
     await pool.query("update agent_invocation set status='waiting_for_user'");
     const acquired = await controls.prepare("alice", r.session_id, "boot", paused.session.revision,
       "acquire", { action:"control", operation:"acquire" }, "human_private");
+    assert.equal(acquired.request.browser_color, undefined);
     const returning = await controls.prepare(
       "alice",
       r.session_id,
@@ -239,8 +244,10 @@ test(
     const beforeRecovery = await controls.get("alice", r.session_id);
     await assert.rejects(controls.prepare("bob",r.session_id,"new-boot",beforeRecovery.revision,
       "recover",{action:"control",operation:"pause"},"paused"), /not_found/);
+    await pool.query("update bud set accent_color='oklch(0.70 0 0)' where bud_id='bud'");
     const recovering = await controls.prepare("alice",r.session_id,"new-boot",beforeRecovery.revision,
       "recover",{action:"control",operation:"pause"},"paused");
+    assert.equal(recovering.request.browser_color, "#9E9E9E");
     assert.equal(recovering.session.id,r.session_id);
     assert.notEqual(recovering.session.generation,r.generation);
     assert.equal(recovering.session.boot_id,"new-boot");

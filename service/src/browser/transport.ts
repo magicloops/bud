@@ -17,6 +17,7 @@ const capability = z.object({
   boot_id: z.string().min(1).max(128),
   managed: z.literal(true),
   profile_mode: z.literal("persistent"),
+  native_window: z.boolean().optional(),
   handoff: z.boolean().optional(),
   viewport_resize: z.boolean().optional(),
   agent_viewport_resize: z.boolean().optional(),
@@ -42,6 +43,7 @@ const resultSchema = z.object({
 });
 type Tracker = SessionTracker | GrpcSessionTracker;
 export type BrowserCommand = {
+  browser_color?: string;
   request_id: string;
   session_id: string;
   generation: string;
@@ -61,6 +63,7 @@ export type BrowserCommand = {
 export type BrowserCarrier = {
   tracker: Tracker;
   bootId: string;
+  nativeWindow?: boolean;
   handoff?: boolean;
   viewportResize?: boolean;
   agentViewportResize?: boolean;
@@ -98,6 +101,7 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
     return {
       tracker,
       bootId: parsed.data.boot_id,
+      nativeWindow: parsed.data.native_window === true,
       handoff: parsed.data.handoff === true,
       viewportResize: parsed.data.viewport_resize === true,
       agentViewportResize: parsed.data.agent_viewport_resize === true,

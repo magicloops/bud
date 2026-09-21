@@ -16,6 +16,11 @@ pub enum Action {
     Open {
         url: Option<String>,
     },
+    NativeWindow {
+        controller_id: String,
+        target_id: Option<String>,
+        show: bool,
+    },
     ReopenPages {
         controller_id: String,
     },
@@ -93,6 +98,7 @@ impl Action {
     fn diagnostic_name(&self) -> &'static str {
         match self {
             Self::Open { .. } => "open",
+            Self::NativeWindow { .. } => "native_window",
             Self::ReopenPages { .. } => "reopen_pages",
             Self::Observe { .. } => "observe",
             Self::Capture { .. } => "capture",
@@ -124,6 +130,7 @@ pub struct Locator {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    pub browser_color: Option<String>,
     pub request_id: String,
     pub device_session_id: String,
     pub session_id: String,
@@ -290,6 +297,7 @@ impl BrowserManager {
 
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
+            "native_window":cfg!(target_os = "macos") && std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1"),
             "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
             "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":2})
     }
@@ -484,6 +492,7 @@ impl BrowserManager {
             && matches!(
                 request.command,
                 Action::ReopenPages { .. }
+                    | Action::NativeWindow { .. }
                     | Action::HumanInput { .. }
                     | Action::ResizeViewport { .. }
                     | Action::Control {
@@ -580,6 +589,7 @@ impl BrowserManager {
             }
         } else if let Action::HumanInput { controller_id, .. }
         | Action::ReopenPages { controller_id }
+        | Action::NativeWindow { controller_id, .. }
         | Action::ResizeViewport { controller_id, .. } = &request.command
         {
             if !entry
@@ -677,6 +687,7 @@ impl BrowserManager {
             }
         } else if let Action::HumanInput { controller_id, .. }
         | Action::ReopenPages { controller_id }
+        | Action::NativeWindow { controller_id, .. }
         | Action::ResizeViewport { controller_id, .. } = &request.command
         {
             if !slot
@@ -752,6 +763,7 @@ impl BrowserManager {
                 request.command,
                 Action::Close
                     | Action::ReopenPages { .. }
+                    | Action::NativeWindow { .. }
                     | Action::HumanInput { .. }
                     | Action::ResizeViewport { .. }
             )
@@ -829,6 +841,8 @@ impl BrowserManager {
                     entry.closed_at = Some(Instant::now());
                 }
                 const REJECTED: &[&str] = &[
+                    "browser_window_unsupported",
+                    "browser_window_unconfirmed",
                     "browser_recovery_unavailable",
                     "browser_profile_in_use",
                     "browser_profile_permissions",
@@ -929,7 +943,12 @@ impl BrowserManager {
                             &request.browser_id,
                             &request.owner_user_id,
                         )?;
-                        Browser::launch_persistent(executable, profile).await?
+                        Browser::launch_persistent(
+                            executable,
+                            profile,
+                            request.browser_color.as_deref(),
+                        )
+                        .await?
                     } else {
                         Browser::launch(executable).await?
                     });
@@ -956,6 +975,7 @@ impl BrowserManager {
                 browser.invalidate_references();
             }
             if matches!(control, ControlCommand::PrepareReturn { .. }) {
+                browser.hide_before_return().await?;
                 let targets = browser.targets().await?;
                 let target = entry
                     .target
@@ -991,6 +1011,15 @@ impl BrowserManager {
         let browser = entry.browser.as_mut().unwrap();
         if browser.interrupted() {
             anyhow::bail!("browser_interrupted");
+        }
+        if let Action::NativeWindow {
+            target_id, show, ..
+        } = action
+        {
+            browser
+                .native_window(target_id.as_deref().or(entry.target.as_deref()), *show)
+                .await?;
+            return Ok(json!({"window_acknowledged":true}));
         }
         if matches!(action, Action::ReopenPages { .. }) {
             entry.target = Some(browser.reopen_pages().await?);
@@ -1096,6 +1125,7 @@ impl BrowserManager {
             }
             Action::Lifecycle { .. }
             | Action::ReopenPages { .. }
+            | Action::NativeWindow { .. }
             | Action::Close
             | Action::Cancel
             | Action::Control { .. }
@@ -1175,6 +1205,11 @@ fn valid_action(action: &Action) -> bool {
                 && text.as_ref().is_none_or(|t| t.len() <= 8192)
                 && delta_y.is_none_or(|d| (-10000..=10000).contains(&d))
         }
+        Action::NativeWindow {
+            controller_id,
+            target_id,
+            ..
+        } => id(controller_id) && target(target_id),
         Action::ReopenPages { controller_id } => id(controller_id),
         Action::Observe { target_id } => target(target_id),
         Action::Focus { reference } | Action::Click { reference } => id(reference),
@@ -1260,8 +1295,37 @@ mod tests {
         assert!(serde_json::from_value::<Action>(json!({"action":"control","control":{"operation":"acquire","controller_id":"one","script":"bad"}})).is_err());
     }
 
+    #[test]
+    fn launch_color_is_envelope_metadata_not_an_action_argument() {
+        let mut value = json!({
+            "request_id":"request", "device_session_id":"device", "session_id":"session",
+            "generation":"generation", "thread_id":"thread", "owner_user_id":"alice",
+            "browser_id":"resource", "browser_epoch":1, "private_content":false,
+            "browser_paused":false, "control_epoch":1, "sequence":1,
+            "expires_at_ms":30000, "invocation_id":"invocation", "invocation_fence":1,
+            "browser_color":"#EE50E6", "command":{"action":"open"}
+        });
+        assert_eq!(
+            serde_json::from_value::<Request>(value.clone())
+                .unwrap()
+                .browser_color
+                .as_deref(),
+            Some("#EE50E6")
+        );
+        value.as_object_mut().unwrap().remove("browser_color");
+        assert!(serde_json::from_value::<Request>(value)
+            .unwrap()
+            .browser_color
+            .is_none());
+        assert!(serde_json::from_value::<Action>(
+            json!({"action":"open", "browser_color":"#FFFFFF"})
+        )
+        .is_err());
+    }
+
     fn request(sequence: u64, command: Action) -> Request {
         Request {
+            browser_color: None,
             request_id: format!("request-{sequence}"),
             device_session_id: "device".into(),
             session_id: "browser".into(),
@@ -2002,6 +2066,45 @@ mod tests {
                 Some(expected)
             );
         }
+        for (workspace_id, controller, expected) in [
+            ("a", "other", "browser_control_expired"),
+            ("b", "viewer", "browser_control_workspace_mismatch"),
+        ] {
+            assert_eq!(
+                manager
+                    .execute(workspace(
+                        workspace_id,
+                        4,
+                        3,
+                        Action::NativeWindow {
+                            controller_id: controller.into(),
+                            target_id: None,
+                            show: true
+                        }
+                    ))
+                    .await
+                    .error,
+                Some(expected)
+            );
+        }
+        // A queued reveal cannot use authority revoked while waiting for page work.
+        let page = manager.page_lock.lock().await;
+        let stale_show = manager.execute(workspace(
+            "a",
+            4,
+            3,
+            Action::NativeWindow {
+                controller_id: "viewer".into(),
+                target_id: None,
+                show: true,
+            },
+        ));
+        let (result, ()) = tokio::join!(stale_show, async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            manager.authority.lock().unwrap().pause();
+            drop(page);
+        });
+        assert_eq!(result.error, Some("browser_control_expired"));
         assert!(!manager.authority.lock().unwrap().workspace_allowed("b"));
         assert!(!manager.authority.lock().unwrap().viewer_allowed(3, None));
         // Stop is globally fenced, acknowledged only after process exit, and

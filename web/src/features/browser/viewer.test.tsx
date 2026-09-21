@@ -499,3 +499,49 @@ test('daemon restart offers explicit page recovery without polling-driven naviga
     Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
   }
 });
+
+test('native window controls retain private media and a failed hide preserves Return to agent', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (()=>0) as typeof requestAnimationFrame;
+  let clients = 0;
+  Object.assign(globalThis,{__testBrowserCanvas:class { constructor() { clients++; } close() {} }});
+  const writes: string[] = [];
+  let privateControl = false;
+  let failHide = false;
+  const snapshot = () => ({session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:privateControl?'human_private':'agent',revision:privateControl?3:1,can_view:!privateControl,can_show_window:true,owns_control:privateControl});
+  globalThis.fetch = async (_url,init) => {
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)); writes.push(body.operation);
+      if (body.operation === 'show_window') privateControl = true;
+      if (failHide && body.operation === 'return') return Response.json({error:'browser_window_unconfirmed'},{status:409});
+      if (body.operation === 'return') privateControl = false;
+    }
+    return Response.json(snapshot());
+  };
+  const {BrowserViewer} = await import('./viewer');
+  let view!: ReactTestRenderer;
+  const click = async (label: string) => act(async()=>view.root.findAllByType('button').find(b=>b.children.includes(label))!.props.onClick());
+  try {
+    await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser'}),{createNodeMock:()=>({value:''})})});
+    assert.deepEqual(writes,[]);
+    await click('Show browser window');
+    assert.deepEqual(writes,['show_window']);
+    const connected = clients;
+    await click('Hide browser window');
+    assert.equal(clients,connected);
+    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
+    failHide = true;
+    await click('Return to agent');
+    assert.match(view.root.findByProps({role:'alert'}).children.join(''),/window change was not confirmed/);
+    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
+    assert.equal(clients,connected);
+    failHide = false;
+    await click('Return to agent');
+    assert.equal(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')),false);
+  } finally {
+    if(view) await act(async()=>view.unmount());
+    globalThis.fetch=originalFetch; globalThis.requestAnimationFrame=originalAnimationFrame;
+    Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
+  }
+});

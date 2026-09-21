@@ -14,7 +14,8 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   plus continuous private capture through two five-second renewals.
 - `profile.rs`: Persistent-profile ownership: owner/environment/resource
   identity, private-directory checks, exclusive ownership lock, reset primitive and
-  macOS secure-store preflight. Used by production admission; non-macOS
+  macOS secure-store preflight, first-creation appearance defaults and atomic
+  launch-only color synchronization. Used by production admission; non-macOS
   persistent launch is explicitly unsupported pending credential-store acceptance.
 - `recovery.rs`: bounded, private, atomic per-workspace URL hints; corrupt/symlinked data fails closed without modifying the profile.
 - `workspace_tests.rs`: opt-in disposable Chrome fixture proving shared cookies,
@@ -26,6 +27,7 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   attachment and semantic calls; native targets without a verified opener remain
   unassigned. Persistent launch uses owned-child stderr discovery. Close waits for
   graceful child exit, with bounded escalation to killing only its owned child.
+- `idle.html`: embedded static Bud landing page for the process-owned presentation tab; no scripts or external resources.
 - `cdp.rs`: serial private loopback CDP connection; 24 MiB frame cap (bounded PNG before downscaling), 10-second call
   timeout, poison after interrupted calls. Failure diagnostics include only the
   internal method, category and timing, never params or raw errors. No raw CDP/JS surface for the model.
@@ -35,12 +37,14 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
 - `media.rs`: subordinate ticket-authenticated WebSocket, demand-driven JPEG
   capture and authority checks before/after capture; one stream per browser.
   Logs termination phase/timing/frame count and whether private control was
-  paused, without tickets, controller IDs, images, URLs or input.
+  paused, without tickets, controller IDs, images, URLs or input. End events also
+  distinguish inventory from target selection, reporting a target count and
+  allowlisted internal error code (unknown errors remain redacted).
 - `viewer.rs`: bounded human-input and frame types, document/viewport/focus guards.
 - `viewer_tests.rs`: real Chrome fixture for private Unicode/password input and
   rejection of stale frame/focus references, plus fitted click/wheel input to a
-  background target. Human input activates the validated selected target before
-  dispatch; a screenshot alone does not mean Chrome's renderer is active.
+  background target. Human input dispatches to the validated CDP target without foreground activation.
+  A headed minimized/background regression covers fitted clicks, typing and scrolling.
 
 ## Limits and lifetime
 Two active workspaces per Bud, one per thread, sharing one process and one FIFO page lock. Page operations (including agent
@@ -65,12 +69,21 @@ launch requires macOS native keychain preflight and omits mock/basic storage fla
 Probes and disposable tests alone use temporary profiles and mock storage.
 Empty persistent profiles are seeded before Chrome launch with name `Bud Browser`,
 built-in avatar 44 and magenta theme seed `#FF00FF` (color variant 1).
-Chrome derives highlight colors. Existing profiles/customizations are never rewritten;
-explicit Reset makes the next launch eligible for defaults again. Preferences are
-published via an atomic directory rename under the profile lock, with private permissions.
+Chrome derives highlight colors. Name/avatar defaults are first-creation only;
+existing values are preserved. At root process launch, optional service-owned
+`browser_color` overrides the color seed in new/existing profiles. Strict #RRGGBB
+becomes opaque signed ARGB; theme variant and installed themes are preserved.
+The update holds the profile lock, refuses surviving Chrome, and atomically replaces
+Preferences via a private flushed temporary file. Unchanged/absent/invalid color
+skips writes; malformed, symlinked, nonregular or unwritable preferences are left
+intact with a bounded cosmetic warning. Ownership/secure-store failures still block.
+Running Chrome, new thread workspaces, probes and Reset acquisition never sync.
+Reset makes the next launch eligible for defaults plus the current Bud color.
+No Local State cache writes, desired-color persistence or live restart. See
+[Phase 3n](../../../plan/bud-owned-browser/phase-3n-bud-color-sync.md).
 No personal-profile reuse, implicit downloads or disabled Chromium sandbox.
 
-Set `BUD_BROWSER_HEADED=1` to try a visible window with a nonzero loopback debugging
+Set `BUD_BROWSER_HEADED=1` for headed Chrome (minimized by default on macOS) with a nonzero loopback debugging
 port. Default mode remains headless with port-zero discovery. Visible mode reads
 the endpoint only from the owned child's bounded startup stderr, then drains
 stderr without logging it; binding failure does not fall back to another browser.
@@ -291,3 +304,51 @@ created target IDs bind directly to the workspace. No history replay or native-t
 adoption. Close removes hints, including service cleanup on a new boot; reset
 removes the profile. Limits and exclusions are in
 [Phase 3l](../../../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md).
+
+
+## Background headed windows (Phase 3m)
+
+macOS headed runtimes advertise `native_window:true`. Existing target inventory
+minimizes windows when new owned targets are discovered using Chrome window APIs, with a
+process-local target/window cache and explicit native-show intent. Headless and
+other platforms keep their existing behavior. No native app helper, dependency,
+extra visibility polling or agent capture cadence change is introduced.
+`Page.bringToFront` is reserved for explicit Show; pane input no longer restores
+Chrome. Verified opener popups share presentation intent; unknown native targets
+remain unassigned. Initial creation can flash before discovery; Chrome remains in
+the Dock. Manual restoration is not intercepted or an authority transition.
+
+`native_window {controller_id,target_id?,show}` uses existing owner/workspace,
+generation, connection, sequence and exact private-controller/epoch checks before
+and after the page lock. Target/window IDs resolve through the owned process;
+external PIDs/window IDs are not accepted. Hide minimizes all owned workspace
+windows; Show selects only this workspace's validated target. Return preparation
+also verifies hide before clearing privacy. Window failures use
+`browser_window_unconfirmed`, retaining private pause rather than resuming work.
+See [feasibility and limitations](../../../debug/browser-background-window.md).
+
+## Screenshot timeout recovery
+Screenshot requests use a lazy workspace-local CDP connection and separate target
+attachments. A timed-out/cancelled screenshot poisons only that connection; the
+next normal capture demand replaces it without replaying input. Command CDP
+poisoning, ownership/document/layout validation, page locking and privacy fences
+remain unchanged. No new capture loop or foreground activation. See
+[reconnect investigation](../../../debug/browser-media-target-reconnect.md).
+
+## Minimized selected-tab workaround
+On macOS headed Chrome, one process-owned static Bud tab remains selected while
+the shared window is minimized. Hide/Return reselects it; explicit Show selects
+the authorized work tab. Inventory detects native closure and recreates the idle
+tab without new polling. Its exact target identity is excluded even from lifecycle
+inventory; it has no workspace owner and cannot enter agent/viewer target lists,
+thread URL recovery or workspace-only close. Closing Chrome removes it normally.
+Separate popup windows retain minimization but are not covered by this shared-window
+capture workaround. Headless behavior and authority/protocol contracts are unchanged.
+The headed regression covers repeated navigation/capture, Show/Return, idle closure,
+workspace isolation and recovery exclusion. Requires a rebuilt daemon only.
+
+Idle selection completes native restoration before minimizing to avoid Chrome
+applying a delayed activation restore afterward. This is restricted to initial
+idle creation/recovery and a transition from explicit native Show; repeated return
+preparation leaves an already parked window minimized. Creation/recovery can flash
+a window, as can ordinary Chrome startup; there is no per-capture visibility loop.

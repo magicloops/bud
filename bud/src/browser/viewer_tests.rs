@@ -513,3 +513,314 @@ async fn live_table_observation_reads_story_links_in_order() {
     assert!(serde_json::to_vec(&limited.elements).unwrap().len() <= 64 * 1024);
     browser.close().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "headed macOS Chrome fixture; requires BUD_BROWSER_EXECUTABLE"]
+async fn minimized_windows_preserve_capture_and_private_input() {
+    let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
+    let mut root = Browser::launch_mode(Path::new(&executable), true)
+        .await
+        .unwrap();
+    let mut browser = root.workspace("test-workspace").await.unwrap();
+    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    let session = browser.session(&target).await.unwrap();
+    let tree = browser
+        .cdp
+        .call(Some(&session), "Page.getFrameTree", json!({}))
+        .await
+        .unwrap();
+    browser.cdp.call(Some(&session), "Page.setDocumentContent", json!({
+        "frameId":tree["frameTree"]["frame"]["id"],
+        "html":"<style>body{margin:20px}input{width:300px;height:40px}</style><input aria-label='Text'><button onclick=\"document.body.style.background='red'\">Change</button><div style='height:4000px'>Scroll</div>"
+    })).await.unwrap();
+    let mut other = root.workspace("other-workspace").await.unwrap();
+    let other_target = other.targets().await.unwrap()[0].target_id.clone();
+    // Both workspaces must capture without native activation, including the
+    // second tab before any viewer has applied emulated viewport dimensions.
+    other.capture(&other_target).await.unwrap();
+    browser.capture(&target).await.unwrap();
+    let document = browser.document(&session).await.unwrap();
+    browser
+        .resize_viewport(&target, &document, 640, 480)
+        .await
+        .unwrap();
+    let window = browser.window_id(&target).await.unwrap();
+    browser.observe(&target).await.unwrap();
+    let before = browser.capture(&target).await.unwrap();
+    browser
+        .inspect(
+            &target,
+            json!({"operation":"click","locator":{"role":"button","name":"Change"}}),
+        )
+        .await
+        .unwrap();
+    let frame = browser.capture(&target).await.unwrap();
+    assert_ne!(
+        frame["image"], before["image"],
+        "minimized screenshots must reflect changes"
+    );
+    let focused = browser
+        .human_input(
+            &target,
+            frame["document_id"].as_str().unwrap(),
+            frame["frame_token"].as_str().unwrap(),
+            &HumanInput::Click { x: 50.0, y: 40.0 },
+        )
+        .await
+        .unwrap();
+    browser
+        .human_input(
+            &target,
+            frame["document_id"].as_str().unwrap(),
+            frame["frame_token"].as_str().unwrap(),
+            &HumanInput::Text {
+                focus_token: focused["focus_token"].as_str().unwrap().into(),
+                text: "background input".into(),
+            },
+        )
+        .await
+        .unwrap();
+    browser
+        .human_input(
+            &target,
+            frame["document_id"].as_str().unwrap(),
+            frame["frame_token"].as_str().unwrap(),
+            &HumanInput::Scroll {
+                x: 100.0,
+                y: 100.0,
+                delta_y: 300.0,
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let value=browser.cdp.call(Some(&session),"Runtime.evaluate",json!({"expression":"({text:document.querySelector('input').value,y:scrollY})","returnByValue":true})).await.unwrap();
+    assert_eq!(value["result"]["value"]["text"], "background input");
+    assert!(value["result"]["value"]["y"].as_f64().unwrap() > 0.0);
+    let state = browser
+        .cdp
+        .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+        .await
+        .unwrap();
+    assert_eq!(state["bounds"]["windowState"], "minimized");
+    browser.native_window(Some(&target), true).await.unwrap();
+    let state = browser
+        .cdp
+        .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+        .await
+        .unwrap();
+    assert_eq!(state["bounds"]["windowState"], "normal");
+    browser.hide_before_return().await.unwrap();
+    let state = browser
+        .cdp
+        .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+        .await
+        .unwrap();
+    assert_eq!(state["bounds"]["windowState"], "minimized");
+    // Verified opener popups inherit ownership and are minimized on discovery.
+    browser.cdp.call(Some(&session), "Runtime.evaluate", json!({
+        "expression":"window.open('about:blank','bud-popup','popup,width=400,height=300')", "userGesture":true
+    })).await.unwrap();
+    let mut popup = None;
+    for _ in 0..20 {
+        popup = browser
+            .targets()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.target_id != target);
+        if popup.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let popup = popup.expect("owned popup");
+    let popup_window = browser.window_id(&popup.target_id).await.unwrap();
+    let state = browser
+        .cdp
+        .call(
+            None,
+            "Browser.getWindowBounds",
+            json!({"windowId":popup_window}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(state["bounds"]["windowState"], "minimized");
+    browser
+        .native_window(Some(&popup.target_id), true)
+        .await
+        .unwrap();
+    browser.hide_before_return().await.unwrap();
+    for id in [window, popup_window] {
+        let state = browser
+            .cdp
+            .call(None, "Browser.getWindowBounds", json!({"windowId":id}))
+            .await
+            .unwrap();
+        assert_eq!(state["bounds"]["windowState"], "minimized");
+    }
+    root.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn live_screenshot_timeout_recovers_without_recovering_commands() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+        return;
+    };
+    let mut browser = Browser::launch_mode(Path::new(&executable), false)
+        .await
+        .unwrap();
+    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    let initial = browser.capture(&target).await.unwrap();
+    // A CDP peer acknowledges attachment but never answers the screenshot.
+    // Exercise the actual transport timeout, rather than setting its poison flag.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let peer = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let mut calls = Vec::new();
+        while let Some(Ok(Message::Text(raw))) = socket.next().await {
+            let request: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            calls.push(request["method"].as_str().unwrap().to_owned());
+            if request["method"] == "Target.attachToTarget" {
+                socket
+                    .send(Message::Text(
+                        json!({"id":request["id"],"result":{"sessionId":"fixture"}}).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+            if request["method"] == "Page.captureScreenshot" {
+                tokio::time::sleep(Duration::from_secs(11)).await;
+                return calls;
+            }
+        }
+        calls
+    });
+    browser.screenshot = Some((Cdp::connect(&endpoint).await.unwrap(), HashMap::new()));
+    let error = browser.capture(&target).await.unwrap_err();
+    assert!(error.is::<tokio::time::error::Elapsed>());
+    assert!(!browser.interrupted(), "capture must not poison commands");
+    browser.version().await.unwrap();
+    browser.observe(&target).await.unwrap();
+    let recovered = browser.capture(&target).await.unwrap();
+    assert_eq!(recovered["document_id"], initial["document_id"]);
+    assert!(!recovered["image"].as_str().unwrap().is_empty());
+    assert_eq!(
+        peer.await.unwrap(),
+        ["Target.attachToTarget", "Page.captureScreenshot"]
+    );
+    // An uncertain command must still fail closed, even with a healthy screenshot channel.
+    let session = browser.session(&target).await.unwrap();
+    assert!(tokio::time::timeout(
+        Duration::from_millis(50),
+        browser.cdp.call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression":"new Promise(()=>{})","awaitPromise":true})
+        )
+    )
+    .await
+    .is_err());
+    assert!(browser.interrupted());
+    assert!(browser.capture(&target).await.is_err());
+    browser.close().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "headed macOS Chrome fixture; requires BUD_BROWSER_EXECUTABLE"]
+async fn static_idle_tab_preserves_minimized_navigation_capture() {
+    let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buffer = [0; 4096];
+                let n = socket.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..n]);
+                let path = request.split_whitespace().nth(1).unwrap_or("/");
+                let body = format!("<!doctype html><h1>Navigation {path}</h1>");
+                let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await;
+            });
+        }
+    });
+    let mut root = Browser::launch_mode(Path::new(&executable), true)
+        .await
+        .unwrap();
+    let mut a = root.workspace("idle-test-a").await.unwrap();
+    let mut b = root.workspace("idle-test-b").await.unwrap();
+    let ta = a.targets().await.unwrap()[0].target_id.clone();
+    let tb = b.targets().await.unwrap()[0].target_id.clone();
+    let (idle, window) = root.process.lock().unwrap().idle_tab.clone().unwrap();
+    assert!(!root
+        .targets()
+        .await
+        .unwrap()
+        .iter()
+        .any(|t| t.target_id == idle));
+    assert!(a.session(&idle).await.is_err());
+    assert!(b
+        .inspect(&idle, json!({"operation":"snapshot"}))
+        .await
+        .is_err());
+    let mut images = [serde_json::Value::Null, serde_json::Value::Null];
+    for round in 0..4 {
+        // Exercise explicit Show/Return once, then repeated background navigation.
+        if round == 1 {
+            b.native_window(Some(&tb), true).await.unwrap();
+            b.hide_before_return().await.unwrap();
+        }
+        if round == 2 {
+            // Native closure of the idle tab must not remove workspace pages.
+            root.cdp
+                .call(None, "Target.closeTarget", json!({"targetId":idle}))
+                .await
+                .unwrap();
+            for _ in 0..20 {
+                a.targets().await.unwrap();
+                if root.process.lock().unwrap().idle_tab.as_ref().unwrap().0 != idle {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert_ne!(
+                root.process.lock().unwrap().idle_tab.as_ref().unwrap().0,
+                idle
+            );
+        }
+        a.navigate(&ta, &format!("{url}/a-{round}")).await.unwrap();
+        b.navigate(&tb, &format!("{url}/b-{round}")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        for (index, (browser, target)) in [(&mut a, &ta), (&mut b, &tb)].into_iter().enumerate() {
+            let frame = browser.capture(target).await.unwrap();
+            assert_ne!(frame["image"], images[index], "fresh navigation pixels");
+            images[index] = frame["image"].clone();
+            assert_eq!(browser.targets().await.unwrap().len(), 1);
+        }
+        let bounds = root
+            .cdp
+            .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+            .await
+            .unwrap();
+        assert_eq!(
+            bounds["bounds"]["windowState"], "minimized",
+            "round {round}"
+        );
+    }
+    a.save_pages(Some(&ta)).await.unwrap();
+    assert_eq!(
+        a.recovery.lock().unwrap().get("idle-test-a").unwrap().urls,
+        vec![format!("{url}/a-3")]
+    );
+    a.close().await.unwrap();
+    assert_eq!(b.targets().await.unwrap().len(), 1);
+    assert!(root.process.lock().unwrap().idle_tab.is_some());
+    b.capture(&tb).await.unwrap();
+    root.close().await.unwrap();
+    server.abort();
+}

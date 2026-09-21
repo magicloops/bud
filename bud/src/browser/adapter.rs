@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use serde_json::json;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
@@ -79,6 +79,10 @@ async fn timed<T>(elapsed: &mut u64, operation: impl std::future::Future<Output 
 
 struct Process {
     child: Child,
+    background_windows: bool,
+    native_shown: bool,
+    windows: HashMap<String, i64>,
+    idle_tab: Option<(String, i64)>,
     _temporary: Option<TempDir>,
     _persistent: Option<super::profile::Profile>,
 }
@@ -87,6 +91,7 @@ struct Process {
 /// Workspaces share one persistent process/profile and global privacy authority.
 pub struct Browser {
     cdp: Cdp,
+    screenshot: Option<(Cdp, HashMap<String, String>)>,
     semantic: super::semantic::Semantic,
     semantic_dirty: bool,
     semantic_target: Option<String>,
@@ -124,8 +129,14 @@ impl Browser {
     pub(super) async fn launch_persistent(
         executable: &Path,
         profile: super::profile::Profile,
+        color: Option<&str>,
     ) -> Result<Self> {
         super::profile::secure_storage_ready()?;
+        // Cosmetic failure must never destroy preferences or prevent browsing.
+        profile.ensure_not_running()?;
+        if profile.apply_color(color).is_err() {
+            tracing::warn!("Browser profile color update unavailable");
+        }
         let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
         Self::launch_profile(executable, headed, None, Some(profile)).await
     }
@@ -281,11 +292,16 @@ impl Browser {
         }
         Ok(Self {
             cdp,
+            screenshot: None,
             semantic,
             semantic_dirty: false,
             semantic_target: None,
             process: Arc::new(Mutex::new(Process {
                 child,
+                background_windows: cfg!(target_os = "macos") && headed,
+                native_shown: false,
+                windows: HashMap::new(),
+                idle_tab: None,
                 _temporary: temporary,
                 _persistent: persistent,
             })),
@@ -318,40 +334,64 @@ impl Browser {
         let infos = result["targetInfos"]
             .as_array()
             .context("browser_invalid_targets")?;
-        let mut owners = self.ownership.lock().unwrap();
-        owners.retain(|id, _| infos.iter().any(|t| t["targetId"].as_str() == Some(id)));
-        for _ in 0..infos.len() {
-            let mut changed = false;
-            for target in infos.iter().filter(|t| t["type"] == "page") {
-                let Some(id) = target["targetId"].as_str() else {
-                    continue;
-                };
-                if owners.contains_key(id) {
-                    continue;
+        // Identity, not URL/title, distinguishes our presentation tab. It never
+        // belongs to a workspace, including after a native user navigates it.
+        let idle =
+            {
+                let mut process = self.process.lock().unwrap();
+                if process.idle_tab.as_ref().is_some_and(|(id, _)| {
+                    !infos.iter().any(|t| t["targetId"].as_str() == Some(id))
+                }) {
+                    process.idle_tab = None;
                 }
-                if let Some(owner) = target["openerId"]
-                    .as_str()
-                    .and_then(|id| owners.get(id))
-                    .cloned()
-                {
-                    owners.insert(id.to_owned(), owner);
-                    changed = true;
+                process.idle_tab.as_ref().map(|(id, _)| id.clone())
+            };
+        let owned_targets: Vec<String> = {
+            let mut owners = self.ownership.lock().unwrap();
+            owners.retain(|id, _| infos.iter().any(|t| t["targetId"].as_str() == Some(id)));
+            for _ in 0..infos.len() {
+                let mut changed = false;
+                for target in infos.iter().filter(|t| t["type"] == "page") {
+                    let Some(id) = target["targetId"].as_str() else {
+                        continue;
+                    };
+                    if owners.contains_key(id) {
+                        continue;
+                    }
+                    if let Some(owner) = target["openerId"]
+                        .as_str()
+                        .and_then(|id| owners.get(id))
+                        .cloned()
+                    {
+                        owners.insert(id.to_owned(), owner);
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
                 }
             }
-            if !changed {
-                break;
-            }
-        }
+            infos
+                .iter()
+                .filter(|t| t["type"] == "page")
+                .filter_map(|t| t["targetId"].as_str())
+                .filter(|id| idle.as_deref() != Some(*id))
+                .filter(|id| self.workspace.is_empty() || owners.contains_key(*id))
+                .map(str::to_owned)
+                .collect()
+        };
+        self.background_new_windows(&owned_targets).await?;
         Ok(result["targetInfos"]
             .as_array()
             .context("browser_invalid_targets")?
             .iter()
             .filter(|target| {
                 target["type"] == "page"
+                    && target["targetId"].as_str() != idle.as_deref()
                     && (self.workspace.is_empty()
-                        || target["targetId"]
-                            .as_str()
-                            .is_some_and(|id| owners.get(id) == Some(&self.workspace)))
+                        || target["targetId"].as_str().is_some_and(|id| {
+                            self.ownership.lock().unwrap().get(id) == Some(&self.workspace)
+                        }))
             })
             .take(16)
             .map(|target| Target {
@@ -360,6 +400,178 @@ impl Browser {
                 url: bounded(target["url"].as_str().unwrap_or_default(), 2048),
             })
             .collect())
+    }
+
+    // The owned CDP connection resolves window IDs; they never come from clients.
+    async fn window_id(&mut self, target: &str) -> Result<i64> {
+        self.cdp
+            .call(
+                None,
+                "Browser.getWindowForTarget",
+                json!({"targetId":target}),
+            )
+            .await?["windowId"]
+            .as_i64()
+            .context("browser_window_unconfirmed")
+    }
+
+    async fn window_state(&mut self, window: i64, state: &str) -> Result<()> {
+        self.cdp
+            .call(
+                None,
+                "Browser.setWindowBounds",
+                json!({"windowId":window,"bounds":{"windowState":state}}),
+            )
+            .await?;
+        // Window transitions are asynchronous on macOS. Bounded acknowledgement,
+        // not a visibility monitor or a restore/minimize loop on each gesture.
+        for _ in 0..20 {
+            let bounds = self
+                .cdp
+                .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+                .await?;
+            if bounds["bounds"]["windowState"] == state {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        bail!("browser_window_unconfirmed")
+    }
+
+    async fn background_new_windows(&mut self, targets: &[String]) -> Result<()> {
+        if !self.process.lock().unwrap().background_windows {
+            return Ok(());
+        }
+        if !targets.is_empty() && self.process.lock().unwrap().idle_tab.is_none() {
+            self.create_idle_tab().await?;
+            if !self.process.lock().unwrap().native_shown {
+                self.select_idle_tab().await?;
+                let window = self.process.lock().unwrap().idle_tab.as_ref().unwrap().1;
+                self.window_state(window, "minimized").await?;
+            }
+        }
+        self.process
+            .lock()
+            .unwrap()
+            .windows
+            .retain(|target, _| targets.contains(target));
+        for target in targets {
+            if self.process.lock().unwrap().windows.contains_key(target) {
+                continue;
+            }
+            let window = self.window_id(target).await?;
+            // Even background tab creation can restore an existing native window.
+            // Apply presentation once per newly discovered target, not per frame.
+            if !self.process.lock().unwrap().native_shown {
+                self.window_state(window, "minimized").await?;
+            }
+            self.process
+                .lock()
+                .unwrap()
+                .windows
+                .insert(target.clone(), window);
+        }
+        Ok(())
+    }
+
+    // One process-owned presentation tab, never entered in the ownership map.
+    // Existing inventory detects native closure; the next inventory recreates it.
+    async fn create_idle_tab(&mut self) -> Result<()> {
+        use base64::Engine;
+        let html = include_str!("idle.html");
+        let url = format!(
+            "data:text/html;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(html)
+        );
+        let result = self
+            .cdp
+            .call(
+                None,
+                "Target.createTarget",
+                json!({
+                    "url":url,"background":true
+                }),
+            )
+            .await?;
+        let id = result["targetId"]
+            .as_str()
+            .context("browser_window_unconfirmed")?
+            .to_owned();
+        let window = self.window_id(&id).await?;
+        self.process.lock().unwrap().idle_tab = Some((id, window));
+        Ok(())
+    }
+
+    async fn select_idle_tab(&mut self) -> Result<()> {
+        let idle = self.process.lock().unwrap().idle_tab.clone();
+        if let Some((id, window)) = idle {
+            // Finish any native restore before selecting/minimizing. Otherwise
+            // Chrome can apply a delayed activation restore after our minimize.
+            // This runs only for idle-tab creation/recovery and explicit Hide.
+            self.window_state(window, "normal").await?;
+            self.cdp
+                .call(None, "Target.activateTarget", json!({"targetId":id}))
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn native_window(&mut self, target: Option<&str>, show: bool) -> Result<()> {
+        if !self.process.lock().unwrap().background_windows {
+            bail!("browser_window_unsupported");
+        }
+        let result = self.set_native_window(target, show).await;
+        result.map_err(|_| anyhow::anyhow!("browser_window_unconfirmed"))
+    }
+
+    async fn set_native_window(&mut self, target: Option<&str>, show: bool) -> Result<()> {
+        let targets = self.targets().await?;
+        if show {
+            let target = target
+                .and_then(|id| targets.iter().find(|t| t.target_id == id))
+                .or_else(|| {
+                    if target.is_none() {
+                        targets.first()
+                    } else {
+                        None
+                    }
+                })
+                .context("browser_target_not_found")?;
+            let window = self.window_id(&target.target_id).await?;
+            self.window_state(window, "normal").await?;
+            let session = self.session(&target.target_id).await?;
+            self.cdp
+                .call(Some(&session), "Page.bringToFront", json!({}))
+                .await?;
+            self.process.lock().unwrap().native_shown = true;
+        } else {
+            // Repeated return preparation must not restore an already parked window.
+            let was_shown = self.process.lock().unwrap().native_shown;
+            // All owned workspaces share native windows and private authority.
+            let owned: Vec<String> = self.ownership.lock().unwrap().keys().cloned().collect();
+            let mut windows = HashSet::new();
+            for target in owned {
+                windows.insert(self.window_id(&target).await?);
+            }
+            if was_shown {
+                self.select_idle_tab().await?;
+            }
+            if let Some((_, window)) = self.process.lock().unwrap().idle_tab.clone() {
+                windows.insert(window);
+            }
+            for window in windows {
+                self.window_state(window, "minimized").await?;
+            }
+            self.process.lock().unwrap().native_shown = false;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn hide_before_return(&mut self) -> Result<()> {
+        if self.process.lock().unwrap().background_windows {
+            self.native_window(None, false).await?;
+        }
+        Ok(())
     }
 
     async fn session(&mut self, target: &str) -> Result<String> {
@@ -616,6 +828,48 @@ impl Browser {
             .await
     }
 
+    // Only screenshots may recover on a new connection. Mutating commands retain
+    // their fail-closed channel, and normal capture guards/serialization still apply.
+    async fn screenshot(
+        &mut self,
+        target: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        if self
+            .screenshot
+            .as_ref()
+            .is_some_and(|(cdp, _)| cdp.interrupted())
+        {
+            self.screenshot = None;
+        }
+        if self.screenshot.is_none() {
+            self.screenshot = Some((Cdp::connect(&self.endpoint).await?, HashMap::new()));
+        }
+        let (cdp, sessions) = self.screenshot.as_mut().unwrap();
+        let session = if let Some(session) = sessions.get(target) {
+            session.clone()
+        } else {
+            if sessions.len() >= 32 {
+                bail!("browser_target_limit");
+            }
+            let attached = cdp
+                .call(
+                    None,
+                    "Target.attachToTarget",
+                    json!({"targetId":target,"flatten":true}),
+                )
+                .await?;
+            let session = attached["sessionId"]
+                .as_str()
+                .context("browser_attach_failed")?
+                .to_owned();
+            sessions.insert(target.into(), session.clone());
+            session
+        };
+        cdp.call(Some(&session), "Page.captureScreenshot", params)
+            .await
+    }
+
     pub(super) async fn capture_scaled_timed(
         &mut self,
         target: &str,
@@ -658,7 +912,7 @@ impl Browser {
             timing.stage = "screenshot";
             timing.attempts = attempt + 1;
             timing.scales[attempt] = scale;
-            let shot = timed(&mut timing.screenshot_ms[attempt], self.cdp.call(Some(&session), "Page.captureScreenshot", json!({
+            let shot = timed(&mut timing.screenshot_ms[attempt], self.screenshot(target, json!({
                 "format":if enhanced { "png" } else { "jpeg" }, "quality":65, "captureBeyondViewport":false,
                 "clip":{"x":metrics["cssLayoutViewport"]["pageX"], "y":metrics["cssLayoutViewport"]["pageY"],
                     "width":width, "height":height, "scale":scale}
@@ -823,11 +1077,6 @@ impl Browser {
             bail!("browser_stale_viewport");
         }
         let expected_metrics = viewport.metrics.clone();
-        // Capture can display a background tab, but native input needs its
-        // renderer active. The user's selected frame identifies the target.
-        self.cdp
-            .call(Some(&session), "Page.bringToFront", json!({}))
-            .await?;
         if self.document(&session).await? != document {
             bail!("browser_stale_focus");
         }
@@ -1101,6 +1350,7 @@ impl Browser {
         self.ownership.lock().unwrap().insert(target, id.to_owned());
         Ok(Self {
             cdp,
+            screenshot: None,
             semantic,
             semantic_dirty: false,
             semantic_target: None,
