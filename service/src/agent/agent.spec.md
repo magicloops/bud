@@ -1408,3 +1408,18 @@ thread workspace. Claim requires acknowledged global agent authority; private
 control does not reserve unrelated chat. Recovery cancels waits for canceled
 handoffs, closed/deleted workspaces or retired resources (including same-owner
 Bud reclaim). No new scheduler is introduced. See [browser broker](../browser/browser.spec.md).
+
+### Browser empty workspace recovery (Phase 3p)
+
+Browser tool guidance describes the shared persistent browser and thread-owned
+pages. `browser_open` ensures a page, optionally navigates, and is the explicit
+recovery entry point after closure/restart. It does not replay uncertain actions;
+private authority still parks calls for human return. `browser_close` closes only
+this thread's pages and preserves other threads and saved sign-ins.
+
+Browser deferred continuation results distinguish action non-execution from an
+acknowledged handoff return: `executed:false` plus a `handoff` receipt with
+`status:returned`, `control_state:agent`, and `private_content:false`. Recovery
+guidance discovers current pages without stale target IDs, then explicitly opens
+the requested URL for an empty/blank workspace. The receipt is historical evidence;
+every subsequent operation still checks live authority. No daemon contract changes.

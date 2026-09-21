@@ -146,7 +146,7 @@ export class BrowserRepository {
         ).rows[0];
       }
       if (resource.control_state !== "agent" || resource.private_content) {
-        if (!context.waitClientId || session.desired_state !== "open" || session.state === "interrupted")
+        if (!context.waitClientId || session.desired_state !== "open")
           throw new BrowserError("browser_private_or_paused");
         const handoffId = ulid();
         await client.query(`insert into browser_handoff
@@ -163,20 +163,23 @@ export class BrowserRepository {
         await client.query("commit");
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });
       }
-      if (session.boot_id !== bootId && command.action !== "close")
+      const restarted = session.boot_id !== bootId;
+      if (restarted && !["open", "close"].includes(String(command.action)))
         throw new BrowserError("browser_recovery_required");
-      if (session.pending_until && session.pending_until.getTime() > Date.now())
+      if (!restarted && session.pending_until && session.pending_until.getTime() > Date.now())
         throw new BrowserError("browser_busy");
       if (session.desired_state === "closed" && command.action !== "close")
         throw new BrowserError("browser_close_pending");
       const changed =
-        session.invocation_id !== identity.id ||
+        restarted || command.action === "open" || session.invocation_id !== identity.id ||
         session.invocation_fence !== identity.fence;
       const updated = (
         await client.query<Session>(
           `update browser_session set sequence=sequence+1,
         control_epoch=control_epoch+$2,invocation_id=$3,invocation_fence=$4,pending_until=$5,
-        desired_state=case when $6 then 'closed' else desired_state end,updated_at=now() where id=$1 returning *`,
+        desired_state=case when $6 then 'closed' else desired_state end,
+        generation=case when boot_id<>$7 then $8 else generation end,boot_id=$7,
+        updated_at=now() where id=$1 returning *`,
           [
             session.id,
             changed ? 1 : 0,
@@ -184,6 +187,8 @@ export class BrowserRepository {
             identity.fence,
             new Date(expires),
             command.action === "close",
+            bootId,
+            ulid(),
           ],
         )
       ).rows[0];

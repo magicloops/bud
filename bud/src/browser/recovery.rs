@@ -50,6 +50,10 @@ impl Recovery {
         }
         store
     }
+    pub fn available(&self) -> bool {
+        self.writable
+    }
+
     pub fn get(&self, workspace: &str) -> Option<Pages> {
         self.manifest.workspaces.get(workspace).cloned()
     }

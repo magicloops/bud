@@ -152,10 +152,12 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
   Object.assign(globalThis, { __testBrowserCanvas: FakeCanvas })
   let metadata = { session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: 'agent', control_epoch: 2, revision: 1, can_view: true, runtime_status: 'available' }
   let absent = false
+  let statusFailed = false
   const requests: string[] = []
   globalThis.fetch = async (url, init) => {
     requests.push(init?.method ?? 'GET')
     assert.equal(String(url).split('?')[0].endsWith('/browser'), true)
+    if (statusFailed) throw new TypeError('Network interrupted')
     return absent ? Response.json({ error: 'browser_not_found' }, { status: 404 }) : Response.json(metadata)
   }
   const { BrowserViewer } = await import('./viewer')
@@ -165,6 +167,12 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '' }) }) })
     assert.equal(clients.length, 1)
     await act(async () => clients[0].show())
+    statusFailed = true
+    await poll()
+    assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /refresh browser status/)
+    statusFailed = false
+    await poll()
+    assert.equal(view.root.findAllByProps({ role: 'alert' }).length, 0)
     metadata = { ...metadata, control_epoch: 3 }
     await poll()
     assert.equal(clients.length, 1)
@@ -275,7 +283,12 @@ test('chat return action uses the owning viewer and clears after return or dismi
   const originalFetch = globalThis.fetch
   const originalAnimationFrame = globalThis.requestAnimationFrame
   globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
-  Object.assign(globalThis, { __testBrowserCanvas: class { close() {} } })
+  let mediaStatus!: (state: string, targets?: BrowserFrame['targets']) => void
+  Object.assign(globalThis, { __testBrowserCanvas: class {
+    frame = null
+    constructor(_canvas: unknown, _url: string, _viewer: string, status: typeof mediaStatus) { mediaStatus = status }
+    close() {}
+  } })
   const writes: { operation: string; viewer_id: string }[] = []
   let finishReturn!: (value: Response) => void
   let action: import('./viewer').BrowserReturnAction | null = null
@@ -296,6 +309,10 @@ test('chat return action uses the owning viewer and clears after return or dismi
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
     assert.equal(action, null)
     await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    await act(async () => mediaStatus('empty', []))
+    assert.match(JSON.stringify(view.toJSON()), /No page is open/)
+    assert.equal(view.root.findByType('textarea').props.disabled, true)
+    assert.deepEqual(writes.map(w => w.operation), ['acquire'])
     const acquired = action as unknown as import('./viewer').BrowserReturnAction
     assert.equal(acquired.sessionId, 'browser')
     assert.equal(acquired.disabled, false)
@@ -487,7 +504,11 @@ test('daemon restart offers explicit page recovery without polling-driven naviga
   try {
     await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser'}),{createNodeMock:()=>({value:''})})});
     assert.deepEqual(writes,[]);
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Start blank workspace') || b.children.includes('Close this thread’s tabs')), false);
+    await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('More options'))!.props.onClick());
     assert.match(JSON.stringify(view.toJSON()),/Back history and unsaved edits are not restored/);
+    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Start blank workspace')));
+    assert.deepEqual(writes,[]); // Expanding options does not recover or change authority.
     await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Reopen saved pages'))!.props.onClick());
     assert.deepEqual(writes,['reopen']);
     assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
@@ -543,5 +564,53 @@ test('native window controls retain private media and a failed hide preserves Re
     if(view) await act(async()=>view.unmount());
     globalThis.fetch=originalFetch; globalThis.requestAnimationFrame=originalAnimationFrame;
     Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
+  }
+});
+
+test('explicit chat return recovers an orphaned private lease after restart without restoring pages', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
+  const writes: { operation: string; viewer_id: string; revision: number }[] = [];
+  let action: import('./viewer').BrowserReturnAction | null = null;
+  const publish = (next: typeof action) => { action = next; };
+  let metadata = { session_id:'browser', thread_id:'thread', bud_id:'bud', generation:'old', state:'ready', control_state:'paused', revision:12, can_view:false, runtime_status:'daemon_restarted', can_take_control:true };
+  let blocked = true;
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)); writes.push(body);
+      if (body.operation === 'acquire') {
+        if (blocked) return Response.json({error:'browser_controller_exists'}, {status:409});
+        metadata = {...metadata, generation:'new', revision:14, runtime_status:'available', control_state:'human_private'};
+      } else if (body.operation === 'return') {
+        assert.equal(body.revision,14);
+        metadata = {...metadata, revision:16, control_state:'agent'};
+      }
+    }
+    return Response.json(metadata);
+  };
+  const {BrowserViewer} = await import('./viewer');
+  let view!: ReactTestRenderer;
+  try {
+    await act(async () => { view=create(createElement(BrowserViewer,{sessionId:'browser',onReturnActionChange:publish}),{createNodeMock:()=>({value:''})}); });
+    assert.deepEqual(writes,[]); // Mount/status never changes authority.
+    assert.ok(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')));
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Reopen saved pages') || b.children.includes('Start blank workspace')), false);
+    const first = action as unknown as import('./viewer').BrowserReturnAction;
+    assert.equal(first.disabled,false);
+    await act(async () => { first.run(); first.run(); });
+    assert.deepEqual(writes.map(w=>w.operation),['acquire']); // Duplicate click fenced; competing controller blocks return.
+    assert.match(JSON.stringify(view.toJSON()),/Another viewer has control/);
+    blocked = false;
+    await act(async () => (action as unknown as import('./viewer').BrowserReturnAction).run());
+    assert.deepEqual(writes.map(w=>w.operation),['acquire','acquire','return']);
+    assert.equal(writes.every(w=>w.viewer_id===writes[0].viewer_id),true);
+    assert.equal(action,null);
+    await act(async () => first.run());
+    assert.equal(writes.length,3); // A stale callback cannot return again.
+  } finally {
+    if(view) await act(async () => view.unmount());
+    globalThis.fetch=originalFetch;
+    globalThis.requestAnimationFrame=originalAnimationFrame;
   }
 });

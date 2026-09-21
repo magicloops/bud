@@ -515,3 +515,14 @@ never authorize offline access or appear in service inventory.
   an open action argument; profile identity/ownership locks are unchanged.
 - [ ] Real two-account Bud settings and next-launch visual acceptance, including
   reclaim/reset and installed-theme precedence. Existing settings auth applies.
+
+## Phase 3p: empty browser workspace recovery
+
+- [x] Isolated repository/continuation tests preserve invocation ownership, private
+  parking and stale-generation rejection across fresh restart open.
+- [x] Media tests recheck delivery authority for empty markers; revoked viewers
+  receive no empty state or old image. Real-Chrome fixtures retain target isolation.
+- [ ] Repeat with two authenticated users: a foreign workspace status/control/media
+  request remains 404 and cannot create/restore pages or release private authority.
+- [ ] Actual owner flow: close last tab, reopen through agent, restart, recover empty
+  private workspace and return; check old proofs and references remain rejected.

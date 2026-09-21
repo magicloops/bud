@@ -64,14 +64,18 @@ impl Cdp {
         let started = Instant::now();
         let mut sent_ms = None;
         let mut frames_received = 0;
+        let mut stage = "send";
         let result = tokio::time::timeout(Duration::from_secs(10), async {
             self.socket.send(Message::Text(request.to_string())).await?;
             sent_ms = Some(started.elapsed().as_millis());
+            stage = "receive";
             while let Some(frame) = self.socket.next().await {
                 frames_received += 1;
                 match frame? {
                     Message::Text(text) => {
+                        stage = "decode";
                         let value: Value = serde_json::from_str(&text)?;
+                        stage = "receive";
                         if value["id"].as_u64() == Some(id) {
                             return Ok(value);
                         }
@@ -100,6 +104,7 @@ impl Cdp {
                 event = "call_failed",
                 method,
                 reason,
+                stage,
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 frames_received,
                 "Browser CDP call failed"

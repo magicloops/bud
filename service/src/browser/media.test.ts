@@ -165,7 +165,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   const sockets = new Set<WebSocket>();
   const session = { id: 'browser', browser_id: 'shared', generation: 'gen', control_epoch: 1, browser_epoch: 1 } as BrowserSession;
   const carrier = { operationDrivenMedia: true, current: () => true } as BrowserCarrier;
-  let daemon!: WebSocket, attachments = 0, frames = 0, pending = false;
+  let daemon!: WebSocket, attachments = 0, frames = 0, pending = false, empty = false;
   let unblock: (() => void) | undefined;
   const control = {
     expireControllers() {}, onFence() {},
@@ -180,7 +180,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
     daemon = new WebSocket(`${endpoint}/daemon`);
     sockets.add(daemon);
     daemon.on('error', () => {});
-    daemon.on('message', () => daemon.send(JSON.stringify({
+    daemon.on('message', () => daemon.send(JSON.stringify(empty ? { empty: true } : {
       target_id: 'page', document_id: 'doc', frame_token: 'frame', width: 800, height: 600, image: 'fixture', targets: [],
     })));
     await once(daemon, 'open');
@@ -202,7 +202,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
     const socket = new WebSocket(`${endpoint}/${name}`);
     sockets.add(socket);
     socket.on('message', raw => {
-      if (JSON.parse(raw.toString()).type === 'frame') { frames++; socket.send('{"type":"ack"}'); }
+      if (['frame', 'empty'].includes(JSON.parse(raw.toString()).type)) { frames++; socket.send('{"type":"ack"}'); }
     });
     await once(socket, 'open');
     return socket;
@@ -219,6 +219,11 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   await until(() => frames >= 4);
   assert.equal(attachments, 1, 'new epoch joins the same daemon socket');
   assert.equal(control.isSizingViewer('alice', session, '/second'), false);
+  empty = true;
+  const beforeEmpty = frames;
+  daemon.send('{"refresh":true}');
+  await until(() => frames >= beforeEmpty + 2);
+  assert.equal(first.readyState, WebSocket.OPEN, 'empty inventory retains the authorized stream');
   pending = true;
   daemon.send('{"refresh":true}');
   await until(() => Boolean(unblock));

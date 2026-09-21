@@ -30,7 +30,7 @@ export class BrowserCanvas {
   private canvas: HTMLCanvasElement;
   private captureRatio: () => number | undefined;
   private status: (
-    state: "connected" | "unavailable",
+    state: "connected" | "empty" | "unavailable",
     targets?: BrowserFrame["targets"],
   ) => void;
   frame: BrowserFrame | null = null;
@@ -39,7 +39,7 @@ export class BrowserCanvas {
     url: string,
     viewerId: string,
     status: (
-      state: "connected" | "unavailable",
+      state: "connected" | "empty" | "unavailable",
       targets?: BrowserFrame["targets"],
     ) => void,
     captureRatio: () => number | undefined = () => undefined,
@@ -79,6 +79,12 @@ export class BrowserCanvas {
     const data = JSON.parse(raw);
     if (data.type === "revoked") {
       this.close("server_revoked");
+      return;
+    }
+    if (data.type === "empty") {
+      this.clear();
+      this.status("empty", []);
+      this.socket.send(JSON.stringify({ type: "ack", pixel_ratio: this.captureRatio() }));
       return;
     }
     if (

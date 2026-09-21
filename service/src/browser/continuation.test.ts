@@ -9,6 +9,8 @@ import { InvocationRepository } from "../agent/invocation-repository.js";
 import { BrowserRepository } from "./repository.js";
 import { BrowserToolWait } from "../agent/browser-tool-executor.js";
 import { BrowserResourceRepository } from "./resource-repository.js";
+import { AgentConversationLoader } from "../agent/conversation-loader.js";
+import type { CanonicalMessage } from "../llm/types.js";
 import { BrowserControlRepository } from "./control-repository.js";
 
 test(
@@ -292,6 +294,24 @@ test(
           assert.equal(JSON.parse(results[0].content).ok, true);
         }
         assert.match(results[1].content, /not_executed_due_to_browser_handoff/);
+        for (const result of userTakeover ? results : results.slice(1)) {
+          const payload = JSON.parse(result.content);
+          assert.equal(payload.ok, false, "return must not claim the queued action ran");
+          assert.equal(payload.executed, false);
+          for (const toolUseFromProviderLedger of [true, false]) {
+            const replay: CanonicalMessage[] = [];
+            const loader = new AgentConversationLoader();
+            Reflect.get(loader, "appendStoredMessage").call(loader,
+              (message: CanonicalMessage) => replay.push(message), result, { toolUseFromProviderLedger });
+            const blocks = replay.at(-1)?.content;
+            assert.ok(Array.isArray(blocks));
+            assert.equal(blocks[0]?.type, "tool_result");
+            assert.equal(blocks[0]?.type === "tool_result" && blocks[0].content, result.content);
+          }
+          assert.deepEqual(payload.handoff, {
+            status: "returned", control_state: "agent", private_content: false,
+          });
+        }
       }
       assert.deepEqual(await repo.prepareQuestionContinuation(resumed), []);
       await repo.finish(resumed, "succeeded", "done");

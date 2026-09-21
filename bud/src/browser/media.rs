@@ -169,38 +169,45 @@ pub(super) fn start(
                     }
                     let targets = targets_result?;
                     target_count = Some(targets.len());
-                    phase = "select_target";
-                    let target = preferred
-                        .filter(|id| targets.iter().any(|t| &t.target_id == id))
-                        .or_else(|| targets.first().map(|t| t.target_id.clone()))
-                        .ok_or_else(|| anyhow::anyhow!("browser_no_target"))?;
-                    phase = "capture";
-                    // This capture includes all operations completed before taking the lock.
-                    refresh.borrow_and_update();
-                    let capture_started = Instant::now();
-                    let mut timing = super::adapter::CaptureTiming::default();
-                    let captured = browser
-                        .capture_scaled_timed(&target, request.pixel_ratio, &mut timing)
-                        .await;
-                    let capture_ms = capture_started.elapsed().as_millis() as u64;
-                    let hold_ms = hold_started.elapsed().as_millis() as u64;
-                    if hold_ms >= 250 || wait_ms >= 250 {
-                        tracing::info!(component = "browser_timing", event = "media_capture",
+                    if targets.is_empty() {
+                        refresh.borrow_and_update();
+                        entry.target = None;
+                        next_capture = tokio::time::Instant::now() + Duration::from_secs(1);
+                        json!({"empty":true})
+                    } else {
+                        phase = "select_target";
+                        let target = preferred
+                            .filter(|id| targets.iter().any(|t| &t.target_id == id))
+                            .or_else(|| targets.first().map(|t| t.target_id.clone()))
+                            .ok_or_else(|| anyhow::anyhow!("browser_no_target"))?;
+                        phase = "capture";
+                        // This capture includes all operations completed before taking the lock.
+                        refresh.borrow_and_update();
+                        let capture_started = Instant::now();
+                        let mut timing = super::adapter::CaptureTiming::default();
+                        let captured = browser
+                            .capture_scaled_timed(&target, request.pixel_ratio, &mut timing)
+                            .await;
+                        let capture_ms = capture_started.elapsed().as_millis() as u64;
+                        let hold_ms = hold_started.elapsed().as_millis() as u64;
+                        if hold_ms >= 250 || wait_ms >= 250 {
+                            tracing::info!(component = "browser_timing", event = "media_capture",
                             session_id = %session_id, epoch, wait_ms, targets_ms, capture_ms, hold_ms,
                             ok = captured.is_ok(), capture_stages = ?timing, "Slow browser capture");
-                    }
-                    let mut data = match captured {
-                        Ok(data) => data,
-                        Err(error) if error.to_string() == "browser_frame_discarded" => {
-                            json!({"busy":true})
                         }
-                        Err(error) => return Err(error),
-                    };
-                    // Display origin only: URLs can carry sign-in tokens.
-                    data["targets"]=json!(targets.iter().map(|t|json!({"target_id":t.target_id,
+                        let mut data = match captured {
+                            Ok(data) => data,
+                            Err(error) if error.to_string() == "browser_frame_discarded" => {
+                                json!({"busy":true})
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        // Display origin only: URLs can carry sign-in tokens.
+                        data["targets"]=json!(targets.iter().map(|t|json!({"target_id":t.target_id,
                         "origin":url::Url::parse(&t.url).map(|u|u.origin().ascii_serialization()).unwrap_or_default()})).collect::<Vec<_>>());
-                    entry.target = Some(target);
-                    data
+                        entry.target = Some(target);
+                        data
+                    }
                 } else {
                     tracing::info!(component = "browser_timing", event = "media_lock_wait",
                         session_id = %session_id, epoch,

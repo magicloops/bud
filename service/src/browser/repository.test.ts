@@ -239,25 +239,29 @@ test(
       repo.prepare(await next(), "new-boot", { action: "observe" }),
       /recovery_required/,
     );
-    await assert.rejects(repo.prepare(await next(), "new-boot", { action: "open" }), /recovery_required/);
+    const fresh = await repo.prepare(await next(), "new-boot", { action: "open" });
+    assert.equal(fresh.session_id, r.session_id);
+    assert.notEqual(fresh.generation, recovered.generation);
+    await repo.complete(fresh, { ok: true, outcome: "completed" });
+    assert.equal(await repo.evidenceAllowed(recovered), false);
     assert.equal((await controls.list("alice", thread))[0].id, r.session_id);
     const beforeRecovery = await controls.get("alice", r.session_id);
     await assert.rejects(controls.prepare("bob",r.session_id,"new-boot",beforeRecovery.revision,
       "recover",{action:"control",operation:"pause"},"paused"), /not_found/);
     await pool.query("update bud set accent_color='oklch(0.70 0 0)' where bud_id='bud'");
-    const recovering = await controls.prepare("alice",r.session_id,"new-boot",beforeRecovery.revision,
+    const recovering = await controls.prepare("alice",r.session_id,"third-boot",beforeRecovery.revision,
       "recover",{action:"control",operation:"pause"},"paused");
     assert.equal(recovering.request.browser_color, "#9E9E9E");
     assert.equal(recovering.session.id,r.session_id);
     assert.notEqual(recovering.session.generation,r.generation);
-    assert.equal(recovering.session.boot_id,"new-boot");
+    assert.equal(recovering.session.boot_id,"third-boot");
     await repo.complete(recovered,{ok:true,outcome:"completed"});
     assert.equal((await controls.get("alice",r.session_id)).generation,recovering.session.generation);
     const replacement = recovering.request;
     // Restart cannot release the browser-wide private latch. Only explicit
     // takeover of the new process and acknowledged return can resume agents.
     const live = replacement;
-    const liveBoot = "new-boot";
+    const liveBoot = "third-boot";
     for (const state of ["paused", "human_private", "resume_pending"]) {
       await pool.query("update browser_resource set control_state=$1,private_content=true,control_session_id=$2", [state,live.session_id]);
       await assert.rejects(repo.prepare(await next(), liveBoot, { action:"open" }), /private_or_paused/);

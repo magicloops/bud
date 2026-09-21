@@ -3398,7 +3398,8 @@ client-selected owner is accepted. No new rows or ownership stamps are introduce
 
 Service preserves open workspaces across boot changes, including interrupted old
 runtimes. Closed/deleted/retired resources remain closed. Agent admission on an old
-boot rejects `browser_recovery_required` (or parks under existing private intent).
+boot permits explicit open/close; other actions reject `browser_recovery_required`
+(or park under existing private intent).
 Explicit pause on the new boot rotates workspace generation while retaining its ID;
 old controller proofs, targets and completions remain invalid. Metadata reads do
 not create pages. Temporary carrier absence remains disconnected, not restart.
@@ -3413,13 +3414,14 @@ This command uses the existing browser envelope, owner/thread/generation, resour
 privacy epoch, sequence and bounded deadline. Daemon validates the exact private
 controller/workspace before and after page locking. It consumes bounded local hints
 before creating new owned tabs, returning
-`data:{pages_reopened:true,history_restored:false}` on success. It never imports
+`data:{pages_reopened:true,restored_pages:N,recovery_hints_available:boolean,history_restored:false}` on success. It never imports
 history or replays forms/actions. Service renews the private lease before returning
 ordinary control metadata; explicit Return remains required for agent access.
 No saved URL list enters the HTTP/control response or service inventory.
 
-`browser_recovery_unavailable` means usable hints were unavailable; uncertain
-execution becomes `browser_recovery_uncertain`. Neither triggers automatic replay.
+Missing/filtered hints succeed with `restored_pages:0`; corrupt/unreadable hints
+also report `recovery_hints_available:false` and are preserved. Uncertain execution
+becomes `browser_recovery_uncertain` and never triggers automatic replay.
 Failed recovery remains private/paused. Close cleanup may reach an unallocated
 workspace on a fresh boot to remove its hints without opening Chrome.
 
@@ -3476,3 +3478,33 @@ acknowledgement, extra message, capability, database field or live restart.
 This unreleased browser change requires coordinated updated service and daemon:
 old strict daemons reject the new request field; old services omit it and updated
 daemons retain existing appearance. No compatibility branch is provided.
+
+
+### Empty browser workspaces (Phase 3p)
+
+Existing `open` now ensures a thread-owned page before optional navigation. It may
+establish a fresh generation across a daemon restart under agent authority. Private
+intent still parks eligible agent calls; neither missing tabs nor unavailable saved
+hints release privacy. Other actions remain target/generation-strict. Explicit
+open/private pause may repair a channel or replace an exited owned process without
+replaying uncertain mutations. Empty private return skips DOM observation only.
+
+Private reopen control responses optionally include
+`page_recovery:{restored_pages:number,hints_available:boolean}`. An interrupted,
+open workspace can expose `can_take_control` when its carrier supports handoff.
+Existing authenticated viewer/owner/Origin checks apply before all operations.
+
+The daemon media payload adds strict `{empty:true}` when authenticated inventory
+contains no owned targets. The service relays `{type:"empty"}` to the web viewer.
+It uses the same demand credit, delivery authorization and client ACK as an image.
+The viewer clears old pixels and input references while retaining the connection
+and private lease. This is neither a disconnected nor a revoked session. No new
+command variant, table, SSE family or automatic page creation is introduced.
+
+Rollout: full recovery requires updated daemon and service/web. New service with
+old daemon retains known failure handling when ensure/reopen cannot succeed; it
+does not replay mutations. Old service with new daemon ignores additive recovery
+result fields and retains its restrictive restart admission. An old media relay
+rejects the new empty payload and ends that media stream, matching its previous
+empty-workspace unavailability; the control transport/authority remain intact.
+No profile reset or data migration is required.

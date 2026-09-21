@@ -1,5 +1,10 @@
 # Phase 3l: Recover tabs and history in the Bud-owned browser
 
+Phase 3p supersedes mandatory saved-page recovery for agent open: explicit open
+can create a fresh page after restart, and missing hints yield a usable private
+workspace with zero restored pages. History restoration remains optional and
+explicit. See [Phase 3p](phase-3p-empty-workspace-recovery.md).
+
 Status: **Explicit URL recovery implemented; two-thread page recovery user-confirmed.**
 Depends on [3k](phase-3k-shared-persistent-browser.md).
 

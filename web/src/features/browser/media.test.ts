@@ -28,9 +28,10 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     parentElement: { getBoundingClientRect: () => ({ width: 300, height: 400 }) },
     getContext: () => ({ drawImage() {}, clearRect() { clears++; } }),
   };
+  const states: string[] = [];
   let drawn!: () => void;
   const client = new BrowserCanvas(canvas as unknown as HTMLCanvasElement, "ws://fixture",
-    "viewer", state => { if (state === "connected") drawn(); }, () => 2);
+    "viewer", state => { states.push(state); if (state === "connected") drawn(); }, () => 2);
   const socket = sockets[0];
   try {
     socket.onopen!();
@@ -52,9 +53,14 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     assert.deepEqual(socket.sent.map(value => JSON.parse(value)), [
       { viewer_id: "viewer" }, { type: "ack", pixel_ratio: 2 }, { type: "ack", pixel_ratio: 2 },
     ]);
+    socket.onmessage!({ data: '{"type":"empty"}' });
+    assert.equal(client.frame, null);
+    assert.equal(states.at(-1), "empty");
+    assert.equal(clears, 1);
+    assert.equal(JSON.parse(socket.sent.at(-1)!).type, "ack");
     socket.onmessage!({ data: '{"type":"revoked"}' });
     assert.equal(client.frame, null);
-    assert.equal(clears, 1, "revocation clears retained pixels immediately");
+    assert.equal(clears, 2, "revocation clears retained pixels immediately");
   } finally {
     client.close();
     globalThis.WebSocket = originalSocket;

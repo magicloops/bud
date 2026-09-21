@@ -110,9 +110,10 @@ clears queued input/focus; old daemons receive no new input variant.
 The existing inventory loop exposes pausedSessionId from control_state without
 another request or image state. The thread shows a compact browser-actions-paused
 notice and an explicit link to browser controls; chat stays enabled. Returning
-control remains an intentional action through the authorized viewer. The mounted
-private controller exposes its existing return action to the chat notice; it uses
-the same viewer identity and clears on control loss, session end or unmount.
+control remains an intentional action through the authorized viewer. The mounted viewer exposes an explicit return action to chat using the same viewer
+identity. A recoverable paused/private workspace can return without a preexisting
+local controller: the click acquires first, then returns with the acquired revision.
+Confirmed closed/missing sessions and unmount clear the action.
 Busy/resize states disable it and duplicate clicks are fenced synchronously. Older inventory
 without control_state omits the notice; obsolete visit responses remain ignored.
 
@@ -185,8 +186,8 @@ services without tickets retain manual recovery. No ticket goes in URLs or chat.
 `BrowserWaitActionsContext` shares the mounted viewer's return callback, error and
 thread-scoped Stop action with waiting chat rows. It adds no controller, heartbeat,
 media subscription or polling loop. Another session/viewer cannot use the callback.
-Errors stay visible on matching pending cards; missing ownership links to browser
-controls. The redundant top-of-chat return banner is removed.
+Errors stay visible on matching pending cards; recoverable missing ownership uses
+the explicit acquire-then-return flow. The redundant top-of-chat return banner is removed.
 
 
 The wait-action context includes the currently visible pane session ID for presentation only; this hides redundant Open browser links without granting control.
@@ -236,3 +237,34 @@ it before failing); an existing private lease and Return action remain available
 No added metadata loop or inferred native visibility state. Return hides before
 resuming on the service/daemon path, including inline chat Return. Mounted tests
 cover canvas continuity and retained control following failed hide.
+
+## Empty workspace recovery (Phase 3p)
+
+An authorized media `empty` message clears the canvas, references and pending input,
+acknowledges delivery and shows “No page is open” without reconnecting or dropping
+private control. Return to agent remains available. An optional `page_recovery`
+result distinguishes zero saved pages from unreadable hints using informational copy.
+Restart recovery explains that asking Bud to open a page is valid; saved-page
+restoration is optional. Interrupted workspaces expose server-authorized takeover.
+
+### Failed-takeover return recovery
+
+Return remains actionable for server-reported recoverable paused/private workspaces,
+including daemon restart. Only the explicit click acquires a controller and then
+returns with the acquired revision; existing owner/Origin/competing-controller and
+daemon acknowledgement checks remain authoritative. No page restoration or input
+replay is requested. Duplicate clicks are fenced. Unmount after acquisition or
+failed compound return best-effort releases the lease without resuming the agent.
+Transient status errors are separate from control failures and clear on successful
+polling. Mounted tests cover these decisions and status recovery.
+
+### Focused recovery presentation
+
+The ended/restarted/interrupted screen shows one primary action: Return to agent
+when recoverable private authority remains, otherwise Reopen saved pages after a
+restart or Take control for an interrupted recoverable workspace. Dismiss (or
+Conversation in standalone mode) remains visible. More options reveals alternate
+recovery, restoration limitations, thread close and the existing confirmed Bud-wide
+Stop/Reset controls; their status polling mounts only while options are expanded.
+Missing sessions offer navigation only. Existing authorization and control flows
+are unchanged; mounted tests cover primary return and explicit alternate recovery.

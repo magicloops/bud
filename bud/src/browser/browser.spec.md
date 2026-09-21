@@ -92,7 +92,7 @@ control before direct native-window input: OS input bypasses Bud's admission che
 This option does not promise site acceptance. See [experiment](../../../debug/bud-visible-chrome.md).
 
 A turn ending or control disconnect preserves the browser. Reconnect invalidates
-references; interrupted CDP work requires explicit close/open. SIGINT/SIGTERM drains browser page work and requests graceful Chrome exit before
+references; interrupted CDP work requires explicit open or private reacquisition. SIGINT/SIGTERM drains browser page work and requests graceful Chrome exit before
 releasing the profile lock; detached terminal holders survive.
 Hard SIGKILL/power-loss orphan scavenging is still release work: never recover by
 blindly attaching to a stored PID or debugging port. Surviving Chrome singleton locks require explicit recovery. Phase 3l offers explicit URL reopening, not exact tab/history restoration.
@@ -202,10 +202,10 @@ Control disconnect is observed while media waits for demand. Once capture owns
 CDP, bounded reads drain instead of being cancelled; the existing connection and
 authority checks discard the result before delivery. This prevents screenshot
 cancellation from poisoning the shared command channel on service restart.
-Acquisition rejects an already-interrupted browser rather than acknowledging a
-lease that can never display frames. Pause and close remain available. Real-Chrome
+Explicit pause repairs an interrupted channel once before acquisition; failed repair
+never acknowledges a usable lease. Close remains available. Real-Chrome
 regressions disconnect during the capture lock, verify no stale delivery and a
-usable channel after reconnect, and reject acquisition after an uncertain command.
+usable channel after reconnect, and require explicit recovery after an uncertain command.
 No protocol change; requires a rebuilt daemon and works with either service version.
 
 ## Structured observations (Phase 3d)
@@ -352,3 +352,24 @@ applying a delayed activation restore afterward. This is restricted to initial
 idle creation/recovery and a transition from explicit native Show; repeated return
 preparation leaves an already parked window minimized. Creation/recovery can flash
 a window, as can ordinary Chrome startup; there is no per-capture visibility loop.
+
+## Empty workspace recovery (Phase 3p)
+
+Explicit open ensures an owned page before target selection: reuse an existing
+page or create one blank page, then optionally navigate. Workspace allocation alone
+creates no tab. The existing page lock serializes concurrent opens; request receipts
+prevent duplicate dispatch. Observe/action/media/status never create replacements.
+
+Open and private pause check the owned root process. An exited process is replaced
+under the existing profile lock after invalidating old workspace handles; sign-ins,
+recovery hints and private intent survive. A live process with a poisoned channel
+gets one bounded reconnect to its verified endpoint and read-only inventory check.
+Uncertain mutations are not replayed and foreign targets are not adopted.
+
+Reopen validates the placeholder before consuming hints. Missing/filtered hints
+return zero restored pages with a usable workspace. Unreadable/corrupt hints return
+`recovery_hints_available:false` without overwriting the checkpoint. Partial or
+uncertain restoration remains an error. Preparing return from a confirmed empty
+workspace skips DOM observation but retains all authority checks. Authorized media
+sends an acknowledged empty marker, clears old pixels and keeps control alive.
+See [Phase 3p](../../../plan/bud-owned-browser/phase-3p-empty-workspace-recovery.md).

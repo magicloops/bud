@@ -183,6 +183,7 @@ export class BrowserControl {
     session = await this.pause(session, signal);
     const id = randomUUID();
     session = await this.transition(session, "acquire", "human_private", signal, id);
+    let pageRecovery: { restored_pages: number; hints_available: boolean } | undefined;
     if (reopenPages) {
       // Explicit human recovery after acknowledged private takeover. No automatic
       // replay from metadata polling, signed recovery tickets, or agent calls.
@@ -196,6 +197,10 @@ export class BrowserControl {
         throw new BrowserError(result.outcome === "rejected" && result.error === "browser_recovery_unavailable"
           ? result.error : "browser_recovery_uncertain");
       }
+      if (typeof result.data.restored_pages === "number") pageRecovery = {
+        restored_pages: result.data.restored_pages,
+        hints_available: result.data.recovery_hints_available !== false,
+      };
       session = prepared.session;
       // Start the visible controller lease after recovery, not before page creation.
       const renewed = await this.dispatch(this.carrier(session), this.repository.command(session,
@@ -209,7 +214,7 @@ export class BrowserControl {
       owner: session.created_by_user_id, browser: session.browser_id, viewer, id, recoveredTicket,
       expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
     });
-    return session;
+    return { ...session, ...(pageRecovery ? { page_recovery: pageRecovery } : {}) };
   }
 
   recoveryTicket(session: BrowserSession, viewer: string): string | undefined {
@@ -343,6 +348,12 @@ export class BrowserControl {
     if (!carrier?.current()) return "disconnected";
     if (carrier.bootId !== session.boot_id) return "daemon_restarted";
     return session.state === "interrupted" ? "ended" : "available";
+  }
+
+  canTakeControl(session: BrowserSession): boolean {
+    const carrier = this.carrierFor(session.bud_id);
+    return session.desired_state === "open" && session.state !== "closed" &&
+      Boolean(carrier?.handoff && carrier.current());
   }
 
   windowAvailable(session: BrowserSession): boolean {

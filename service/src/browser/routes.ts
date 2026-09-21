@@ -233,7 +233,7 @@ export async function registerBrowserRoutes(
         ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
         ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
-        can_take_control: ["available", "daemon_restarted"].includes(control.runtimeStatus(session)),
+        can_take_control: control.canTakeControl(session),
       };
     });
     routes.post(
@@ -285,7 +285,7 @@ export async function registerBrowserRoutes(
                 : body.operation === "release"
                   ? await control.release(...args)
                   : await control.returnToAgent(...args, body.revision);
-        return { can_show_window: control.windowAvailable(result), ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
+        return { ...("page_recovery" in result ? { page_recovery: result.page_recovery } : {}), can_show_window: control.windowAvailable(result), ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
           recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)) };
       },
     );

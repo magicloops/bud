@@ -837,9 +837,6 @@ impl BrowserManager {
                 data,
             },
             Err(error) => {
-                if entry.browser.is_none() {
-                    entry.closed_at = Some(Instant::now());
-                }
                 const REJECTED: &[&str] = &[
                     "browser_window_unsupported",
                     "browser_window_unconfirmed",
@@ -923,36 +920,62 @@ impl BrowserManager {
         request: &Request,
     ) -> anyhow::Result<Value> {
         let action = &request.command;
-        if !matches!(action, Action::Close) {
+        let ensure = matches!(
+            action,
+            Action::Open { .. }
+                | Action::Control {
+                    control: ControlCommand::Pause
+                }
+        );
+        if ensure {
+            let mut root = self.root.lock().await;
+            if root
+                .as_ref()
+                .map(|b| b.process_exited())
+                .transpose()?
+                .unwrap_or(false)
+            {
+                tracing::info!(component="browser_lifecycle", event="process_exited",
+                    session_id=%request.session_id, request_id=%request.request_id,
+                    "Replacing exited owned browser on explicit request");
+                // The global page lock is held. Drop every handle before releasing
+                // the persistent profile lock; do not close logical workspaces.
+                entry.browser = None;
+                entry.target = None;
+                let slots: Vec<_> = self
+                    .entries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(id, _)| *id != &request.session_id)
+                    .map(|(_, s)| s.clone())
+                    .collect();
+                for slot in slots {
+                    let mut other = slot.state.lock().await;
+                    other.browser = None;
+                    other.target = None;
+                }
+                *root = None;
+            }
+            if root.is_none() {
+                *root = Some(if let Some((base, environment)) = &self.persistent {
+                    let profile = super::profile::Profile::acquire(
+                        base,
+                        environment,
+                        &request.browser_id,
+                        &request.owner_user_id,
+                    )?;
+                    Browser::launch_persistent(
+                        executable,
+                        profile,
+                        request.browser_color.as_deref(),
+                    )
+                    .await?
+                } else {
+                    Browser::launch(executable).await?
+                });
+            }
             if entry.browser.is_none() {
-                if !matches!(
-                    action,
-                    Action::Open { .. }
-                        | Action::Control {
-                            control: ControlCommand::Pause
-                        }
-                ) {
-                    anyhow::bail!("browser_interrupted");
-                }
-                let mut root = self.root.lock().await;
-                if root.is_none() {
-                    *root = Some(if let Some((base, environment)) = &self.persistent {
-                        let profile = super::profile::Profile::acquire(
-                            base,
-                            environment,
-                            &request.browser_id,
-                            &request.owner_user_id,
-                        )?;
-                        Browser::launch_persistent(
-                            executable,
-                            profile,
-                            request.browser_color.as_deref(),
-                        )
-                        .await?
-                    } else {
-                        Browser::launch(executable).await?
-                    });
-                }
                 entry.browser = Some(
                     root.as_mut()
                         .unwrap()
@@ -960,6 +983,7 @@ impl BrowserManager {
                         .await?,
                 );
             }
+            entry.browser.as_mut().unwrap().recover_channel().await?;
         }
         if let Action::Control { control } = action {
             let browser = entry
@@ -968,8 +992,11 @@ impl BrowserManager {
                 .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
             // A lease acknowledgement must not imply that a permanently interrupted
             // Chrome channel can produce frames. Pause/close remain available.
-            if matches!(control, ControlCommand::Acquire { .. }) && browser.interrupted() {
-                anyhow::bail!("browser_interrupted");
+            if matches!(control, ControlCommand::Acquire { .. }) {
+                if browser.interrupted() {
+                    anyhow::bail!("browser_interrupted");
+                }
+                entry.target = Some(browser.ensure_page(entry.target.as_deref()).await?);
             }
             if !matches!(control, ControlCommand::Renew { .. }) {
                 browser.invalidate_references();
@@ -981,11 +1008,14 @@ impl BrowserManager {
                     .target
                     .as_ref()
                     .filter(|id| targets.iter().any(|t| &t.target_id == *id))
-                    .or_else(|| targets.first().map(|t| &t.target_id))
-                    .ok_or_else(|| anyhow::anyhow!("browser_target_not_found"))?;
-                // Validate that a fresh nonprivate observation can be obtained;
-                // its contents are not a control acknowledgement or audit payload.
-                browser.observe(target).await?;
+                    .or_else(|| targets.first().map(|t| &t.target_id));
+                // Empty inventory can be returned too; no DOM is required to
+                // release private authority. Contents never enter the ack.
+                if let Some(target) = target {
+                    browser.observe(target).await?;
+                } else {
+                    entry.target = None;
+                }
             }
             return Ok(json!({"control_acknowledged":true}));
         }
@@ -1008,7 +1038,10 @@ impl BrowserManager {
             entry.closed_at = Some(Instant::now());
             return Ok(json!({"state":"closed", "profile_mode":"persistent"}));
         }
-        let browser = entry.browser.as_mut().unwrap();
+        let browser = entry
+            .browser
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("browser_interrupted"))?;
         if browser.interrupted() {
             anyhow::bail!("browser_interrupted");
         }
@@ -1022,8 +1055,15 @@ impl BrowserManager {
             return Ok(json!({"window_acknowledged":true}));
         }
         if matches!(action, Action::ReopenPages { .. }) {
-            entry.target = Some(browser.reopen_pages().await?);
-            return Ok(json!({"pages_reopened":true,"history_restored":false}));
+            let (target, restored_pages, hints_available) = browser.reopen_pages().await?;
+            entry.target = Some(target);
+            return Ok(
+                json!({"pages_reopened":true,"restored_pages":restored_pages,
+                "recovery_hints_available":hints_available,"history_restored":false}),
+            );
+        }
+        if matches!(action, Action::Open { .. }) {
+            entry.target = Some(browser.ensure_page(entry.target.as_deref()).await?);
         }
         let targets = browser.targets().await?;
         let requested = match action {
@@ -1970,9 +2010,9 @@ mod tests {
         );
         acquire.control_epoch = 3;
         acquire.browser_epoch = 3;
-        assert_eq!(
-            manager.execute(acquire).await.error,
-            Some("browser_interrupted")
+        assert!(
+            manager.execute(acquire).await.ok,
+            "explicit takeover repairs the channel without replaying navigation"
         );
         let mut close = request(9, Action::Close);
         close.control_epoch = 3;
@@ -1984,6 +2024,151 @@ mod tests {
         assert_eq!(
             manager.execute(reopen).await.error,
             Some("browser_private_or_paused")
+        );
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_empty_workspace_return_and_dead_process_replacement() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let manager = BrowserManager::new(Some(executable.into()));
+        manager.connect("device".into());
+        let first = manager
+            .execute(request(1, Action::Open { url: None }))
+            .await;
+        assert!(first.ok, "{first:?}");
+        let slot = manager
+            .entries
+            .lock()
+            .unwrap()
+            .get("browser")
+            .unwrap()
+            .clone();
+        // Close pages without closing the logical workspace, as native tab close does.
+        slot.state
+            .lock()
+            .await
+            .browser
+            .as_mut()
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+        let reopen = request(2, Action::Open { url: None });
+        assert!(manager.execute(reopen.clone()).await.ok);
+        assert!(
+            !manager.execute(reopen).await.ok,
+            "duplicate receipt must not dispatch"
+        );
+        assert_eq!(
+            slot.state
+                .lock()
+                .await
+                .browser
+                .as_mut()
+                .unwrap()
+                .targets()
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        manager
+            .root
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+        assert!(
+            manager
+                .execute(request(3, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        let control = |seq, epoch, control| {
+            let mut r = request(seq, Action::Control { control });
+            r.control_epoch = epoch;
+            r.browser_epoch = epoch;
+            r
+        };
+        assert!(
+            manager
+                .execute(control(4, 2, ControlCommand::Pause))
+                .await
+                .ok
+        );
+        assert!(
+            manager
+                .execute(control(
+                    5,
+                    3,
+                    ControlCommand::Acquire {
+                        controller_id: "viewer".into()
+                    }
+                ))
+                .await
+                .ok
+        );
+        slot.state
+            .lock()
+            .await
+            .browser
+            .as_mut()
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .execute(request(6, Action::Open { url: None }))
+                .await
+                .error,
+            Some("browser_private_or_paused")
+        );
+        assert!(
+            manager
+                .execute(control(
+                    6,
+                    4,
+                    ControlCommand::PrepareReturn {
+                        controller_id: "viewer".into()
+                    }
+                ))
+                .await
+                .ok
+        );
+        assert!(
+            manager
+                .execute(control(7, 5, ControlCommand::FinishReturn))
+                .await
+                .ok
+        );
+        let mut open = request(8, Action::Open { url: None });
+        open.control_epoch = 5;
+        open.browser_epoch = 5;
+        let mut concurrent = request(9, Action::Open { url: None });
+        concurrent.control_epoch = 5;
+        concurrent.browser_epoch = 5;
+        let (first, second) = tokio::join!(manager.execute(open), manager.execute(concurrent));
+        assert!(first.ok || second.ok, "{first:?} {second:?}");
+        assert_eq!(
+            slot.state
+                .lock()
+                .await
+                .browser
+                .as_mut()
+                .unwrap()
+                .targets()
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "concurrent opens must ensure only one owned page"
         );
         manager.shutdown().await.unwrap();
     }

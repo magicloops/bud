@@ -494,3 +494,33 @@ test("unsupported native windows cannot acquire control or dispatch", async () =
   await assert.rejects(f.control.nativeWindow("alice","browser","viewer",1,true), /window_unsupported/);
   assert.equal(f.requests.length,0);
 });
+
+
+test("zero-page recovery installs a renewable controller and reports unreadable hints separately", async () => {
+  for (const available of [true, false]) {
+    const f = fixture();
+    f.reopenReply = { ok: true, outcome: "completed", data: {
+      pages_reopened: true, restored_pages: 0, recovery_hints_available: available,
+    } };
+    const acquired = await f.control.acquire("alice", "browser", "viewer", 1, true);
+    assert.deepEqual(acquired.page_recovery, { restored_pages: 0, hints_available: available });
+    assert.equal(f.control.ownsControl("alice", "browser", "viewer"), true);
+    await f.control.renew("alice", "browser", "viewer");
+    assert.equal(f.returned, 0);
+    await f.control.returnToAgent("alice", "browser", "viewer", f.session.revision);
+    assert.equal(f.returned, 1);
+  }
+});
+
+
+test("interrupted open workspaces allow explicit takeover but closed or offline ones do not", () => {
+  const f = fixture();
+  f.session.state = "interrupted";
+  f.session.private_content = true;
+  assert.equal(f.control.canTakeControl(f.session), true);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.control.canTakeControl({ ...f.session, desired_state: "closed" }), false);
+  assert.equal(f.control.canTakeControl({ ...f.session, state: "closed" }), false);
+  f.carrier.current = () => false;
+  assert.equal(f.control.canTakeControl(f.session), false);
+});

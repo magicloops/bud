@@ -33,13 +33,17 @@ from optional attachment to a user's personal browser.
 | 3l — tab/history recovery | [Implemented locally](phase-3l-tab-and-history-recovery.md): explicit per-thread URL reopening in private control; native ownership mapping failed the gate, so Back/Forward and unsaved state are not restored; two-thread reopening user-confirmed, broader recovery matrix pending |
 | 3m — background headed browser | [Implemented locally on macOS](phase-3m-background-headed-browser.md): minimized capture/input and native Show/Hide under private control; user confirmed both thread views after the static idle-tab workaround, broader host matrix pending |
 | 3n — Bud color sync | [Implemented locally](phase-3n-bud-color-sync.md), with disposable Chrome restart validation: apply the owning Bud's accent to new/existing Chrome profiles on process launch; no live edits or forced restart |
+| 3o — monitorless Ubuntu | [Scoped for work on an Ubuntu host](phase-3o-ubuntu-headed-browser.md): virtual display, Linux secure storage, supervised host lifecycle, and actual-agent acceptance; not implemented |
+| 3p — empty workspace recovery | [Implemented locally](phase-3p-empty-workspace-recovery.md): explicit open ensures a page, optional saved-page recovery, and usable empty private control; automated checks passed, actual-agent acceptance pending |
 | 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
 
-Recommended next sequence: **3n visual acceptance → 3b → 4**, retaining
+Recommended next sequence: **3p actual-agent acceptance → 3n visual acceptance → 3b → 4**, retaining
 the remaining 3k/3l acceptance checks alongside
 the outstanding 3g reliability checks. Phase numbers reflect scoping order.
+Phase **3o** is a separate host-support track to pursue on an Ubuntu box before
+advertising Linux persistent-browser support; it does not block the iOS track.
 3k deliberately changes browser ownership/private-control scope; 3l separately
 validates recovery. Neither adds a REPL or personal-browser attachment. Phase 3m
 can ship independently of 3l after its window/capture feasibility gates pass.
@@ -250,6 +254,16 @@ credit with negotiated mixed-version behavior. No screenshot archive, exact
 DOM/image pairing, image diffing or controller rewrite. This phase supersedes
 the earlier recommendation to implement unchanged-frame suppression first for
 agent-controlled viewing. Human-mode efficiency remains later work.
+
+## Phase 3o — persistent headed browser on monitorless Ubuntu
+
+See [the Ubuntu phase](phase-3o-ubuntu-headed-browser.md). Start with a disposable
+Xvfb fixture on the target host, validate and implement Linux secure storage, then
+validate rendering/input and document the supervised launch/unlock/reboot path.
+Finish with real-agent private login, cross-thread sign-in sharing, restart/page
+recovery, and performance checks. Keep the existing ownership and screenshot
+architecture; native desktop control and a new display manager are out of scope.
+This is scoped work, not a claim of current Ubuntu support.
 
 ## Phase 4 — release validation and cleanup
 

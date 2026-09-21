@@ -70,8 +70,7 @@ authorized chat carries handoff prompts and tool results without a new SSE famil
 
 DB identity survives service and daemon restart; a different daemon boot preserves
 workspace inventory for explicit page recovery. Private intent survives and needs
-explicit takeover/return, even though live tabs may have been lost. Same-boot interrupted browsers can be closed
-then opened with a new generation. Deleted threads/unclaimed Buds persist desired
+explicit takeover/return, even though live tabs may have been lost. Explicit open can recover interrupted workspaces without a close first. Deleted threads/unclaimed Buds persist desired
 close until an eligible daemon connection returns. Internal cleanup scans are
 not viewer reads. Browser mutation outcomes are never automatically replayed.
 
@@ -171,8 +170,9 @@ clears queued input/focus; old daemons receive no new input variant.
 Private/paused control no longer excludes the thread from invocation claiming.
 Browser handoff waits release their thread reservation, preserving the original
 continuation and serialized execution on return. Inventory handoff recovery uses
-invocation status rather than reservation. Browser prepare parks eligible undispatched agent operations on same-boot private
-sessions, including close; unsupported/non-durable callers receive a rejection. A confirmed different authenticated daemon boot requires explicit page recovery;
+invocation status rather than reservation. Browser prepare parks eligible undispatched agent operations on private
+sessions, including interrupted/restarted workspaces, including close; unsupported/non-durable callers receive a rejection. A confirmed different authenticated daemon boot permits explicit fresh open; other
+agent operations require recovery;
 private intent survives at browser scope and requires explicit human recovery. Only browser access is blocked; ordinary chat remains available.
 See [plan](../../../plan/bud-owned-browser/private-control-chat.md).
 
@@ -345,7 +345,7 @@ conferring access. Migrations 0044–0046 are a coordinated unreleased-feature c
 
 ## Explicit page recovery (Phase 3l)
 
-A changed daemon boot preserves open workspace inventory and rejects agent admission
+A changed daemon boot preserves open workspace inventory and rejects agent admission other than explicit open/close
 with `browser_recovery_required`; resource retirement and explicit close still win.
 Owner-authorized control `operation:reopen` acknowledges pause/acquire first,
 rotates workspace generation on the boot boundary, dispatches `reopen_pages` once,
@@ -385,3 +385,19 @@ No new route, migration or client work. Coordinated service/daemon update for th
 unreleased feature; old strict daemon request schemas do not accept this field.
 Repository tests cover foreign ownership, owner-only fallback, changed-color private
 recovery, and omission on observe/acquire; transport tests cover WS and gRPC.
+
+## Empty workspace recovery (Phase 3p)
+
+Explicit open across a daemon boot changes generation and clears stale pending
+admission through the existing fencing contract. Same-boot open advances the
+workspace control epoch. Private intent is checked first and eligible calls park
+for explicit human return, even for an interrupted workspace. Old results cannot
+complete the replacement generation; other agent actions retain strict boot checks.
+
+Authorized private reopen accepts zero restored pages and installs/renews the
+controller. The control response optionally carries
+`page_recovery:{restored_pages,hints_available}` without URLs. An interrupted open
+workspace with a capable carrier exposes `can_take_control`, allowing explicit
+repair. Owner/Origin/cookie checks and row stamping are unchanged. Media accepts
+strict `{empty:true}`, applies the existing delivery authorization and ACK credit,
+and sends `{type:"empty"}` without ending control. No schema migration.

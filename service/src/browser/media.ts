@@ -379,12 +379,12 @@ export class BrowserMedia {
       return;
     }
     group.processing = true;
-    const frame = frameSchema.parse(data);
+    const frame = data.empty === true ? z.object({ empty: z.literal(true) }).strict().parse(data) : frameSchema.parse(data);
     group.frames++;
     group.retries = 0;
     const viewers = [...group.viewers].filter((v) => v.ready);
     for (const viewer of viewers) {
-      if (frame.image_format && viewer.pixelRatio === undefined) {
+      if ("image_format" in frame && frame.image_format && viewer.pixelRatio === undefined) {
         group.dirty = true; // A newly joined legacy-quality viewer needs JPEG.
         continue;
       }
@@ -400,7 +400,7 @@ export class BrowserMedia {
       viewer.ready = false;
       viewer.lastFrame = group.frames;
       viewer.deadline = Date.now() + 5000;
-      viewer.socket.send(JSON.stringify({ type: "frame", ...frame }));
+      viewer.socket.send(JSON.stringify("empty" in frame ? { type: "empty" } : { type: "frame", ...frame }));
     }
     group.processing = false;
     group.awaiting = false;

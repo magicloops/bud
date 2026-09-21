@@ -442,7 +442,7 @@ async fn live_table_observation_reads_story_links_in_order() {
         return;
     };
     let mut browser = Browser::launch(Path::new(&executable)).await.unwrap();
-    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    let target = browser.ensure_page(None).await.unwrap();
     let session = browser.session(&target).await.unwrap();
     let tree = browser
         .cdp
@@ -522,7 +522,7 @@ async fn minimized_windows_preserve_capture_and_private_input() {
         .await
         .unwrap();
     let mut browser = root.workspace("test-workspace").await.unwrap();
-    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    let target = browser.ensure_page(None).await.unwrap();
     let session = browser.session(&target).await.unwrap();
     let tree = browser
         .cdp
@@ -534,7 +534,7 @@ async fn minimized_windows_preserve_capture_and_private_input() {
         "html":"<style>body{margin:20px}input{width:300px;height:40px}</style><input aria-label='Text'><button onclick=\"document.body.style.background='red'\">Change</button><div style='height:4000px'>Scroll</div>"
     })).await.unwrap();
     let mut other = root.workspace("other-workspace").await.unwrap();
-    let other_target = other.targets().await.unwrap()[0].target_id.clone();
+    let other_target = other.ensure_page(None).await.unwrap();
     // Both workspaces must capture without native activation, including the
     // second tab before any viewer has applied emulated viewport dimensions.
     other.capture(&other_target).await.unwrap();
@@ -754,8 +754,8 @@ async fn static_idle_tab_preserves_minimized_navigation_capture() {
         .unwrap();
     let mut a = root.workspace("idle-test-a").await.unwrap();
     let mut b = root.workspace("idle-test-b").await.unwrap();
-    let ta = a.targets().await.unwrap()[0].target_id.clone();
-    let tb = b.targets().await.unwrap()[0].target_id.clone();
+    let ta = a.ensure_page(None).await.unwrap();
+    let tb = b.ensure_page(None).await.unwrap();
     let (idle, window) = root.process.lock().unwrap().idle_tab.clone().unwrap();
     assert!(!root
         .targets()

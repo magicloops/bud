@@ -11,9 +11,16 @@ async fn shared_process_keeps_workspaces_separate_and_shares_site_cookies() {
     let mut a = runtime.workspace("thread-a").await.unwrap();
     let mut b = runtime.workspace("thread-b").await.unwrap();
     assert!(Arc::ptr_eq(&a.process, &b.process));
-    assert!(runtime.workspace("thread-a").await.is_err());
-    let ta = a.targets().await.unwrap().remove(0).target_id;
-    let tb = b.targets().await.unwrap().remove(0).target_id;
+    assert!(runtime
+        .workspace("thread-a")
+        .await
+        .unwrap()
+        .targets()
+        .await
+        .unwrap()
+        .is_empty());
+    let ta = a.ensure_page(None).await.unwrap();
+    let tb = b.ensure_page(None).await.unwrap();
     assert_ne!(ta, tb);
     assert!(a.session(&tb).await.is_err());
     assert!(a
@@ -142,8 +149,8 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
     ))));
     let mut a = runtime.workspace("a").await.unwrap();
     let mut b = runtime.workspace("b").await.unwrap();
-    let old_a = a.targets().await.unwrap()[0].target_id.clone();
-    let old_b = b.targets().await.unwrap()[0].target_id.clone();
+    let old_a = a.ensure_page(None).await.unwrap();
+    let old_b = b.ensure_page(None).await.unwrap();
     for (browser, target) in [(&mut a, &old_a), (&mut b, &old_b)] {
         browser.navigate(target, &url).await.unwrap();
         for _ in 0..100 {
@@ -180,15 +187,22 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
     ))));
     let mut a = runtime.workspace("a").await.unwrap();
     let mut b = runtime.workspace("b").await.unwrap();
+    a.ensure_page(None).await.unwrap();
     assert_eq!(a.targets().await.unwrap()[0].url, "about:blank");
     // Acquiring/observing a blank workspace must not overwrite unused hints.
     a.save_pages(None).await.unwrap();
-    assert!(b.reopen_pages().await.is_err());
-    let target = a.reopen_pages().await.unwrap();
+    assert_eq!(b.reopen_pages().await.unwrap().1, 0);
+    let (target, restored, available) = a.reopen_pages().await.unwrap();
+    assert_eq!(restored, 1);
+    assert!(available);
     assert_ne!(target, old_a);
     assert!(a.session(&old_a).await.is_err());
     assert!(b.session(&target).await.is_err());
-    assert!(a.reopen_pages().await.is_err(), "recovery was replayed");
+    assert_eq!(
+        a.reopen_pages().await.unwrap().1,
+        0,
+        "recovery was replayed"
+    );
     assert_eq!(a.targets().await.unwrap().len(), 1);
     let session = a.session(&target).await.unwrap();
     let history = a
@@ -199,4 +213,63 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
     assert!(history["entries"].as_array().unwrap().len() <= 2);
     runtime.close().await.unwrap();
     server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires BUD_BROWSER_EXECUTABLE and the installed browser helper"]
+async fn native_tab_close_and_broken_channel_allow_explicit_ensure_without_adoption() {
+    let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").unwrap();
+    let mut root = Browser::launch_mode(Path::new(&executable), false)
+        .await
+        .unwrap();
+    let mut a = root.workspace("a").await.unwrap();
+    let mut b = root.workspace("b").await.unwrap();
+    let old = a.ensure_page(None).await.unwrap();
+    let other = b.ensure_page(None).await.unwrap();
+    root.cdp
+        .call(None, "Target.closeTarget", json!({"targetId":old}))
+        .await
+        .unwrap();
+    // Chrome acknowledges native close before removing the target from inventory.
+    for _ in 0..100 {
+        if a.targets().await.unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(a.targets().await.unwrap().is_empty());
+    assert!(a.observe(&old).await.is_err());
+    let replacement = a.ensure_page(Some(&old)).await.unwrap();
+    assert_ne!(replacement, old);
+    assert_eq!(a.ensure_page(None).await.unwrap(), replacement);
+    assert_eq!(b.targets().await.unwrap()[0].target_id, other);
+    assert!(a.session(&other).await.is_err());
+    // Poison the actual command socket with a cancelled read, without killing Chrome.
+    let session = a.session(&replacement).await.unwrap();
+    assert!(tokio::time::timeout(
+        Duration::from_millis(50),
+        a.cdp.call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression":"new Promise(()=>{})","awaitPromise":true})
+        )
+    )
+    .await
+    .is_err());
+    assert!(a.interrupted());
+    a.recover_channel().await.unwrap();
+    assert!(!a.interrupted());
+    assert_eq!(a.ensure_page(None).await.unwrap(), replacement);
+    assert_eq!(a.targets().await.unwrap().len(), 1);
+    assert_eq!(b.targets().await.unwrap()[0].target_id, other);
+    // Unreadable hints are optional for fresh browsing and remain untouched.
+    let hints = tempfile::tempdir().unwrap();
+    let path = hints.path().join("bud-pages.json");
+    std::fs::write(&path, "corrupt-fixture").unwrap();
+    a.recovery = Arc::new(Mutex::new(super::super::recovery::Recovery::load(Some(
+        hints.path(),
+    ))));
+    assert_eq!(a.reopen_pages().await.unwrap(), (replacement, 0, false));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "corrupt-fixture");
+    root.close().await.unwrap();
 }

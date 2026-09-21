@@ -1206,18 +1206,20 @@ impl Browser {
         self.recovery.lock().unwrap().save(&self.workspace, pages)
     }
 
-    /// Explicit human recovery only, after private authority is established.
-    /// Consume hints before creating targets: interruption cannot replay recovery.
-    pub(super) async fn reopen_pages(&mut self) -> Result<String> {
-        let pages = self
-            .saved_pages
-            .take()
-            .context("browser_recovery_unavailable")?;
-        self.recovery.lock().unwrap().save(&self.workspace, None)?;
+    /// Explicit human recovery. Validate before consuming hints; uncertain mutations
+    /// remain consumed and are never replayed by subsequent recovery requests.
+    pub(super) async fn reopen_pages(&mut self) -> Result<(String, usize, bool)> {
+        let available = self.recovery.lock().unwrap().available();
+        if self.saved_pages.is_none() {
+            let target = self.ensure_page(None).await?;
+            return Ok((target, 0, available));
+        }
         let blanks = self.targets().await?;
-        if blanks.len() != 1 || blanks[0].url != "about:blank" {
+        if blanks.len() > 1 || blanks.first().is_some_and(|t| t.url != "about:blank") {
             bail!("browser_recovery_unavailable");
         }
+        self.recovery.lock().unwrap().save(&self.workspace, None)?;
+        let pages = self.saved_pages.take().unwrap();
         let mut selected = None;
         for (index, url) in pages.urls.iter().enumerate() {
             let result = self
@@ -1240,13 +1242,22 @@ impl Browser {
                 selected = Some(target);
             }
         }
-        let blank = &blanks[0].target_id;
-        self.cdp
-            .call(None, "Target.closeTarget", json!({"targetId":blank}))
-            .await?;
-        self.ownership.lock().unwrap().remove(blank);
+        if let Some(blank) = blanks.first() {
+            self.cdp
+                .call(
+                    None,
+                    "Target.closeTarget",
+                    json!({"targetId":blank.target_id}),
+                )
+                .await?;
+            self.ownership.lock().unwrap().remove(&blank.target_id);
+        }
         self.invalidate_references();
-        selected.context("browser_recovery_unavailable")
+        Ok((
+            selected.context("browser_recovery_unavailable")?,
+            pages.urls.len(),
+            true,
+        ))
     }
 
     pub fn invalidate_references(&mut self) {
@@ -1254,6 +1265,75 @@ impl Browser {
         self.focus = None;
         self.viewport = None;
         self.last_wheel = None;
+    }
+
+    pub(super) fn process_exited(&self) -> Result<bool> {
+        Ok(self.process.lock().unwrap().child.try_wait()?.is_some())
+    }
+
+    /// Only explicit open/acquire preparation calls this. Reconnect reads inventory;
+    /// it never retries the failed command or adopts a different process.
+    pub(super) async fn recover_channel(&mut self) -> Result<()> {
+        if self.process_exited()? {
+            bail!("browser_process_exited");
+        }
+        if !self.cdp.interrupted() {
+            if let Err(error) = self.targets().await {
+                if !self.cdp.interrupted() {
+                    return Err(error);
+                }
+            }
+        }
+        if self.cdp.interrupted() {
+            tracing::info!(component="browser_lifecycle", event="channel_recovery",
+                session_id=%self.workspace, stage="connect", process_exited=false,
+                "Repairing owned browser command channel");
+            self.cdp = Cdp::connect(&self.endpoint).await?;
+            self.sessions.clear();
+            self.screenshot = None;
+            self.fitted_sizes.clear();
+            self.viewport_id = None;
+            self.invalidate_references();
+            self.targets().await?;
+        }
+        if self.semantic.interrupted() {
+            self.semantic = super::semantic::Semantic::connect(&self.endpoint).await?;
+            self.semantic_target = None;
+            self.invalidate_references();
+        }
+        Ok(())
+    }
+
+    /// A missing tab is not an interrupted workspace. Only explicit open/acquire
+    /// can create a replacement; observations and capture never call this.
+    pub(super) async fn ensure_page(&mut self, selected: Option<&str>) -> Result<String> {
+        let targets = self.targets().await?;
+        if let Some(target) = targets
+            .iter()
+            .find(|t| Some(t.target_id.as_str()) == selected)
+            .or_else(|| targets.first())
+        {
+            return Ok(target.target_id.clone());
+        }
+        let result = self
+            .cdp
+            .call(
+                None,
+                "Target.createTarget",
+                json!({"url":"about:blank", "background":true}),
+            )
+            .await?;
+        let target = result["targetId"]
+            .as_str()
+            .context("browser_target_not_found")?
+            .to_owned();
+        self.ownership
+            .lock()
+            .unwrap()
+            .insert(target.clone(), self.workspace.clone());
+        self.invalidate_references();
+        self.targets().await?; // Apply existing native presentation policy.
+        Ok(target)
     }
 
     pub fn interrupted(&mut self) -> bool {
@@ -1265,6 +1345,9 @@ impl Browser {
     /// Only lifecycle ownership may stop Chrome; closing a workspace closes its pages.
     pub async fn close(&mut self) -> Result<()> {
         if self.workspace.is_empty() {
+            if self.process_exited()? {
+                return Ok(());
+            }
             let _ = self.cdp.call(None, "Browser.close", json!({})).await;
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
@@ -1290,6 +1373,9 @@ impl Browser {
         } else {
             self.recovery.lock().unwrap().save(&self.workspace, None)?;
             self.saved_pages = None;
+            if self.process_exited()? {
+                return Ok(());
+            }
             // Closing known owned tabs uses a fresh read/close channel after an
             // interrupted page call; no uncertain page mutation is replayed.
             if self.cdp.interrupted() {
@@ -1324,30 +1410,9 @@ impl Browser {
         if id.is_empty() || id.len() > 128 || !self.workspace.is_empty() {
             bail!("browser_invalid_workspace");
         }
-        if self
-            .ownership
-            .lock()
-            .unwrap()
-            .values()
-            .any(|owner| owner == id)
-        {
-            bail!("browser_workspace_exists");
-        }
+        self.recover_channel().await?;
         let cdp = Cdp::connect(&self.endpoint).await?;
         let semantic = super::semantic::Semantic::connect(&self.endpoint).await?;
-        let target = self
-            .cdp
-            .call(
-                None,
-                "Target.createTarget",
-                json!({"url":"about:blank", "background":true}),
-            )
-            .await?;
-        let target = target["targetId"]
-            .as_str()
-            .context("browser_target_not_found")?
-            .to_owned();
-        self.ownership.lock().unwrap().insert(target, id.to_owned());
         Ok(Self {
             cdp,
             screenshot: None,
