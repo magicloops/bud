@@ -33,30 +33,12 @@ test(
       fence integer,worker_id text,status text,lease_expires_at timestamptz,cancel_requested_at timestamptz);
     create table agent_invocation_action(id text primary key,invocation_id text,call_id text,fence integer,
       created_by_user_id text,status text,evidence jsonb);`);
-    const migration = await readFile(
-      new URL("../../drizzle/migrations/0039_tiny_loners.sql", import.meta.url),
-      "utf8",
-    );
-    await pool.query(migration.replaceAll('"public".', `"${schema}".`));
     await pool.query(`alter table agent_invocation add column bud_id text default 'bud';
     alter table agent_invocation add column reserves_thread boolean default true;
     alter table agent_invocation add constraint invocation_context unique(id,thread_id,bud_id,created_by_user_id);
     alter table agent_invocation_action add column kind text default 'browser_request_handoff';`);
-    const handoffMigration = await readFile(
-      new URL(
-        "../../drizzle/migrations/0040_broad_cassandra_nova.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    await pool.query(handoffMigration.replaceAll('"public".', `"${schema}".`));
-    await pool.query(
-      await readFile(
-        new URL("../../drizzle/migrations/0041_cool_lyja.sql", import.meta.url),
-        "utf8",
-      ),
-    );
-    for (const name of ["0044_dry_princess_powerful.sql", "0045_gorgeous_luke_cage.sql", "0046_tired_johnny_blaze.sql"]) {
+    // Apply the exact deploy migrations against pre-change tables.
+    for (const name of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql"]) {
       await pool.query((await readFile(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")).replaceAll('"public".', `"${schema}".`));
     }
     const thread = randomUUID();

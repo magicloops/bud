@@ -16,23 +16,18 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   const database = new Pool({ connectionString: config.databaseUrl, max: 4, options: `-c search_path=${schema}` });
   t.after(async () => { await database.query(`drop schema ${schema} cascade`); await database.end(); });
   await database.query(`create schema ${schema};
-    create table bud(bud_id text primary key,created_by_user_id text,tenant_id text);
-    create table thread(thread_id uuid primary key,bud_id text,created_by_user_id text,deleted_at timestamptz);
-    create table browser_session(id text primary key,thread_id uuid,bud_id text,created_by_user_id text,
-      desired_state text default 'open',state text default 'ready',closed_at timestamptz,updated_at timestamptz,
-      created_at timestamptz default now(),generation text default 'gen',boot_id text default 'boot',
-      control_epoch int default 1,sequence int default 0,invocation_id text,invocation_fence int,pending_until timestamptz);
-    create table agent_invocation(id text primary key,created_by_user_id text,status text,cancel_requested_at timestamptz);
-    create table browser_handoff(id text primary key,session_id text,invocation_id text,created_by_user_id text,
-      status text default 'pending',returned_by_user_id text,resolved_at timestamptz);
-    insert into bud values('bud','alice','tenant'),('other','bob',null);
-    insert into browser_session(id,bud_id,created_by_user_id) values('legacy','bud','alice');`);
-  for (const file of ["0044_dry_princess_powerful.sql", "0045_gorgeous_luke_cage.sql"]) {
+    create table bud(bud_id text primary key,created_by_user_id text,tenant_id text,device_secret text,
+      accent_color text,created_at timestamptz default now());
+    create table thread(thread_id uuid primary key,bud_id text,created_by_user_id text,deleted_at timestamptz,
+      unique(thread_id,bud_id,created_by_user_id));
+    create table agent_invocation(id text primary key,thread_id uuid,bud_id text,created_by_user_id text,status text,
+      cancel_requested_at timestamptz,unique(id,thread_id,bud_id,created_by_user_id));
+    insert into bud values('bud','alice','tenant','secret'),('other','bob',null,'secret');`);
+  // Apply the exact deploy migrations against pre-change tables.
+  for (const file of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql"]) {
     const migration = await readFile(new URL(`../../drizzle/migrations/${file}`, import.meta.url), "utf8");
     await database.query(migration.replaceAll('"public".', `"${schema}".`));
   }
-  assert.equal((await database.query("select browser_id from browser_session where id='legacy'")).rows[0].browser_id, null,
-    "migration must not silently relabel ephemeral profiles");
   const repo = new BrowserResourceRepository(database);
   await assert.rejects(repo.ensure("bob", "bud"), /not_found/);
   assert.equal(await repo.get("bob", "bud"), null);
@@ -44,8 +39,10 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   const threadA = randomUUID(), threadB = randomUUID(), foreignThread = randomUUID();
   await database.query(`insert into thread values($1,'bud','alice',null),($2,'bud','alice',null),($3,'other','bob',null);
   `, [threadA,threadB,foreignThread]);
-  await database.query(`insert into browser_session(id,thread_id,bud_id,created_by_user_id,browser_id) values
-    ('a',$1,'bud','alice',$4),('b',$2,'bud','alice',$4),('foreign',$3,'other','bob',null)`, [threadA,threadB,foreignThread,resource.id]);
+  const foreignResource = await repo.ensure("bob", "other");
+  await database.query(`insert into browser_session(id,thread_id,bud_id,created_by_user_id,browser_id,generation,boot_id,state) values
+    ('a',$1,'bud','alice',$4,'gen','boot','ready'),('b',$2,'bud','alice',$4,'gen','boot','ready'),
+    ('foreign',$3,'other','bob',$5,'gen','boot','ready')`, [threadA,threadB,foreignThread,resource.id,foreignResource.id]);
   await assert.rejects(database.query("update browser_session set browser_id=$1 where id='foreign'", [resource.id]), /foreign key/);
   const control = new BrowserControlRepository(database);
   const prepare = async (owner: string, bud: string, session: string, revision: number,
@@ -77,11 +74,12 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   resource = await prepare("alice", "bud", controller, resource.revision, "prepare_return");
   await assert.rejects(repo.acknowledgeReturn(resource), /control_conflict/, "prepare acknowledgement unlocked browser");
   resource = await prepare("alice", "bud", controller, resource.revision, "finish_return");
-  await database.query(`insert into agent_invocation values
-    ('ia','alice','waiting_for_user',null),('ib','alice','waiting_for_user',null),
-    ('cancel','alice','waiting_for_user',now()),('done','alice','succeeded',null);
-    insert into browser_handoff(id,session_id,invocation_id,created_by_user_id) values
-    ('ha','a','ia','alice'),('hb','b','ib','alice'),('hc','b','cancel','alice'),('hd','a','done','alice');`);
+  await database.query(`insert into agent_invocation(id,thread_id,bud_id,created_by_user_id,status,cancel_requested_at) values
+    ('ia',$1,'bud','alice','waiting_for_user',null),('ib',$2,'bud','alice','waiting_for_user',null),
+    ('cancel',$2,'bud','alice','waiting_for_user',now()),('done',$1,'bud','alice','succeeded',null)`, [threadA,threadB]);
+  await database.query(`insert into browser_handoff(id,session_id,thread_id,bud_id,invocation_id,reason,kind,created_by_user_id) values
+    ('ha','a',$1,'bud','ia','wait','agent','alice'),('hb','b',$2,'bud','ib','wait','agent','alice'),
+    ('hc','b',$2,'bud','cancel','wait','agent','alice'),('hd','a',$1,'bud','done','wait','agent','alice')`, [threadA,threadB]);
   const returnReceipt = resource;
   resource = await repo.acknowledgeReturn(resource);
   assert.equal(resource.private_content, false);

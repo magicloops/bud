@@ -35,6 +35,7 @@ from optional attachment to a user's personal browser.
 | 3n — Bud color sync | [Implemented locally](phase-3n-bud-color-sync.md), with disposable Chrome restart validation: apply the owning Bud's accent to new/existing Chrome profiles on process launch; no live edits or forced restart |
 | 3o — monitorless Ubuntu | [Scoped for work on an Ubuntu host](phase-3o-ubuntu-headed-browser.md): virtual display, Linux secure storage, supervised host lifecycle, and actual-agent acceptance; not implemented |
 | 3p — empty workspace recovery | [Implemented locally](phase-3p-empty-workspace-recovery.md): explicit open ensures a page, optional saved-page recovery, and usable empty private control; automated checks passed, actual-agent acceptance pending |
+| 3q — migration squash | [Implemented locally](phase-3q-migration-squash.md): the unreleased 0039–0046 chain is replaced by `0039_bud_browser` (generated) and `0040_browser_claim_retirement` (custom trigger); fresh-database migrate and isolated-schema tests pass; production confirmed at 0038 |
 | 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |

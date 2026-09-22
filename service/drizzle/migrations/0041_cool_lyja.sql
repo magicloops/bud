@@ -1,1 +1,0 @@
-ALTER TABLE "browser_session" ADD COLUMN "private_content" boolean DEFAULT false NOT NULL;

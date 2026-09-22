@@ -1,5 +1,5 @@
 {
-  "id": "4676babc-27b5-43f5-8855-6dd894936aae",
+  "id": "71420353-2c0b-445f-9db2-058f1957c204",
   "prevId": "d521fe29-da14-4b9e-ad6b-62d7180c6d43",
   "version": "7",
   "dialect": "postgresql",
@@ -562,6 +562,18 @@
         },
         "latest_start_at": {
           "name": "latest_start_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "work_duration_ms": {
+          "name": "work_duration_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "work_started_at": {
+          "name": "work_started_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -3981,6 +3993,466 @@
       },
       "isRLSEnabled": false
     },
+    "public.browser_handoff": {
+      "name": "browser_handoff",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bud_id": {
+          "name": "bud_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invocation_id": {
+          "name": "invocation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "call_id": {
+          "name": "call_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "returned_by_user_id": {
+          "name": "returned_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "browser_handoff_pending_invocation_idx": {
+          "name": "browser_handoff_pending_invocation_idx",
+          "columns": [
+            {
+              "expression": "invocation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"browser_handoff\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "browser_handoff_session_status_idx": {
+          "name": "browser_handoff_session_status_idx",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "browser_handoff_owner_idx": {
+          "name": "browser_handoff_owner_idx",
+          "columns": [
+            {
+              "expression": "created_by_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "browser_handoff_session_owner_fk": {
+          "name": "browser_handoff_session_owner_fk",
+          "tableFrom": "browser_handoff",
+          "tableTo": "browser_session",
+          "columnsFrom": [
+            "session_id",
+            "thread_id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id",
+            "thread_id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "browser_handoff_invocation_owner_fk": {
+          "name": "browser_handoff_invocation_owner_fk",
+          "tableFrom": "browser_handoff",
+          "tableTo": "agent_invocation",
+          "columnsFrom": [
+            "invocation_id",
+            "thread_id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id",
+            "thread_id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "browser_handoff_call_key": {
+          "name": "browser_handoff_call_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "invocation_id",
+            "call_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "browser_handoff_status_check": {
+          "name": "browser_handoff_status_check",
+          "value": "\"browser_handoff\".\"status\" in ('pending','returned','canceled') and \"browser_handoff\".\"kind\" in ('agent','user','return_control')"
+        },
+        "browser_handoff_actor_check": {
+          "name": "browser_handoff_actor_check",
+          "value": "\"browser_handoff\".\"returned_by_user_id\" is null or \"browser_handoff\".\"returned_by_user_id\" = \"browser_handoff\".\"created_by_user_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.browser_resource": {
+      "name": "browser_resource",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "bud_id": {
+          "name": "bud_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "profile_generation": {
+          "name": "profile_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "control_state": {
+          "name": "control_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'agent'"
+        },
+        "private_content": {
+          "name": "private_content",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "control_epoch": {
+          "name": "control_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "control_session_id": {
+          "name": "control_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "control_request_id": {
+          "name": "control_request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "control_operation": {
+          "name": "control_operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "desired_state": {
+          "name": "desired_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "lifecycle_request_id": {
+          "name": "lifecycle_request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "requested_by_user_id": {
+          "name": "requested_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retired_at": {
+          "name": "retired_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "browser_resource_active_bud_idx": {
+          "name": "browser_resource_active_bud_idx",
+          "columns": [
+            {
+              "expression": "bud_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"browser_resource\".\"retired_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "browser_resource_owner_idx": {
+          "name": "browser_resource_owner_idx",
+          "columns": [
+            {
+              "expression": "created_by_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "bud_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "browser_resource_pending_idx": {
+          "name": "browser_resource_pending_idx",
+          "columns": [
+            {
+              "expression": "desired_state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "browser_resource_bud_id_bud_bud_id_fk": {
+          "name": "browser_resource_bud_id_bud_bud_id_fk",
+          "tableFrom": "browser_resource",
+          "tableTo": "bud",
+          "columnsFrom": [
+            "bud_id"
+          ],
+          "columnsTo": [
+            "bud_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "browser_resource_owner_key": {
+          "name": "browser_resource_owner_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "bud_id",
+            "created_by_user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "browser_resource_control_check": {
+          "name": "browser_resource_control_check",
+          "value": "\"browser_resource\".\"control_state\" in ('agent','paused','human_private','resume_pending') and (\"browser_resource\".\"control_state\" <> 'agent' or not \"browser_resource\".\"private_content\") and (\"browser_resource\".\"control_state\" <> 'human_private' or (\"browser_resource\".\"private_content\" and \"browser_resource\".\"control_session_id\" is not null))"
+        },
+        "browser_resource_operation_check": {
+          "name": "browser_resource_operation_check",
+          "value": "\"browser_resource\".\"control_operation\" is null or \"browser_resource\".\"control_operation\" in ('pause','acquire','prepare_return','finish_return')"
+        },
+        "browser_resource_state_check": {
+          "name": "browser_resource_state_check",
+          "value": "\"browser_resource\".\"desired_state\" in ('open','stop_pending','stopped','reset_pending') and (\"browser_resource\".\"desired_state\" not in ('stop_pending','reset_pending') or \"browser_resource\".\"lifecycle_request_id\" is not null)"
+        },
+        "browser_resource_counters_check": {
+          "name": "browser_resource_counters_check",
+          "value": "\"browser_resource\".\"control_epoch\" > 0 and \"browser_resource\".\"revision\" >= 0 and \"browser_resource\".\"profile_generation\" > 0"
+        },
+        "browser_resource_actor_check": {
+          "name": "browser_resource_actor_check",
+          "value": "\"browser_resource\".\"requested_by_user_id\" is null or \"browser_resource\".\"requested_by_user_id\" = \"browser_resource\".\"created_by_user_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.browser_session": {
       "name": "browser_session",
       "schema": "",
@@ -4015,6 +4487,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "browser_id": {
+          "name": "browser_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "generation": {
           "name": "generation",
           "type": "text",
@@ -4026,13 +4504,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "profile_mode": {
-          "name": "profile_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'ephemeral'"
         },
         "state": {
           "name": "state",
@@ -4102,6 +4573,27 @@
         }
       },
       "indexes": {
+        "browser_session_resource_idx": {
+          "name": "browser_session_resource_idx",
+          "columns": [
+            {
+              "expression": "browser_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "closed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "browser_session_active_thread_idx": {
           "name": "browser_session_active_thread_idx",
           "columns": [
@@ -4168,6 +4660,23 @@
         }
       },
       "foreignKeys": {
+        "browser_session_resource_owner_fk": {
+          "name": "browser_session_resource_owner_fk",
+          "tableFrom": "browser_session",
+          "tableTo": "browser_resource",
+          "columnsFrom": [
+            "browser_id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id",
+            "bud_id",
+            "created_by_user_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "browser_session_thread_owner_fk": {
           "name": "browser_session_thread_owner_fk",
           "tableFrom": "browser_session",
@@ -4187,12 +4696,27 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "browser_session_context_key": {
+          "name": "browser_session_context_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "thread_id",
+            "bud_id",
+            "created_by_user_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
+        "browser_session_linked_check": {
+          "name": "browser_session_linked_check",
+          "value": "\"browser_session\".\"closed_at\" is not null or \"browser_session\".\"browser_id\" is not null"
+        },
         "browser_session_state_check": {
           "name": "browser_session_state_check",
-          "value": "\"browser_session\".\"state\" in ('opening','ready','interrupted','closed') and \"browser_session\".\"desired_state\" in ('open','closed') and \"browser_session\".\"profile_mode\" = 'ephemeral'"
+          "value": "\"browser_session\".\"state\" in ('opening','ready','interrupted','closed') and \"browser_session\".\"desired_state\" in ('open','closed')"
         },
         "browser_session_counters_check": {
           "name": "browser_session_counters_check",

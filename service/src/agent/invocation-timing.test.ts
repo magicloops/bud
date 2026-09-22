@@ -58,8 +58,10 @@ test("durable execution timing excludes waits, survives recovery and publishes a
       await pool.query(`create table "${isolated}"."${tablename}" (like public."${tablename}" including all)`);
     }
     // Exercise the deploy migration against pre-change storage, including defaults.
-    await pool.query('alter table agent_invocation drop column work_duration_ms, drop column work_started_at');
-    await pool.query(readFileSync(new URL('../../drizzle/migrations/0043_redundant_raza.sql', import.meta.url), 'utf8'));
+    await pool.query(`drop table "${isolated}".browser_handoff, "${isolated}".browser_session, "${isolated}".browser_resource;
+      alter table agent_invocation drop column work_duration_ms, drop column work_started_at`);
+    await pool.query(readFileSync(new URL('../../drizzle/migrations/0039_bud_browser.sql', import.meta.url), 'utf8')
+      .replaceAll('"public".', `"${isolated}".`));
     const columns = await pool.query(`select column_default, is_nullable from information_schema.columns where table_schema=$1 and table_name='agent_invocation' and column_name in ('work_duration_ms','work_started_at')`, [isolated]);
     assert.equal(columns.rows.length, 2);
     assert.ok(columns.rows.every(row => row.column_default === null && row.is_nullable === 'YES'));
