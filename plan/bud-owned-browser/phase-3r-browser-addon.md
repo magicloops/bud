@@ -151,6 +151,28 @@ Risks and mitigations:
 - Not yet exercised: a release build (embedded helper from CI's `npm ci`),
   Ubuntu x64/arm64 managed install, and the interactive daemon restart prompt.
 
+## Review fixes (2026-09-22)
+
+Three findings from review of the implementation, all confirmed and fixed:
+
+- **Release pin check compared text against a rustfmt-reflowed file** and
+  failed on the committed `pins.rs`, which would have blocked every release
+  build. `scripts/browser-addon-pins.mjs --check` now parses the values out of
+  the committed file and compares them (versions, per-target URL and
+  executable, well-formed hash and size) without downloading anything; the
+  generator runs `rustfmt` on its output. `browser-addon-pins.test.mjs` covers
+  the render/parse round trip including a rustfmt reflow.
+- **`bud browser remove` could delete a profile Chrome was using.** `remove`
+  now refuses before touching anything when any profile's ownership lock is
+  held (`addon::profiles_in_use`, a non-blocking `flock` probe), with
+  guidance to `bud stop` and retry. Verified by holding the lock from another
+  process. Unit test acquires a real `Profile` and asserts detection and release.
+- **Relative `--browser`/`--node`/`--helper-dir` were persisted as given** and
+  broke daemon startup from another working directory. `prepare` now resolves
+  them to canonical absolute paths before probing and saving
+  (`addon::absolute_existing`), rejecting missing paths. Verified end to end
+  with relative overrides from the repo root and `status` from `/tmp`.
+
 ## Left after this phase (tracked)
 
 - Linux persistent profile remains gated on secure storage (Phase 3o).

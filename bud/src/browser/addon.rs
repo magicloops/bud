@@ -260,6 +260,39 @@ pub fn record_observed_version(base: &Path, version: &str) {
     }
 }
 
+/// Absolute, existing path for anything the manifest will persist. Relative
+/// `--browser`/`--node`/`--helper-dir` values are resolved against the current
+/// directory at prepare time, never re-resolved by the daemon later.
+pub fn absolute_existing(path: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(path).with_context(|| format!("{} does not exist", path.display()))
+}
+
+/// Profile directories whose ownership lock is currently held (a daemon has
+/// the profile open, so Chrome may be running from it).
+pub fn profiles_in_use(base: &Path) -> Vec<PathBuf> {
+    use std::os::unix::io::AsRawFd;
+    let mut held = Vec::new();
+    let Ok(entries) = std::fs::read_dir(profiles_dir(base)) else {
+        return held;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Ok(lock) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("bud.lock"))
+        else {
+            continue;
+        };
+        let busy = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
+        if busy {
+            held.push(dir);
+        }
+        // On success the lock is released when `lock` drops here.
+    }
+    held
+}
+
 // ---------------------------------------------------------------------------
 // Detection
 // ---------------------------------------------------------------------------
@@ -897,6 +930,42 @@ mod tests {
         assert_eq!(updated.browser.version, "Chrome/154.0.8037.0");
         assert_eq!(updated.browser.path, manifest.browser.path);
         assert_eq!(updated.node, manifest.node);
+    }
+
+    #[test]
+    fn relative_paths_are_persisted_absolute_and_missing_paths_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("node");
+        std::fs::write(&file, "x").unwrap();
+        let previous = std::env::current_dir().unwrap();
+        // The test process's cwd is shared; use a relative path rooted at the
+        // tempdir through its absolute parent instead of changing cwd.
+        let relative = PathBuf::from(format!(
+            "{}/../{}/node",
+            dir.path().display(),
+            dir.path().file_name().unwrap().to_string_lossy()
+        ));
+        let resolved = absolute_existing(&relative).unwrap();
+        assert!(resolved.is_absolute());
+        assert_eq!(resolved, std::fs::canonicalize(&file).unwrap());
+        assert!(absolute_existing(Path::new("definitely/missing/node")).is_err());
+        assert_eq!(std::env::current_dir().unwrap(), previous);
+    }
+
+    #[test]
+    fn profiles_in_use_reports_held_ownership_locks_only() {
+        let base = tempfile::tempdir().unwrap();
+        assert!(profiles_in_use(base.path()).is_empty());
+        let profile =
+            super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
+                .unwrap();
+        let held = profiles_in_use(base.path());
+        assert_eq!(held, vec![profile.path.clone()]);
+        drop(profile);
+        assert!(
+            profiles_in_use(base.path()).is_empty(),
+            "released lock is not in use"
+        );
     }
 
     #[test]

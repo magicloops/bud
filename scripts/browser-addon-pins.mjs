@@ -10,7 +10,7 @@
 //
 // Usage:
 //   node scripts/browser-addon-pins.mjs            # download+hash, write pins.rs
-//   node scripts/browser-addon-pins.mjs --check    # verify pins.rs is current (no downloads)
+//   node scripts/browser-addon-pins.mjs --check    # verify pins.rs values match the helper pins (no downloads)
 //   node scripts/browser-addon-pins.mjs --no-hash  # write URLs with empty hashes (dev scaffolding)
 //
 // Every artifact is streamed and SHA-256 hashed; Node hashes are additionally
@@ -18,6 +18,7 @@
 // except the generated Rust source.
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,9 +121,72 @@ ${pins.browser.map(artifact).join("\n")}
 `;
 }
 
+/**
+ * Parse the values back out of a generated (and possibly rustfmt-reflowed)
+ * pins.rs. Comparing values rather than text keeps `--check` independent of
+ * formatting.
+ */
+export function parsePins(text) {
+  const constant = name => {
+    const match = text.match(new RegExp(`pub const ${name}: &str = "([^"]*)"`));
+    return match?.[1] ?? null;
+  };
+  const minMajor = text.match(/pub const BROWSER_MIN_MAJOR: u32 = (\d+)/);
+  const list = name => {
+    const start = text.indexOf(`pub const ${name}: &[Artifact] = &[`);
+    if (start === -1) return null;
+    const end = text.indexOf("];", start);
+    const body = text.slice(start, end);
+    const entries = [];
+    const entry = /Artifact\s*\{([\s\S]*?)\}/g;
+    let m;
+    while ((m = entry.exec(body))) {
+      const field = key => m[1].match(new RegExp(`${key}:\\s*"([^"]*)"`))?.[1] ?? null;
+      const size = m[1].match(/size:\s*(\d+)/);
+      entries.push({ target: field("target"), url: field("url"), sha256: field("sha256"), size: size ? Number(size[1]) : null, executable: field("executable") });
+    }
+    return entries;
+  };
+  return {
+    nodeVersion: constant("NODE_VERSION"),
+    playwrightCore: constant("PLAYWRIGHT_CORE_VERSION"),
+    cftVersion: constant("MANAGED_BROWSER_VERSION"),
+    minMajor: minMajor ? Number(minMajor[1]) : null,
+    node: list("NODE"),
+    browser: list("MANAGED_BROWSER"),
+  };
+}
+
+/** Differences between the committed pins and the expected values; empty when current. */
+export function pinsDrift(committed, expected) {
+  const drift = [];
+  for (const key of ["nodeVersion", "playwrightCore", "cftVersion", "minMajor"]) {
+    if (committed[key] !== expected[key]) drift.push(`${key}: committed ${committed[key]}, expected ${expected[key]}`);
+  }
+  for (const list of ["node", "browser"]) {
+    const have = committed[list] ?? [];
+    for (const want of expected[list]) {
+      const got = have.find(a => a.target === want.target);
+      if (!got) { drift.push(`${list}: missing target ${want.target}`); continue; }
+      if (got.url !== want.url) drift.push(`${list} ${want.target}: url ${got.url} != ${want.url}`);
+      if (got.executable !== want.executable) drift.push(`${list} ${want.target}: executable ${got.executable} != ${want.executable}`);
+      if (!/^[0-9a-f]{64}$/.test(got.sha256 ?? "")) drift.push(`${list} ${want.target}: sha256 missing or malformed`);
+      if (!(got.size > 0)) drift.push(`${list} ${want.target}: size missing`);
+    }
+  }
+  return drift;
+}
+
 async function main() {
   const args = new Set(process.argv.slice(2));
   const pins = await readPins();
+  if (args.has("--check")) {
+    const current = await readFile(outFile, "utf8").catch(() => "");
+    const drift = pinsDrift(parsePins(current), pins);
+    if (drift.length) { console.error("pins.rs is out of date; run node scripts/browser-addon-pins.mjs\n  " + drift.join("\n  ")); process.exit(1); }
+    console.log("pins.rs is current");
+    return;
+  }
   if (!args.has("--no-hash")) {
     const shasums = await nodeShasums(pins.nodeVersion);
     for (const list of [pins.node, pins.browser]) {
@@ -134,16 +198,10 @@ async function main() {
       }
     }
   }
-  const rendered = renderPins(pins);
-  if (args.has("--check")) {
-    const current = await readFile(outFile, "utf8").catch(() => "");
-    const strip = s => s.replace(/sha256: "[0-9a-f]*", size: \d+/g, "");
-    if (strip(current) !== strip(rendered)) { console.error("pins.rs is out of date; run node scripts/browser-addon-pins.mjs"); process.exit(1); }
-    console.log("pins.rs versions are current");
-    return;
-  }
-  await writeFile(outFile, rendered);
-  console.log(`wrote ${path.relative(repoRoot, outFile)}`);
+  await writeFile(outFile, renderPins(pins));
+  // Keep the checked-in file rustfmt-stable so `cargo fmt --check` never fights it.
+  const fmt = spawnSync("rustfmt", ["--edition", "2021", outFile], { stdio: "ignore" });
+  console.log(`wrote ${path.relative(repoRoot, outFile)}${fmt.status === 0 ? " (rustfmt applied)" : ""}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

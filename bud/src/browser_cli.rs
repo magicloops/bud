@@ -26,7 +26,7 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
 
     // 1. Browser: explicit path, system detection, or managed plan B.
     let mut browser = if let Some(path) = &opts.browser {
-        let path = PathBuf::from(shellexpand::tilde(path).into_owned());
+        let path = addon::absolute_existing(&PathBuf::from(shellexpand::tilde(path).into_owned()))?;
         if !path.is_file() {
             bail!("{} is not a file", path.display());
         }
@@ -79,7 +79,8 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
     println!("Installing managed runtime ...");
     let node = match &opts.node {
         Some(path) => {
-            let path = PathBuf::from(shellexpand::tilde(path).into_owned());
+            let path =
+                addon::absolute_existing(&PathBuf::from(shellexpand::tilde(path).into_owned()))?;
             if !path.is_file() {
                 bail!("{} is not a file", path.display());
             }
@@ -103,7 +104,8 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
     // 3. Helper.
     let helper = match &opts.helper_dir {
         Some(dir) => {
-            let dir = PathBuf::from(shellexpand::tilde(dir).into_owned());
+            let dir =
+                addon::absolute_existing(&PathBuf::from(shellexpand::tilde(dir).into_owned()))?;
             let record = addon::helper_from_dir(&dir)?;
             println!("  helper (dev override) {}", dir.display());
             record
@@ -267,6 +269,20 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
 
 pub fn remove(args: &BudArgs, opts: &BrowserRemoveArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
+    // A held profile lock means a daemon has the browser open, possibly running
+    // Chrome from the managed directory and writing to the profile. Never pull
+    // files out from under it.
+    let in_use = addon::profiles_in_use(&base);
+    if !in_use.is_empty() {
+        bail!(
+            "browser profile in use by a running daemon ({}); run `bud stop` or wait for the browser to close, then retry",
+            in_use
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     let removed_manifest = addon::remove_manifest(&base)?;
     println!(
         "{}",
