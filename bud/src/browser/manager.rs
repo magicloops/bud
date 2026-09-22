@@ -24,9 +24,6 @@ pub enum Action {
     ReopenPages {
         controller_id: String,
     },
-    Observe {
-        target_id: Option<String>,
-    },
     Capture {
         target_id: Option<String>,
         endpoint: String,
@@ -100,7 +97,6 @@ impl Action {
             Self::Open { .. } => "open",
             Self::NativeWindow { .. } => "native_window",
             Self::ReopenPages { .. } => "reopen_pages",
-            Self::Observe { .. } => "observe",
             Self::Capture { .. } => "capture",
             Self::Inspect { .. } => "inspect",
             Self::Navigate { .. } => "navigate",
@@ -769,7 +765,6 @@ impl BrowserManager {
                             request.command,
                             Action::Open { .. }
                                 | Action::Navigate { .. }
-                                | Action::Observe { .. }
                                 | Action::Inspect { .. }
                                 | Action::Click { .. }
                                 | Action::HumanInput { .. }
@@ -848,7 +843,6 @@ impl BrowserManager {
         };
         let refresh = match &request.command {
             Action::Open { .. }
-            | Action::Observe { .. }
             | Action::Capture { .. }
             | Action::Navigate { .. }
             | Action::Focus { .. }
@@ -1052,7 +1046,10 @@ impl BrowserManager {
                 // Empty inventory can be returned too; no DOM is required to
                 // release private authority. Contents never enter the ack.
                 if let Some(target) = target {
-                    browser.observe(target).await?;
+                    // Refresh the structured snapshot before authority returns.
+                    browser
+                        .inspect(target, json!({"operation":"snapshot","compact":true}))
+                        .await?;
                 } else {
                     entry.target = None;
                 }
@@ -1108,7 +1105,6 @@ impl BrowserManager {
         let targets = browser.targets().await?;
         let requested = match action {
             Action::Navigate { target_id, .. }
-            | Action::Observe { target_id }
             | Action::Inspect { target_id, .. }
             | Action::Capture { target_id, .. } => target_id.as_ref(),
             Action::ResizeViewport { target_id, .. } | Action::FitViewport { target_id, .. } => {
@@ -1156,9 +1152,6 @@ impl BrowserManager {
                 "scope":scope,"observation_id":observation_id,"reference":reference,"locator":locator,
                 "text":text,"delta_y":delta_y})).await?;
                 Ok(json!({"observation":data}))
-            }
-            Action::Observe { .. } => {
-                Ok(json!({"targets":targets, "observation":browser.observe(&target).await?}))
             }
             Action::Navigate { url, .. } => {
                 browser.navigate(&target, url).await?;
@@ -1291,7 +1284,6 @@ fn valid_action(action: &Action) -> bool {
             ..
         } => id(controller_id) && target(target_id),
         Action::ReopenPages { controller_id } => id(controller_id),
-        Action::Observe { target_id } => target(target_id),
         Action::Focus { reference } | Action::Click { reference } => id(reference),
         Action::HumanInput {
             controller_id,
@@ -1360,6 +1352,10 @@ fn valid_action(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    fn inspect_snapshot() -> Action {
+        serde_json::from_value(json!({"action":"inspect","operation":"snapshot"})).unwrap()
+    }
     use super::*;
 
     #[test]
@@ -1516,11 +1512,9 @@ mod tests {
             next.control_epoch = 2;
             next
         };
-        let observed = manager
-            .execute(request(2, Action::Observe { target_id: None }))
-            .await;
+        let observed = manager.execute(request(2, inspect_snapshot())).await;
         assert!(observed.ok);
-        let mut stale = request(3, Action::Observe { target_id: None });
+        let mut stale = request(3, inspect_snapshot());
         stale.control_epoch = 1;
         assert!(!manager.execute(stale).await.ok);
         let refresh = tokio::time::timeout(Duration::from_secs(1), socket.next())
@@ -1661,7 +1655,7 @@ mod tests {
             "revoked capture delivered pixels"
         );
         manager.connect("reconnected".into());
-        let mut observe = request(2, Action::Observe { target_id: None });
+        let mut observe = request(2, inspect_snapshot());
         observe.device_session_id = "reconnected".into();
         assert!(manager.execute(observe.clone()).await.ok);
         observe.sequence = 3;
@@ -1742,9 +1736,7 @@ mod tests {
                 .await;
             assert_eq!(rejected.error, Some("browser_control_expired"));
         }
-        let blocked = manager
-            .execute(request(4, Action::Observe { target_id: None }))
-            .await;
+        let blocked = manager.execute(request(4, inspect_snapshot())).await;
         assert_eq!(blocked.error, Some("browser_private_or_paused"));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ticket = "test-ticket-012345678901234567890123456789";
@@ -1861,7 +1853,7 @@ mod tests {
                 .await
                 .ok
         );
-        let mut observe = request(10, Action::Observe { target_id: None });
+        let mut observe = request(10, inspect_snapshot());
         observe.control_epoch = 5;
         observe.browser_epoch = 5;
         assert!(manager.execute(observe).await.ok);
@@ -1887,11 +1879,9 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.abort();
-        let observed = manager
-            .execute(request(2, Action::Observe { target_id: None }))
-            .await;
+        let observed = manager.execute(request(2, inspect_snapshot())).await;
         let observation = &observed.data["observation"];
-        let reference = observation["elements"][0]["reference"]
+        let reference = observation["nodes"][0]["reference"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1913,9 +1903,7 @@ mod tests {
                 .error,
             Some("browser_stale_reference")
         );
-        let fresh = manager
-            .execute(request(4, Action::Observe { target_id: None }))
-            .await;
+        let fresh = manager.execute(request(4, inspect_snapshot())).await;
         assert!(fresh.ok, "{fresh:?}");
         // Reapplying identical geometry doesn't invalidate the fresh observation.
         assert!(manager.execute(fit.clone()).await.ok);
@@ -1987,20 +1975,13 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
         server.abort();
-        let first = manager
-            .execute(request(2, Action::Observe { target_id: None }))
-            .await;
+        let first = manager.execute(request(2, inspect_snapshot())).await;
         assert!(first.ok, "{first:?}");
-        let reference = first.data["observation"]["elements"][0]["reference"]
+        let reference = first.data["observation"]["nodes"][0]["reference"]
             .as_str()
             .unwrap()
             .to_owned();
-        assert!(
-            manager
-                .execute(request(3, Action::Observe { target_id: None }))
-                .await
-                .ok
-        );
+        assert!(manager.execute(request(3, inspect_snapshot())).await.ok);
         assert_eq!(
             manager
                 .execute(request(4, Action::Click { reference }))
@@ -2025,10 +2006,7 @@ mod tests {
         });
         assert_eq!(result.outcome, "unknown");
         assert_eq!(
-            manager
-                .execute(request(6, Action::Observe { target_id: None }))
-                .await
-                .error,
+            manager.execute(request(6, inspect_snapshot())).await.error,
             Some("browser_interrupted")
         );
         let mut pause = request(
@@ -2267,7 +2245,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .execute(workspace("b", 2, 3, Action::Observe { target_id: None }))
+                .execute(workspace("b", 2, 3, inspect_snapshot()))
                 .await
                 .error,
             Some("browser_private_or_paused")
@@ -2375,7 +2353,7 @@ mod tests {
             manager.execute(open.clone()).await.error,
             Some("browser_stale_request")
         );
-        let mut foreign = request(2, Action::Observe { target_id: None });
+        let mut foreign = request(2, inspect_snapshot());
         foreign.owner_user_id = "bob".into();
         assert_eq!(
             manager.execute(foreign).await.error,
@@ -2397,13 +2375,10 @@ mod tests {
         manager.disconnect();
         manager.connect("reconnected".into());
         assert_eq!(
-            manager
-                .execute(request(2, Action::Observe { target_id: None }))
-                .await
-                .error,
+            manager.execute(request(2, inspect_snapshot())).await.error,
             Some("browser_stale_connection")
         );
-        let mut observe = request(2, Action::Observe { target_id: None });
+        let mut observe = request(2, inspect_snapshot());
         observe.device_session_id = "reconnected".into();
         let observed = manager.execute(observe.clone()).await;
         assert!(observed.ok, "{observed:?}");

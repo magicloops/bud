@@ -50,6 +50,7 @@ const capability = {
   boot_id: "boot",
   managed: true,
   profile_mode: "persistent",
+  semantic_observations: true,
 };
 function fixture() {
   const tracker = {

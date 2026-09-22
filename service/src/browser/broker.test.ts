@@ -10,7 +10,7 @@ import { receiveBrowserResult } from './transport.js';
 test('new observations are capability gated; legacy default and new default use supported forms', async t => {
   const budId = randomUUID();
   const commands: Record<string, unknown>[] = [];
-  const capability = {version:1, available:true, boot_id:'boot', managed:true, profile_mode:'persistent'};
+  const capability = {version:1, available:true, boot_id:'boot', managed:true, profile_mode:'persistent', semantic_observations:true};
   const tracker = {
     budId, sessionId:'device', browserCapability:capability,
     socket:{readyState:1, OPEN:1, send(bytes:Buffer) {
@@ -29,19 +29,19 @@ test('new observations are capability gated; legacy default and new default use 
   } as unknown as BrowserRepository;
   const broker = new BrowserBroker(repository);
   const context = {budId,threadId:'thread',ownerUserId:'alice',turnId:'turn',callId:'call',signal:new AbortController().signal};
+  // A daemon without structured observations is not a browser carrier at all.
+  tracker.browserCapability = {...capability, semantic_observations: undefined};
+  assert.equal((await broker.execute(context,'browser_observe',{})).error,'browser_unavailable');
+  assert.equal(commands.length,0);
+  tracker.browserCapability = capability;
   assert.equal((await broker.execute(context,'browser_observe',{})).ok,true);
-  assert.equal(commands[0].action,'observe');
-  assert.equal((await broker.execute(context,'browser_observe',{mode:'visible_dom'})).error,'browser_representation_unsupported');
-  assert.equal((await broker.execute(context,'browser_act',{action:'fill',locator:{role:'textbox',name:'Search'},text:'test'})).error,'browser_representation_unsupported');
+  assert.deepEqual(commands[0],{action:'inspect',operation:'snapshot'});
   assert.equal((await broker.execute(context,'browser_observe',{mode:'screenshot'})).error,'browser_image_unsupported');
-  assert.equal((await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'})).error,'browser_representation_unsupported');
-  assert.equal(commands.length,1);
-  tracker.browserCapability = {...capability,semantic_observations:true};
-  assert.equal((await broker.execute(context,'browser_observe',{})).ok,true);
-  assert.deepEqual(commands[1],{action:'inspect',operation:'snapshot'});
   assert.equal((await broker.execute(context,'browser_observe',{mode:'page_info'})).ok,true);
-  assert.deepEqual(commands[2],{action:'inspect',operation:'page_info'});
-  tracker.browserCapability = {...capability,semantic_observations:true,compact_observations:true};
+  assert.deepEqual(commands[1],{action:'inspect',operation:'page_info'});
+  assert.equal((await broker.execute(context,'browser_act',{action:'fill',locator:{role:'textbox',name:'Search'},text:'test'})).ok,true);
+  assert.deepEqual(commands[2],{action:'inspect',operation:'fill',locator:{role:'textbox',name:'Search'},text:'test'});
+  tracker.browserCapability = {...capability,compact_observations:true};
   await broker.execute(context,'browser_observe',{});
   assert.deepEqual(commands[3],{action:'inspect',operation:'snapshot',compact:true});
   await broker.execute(context,'browser_observe',{mode:'visible_dom',continuation:'short:10'});

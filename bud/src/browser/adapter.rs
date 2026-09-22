@@ -23,22 +23,6 @@ pub struct Target {
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Element {
-    pub reference: String,
-    pub role: String,
-    pub name: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Observation {
-    pub target_id: String,
-    pub document_id: String,
-    pub observation_id: u64,
-    pub elements: Vec<Element>,
-    pub truncated: bool,
-}
-
 struct Focus {
     target: String,
     document: String,
@@ -102,7 +86,6 @@ pub struct Browser {
     recovery: Arc<Mutex<super::recovery::Recovery>>,
     saved_pages: Option<super::recovery::Pages>,
     sessions: HashMap<String, String>,
-    observation_id: u64,
     focus: Option<Focus>,
     viewport: Option<Viewport>,
     viewport_id: Option<String>,
@@ -310,7 +293,6 @@ impl Browser {
             recovery,
             saved_pages: None,
             sessions: HashMap::new(),
-            observation_id: 0,
             focus: None,
             viewport: None,
             viewport_id: None,
@@ -685,68 +667,14 @@ impl Browser {
         Ok(result)
     }
 
-    // Legacy result shape only. Both service versions use the same semantic engine.
-    pub async fn observe(&mut self, target: &str) -> Result<Observation> {
-        let mut result = self
+    /// Test-only: nodes of a fresh structured snapshot (`inspect` is the only
+    /// observation path; the flat legacy `observe` result is gone).
+    #[cfg(test)]
+    pub(super) async fn snapshot_nodes(&mut self, target: &str) -> Result<Vec<serde_json::Value>> {
+        let result = self
             .inspect(target, json!({"operation":"snapshot"}))
             .await?;
-        let document = result["document_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        self.observation_id += 1;
-        let mut elements = Vec::new();
-        let mut bytes = 0;
-        let mut truncated = false;
-        for page in 0..8 {
-            for node in result["nodes"].as_array().into_iter().flatten() {
-                let role = node["role"].as_str().unwrap_or_default();
-                if matches!(role, "table" | "row" | "cell" | "generic" | "paragraph") {
-                    continue;
-                }
-                let Some(reference) = node["reference"].as_str() else {
-                    continue;
-                };
-                let element = Element {
-                    reference: reference.into(),
-                    role: role.into(),
-                    name: node["name"]
-                        .as_str()
-                        .or(node["text"].as_str())
-                        .unwrap_or_default()
-                        .into(),
-                };
-                bytes += serde_json::to_vec(&element)?.len();
-                if elements.len() == 256 || bytes > 64 * 1024 {
-                    truncated = true;
-                    break;
-                }
-                elements.push(element);
-            }
-            if truncated {
-                break;
-            }
-            let Some(cursor) = result["continuation"].as_str().map(str::to_owned) else {
-                break;
-            };
-            if page == 7 {
-                truncated = true;
-                break;
-            }
-            result = self
-                .inspect(
-                    target,
-                    json!({"operation":"snapshot","continuation":cursor}),
-                )
-                .await?;
-        }
-        Ok(Observation {
-            target_id: target.into(),
-            document_id: document,
-            observation_id: self.observation_id,
-            elements,
-            truncated,
-        })
+        Ok(result["nodes"].as_array().cloned().unwrap_or_default())
     }
 
     pub async fn focus(&mut self, reference: &str) -> Result<()> {
@@ -1471,7 +1399,6 @@ impl Browser {
             recovery: self.recovery.clone(),
             saved_pages: self.recovery.lock().unwrap().get(id),
             sessions: HashMap::new(),
-            observation_id: 0,
             focus: None,
             viewport: None,
             viewport_id: None,

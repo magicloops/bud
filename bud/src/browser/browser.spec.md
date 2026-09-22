@@ -64,10 +64,11 @@ work, private input and fitting) wait at most four seconds for the FIFO serial
 CDP lock. Expired requests reject before page access after waiting.
 Requests expire within 45 seconds (service sends at most 30 seconds,
 limited by the invocation lease). Closed identities remain as 45-second tombstones.
-At most 128 identities, 16 returned targets; legacy observations adapt the same
-semantic engine to 256 elements/64 KiB. New observations paginate a 2 MiB retained
-snapshot. Negotiated compact observations have a 32 KiB complete helper budget;
-legacy consumers retain 24 KiB node pages plus text. URLs 2048 bytes, input 8192 bytes.
+At most 128 identities, 16 returned targets. Structured observations (`inspect`)
+are the only observation path: they paginate a 2 MiB retained snapshot, compact
+observations have a 32 KiB complete helper budget and full-node pages are 24 KiB
+plus text. The flat legacy `observe` command and its 256-element result were
+removed once nothing sent them (Phase 3t follow-up). URLs 2048 bytes, input 8192 bytes.
 Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
 

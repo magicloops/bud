@@ -60,12 +60,11 @@ async fn live_private_capture_input_and_stale_frame_guard() {
     browser.navigate(&target, &url).await.unwrap();
     for _ in 0..30 {
         if browser
-            .observe(&target)
+            .snapshot_nodes(&target)
             .await
             .unwrap()
-            .elements
             .iter()
-            .any(|e| e.name == "Test password")
+            .any(|n| n["name"] == "Test password")
         {
             break;
         }
@@ -109,7 +108,11 @@ async fn live_private_capture_input_and_stale_frame_guard() {
         .await
         .unwrap();
     assert_eq!(result["result"]["value"], "fake-秘密-123");
-    let observation = serde_json::to_string(&browser.observe(&target).await.unwrap()).unwrap();
+    let observation = browser
+        .inspect(&target, json!({"operation":"snapshot"}))
+        .await
+        .unwrap()
+        .to_string();
     assert!(!observation.contains("fake-"));
     let resized = browser
         .resize_viewport(&target, document, 640, 480)
@@ -466,28 +469,25 @@ async fn live_table_observation_reads_story_links_in_order() {
         )
         .await
         .unwrap();
-    let observation = browser.observe(&target).await.unwrap();
-    let links: Vec<_> = observation
-        .elements
-        .iter()
-        .filter(|e| e.role == "link")
-        .collect();
+    let nodes = browser.snapshot_nodes(&target).await.unwrap();
+    let links: Vec<_> = nodes.iter().filter(|n| n["role"] == "link").collect();
     assert_eq!(
-        links.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+        links
+            .iter()
+            .map(|n| n["name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
         (1..=30)
             .map(|i| format!("Story {i}"))
             .chain(["Footer".into()])
             .collect::<Vec<_>>()
     );
-    assert!(!observation.truncated);
-    assert!(observation
-        .elements
+    assert!(nodes
         .iter()
-        .any(|e| e.role == "button" && e.name.is_empty()));
-    assert!(!serde_json::to_string(&observation)
+        .any(|n| n["role"] == "button" && n["name"].as_str().unwrap_or_default().is_empty()));
+    assert!(!serde_json::to_string(&nodes)
         .unwrap()
         .contains("synthetic-secret"));
-    let reference = links[15].reference.clone();
+    let reference = links[15]["reference"].as_str().unwrap().to_owned();
     browser.click(&reference).await.unwrap();
     let location = browser
         .cdp
@@ -499,7 +499,7 @@ async fn live_table_observation_reads_story_links_in_order() {
         .await
         .unwrap();
     assert_eq!(location["result"]["value"], "#story16");
-    browser.observe(&target).await.unwrap();
+    browser.snapshot_nodes(&target).await.unwrap();
     assert!(browser.click(&reference).await.is_err());
     let html = "<button>Example</button>".repeat(400);
     browser
@@ -511,10 +511,13 @@ async fn live_table_observation_reads_story_links_in_order() {
         )
         .await
         .unwrap();
-    let limited = browser.observe(&target).await.unwrap();
-    assert!(limited.truncated);
-    assert!(limited.elements.len() <= 256);
-    assert!(serde_json::to_vec(&limited.elements).unwrap().len() <= 64 * 1024);
+    // Oversized pages paginate through a continuation instead of truncating silently.
+    let limited = browser
+        .inspect(&target, json!({"operation":"snapshot"}))
+        .await
+        .unwrap();
+    assert!(limited["continuation"].is_string());
+    assert!(limited["nodes"].as_array().unwrap().len() < 400);
     browser.close().await.unwrap();
 }
 
@@ -549,7 +552,7 @@ async fn minimized_windows_preserve_capture_and_private_input() {
         .await
         .unwrap();
     let window = browser.window_id(&target).await.unwrap();
-    browser.observe(&target).await.unwrap();
+    browser.snapshot_nodes(&target).await.unwrap();
     let before = browser.capture(&target).await.unwrap();
     browser
         .inspect(
@@ -710,7 +713,7 @@ async fn live_screenshot_timeout_recovers_without_recovering_commands() {
     assert!(error.is::<tokio::time::error::Elapsed>());
     assert!(!browser.interrupted(), "capture must not poison commands");
     browser.version().await.unwrap();
-    browser.observe(&target).await.unwrap();
+    browser.snapshot_nodes(&target).await.unwrap();
     let recovered = browser.capture(&target).await.unwrap();
     assert_eq!(recovered["document_id"], initial["document_id"]);
     assert!(!recovered["image"].as_str().unwrap().is_empty());
@@ -857,12 +860,11 @@ async fn live_private_typing_into_email_input() {
     browser.navigate(&target, &url).await.unwrap();
     for _ in 0..30 {
         if browser
-            .observe(&target)
+            .snapshot_nodes(&target)
             .await
             .unwrap()
-            .elements
             .iter()
-            .any(|e| e.name == "Email")
+            .any(|n| n["name"] == "Email")
         {
             break;
         }

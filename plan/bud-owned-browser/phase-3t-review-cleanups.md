@@ -1,6 +1,6 @@
 # Phase 3t: Review cleanups (spec drift, lint, dead code)
 
-Status: implemented locally except the legacy-adapter removal (decided: deferred, see notes) and a prose-string formatting pass. Updated 2026-09-21.
+Status: implemented locally, including the legacy `observe` removal (2026-09-22); only a prose-string formatting pass remains. Updated 2026-09-22.
 
 ## Context
 
@@ -114,8 +114,8 @@ requires spec parity, so this closes the branch's documentation debt.
   and `BrowserSession` were **not** collapsed: `Session` is the raw
   `browser_session` row, `BrowserSession` is the session/resource join with
   different columns.
-- Item 15, decision: **keep the legacy `observe` action for now, remove in a
-  follow-up.** The daemon uses `Browser::observe` internally at
+- Item 15, resolved 2026-09-22: **the legacy `observe` action is removed.**
+  (Earlier decision, kept for the record: keep for now, remove in a follow-up.) The daemon uses `Browser::observe` internally at
   `PrepareReturn` to refresh the semantic snapshot, `Action::Observe` is used
   by manager tests, and service repository tests use `{action:"observe"}` as a
   generic command shape. The service never sends it to a current daemon
@@ -124,6 +124,13 @@ requires spec parity, so this closes the branch's documentation debt.
   delete `Action::Observe`, `Observation`/`Element`, and the service's
   non-semantic mapping in `broker.ts`, and require `semantic_observations` in
   the capability schema.
+  Done: `PrepareReturn` refreshes through a compact `inspect` snapshot;
+  `Action::Observe`, `Browser::observe`, `Observation`/`Element` and the
+  per-handle observation counter are gone; live fixtures read structured
+  `nodes` through a test-only `snapshot_nodes` helper; the service capability
+  schema requires `semantic_observations:true`, the broker's non-semantic
+  mapping is deleted, and repository/continuation fixtures send `inspect`.
+  proto.md records the removal.
 - Item 16: twenty mechanically splittable long lines were wrapped; no Prettier
   config was added. Remaining long lines are prose string literals
   (`browser-tools.ts` tool descriptions, the pause guidance in

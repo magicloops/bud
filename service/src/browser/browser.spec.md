@@ -224,9 +224,10 @@ epoch and invalidates old proofs. See [recovery plan](../../../plan/bud-owned-br
 
 ## Phase 3d agent observations
 
-`broker.ts` lowers requested observations and semantic actions to `inspect` only
-with `semantic_observations`; old peers retain plain observe or receive explicit
-unsupported. `agent_capture` and model vision support gate screenshot requests.
+`broker.ts` lowers every observation and semantic action to `inspect`; the
+capability schema requires `semantic_observations:true`, so a daemon without it
+is not a browser carrier and the flat `observe` command no longer exists
+(Phase 3t follow-up, 2026-09-22). `agent_capture` and model vision support gate screenshot requests.
 
 `agent-capture.ts` issues one-use, request-deadline upload tickets bound to the
 live carrier/invocation/session/epoch/owner. POST `/api/browser/captures` accepts
@@ -283,8 +284,7 @@ negotiation; agent observation-budget tests cover final payload size and replay.
 ## Identity-qualified reference clicks
 
 The broker routes click + reference + target_id + observation_id through existing
-semantic inspect, gated by semantic_observations. Legacy bare-reference clicks
-retain their original command. No identity fields are discarded, no failed
+semantic inspect. Bare-reference clicks retain their original command. No identity fields are discarded, no failed
 mutation is replayed, and unsupported peers reject before dispatch. Broker tests
 cover both forms and the capability boundary.
 

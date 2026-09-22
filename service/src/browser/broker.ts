@@ -54,12 +54,11 @@ export class BrowserBroker implements BrowserAgentBackend {
     }
     const extended = tool === "browser_observe" && Object.keys(args).some(k => k !== "target_id") ||
       tool === "browser_act" && (args.locator || args.action === "click" && args.reference && args.observation_id || ["fill", "scroll"].includes(String(args.action)));
-    if (extended && !carrier.semanticObservations)
-      return { ok: false, outcome: "rejected", error: "browser_representation_unsupported" };
-    const command: Record<string, unknown> = carrier.semanticObservations && (tool === "browser_observe" || extended)
+    // Structured observations are the only observation path; the capability
+    // schema requires semantic_observations, so no flat "observe" command exists.
+    const command: Record<string, unknown> = tool === "browser_observe" || extended
       ? { ...args, action: "inspect", operation: tool === "browser_observe" ? args.mode ?? "snapshot" : args.action }
-      :
-      tool === "browser_act"
+      : tool === "browser_act"
         ? args
         : { action: tool.replace("browser_", ""), ...args };
     delete command.mode;

@@ -241,7 +241,10 @@ async fn native_tab_close_and_broken_channel_allow_explicit_ensure_without_adopt
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(a.targets().await.unwrap().is_empty());
-    assert!(a.observe(&old).await.is_err());
+    assert!(a
+        .inspect(&old, json!({"operation":"snapshot"}))
+        .await
+        .is_err());
     let replacement = a.ensure_page(Some(&old)).await.unwrap();
     assert_ne!(replacement, old);
     assert_eq!(a.ensure_page(None).await.unwrap(), replacement);

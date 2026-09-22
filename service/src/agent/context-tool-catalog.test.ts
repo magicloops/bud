@@ -12,7 +12,7 @@ test("browser catalog is available for durable execution and idle accounting wit
   const budId = randomUUID();
   sessions.set(budId, {
     budId, sessionId: "device",
-    browserCapability: { version: 1, available: true, boot_id: "boot", managed: true, profile_mode: "persistent" },
+    browserCapability: { version: 1, available: true, boot_id: "boot", managed: true, profile_mode: "persistent", semantic_observations: true },
     socket: { readyState: 1, OPEN: 1, send() { assert.fail("catalog lookup must not dispatch"); } },
   } as unknown as SessionTracker);
   t.after(() => sessions.delete(budId));

@@ -3560,3 +3560,15 @@ sections where they conflict. See
   operation-driven mode as well as continuous mode; there the service's
   three-second native pings count as traffic, so an idle negotiated socket
   survives without capturing.
+
+## Removal of the flat `observe` command (Phase 3t follow-up)
+
+`capabilities.browser.semantic_observations` is now required (`true`) for a
+daemon to be treated as a browser carrier; a hello without it makes the
+browser capability unavailable rather than falling back. Consequently the
+pre-Phase-3d `browser_command` variant `{action:"observe", target_id?}` and its
+flat result `{targets, observation:{target_id, document_id, observation_id,
+elements:[{reference, role, name}], truncated}}` no longer exist on either
+side. All observations use `{action:"inspect", operation, ...}` as documented
+under Phase 3d/3f; the daemon rejects `observe` as an unknown action. This is a
+coordinated daemon/service change with no mixed-version support.

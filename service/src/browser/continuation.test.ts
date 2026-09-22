@@ -143,7 +143,7 @@ test(
         await repo.recordAction(lease,callId,"browser_observe");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
-          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"observe"}),BrowserToolWait);
+          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"inspect",operation:"snapshot"}),BrowserToolWait);
         assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
       }
       const handoff = returnControl ? null : await controls.requestAgent({

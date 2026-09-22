@@ -94,7 +94,7 @@ test(
     );
     await repo.complete(r, { ok: true, outcome: "completed" });
     const second = await repo.prepare(await next(), "boot", {
-      action: "observe",
+      action: "inspect", operation: "snapshot",
     });
     assert.equal(second.browser_color, undefined);
     assert.equal(second.session_id, r.session_id);
@@ -113,7 +113,7 @@ test(
     assert.equal(afterBusy.pending_until, null);
     for (const key of ["id", "generation", "control_epoch", "control_state", "private_content", "revision", "closed_at"])
       assert.deepEqual(afterBusy[key], beforeBusy[key]);
-    const afterRejection = await repo.prepare(await next(), "boot", { action:"observe" });
+    const afterRejection = await repo.prepare(await next(), "boot", { action: "inspect", operation: "snapshot" });
     assert.equal(afterRejection.session_id, busy.session_id);
     await repo.complete(afterRejection, { ok:false, outcome:"unknown", error:"browser_busy" });
     assert.equal((await pool.query("select state from browser_session where id=$1", [busy.session_id])).rows[0].state, "interrupted");
@@ -149,7 +149,7 @@ test(
     assert.equal(await repo.evidenceAllowed(second), false);
     for (const controlState of ["paused", "human_private", "resume_pending"]) {
       await pool.query("update browser_resource set control_state=$1,private_content=true,control_session_id=$2 where id=(select browser_id from browser_session where id=$2)", [controlState, r.session_id]);
-      for (const action of ["open", "observe", "click", "close"]) {
+      for (const action of ["open", "inspect", "click", "close"]) {
         await assert.rejects(repo.prepare(await next(), "boot", { action }), /private_or_paused/);
       }
       assert.equal((await controls.get("alice", r.session_id)).boot_id, "boot");
@@ -200,12 +200,12 @@ test(
     const recovered = await new BrowserRepository(pool).prepare(
       await next(),
       "boot",
-      { action: "observe" },
+      { action: "inspect", operation: "snapshot" },
     );
     assert.equal(recovered.session_id, r.session_id);
     await repo.complete(recovered, { ok: true, outcome: "completed" });
     await assert.rejects(
-      repo.prepare(await next(), "new-boot", { action: "observe" }),
+      repo.prepare(await next(), "new-boot", { action: "inspect", operation: "snapshot" }),
       /recovery_required/,
     );
     const fresh = await repo.prepare(await next(), "new-boot", { action: "open" });
@@ -257,7 +257,7 @@ test(
     );
     await pool.query("update thread set deleted_at=now()");
     await assert.rejects(
-      repo.prepare(await next(), "boot", { action: "observe" }),
+      repo.prepare(await next(), "boot", { action: "inspect", operation: "snapshot" }),
       /authority_lost/,
     );
     const candidates = await repo.cleanupCandidates();
@@ -306,7 +306,7 @@ test(
     } as unknown as Pool;
     const staleCall: BrowserAgentContext = { ...context, threadId: otherThread, turnId: "turn2",
       invocation: { id: "inv2", fence: 1, workerId: "worker" }, callId: "stale-call" };
-    await assert.rejects(new BrowserRepository(observed).prepare(staleCall, "boot", { action: "observe" }), /interrupted_reopen_required/);
+    await assert.rejects(new BrowserRepository(observed).prepare(staleCall, "boot", { action: "inspect", operation: "snapshot" }), /interrupted_reopen_required/);
     assert.ok(statements.includes("commit"));
     assert.equal(statements.filter((s) => s.startsWith("rollback")).length, 0, "rollback after commit");
     assert.notEqual(
