@@ -210,7 +210,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     absent = true
     await poll()
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), false)
-    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Close browser and stop run')), false)
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Close this thread’s tabs')), false)
     assert.equal(requests.every(method => method === 'GET'), true)
   } finally {
     if (view) await act(async () => view.unmount())

@@ -126,9 +126,6 @@ test(
     const handoff = await controls.requestAgent({
       ...handoffCall,
       clientId: randomUUID(),
-      llmCallId: "llm",
-      startedAt: new Date(),
-      remainingCalls: [],
       directive: {
         type: "tool_call",
         tool: "browser_request_handoff",
@@ -185,12 +182,7 @@ test(
     );
     const finished = await controls.prepare("alice", r.session_id, "boot", returning.session.revision,
       "finish", { action:"control", operation:"finish_return" }, "resume_pending");
-    await controls.returned(
-      "alice",
-      r.session_id,
-      finished.session.revision,
-      "returned",
-    );
+    await controls.returned("alice", r.session_id, finished.session.revision);
     assert.equal(
       (
         await pool.query("select status from browser_handoff where id=$1", [
@@ -200,12 +192,7 @@ test(
       "returned",
     );
     await assert.rejects(
-      controls.returned(
-        "alice",
-        r.session_id,
-        returning.session.revision,
-        "duplicate",
-      ),
+      controls.returned("alice", r.session_id, returning.session.revision),
       /revision_conflict/,
     );
     await pool.query("update agent_invocation set status='running'");

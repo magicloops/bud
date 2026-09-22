@@ -164,9 +164,6 @@ test(
               args: { reason: "Sign in" },
             },
             clientId,
-            llmCallId: llmId,
-            startedAt: new Date(),
-            remainingCalls: [],
           });
       let paused = await controls.prepare(
         "alice",
@@ -255,12 +252,7 @@ test(
       );
       returning = await controls.prepare("alice", sessionId, "boot", returning.session.revision,
         "finish", { action: "control", operation: "finish_return" }, "resume_pending");
-      await controls.returned(
-        "alice",
-        sessionId,
-        returning.session.revision,
-        "done",
-      );
+      await controls.returned("alice", sessionId, returning.session.revision);
       // Return does not run two model loops in the same conversation.
       assert.equal(await repo.claim("while-chatting", "alice"), null);
       await repo.finish(chatting, "succeeded", "done");

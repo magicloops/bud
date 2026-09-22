@@ -10,7 +10,12 @@ export function deferredToolResult(block: Extract<CanonicalContentBlock, { type:
   };
   return {
     ...block.input, args: block.input, tool: names[block.name] ?? block.name, call_id: block.id,
-    ok: false, error: waitingFor === "browser" ? "not_executed_due_to_browser_handoff" : waitingFor === "automation" ? "not_executed_due_to_automation_review" : waitingFor === "permission" ? "not_executed_due_to_permission" : "not_executed_due_to_question", retryable: true,
+    ok: false,
+    error: waitingFor === "browser" ? "not_executed_due_to_browser_handoff"
+      : waitingFor === "automation" ? "not_executed_due_to_automation_review"
+      : waitingFor === "permission" ? "not_executed_due_to_permission"
+      : "not_executed_due_to_question",
+    retryable: true,
     ...(waitingFor === "browser" ? {
       executed: false,
       handoff: { status: "returned", control_state: "agent", private_content: false },

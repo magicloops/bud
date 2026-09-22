@@ -86,8 +86,11 @@ trackers and codecs, shared carrier policy. See [daemon browser](../../../bud/sr
 ## Private viewer contract
 
 `GET /api/threads/:thread_id/browser-sessions` and `GET /api/browser/sessions/:id`
-scope inventory in SQL. POST `/:id/control` accepts acquire/renew/release/return/
-close with a viewer UUID and observed revision. POST `/:id/input` accepts bounded
+scope inventory in SQL. POST `/:id/control` accepts one `operation` (acquire,
+renew, release, return, close, recover with `recovery_ticket`, reopen, show_window
+or hide_window with optional `target_id`) with a viewer UUID and observed
+revision. This is the complete operation list; later sections describe the
+semantics of recover, reopen and the window operations. POST `/:id/input` accepts bounded
 frame/document/focus-bound gestures. `/api/browser/sessions/:id/media` authorizes
 before upgrade, then binds the viewer to the live Better Auth session. Writes and
 upgrades require an allowed Origin. Signed-out requests return 401, foreign IDs
@@ -237,6 +240,10 @@ files, seven-day TTL, 128-image capacity, 1.4M base64 chars each. Configure
 the development default is `.bud-data/browser-images`. No schema migration.
 Expired files are cleaned during writes; expired/missing references never recapture.
 Single service instance owns write serialization, matching the browser relay.
+`image-references.ts` is the pure (no I/O) selection of which `browser_observe`
+screenshot references hydrate (newest eight successful, `HYDRATED_IMAGE_LIMIT`)
+and defines `IMAGE_TOKEN_ESTIMATE`; hydration and context accounting share it so
+the estimator counts exactly the images the provider receives (Phase 3s D4).
 
 Before provider invocation, authenticated hydration appends actual canonical image
 blocks alongside paired tool results, limited to eight newest screenshots. JSON,
@@ -268,8 +275,8 @@ multiple waits, targeted cancellation and same-thread follow-up availability.
 The carrier parses `compact_observations`; only capable semantic peers receive
 `inspect.compact:true` for snapshot/visible_dom. Older peers get the existing
 command. The executor preserves compact output in live results and transcript
-replay, rejecting a complete serialized compact tool payload above 12 KiB with
-scoping guidance. Snapshot text and visible-DOM nodes are mutually exclusive;
+replay, rejecting a complete serialized compact tool payload above 36 KiB (the
+helper's own budget is 32 KiB) with scoping guidance. Snapshot text and visible-DOM nodes are mutually exclusive;
 image paths and screenshot hydration are unchanged. Broker tests cover capability
 negotiation; agent observation-budget tests cover final payload size and replay.
 

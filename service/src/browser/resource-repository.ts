@@ -96,7 +96,9 @@ export class BrowserResourceRepository {
         and s.id=h.session_id and t.thread_id=s.thread_id and s.browser_id=$1
         and h.created_by_user_id=$2 and i.created_by_user_id=$2 and s.created_by_user_id=$2
         and t.created_by_user_id=$2 and h.status='pending'`, [resource.id, resource.created_by_user_id]);
-      await client.query(`update browser_handoff h set status=case when s.closed_at is null and s.desired_state='open' and t.deleted_at is null then 'returned' else 'canceled' end,returned_by_user_id=$2,resolved_at=now()
+      await client.query(`update browser_handoff h
+        set status=case when s.closed_at is null and s.desired_state='open' and t.deleted_at is null then 'returned' else 'canceled' end,
+        returned_by_user_id=$2,resolved_at=now()
         from browser_session s,thread t where s.id=h.session_id and t.thread_id=s.thread_id and t.created_by_user_id=$2 and s.browser_id=$1
         and h.created_by_user_id=$2 and h.invocation_id is null and h.status='pending'`,
         [resource.id, resource.created_by_user_id]);

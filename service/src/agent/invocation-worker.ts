@@ -5,7 +5,11 @@ import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycl
 import { AutomationManagement } from "../personal-data/automation-management.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 
-type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff">> & Pick<InvocationRepository, "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction" | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal" | "prepareQuestionContinuation" | "finish">;
+type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff">>
+  & Pick<InvocationRepository,
+    | "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction"
+    | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal"
+    | "prepareQuestionContinuation" | "finish">;
 export type InvocationPreflight = "ready" | "waiting_for_bud" | "waiting_for_model" | "retry_wait";
 export interface InvocationExecutor {
   preflight(invocation: Invocation): Promise<InvocationPreflight>;

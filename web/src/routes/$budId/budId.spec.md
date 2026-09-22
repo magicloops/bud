@@ -399,15 +399,7 @@ file-overlay mode while Browser is selected. Dismissal releases viewer control
 without closing the remote browser or resuming the agent. New-thread layout needs
 no discovery until creation navigates into the existing-thread route.
 
-The browser inventory supplies a chat notice when browser actions are paused,
-with Open browser controls to reach the existing explicit return flow. It does
-not disable the composer or imply all agent work is paused. New threads have no
-browser session, so their layout remains unchanged.
-
-The browser-paused chat notice offers Return to agent directly while the mounted
-viewer owns private control, using that viewer’s existing authenticated action.
-Otherwise it offers Open browser controls; chat never acquires control implicitly.
-
+New threads have no browser session, so their layout remains unchanged.
 
 The thread supplies the shared browser wait-action context: mounted-viewer return,
 matching-session control errors and authenticated invocation-specific cancellation.

@@ -13,12 +13,21 @@ control, input and media; private input is not a transcript event.
 - `pane.tsx`: owner/thread-visit-local discovery and open context. One five-second
   inventory loop plus canonical live open/handoff events; initial history/inventory
   seed a reveal baseline. New identities reveal once, polls/replay respect dismissal,
-  obsolete fetches cannot select a browser in another visit. Replaces session-link.
+  obsolete fetches cannot select a browser in another visit.
 - `pane-state.ts` / `.test.ts`: strict first-party identities and reveal deduplication.
 - `pane.test.tsx`: mounted hook coverage for initial inventory, duplicate handoffs,
   explicit reopen and late responses after thread switch.
-- `viewer.test.tsx`: mounted controller-only fit, post-ACK matching-frame input
-  fence, media preservation and release-on-dismiss regression.
+- `viewer.test.tsx`: nine mounted regressions: private fit fences input and an
+  input failure survives a late renewal, releasing without return; passive media
+  preserves agent epochs and fences handoffs; passive fit without acquisition and
+  failed fitting preserving media/agent ownership; the chat return action uses the
+  owning viewer and clears after return or dismissal; service restart reconnects
+  passive media and drops private ownership without reacquiring; a previously
+  authorized viewer restores its private lease after service restart without
+  replaying input; daemon restart offers explicit page recovery without
+  polling-driven navigation; native window controls retain private media and a
+  failed hide preserves Return to agent; explicit chat return recovers an orphaned
+  private lease after restart without restoring pages.
 - `viewport-fit.ts` / `.test.ts`: bounded CSS dimensions, 150ms coalescing, one resize
   in flight plus the latest desired size; no automatic retry after uncertainty.
 
@@ -34,7 +43,7 @@ stay imperative; React receives only changed target/control status. Input queues
 at most 16 gestures, bound to the displayed document/viewport; typing is cleared
 on navigation, control loss and uncertain acknowledgement. Local Unicode/paste
 input never enters chat or initializes from remote password values. Controller
-renewal runs every five seconds. Explicit Close browser and stop run supports
+renewal runs every five seconds. Explicit Close this thread's tabs supports
 interrupted-session recovery. Basic page interaction only; no OS dialogs/passkeys.
 
 Phase 2 is implemented; signed-in UI acceptance remains pending. See the main
@@ -107,15 +116,13 @@ empty history rejects with browser_no_previous_page. The bottom-left hover/focus
 button is visible on touch and never changes the host web app's history. Navigation
 clears queued input/focus; old daemons receive no new input variant.
 
-The existing inventory loop exposes pausedSessionId from control_state without
-another request or image state. The thread shows a compact browser-actions-paused
-notice and an explicit link to browser controls; chat stays enabled. Returning
-control remains an intentional action through the authorized viewer. The mounted viewer exposes an explicit return action to chat using the same viewer
+Returning control remains an intentional action through the authorized viewer.
+The mounted viewer exposes an explicit return action to chat using the same viewer
 identity. A recoverable paused/private workspace can return without a preexisting
 local controller: the click acquires first, then returns with the acquired revision.
 Confirmed closed/missing sessions and unmount clear the action.
-Busy/resize states disable it and duplicate clicks are fenced synchronously. Older inventory
-without control_state omits the notice; obsolete visit responses remain ignored.
+Busy/resize states disable it and duplicate clicks are fenced synchronously.
+Obsolete visit responses remain ignored.
 
 
 Agent-state viewers with `can_resize_agent_viewport` also fit without acquiring
@@ -134,10 +141,6 @@ stored session boot; absence alone never claims restart. The web pane clears
 stale private/media/page controls on confirmed end, explains lost live tabs while retaining saved website sign-ins, and retains explicit close with its stop-run semantics. Missing-session
 404 shows generic unavailable recovery; no automatic browser recreation or
 private resume. Temporary disconnects retain reconnect. No DB/wire migration.
-
-Ended runtime inventory suppresses the chat's return-control notice while keeping
-the selected pane available to explain why its browser ended.
-
 
 ## Hover takeover
 

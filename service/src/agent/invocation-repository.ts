@@ -97,7 +97,9 @@ export class InvocationRepository {
       .where(and(eq(browserHandoff.threadId,threadId),eq(browserHandoff.createdByUserId,owner),
         eq(browserHandoff.status,"pending"),eq(inv.status,"waiting_for_user"),isNull(inv.cancelRequestedAt)))
       .orderBy(asc(browserHandoff.createdAt),asc(browserHandoff.id)).limit(50);
-    return rows.filter(row=>row.handoff.clientId && row.handoff.callId).map(row=>({turn_id:row.turnId,invocation_id:row.handoff.invocationId,pending_tool:{client_id:row.handoff.clientId,call_id:row.handoff.callId,
+    return rows.filter(row=>row.handoff.clientId && row.handoff.callId).map(row=>({
+      turn_id:row.turnId,invocation_id:row.handoff.invocationId,
+      pending_tool:{client_id:row.handoff.clientId,call_id:row.handoff.callId,
       name:row.tool === "browser_user_handoff" ? "browser_request_handoff" : row.tool,started_at:row.handoff.createdAt.toISOString(),
       args:{reason:row.handoff.reason,handoff_id:row.handoff.id,wait_kind:row.handoff.kind,invocation_id:row.handoff.invocationId,
         session_id:row.handoff.sessionId,viewer_path:`/browser/${row.handoff.sessionId}`}}}));
@@ -273,7 +275,9 @@ export class InvocationRepository {
         eq(inv.reservesThread, true))).limit(1);
       if (active) return null;
       if (selected.expired && current.status !== "waiting_for_user") {
-        const [timed] = await tx.update(inv).set({ ...settleWorkTiming(), status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, current.id)).returning();
+        const [timed] = await tx.update(inv)
+          .set({ ...settleWorkTiming(), status: "expired", reservesThread: false, outcomeCode: "latest_start_elapsed", updatedAt: sql`clock_timestamp()` })
+          .where(eq(inv.id, current.id)).returning();
         recordSettledTiming(tx, timed);
         return null;
       }
@@ -410,7 +414,9 @@ export class InvocationRepository {
         .where(and(eq(action.invocationId, lease.id), sql`${action.status} in ('intent','waiting_for_user')`)).limit(1);
       if(!pending || current.cancelRequestedAt)await tx.update(browserHandoff).set({status:"canceled",resolvedAt:sql`clock_timestamp()`})
         .where(and(eq(browserHandoff.invocationId,lease.id),eq(browserHandoff.status,"pending")));
-      const [timed] = await tx.update(inv).set({ ...(!current.cancelRequestedAt && (pending || status === "needs_review") ? invalidateWorkTiming() : settleWorkTiming()), status: current.cancelRequestedAt ? "canceled" : pending ? "needs_review" : status,
+      const [timed] = await tx.update(inv).set({
+        ...(!current.cancelRequestedAt && (pending || status === "needs_review") ? invalidateWorkTiming() : settleWorkTiming()),
+        status: current.cancelRequestedAt ? "canceled" : pending ? "needs_review" : status,
         reservesThread: !current.cancelRequestedAt && (Boolean(pending) || status === "needs_review"),
         outcomeCode: current.cancelRequestedAt ? "user_canceled" : pending ? "unresolved_action_intent" : outcomeCode,
         workerId: null, leaseExpiresAt: null, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, lease.id)).returning();
@@ -736,7 +742,10 @@ export class InvocationRepository {
             if (dispatched) throw new InvocationError("continuation_action_ambiguous");
           }
           const userTakeover=pending.evidence?.browser_handoff_id && pending.kind!=="browser_request_handoff";
-          const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block, pending.evidence?.browser_handoff_id ? "browser" : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation" : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question");
+          const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block,
+            pending.evidence?.browser_handoff_id ? "browser"
+              : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation"
+              : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question");
           const content = JSON.stringify(payload);
           const finishedAt = isQuestion ? answer.answeredAt : new Date();
           const startedAt = isQuestion ? answer.createdAt : finishedAt;
@@ -811,7 +820,9 @@ export class InvocationRepository {
         if(row.cancelRequestedAt || row.status==='running')await tx.update(browserHandoff)
           .set({status:'canceled',resolvedAt:sql`clock_timestamp()`})
           .where(and(eq(browserHandoff.invocationId,row.id),eq(browserHandoff.status,'pending')));
-        const [timed] = await tx.update(inv).set({ ...(row.status === "running" ? invalidateWorkTiming() : settleWorkTiming()), reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation) && !await this.hasBrowserWait(tx,row.id)),
+        const [timed] = await tx.update(inv).set({
+          ...(row.status === "running" ? invalidateWorkTiming() : settleWorkTiming()),
+          reservesThread: !row.cancelRequestedAt && (row.status === "running" || Boolean(continuation) && !await this.hasBrowserWait(tx,row.id)),
           status: row.cancelRequestedAt ? "canceled" : row.status === "leased" ? "retry_wait" : "needs_review",
           outcomeCode: row.cancelRequestedAt ? "user_canceled" : row.status === "leased" ? "preflight_lease_expired" : "execution_lease_expired",
           fence: sql`${inv.fence} + 1`, workerId: null, leaseExpiresAt: null,

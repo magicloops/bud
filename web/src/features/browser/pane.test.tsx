@@ -51,12 +51,10 @@ test('mounted pane baselines history, reveals new handoff once, and drops old-th
     await poll()
     await act(async () => requests[1].resolve(inventory('new', 'human_private')))
     assert.equal(opened.length, 1)
-    assert.equal(pane.pausedSessionId, id)
     // A dismissal is an external workbench choice; repeated evidence must not override it.
     await act(async () => pane.notice({ viewer_path: `/browser/${id}`, handoff_id: 'new' }))
     await poll()
     await act(async () => requests[2].resolve(inventory('new', 'human_private', 'daemon_restarted')))
-    assert.equal(pane.pausedSessionId, null)
     assert.equal(opened.length, 1)
     await act(async () => pane.open(id))
     assert.equal(opened.length, 2) // Explicit links always work.
@@ -65,7 +63,6 @@ test('mounted pane baselines history, reveals new handoff once, and drops old-th
     assert.equal(requests[3].signal?.aborted, true)
     await act(async () => requests[3].resolve(inventory('late')))
     assert.equal(pane.sessionId, null)
-    assert.equal(pane.pausedSessionId, null)
     assert.equal(opened.length, 2)
   } finally {
     await act(async () => view.unmount())

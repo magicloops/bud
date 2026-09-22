@@ -818,8 +818,7 @@ export class AgentService {
               await args.executionHooks?.beforeTool(toolCall);
               controller.signal.throwIfAborted();
               const handoff = await this.browserToolExecutor.park({ ...browserContext(), directive: toolCall,
-                clientId: toolClientId, llmCallId, startedAt, parkDurably: args.executionHooks?.parkBrowserHandoff,
-                remainingCalls: toolCalls.slice(toolCalls.indexOf(toolCall) + 1) });
+                clientId: toolClientId, parkDurably: args.executionHooks?.parkBrowserHandoff });
               controller.signal.throwIfAborted();
               this.transcriptWriter.emitBrowserHandoff(threadId, turnId, toolCall, toolClientId, startedAt, handoff);
               this.cancellations.clear(threadId);
@@ -906,7 +905,9 @@ export class AgentService {
 	              sessionId: currentSessionId,
 	              threadId,
 	              tool: effectiveToolCall.tool,
-              ...((isBrowserToolDirective(effectiveToolCall) || isWebRetrievalToolDirective(effectiveToolCall) || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall)) ? {} : { args: clientArgs }),
+              ...((isBrowserToolDirective(effectiveToolCall) || isWebRetrievalToolDirective(effectiveToolCall)
+                || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall))
+                ? {} : { args: clientArgs }),
               callId: effectiveToolCall.callId,
 	            });
 

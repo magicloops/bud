@@ -20,18 +20,33 @@ struct Capture {
     pixel_ratio: Option<f64>,
 }
 
-pub(super) fn start(
-    session_id: String,
-    slot: Arc<Slot>,
-    mut connection: watch::Receiver<Option<String>>,
-    device: String,
-    epoch: u64,
-    controller: Option<String>,
-    endpoint: String,
-    ticket: String,
-    operation_driven: bool,
-    media_fence: Option<u64>,
-) {
+/// Everything one media stream needs; built by the manager at admission.
+pub(super) struct MediaStart {
+    pub session_id: String,
+    pub slot: Arc<Slot>,
+    pub connection: watch::Receiver<Option<String>>,
+    pub device: String,
+    pub epoch: u64,
+    pub controller: Option<String>,
+    pub endpoint: String,
+    pub ticket: String,
+    pub operation_driven: bool,
+    pub media_fence: Option<u64>,
+}
+
+pub(super) fn start(args: MediaStart) {
+    let MediaStart {
+        session_id,
+        slot,
+        mut connection,
+        device,
+        epoch,
+        controller,
+        endpoint,
+        ticket,
+        operation_driven,
+        media_fence,
+    } = args;
     tokio::spawn(async move {
         let started = Instant::now();
         let mut phase = "connect";

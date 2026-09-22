@@ -255,7 +255,11 @@ export class BrowserControl {
       control.expires <= Date.now() ||
       !control.carrier.current()
     ) {
-      this.onDiagnostic({ session_id: sessionId, event: "controller_lookup_failed", present: !!control, owner_matches: control?.owner === owner, viewer_matches: control?.viewer === viewer, lease_expired: !!control && control.expires <= Date.now(), carrier_current: control?.carrier.current() ?? false });
+      this.onDiagnostic({
+        session_id: sessionId, event: "controller_lookup_failed", present: !!control,
+        owner_matches: control?.owner === owner, viewer_matches: control?.viewer === viewer,
+        lease_expired: !!control && control.expires <= Date.now(), carrier_current: control?.carrier.current() ?? false,
+      });
       throw new BrowserError("browser_control_expired");
     }
     return control;
@@ -518,12 +522,7 @@ export class BrowserControl {
         "resume_pending",
         AbortSignal.timeout(5000),
       );
-      await this.repository.returned(
-        owner,
-        sessionId,
-        session.revision,
-        randomUUID(),
-      );
+      await this.repository.returned(owner, sessionId, session.revision);
       return this.repository.get(owner, sessionId);
     });
   }

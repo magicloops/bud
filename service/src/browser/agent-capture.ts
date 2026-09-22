@@ -21,13 +21,18 @@ export async function registerAgentCaptures(server: FastifyInstance, repository:
     const ticket = request.headers.authorization?.replace(/^Bearer /, '') ?? '';
     const entry = tickets.get(ticket);
     tickets.delete(ticket);
-    if (!entry || entry.request.expires_at_ms < Date.now() || !entry.carrier.current() || !await repository.evidenceAllowed(entry.request)) return reply.code(403).send({error:'browser_capture_revoked'});
-    const parsed = z.object({ target_id:z.string().max(128), document_id:z.string().max(128), image:z.string().max(1_400_000), image_format:z.literal('png').optional() }).passthrough().safeParse(request.body);
+    if (!entry || entry.request.expires_at_ms < Date.now() || !entry.carrier.current() || !await repository.evidenceAllowed(entry.request))
+      return reply.code(403).send({error:'browser_capture_revoked'});
+    const parsed = z.object({
+      target_id:z.string().max(128), document_id:z.string().max(128), image:z.string().max(1_400_000), image_format:z.literal('png').optional(),
+    }).passthrough().safeParse(request.body);
     if (!parsed.success || (entry.target && parsed.data.target_id !== entry.target)) return reply.code(400).send({error:'browser_invalid_capture'});
     const frame = parsed.data;
     const bytes = Buffer.from(frame.image,'base64');
     const png = frame.image_format === 'png';
-    if (bytes.toString('base64') !== frame.image || (png ? !bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes[0] !== 255 || bytes[1] !== 216)) return reply.code(400).send({error:'browser_invalid_capture'});
+    if (bytes.toString('base64') !== frame.image
+      || (png ? !bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes[0] !== 255 || bytes[1] !== 216))
+      return reply.code(400).send({error:'browser_invalid_capture'});
     if (!entry.carrier.current() || !await repository.evidenceAllowed(entry.request)) return reply.code(403).send({error:'browser_capture_revoked'});
     const artifact = await images.put({ owner:entry.request.owner_user_id, thread:entry.request.thread_id, bud:entry.bud, call:entry.call,
       session:entry.request.session_id, generation:entry.request.generation, epoch:entry.request.control_epoch,

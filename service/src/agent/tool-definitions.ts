@@ -241,7 +241,10 @@ export function resolveAgentToolsForEnvironment(
   environment: AgentEnvironmentSnapshot,
   options: { browser?: boolean; browserHandoff?: boolean; webRetrieval?: boolean; appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
-  const tools = [...AGENT_CANONICAL_TOOLS, ...(options.browser ? BROWSER_CANONICAL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []), ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []), ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
+  const tools = [...AGENT_CANONICAL_TOOLS,
+    ...(options.browser ? BROWSER_CANONICAL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []),
+    ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []),
+    ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
     ...(options.automations ? AUTOMATION_CANONICAL_TOOLS : []),
     ...(options.automations && options.existingContactReviews ? [EXISTING_CONTACTS_REVIEW_TOOL] : [])];
   if (environment.mode === "normal") {

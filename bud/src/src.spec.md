@@ -526,14 +526,14 @@ External crates (from `Cargo.toml`):
 serial CDP operations. `app.rs` probes it once, advertises `capabilities.browser`,
 binds hello-ack device sessions, and spawns browser operations outside the control
 receive loop for both WS and gRPC. Disconnect fences work without closing browsers.
-`main.rs` handles SIGINT/SIGTERM by dropping runtime tasks and owned children;
-`doctor.rs` reports the optional runtime and `BUD_BROWSER_EXECUTABLE` setup guidance.
+`main.rs` handles SIGINT/SIGTERM by awaiting browser manager shutdown (see
+[Shared browser shutdown](#shared-browser-shutdown-phase-3k)) before dropping
+runtime tasks and owned children; `doctor.rs` reports the optional runtime and `BUD_BROWSER_EXECUTABLE` setup guidance.
 `proto_wire.rs` maps browser command/result to envelope tags 190/191.
 
 ## Shared browser shutdown (Phase 3k)
 
 `app.rs` configures the browser manager with persistent Bud base and service
 identity. The outer run/signal boundary awaits manager shutdown before dropping
-its LocalSet; `main.rs` no longer cancels that cleanup by racing another signal
-handler. Identity clearing also drains the owned browser. Detached terminal holders
+its LocalSet; a second signal during that cleanup does not cancel it. Identity clearing also drains the owned browser. Detached terminal holders
 remain independent. See [browser runtime](./browser/browser.spec.md).

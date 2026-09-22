@@ -15,6 +15,8 @@ product bugs, and several cleanup items from the plan's own Phase 4 list are
 still open. The blockers below are each small; the larger "remaining items" are
 acceptance and packaging work that the plan already defers past merge.
 
+The remaining findings are scoped as [Phase 3s](../plan/bud-owned-browser/phase-3s-confirmed-defects.md) (confirmed defects), [Phase 3t](../plan/bud-owned-browser/phase-3t-review-cleanups.md) (spec drift, lint, dead code) and [Phase 3u](../plan/bud-owned-browser/phase-3u-plausible-defects.md) (plausible defects, reproduce first).
+
 Three confirmed defects sit between "blocker" and "follow-up" and need an
 explicit call: daemon H1 (corrupt recovery hints make Close impossible), daemon
 H2 (a stale Chrome `SingletonLock` blocks Reset, the documented recovery

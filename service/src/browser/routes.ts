@@ -217,7 +217,11 @@ export async function registerBrowserRoutes(
           throw new BrowserError("browser_not_found");
         return {
           sessions: await Promise.all((await control.repository.list(actor.userId, threadId)).map(
-            async (session) => ({ ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)), handoff: await control.repository.pending(actor.userId, session.id) }),
+            async (session) => ({
+              ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session),
+                control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
+              handoff: await control.repository.pending(actor.userId, session.id),
+            }),
           )),
         };
       },
@@ -230,7 +234,8 @@ export async function registerBrowserRoutes(
       const { viewer_id } = z.object({ viewer_id: z.string().uuid().optional() }).parse(request.query);
       return {
         can_show_window: control.windowAvailable(session),
-        ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session), control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
+        ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session),
+          control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
         ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
         can_take_control: control.canTakeControl(session),
@@ -285,8 +290,13 @@ export async function registerBrowserRoutes(
                 : body.operation === "release"
                   ? await control.release(...args)
                   : await control.returnToAgent(...args, body.revision);
-        return { ...("page_recovery" in result ? { page_recovery: result.page_recovery } : {}), can_show_window: control.windowAvailable(result), ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result), control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
-          recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)) };
+        return {
+          ...("page_recovery" in result ? { page_recovery: result.page_recovery } : {}),
+          can_show_window: control.windowAvailable(result),
+          ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result),
+            control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
+          recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)),
+        };
       },
     );
     routes.post("/api/browser/sessions/:session_id/viewport", { bodyLimit: 2048 }, async (request, reply) => {

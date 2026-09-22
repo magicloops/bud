@@ -71,7 +71,6 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   const [empty, setEmpty] = useState(false);
   const [missing, setMissing] = useState(false);
   const [owns, setOwns] = useState(false);
-  const [takeoverPending, setTakeoverPending] = useState(false);
   const [working, setWorking] = useState(false);
   const [returning, setReturning] = useState(false);
   const [recovering, setRecovering] = useState(false);
@@ -255,7 +254,6 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           setOwns(acquired);
           recoveryPending.current = false;
           setRecovering(false);
-          setTakeoverPending(operation === "acquire" && !acquired);
           if (!keptPrivateMedia) setMediaVersion((v) => v + 1);
         }
       } catch (failure) {
@@ -298,7 +296,6 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         );
         ownsRef.current = false;
         setOwns(false);
-        setTakeoverPending(false);
         resetInput();
         media.current?.close();
       } finally {
@@ -319,10 +316,6 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   useEffect(() => {
     latestControl.current = control;
   }, [control]);
-  useEffect(() => {
-    if (takeoverPending && session?.can_take_control && !working)
-      void control("acquire");
-  }, [takeoverPending, session?.can_take_control, working, control]);
   useEffect(() => {
     if (!owns) return;
     const timer = setInterval(() => void latestControl.current("renew"), 5000);
@@ -355,7 +348,6 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     setRecovering(false);
     ownsRef.current = false;
     setOwns(false);
-    setTakeoverPending(false);
     resetInput();
     setTargets([]);
     setSelectedTarget("");
@@ -623,7 +615,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
               : session?.can_view ? "Reconnecting to browser…" : "Browser control is paused. Take control to reconnect."}
           </p>
           {!owns && !recovering && session?.runtime_status !== "disconnected" && session && !session.can_view && (
-            <button type="button" className={button} disabled={working || takeoverPending}
+            <button type="button" className={button} disabled={working}
               onClick={() => void control("acquire")}>Take control</button>
           )}
           </div>
@@ -647,10 +639,10 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           <button
             type="button"
             className={`${button} pointer-events-none bg-background/95 px-5 py-3 font-medium shadow-lg backdrop-blur [@media(hover:hover)]:group-hover/browser-pane:pointer-events-auto focus:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring`}
-            disabled={working || resizing || takeoverPending}
+            disabled={working || resizing}
             onClick={() => { setMenuOpen(false); void control("acquire"); }}
           >
-            {working || takeoverPending ? "Taking control…" : "Take control"}
+            {working ? "Taking control…" : "Take control"}
           </button>
         </div>
       )}
@@ -739,13 +731,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         <span className="text-sm text-muted-foreground">
           {working
             ? "Updating control…"
-            : takeoverPending
-              ? "Waiting for agent to pause…"
-              : owns
-                ? "Private control"
-                : session?.control_state === "agent"
-                  ? "View only"
-                  : "Paused"}
+            : owns
+              ? "Private control"
+              : session?.control_state === "agent"
+                ? "View only"
+                : "Paused"}
         </span>
         <div className="ml-auto flex gap-2">
           {owns ? (

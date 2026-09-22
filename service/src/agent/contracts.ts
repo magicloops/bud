@@ -287,7 +287,14 @@ export type ExecutedBrowserTool = {
 export function isBrowserToolDirective(directive: AgentToolCallDirective): directive is ExecutedBrowserTool["directive"] {
   return isBrowserToolName(directive.tool);
 }
-export type ExecutedAgentTool = ExecutedBrowserTool | ExecutedWebRetrievalTool | ExecutedAutomationTool | ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool | ExecutedPersonalDataTool;
+export type ExecutedAgentTool =
+  | ExecutedBrowserTool
+  | ExecutedWebRetrievalTool
+  | ExecutedAutomationTool
+  | ExecutedTerminalTool
+  | ExecutedWebViewTool
+  | ExecutedUserQuestionTool
+  | ExecutedPersonalDataTool;
 
 export const AGENT_MESSAGE_DURATION_SOURCE = "service_wall_clock" as const;
 

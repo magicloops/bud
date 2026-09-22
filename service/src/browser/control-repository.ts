@@ -220,7 +220,7 @@ export class BrowserControlRepository {
     const resource = await repository.get(owner,session.bud_id);
     if (resource && resource.revision === revision) await repository.failControl(resource);
   }
-  async returned(owner: string, session: string, revision: number, _requestId: string) {
+  async returned(owner: string, session: string, revision: number) {
     const row = await this.get(owner,session);
     const repository = new BrowserResourceRepository(this.database);
     const resource = await repository.get(owner,row.bud_id);

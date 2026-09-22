@@ -741,7 +741,16 @@ and actual tools; prefix includes runtime instructions and native replay content
 JSON object key order is stable across JSONB reconstruction; array order matters.
 OpenAI/ds4 input already includes cache hits; Anthropic adds cache reads/writes
 once. Missing/invalid usage, incompatible history/settings, unsupported providers
-and browser image hydration use the full fallback estimate. Raw output/reasoning
+use the full fallback estimate. Browser screenshots (Phase 3s D4): the request
+baseline records the artifact ids hydrated into the measured request
+(`image_ids`, via `browser/image-references.ts`); the provider anchor stands
+while the measured prefix still hydrates exactly that set, new references after
+it are estimated at `IMAGE_TOKEN_ESTIMATE` per image, and a changed set (or an
+older anchor that measured screenshots without recording them) falls back with
+reason `image_hydration`. The estimator charges the same constant per hydrated
+reference and per real image block instead of base64 length, so the meter and
+compaction trigger see what the provider receives; hydration itself stays in
+`model-runner.ts`. Raw output/reasoning
 usage is never added to input. Tests cover these cases and appended user/tool data.
 No tokenizer, historical calibration or request-content archive is introduced.
 
@@ -1297,7 +1306,8 @@ The default prompt distinguishes external live browsing from localhost previews
 and explains daemon upgrade/runtime configuration when browser tools are absent.
 Unknown outcomes prohibit automatic replay. Browser records and tool transcripts
 inherit invocation ownership. Semantic observations use ordinary canonical tool
-results across providers; provider image serialization remains deferred.
+results across providers; screenshots are hydrated into provider image blocks
+before provider invocation (Phase 3d).
 Phase 2 implements real durable parking and a standalone authenticated web viewer.
 See [browser broker](../browser/browser.spec.md) and
 [Phase 1](../../../plan/bud-owned-browser/phase-1-agent-browser.md).

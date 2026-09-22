@@ -184,6 +184,7 @@ function ThreadViewContent() {
   )
   const revealBrowser = useCallback(() => setViewMode('browser'), [])
   const browserPane = useBrowserPane(threadId, initialMessagePage.messages, initialAgentState, revealBrowser)
+  const browserNotice = browserPane.notice
   const [browserControlError, setBrowserControlError] = useState<{sessionId: string; message: string} | null>(null)
   const [browserReturnAction, setBrowserReturnAction] = useState<BrowserReturnAction | null>(null)
   const handleViewChange = useCallback((view: ViewMode) => {
@@ -568,7 +569,7 @@ function ThreadViewContent() {
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
     if (message.role === 'tool') {
-      try { browserPane.notice(JSON.parse(message.content)) } catch { /* Not a browser result. */ }
+      try { browserNotice(JSON.parse(message.content)) } catch { /* Not a browser result. */ }
     }
     if (message.metadata?.tool === 'ask_user_questions') {
       setQuestionSubmitError(null)
@@ -579,7 +580,7 @@ function ThreadViewContent() {
       setViewMode('web')
       void refreshThreadWebView()
     }
-  }, [applyToolResultMessage, refreshThreadWebView, browserPane.notice])
+  }, [applyToolResultMessage, refreshThreadWebView, browserNotice])
 
   const handleAssistantMessageStart = applyAssistantMessageStart
   const handleAssistantMessageDelta = applyAssistantMessageDelta

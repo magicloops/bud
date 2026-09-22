@@ -169,8 +169,6 @@ test("canonical agent loop records results and parks before trailing calls or an
   assert.equal(fixture.requests.length, 2);
   assert.match(JSON.stringify(fixture.requests[1]), /fixture page/);
   assert.equal(parked.directive.callId, "call-2-0");
-  assert.equal(parked.remainingCalls[0].callId, "call-2-1");
-  assert.ok(parked.llmCallId);
   const messages = fixture.writes.filter(row => row.role === "tool");
   assert.equal(messages.length, 2);
   assert.ok(messages.every(row => row.createdByUserId === "alice"));

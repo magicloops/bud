@@ -23,9 +23,6 @@ export class BrowserToolWait extends Error {
 export type BrowserHandoffContext = BrowserAgentContext & {
   directive: Extract<AgentToolCallDirective, { tool: BrowserToolName }>;
   clientId: string;
-  llmCallId: string;
-  startedAt: Date;
-  remainingCalls: AgentToolCallDirective[];
   parkDurably?: (callId: string, handoffId: string) => Promise<void>;
 };
 export type BrowserBackendResult = {
@@ -102,7 +99,10 @@ export class BrowserToolExecutor {
       result.data = { guidance: "Observation exceeds the size limit. Use a smaller observed scope or visible_dom; page_info returns title/URL only." };
     }
     const summary = result.ok ? (directive.tool === "browser_observe"
-      ? args.mode === "screenshot" ? "Captured browser screenshot." : args.mode === "visible_dom" ? "Read visible browser elements." : args.mode === "page_info" ? "Read browser page information." : "Read browser snapshot."
+      ? args.mode === "screenshot" ? "Captured browser screenshot."
+        : args.mode === "visible_dom" ? "Read visible browser elements."
+        : args.mode === "page_info" ? "Read browser page information."
+        : "Read browser snapshot."
       : "Browser operation completed.") : result.outcome === "unknown"
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"

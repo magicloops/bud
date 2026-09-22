@@ -3529,3 +3529,34 @@ browser came from, so operators and (later) the web UI can explain readiness:
 field today; no command, result, SSE or table changes. Availability semantics
 are unchanged: the capability is only `available:true` after the daemon's own
 launch probe succeeded, met the pinned version floor and secure storage is ready.
+
+## Corrections (Phase 3t)
+
+This document is append-only; the following statements supersede earlier
+sections where they conflict. See
+[Phase 3t](../plan/bud-owned-browser/phase-3t-review-cleanups.md).
+
+- Compact observation budgets ("Compact observations" section): the helper
+  bounds the complete serialized observation to **32 KiB** of UTF-8 JSON
+  (`browser-helper/compact.mjs` `OBSERVATION_BYTES`), not 8 KiB, and the
+  service guards the final persisted/model-facing tool envelope at **36 KiB**
+  (`browser-tool-executor.ts`), not 12 KiB.
+- `POST /api/browser/sessions/:session_id/control` ("Web API and live media"):
+  `operation` is one of `acquire`, `renew`, `release`, `return`, `close`,
+  `recover` (with `recovery_ticket`), `reopen`, `show_window` or `hide_window`
+  (the last two with optional `target_id`). This is the complete list; the
+  Phase-2 list of five and the per-phase additions describe the same route.
+- `browser_request_handoff` ("Browser agent tool results (Phase 1)"): the
+  tool is advertised whenever the selected Bud's carrier reports the `handoff`
+  capability and durable execution hooks are available
+  (`tool-definitions.ts` filters it only when `browserHandoff` is false). The
+  "not advertised" sentence is obsolete; the paired unsupported result applies
+  only to a stale call on a Bud that lost the capability.
+- Relay demand ("Web API and live media"): the service sends
+  `{target_id: string | null, pixel_ratio?: number}`. `target_id` is nullable,
+  not omitted: `null` means the daemon's current workspace selection.
+- Media demand timeout: the daemon closes a media socket that receives no
+  message for ten seconds while waiting for demand. This applies in
+  operation-driven mode as well as continuous mode; there the service's
+  three-second native pings count as traffic, so an idle negotiated socket
+  survives without capturing.

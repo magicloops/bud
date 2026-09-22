@@ -354,7 +354,7 @@ impl BrowserManager {
     }
 
     pub async fn execute(&self, request: Request) -> Reply {
-        let now = crate::util::now_millis() as u64;
+        let now = crate::util::now_millis();
         if (request.expires_at_ms <= now && !matches!(request.command, Action::Cancel))
             || request.expires_at_ms > now + 45_000
             || request.browser_epoch == 0
@@ -590,18 +590,18 @@ impl BrowserManager {
             if entry.media.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return Reply::error(&request, "browser_media_busy", false);
             }
-            super::media::start(
-                request.session_id.clone(),
-                entry,
+            super::media::start(super::media::MediaStart {
+                session_id: request.session_id.clone(),
+                slot: entry,
                 connection,
-                request.device_session_id.clone(),
-                request.browser_epoch,
-                controller_id.clone(),
-                endpoint.clone(),
-                ticket.clone(),
-                operation_driven == &Some(true) && controller_id.is_none(),
+                device: request.device_session_id.clone(),
+                epoch: request.browser_epoch,
+                controller: controller_id.clone(),
+                endpoint: endpoint.clone(),
+                ticket: ticket.clone(),
+                operation_driven: operation_driven == &Some(true) && controller_id.is_none(),
                 media_fence,
-            );
+            });
             return Reply {
                 request_id: request.request_id,
                 session_id: request.session_id,
@@ -637,15 +637,15 @@ impl BrowserManager {
             {
                 return Reply::error(&request, "browser_control_expired", false);
             }
-        } else if control.is_none() && !matches!(request.command, Action::Close) {
-            if !entry
+        } else if control.is_none()
+            && !matches!(request.command, Action::Close)
+            && !entry
                 .authority
                 .lock()
                 .unwrap()
                 .agent_allowed(request.browser_epoch)
-            {
-                return Reply::error(&request, "browser_private_or_paused", false);
-            }
+        {
+            return Reply::error(&request, "browser_private_or_paused", false);
         }
         let slot = entry.clone();
         let mut cancellation = entry.cancel.subscribe();
@@ -675,7 +675,7 @@ impl BrowserManager {
         if connection.borrow().as_deref() != Some(&request.device_session_id) {
             return Reply::error(&request, "browser_stale_connection", false);
         }
-        if request.expires_at_ms <= crate::util::now_millis() as u64 {
+        if request.expires_at_ms <= crate::util::now_millis() {
             return Reply::error(&request, "browser_deadline", false);
         }
         if passive_fit {
@@ -761,7 +761,7 @@ impl BrowserManager {
             biased;
             _ = connection.changed() => Err(anyhow::anyhow!("browser_connection_lost")),
             _ = async { loop { if cancellation.changed().await.is_err() || cancellation.borrow_and_update().as_deref() == Some(&request.request_id) { break; } } } => Err(anyhow::anyhow!("browser_canceled")),
-            result = tokio::time::timeout(Duration::from_millis(request.expires_at_ms.saturating_sub(crate::util::now_millis() as u64)),
+            result = tokio::time::timeout(Duration::from_millis(request.expires_at_ms.saturating_sub(crate::util::now_millis())),
                 async {
                     let result = self.perform(&mut entry, runtime, &request).await;
                     if result.is_ok()
@@ -825,13 +825,13 @@ impl BrowserManager {
         {
             // Image bytes never ride the shared control writer. Recheck the fence
             // before upload and after the service acknowledges the artifact.
-            if request.expires_at_ms <= crate::util::now_millis() as u64
+            if request.expires_at_ms <= crate::util::now_millis()
                 || cancellation.borrow().as_deref() == Some(&request.request_id)
             {
                 return Reply::error(&request, "browser_canceled", true);
             }
             let uploaded = super::capture::upload(endpoint, ticket, data).await;
-            if request.expires_at_ms <= crate::util::now_millis() as u64
+            if request.expires_at_ms <= crate::util::now_millis()
                 || cancellation.borrow().as_deref() == Some(&request.request_id)
                 || connection.borrow().as_deref() != Some(&request.device_session_id)
                 || !slot
@@ -1418,7 +1418,7 @@ mod tests {
             browser_paused: false,
             control_epoch: 1,
             sequence,
-            expires_at_ms: crate::util::now_millis() as u64 + 30_000,
+            expires_at_ms: crate::util::now_millis() + 30_000,
             invocation_id: "invocation".into(),
             invocation_fence: 1,
             command,

@@ -12,11 +12,10 @@ export const BrowserWaitActionsContext = createContext<{
   stop: (invocationId: string) => Promise<void>
 } | null>(null)
 export const useBrowserWaitActions = () => useContext(BrowserWaitActionsContext)
-type Inventory = { session_id: string; state: string; control_state?: string; runtime_status?: string; handoff: { id: string } | null }
+type Inventory = { session_id: string; state: string; handoff: { id: string } | null }
 
 export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], initialState: ApiAgentState, reveal: () => void) {
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [pausedSessionId, setPausedSessionId] = useState<string | null>(null)
   const activity = useRef(0)
   const tracker = useRef<BrowserRevealTracker | null>(null)
   if (!tracker.current) {
@@ -56,7 +55,6 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
         const result = await apiFetchJson<{ sessions: Inventory[] }>(`/api/threads/${encodeURIComponent(threadId)}/browser-sessions`, { signal: abort.signal })
         if (abort.signal.aborted) return
         const sessions = result.sessions.filter(s => s.state !== 'closing' && browserSessionId(s.session_id))
-        setPausedSessionId(sessions.find(s => s.control_state && s.control_state !== 'agent' && !['daemon_restarted', 'ended'].includes(s.runtime_status ?? ''))?.session_id ?? null)
         for (const session of sessions) {
           const keys = [`open:${session.session_id}`, ...(session.handoff ? [`handoff:${session.handoff.id}`] : [])]
           let shouldOpen = false
@@ -74,5 +72,5 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
     void poll()
     return () => { abort.abort(); clearTimeout(timer) }
   }, [threadId, open])
-  return { sessionId, pausedSessionId, open, notice }
+  return { sessionId, open, notice }
 }

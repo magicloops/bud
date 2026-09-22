@@ -29,7 +29,7 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   macOS secure-store preflight, first-creation appearance defaults and atomic
   launch-only color synchronization. Used by production admission; non-macOS
   persistent launch is explicitly unsupported pending credential-store acceptance.
-- `recovery.rs`: bounded, private, atomic per-workspace URL hints; corrupt/symlinked data fails closed without modifying the profile.
+- `recovery.rs`: bounded, private, atomic per-workspace URL hints; corrupt/symlinked data fails closed without modifying the profile. `forget` (used by workspace close) is best-effort so a corrupt file never blocks closing (Phase 3s D1).
 - `workspace_tests.rs`: opt-in disposable Chrome fixture proving shared cookies,
   separate target/observation ownership, opener inheritance and workspace-only close.
 - `adapter.rs`: concrete private Chromium launcher, target inventory, private semantic-helper observations and document-bound
@@ -66,7 +66,7 @@ Requests expire within 45 seconds (service sends at most 30 seconds,
 limited by the invocation lease). Closed identities remain as 45-second tombstones.
 At most 128 identities, 16 returned targets; legacy observations adapt the same
 semantic engine to 256 elements/64 KiB. New observations paginate a 2 MiB retained
-snapshot. Negotiated compact observations have an 8 KiB complete helper budget;
+snapshot. Negotiated compact observations have a 32 KiB complete helper budget;
 legacy consumers retain 24 KiB node pages plus text. URLs 2048 bytes, input 8192 bytes.
 Field values and unallowlisted snapshot properties are excluded.
 Page labels/text are untrusted evidence and can still contain sensitive content.
@@ -145,9 +145,11 @@ epochs, new frame tokens and renewal during capture after resizing.
 
 `independent_renewal:true` advertises authority-only renewal: authenticate the
 connection, owner/thread/generation and exact controller/epoch, then extend its
-lease without waiting for CDP or consuming page sequence. Admitted close pauses
-authority before closing Chrome. Expiry/disconnect/close cannot be undone by a
-late heartbeat. The live fixture holds the page lock while renewing.
+lease without waiting for CDP or consuming page sequence. Close does not pause
+authority today: pause happens indirectly when the media task ends or the lease
+expires; [Phase 3u item P7](../../../plan/bud-owned-browser/phase-3u-plausible-defects.md)
+decides whether close should transition authority. Expiry/disconnect/close cannot
+be undone by a late heartbeat. The live fixture holds the page lock while renewing.
 
 ## Negotiated screenshot quality
 
@@ -403,3 +405,25 @@ launches alone carry the mock-keychain flags (`profile_flags`). Linux caveats
 (secure storage, display passthrough, sandbox) are reported by `status`/`doctor`
 rather than hidden; see [design](../../../design/browser-addon.md) and
 [Phase 3r](../../../plan/bud-owned-browser/phase-3r-browser-addon.md).
+
+## Confirmed-defect fixes (Phase 3s)
+
+- **Close never depends on recovery hints.** `Browser::close` removes a
+  workspace's hints through `Recovery::forget`, which is a logged no-op when the
+  hints file was corrupt at load. Saving hints after successful operations keeps
+  failing closed, so corrupt evidence is never overwritten.
+- **Stale Chrome singleton locks are recognised, live ones are not.**
+  `profile.rs` reads the `SingletonLock` symlink target (`<hostname>-<pid>`).
+  The lock is stale only when the hostname is this machine and the pid is gone
+  or belongs to a process whose command line lacks this profile's
+  `--user-data-dir` (pid reuse). Stale locks (plus `SingletonSocket` and
+  `SingletonCookie`) are removed before acquisition and after our own child was
+  SIGKILLed on close; a foreign host or a live matching Chrome still fails
+  `browser_profile_recovery_required`. Reset therefore works after a crash.
+- **CDP session caches are pruned.** Every `targets()` refresh drops command
+  and screenshot sessions whose target vanished and sends
+  `Target.detachFromTarget` best-effort; the 32-entry caps remain as backstops.
+- Ephemeral probe/fixture launches alone carry the mock-keychain flags
+  (`profile_flags`, unit-tested).
+
+See [Phase 3s](../../../plan/bud-owned-browser/phase-3s-confirmed-defects.md).
