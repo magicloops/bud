@@ -234,3 +234,68 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   await until(() => first.readyState === WebSocket.CLOSED && second.readyState === WebSocket.CLOSED);
   assert.equal(frames, before, 'delayed authorization cannot deliver after the fence');
 });
+
+test("a message sent right behind the viewer hello reaches the media listener", async t => {
+  const { viewerHandshake } = await import("./routes.js");
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const endpoint = `ws://127.0.0.1:${address.port}`;
+  const sockets = new Set<WebSocket>();
+  const carrier = { bootId: "boot", handoff: true, hidpiCapture: true, current: () => true } as BrowserCarrier;
+  let admit: (() => void) | undefined;
+  const control = {
+    expireControllers() {}, onFence() {},
+    repository: { command: (_session: unknown, command: unknown) => ({ command }) },
+    mediaAuthority: async () => {
+      // Attach authorization is real I/O; the client's next message lands meanwhile.
+      if (!admit) await new Promise<void>(resolve => { admit = resolve; });
+      return { session: { id: "browser", browser_id: "shared", generation: "gen", control_epoch: 1, browser_epoch: 1 }, carrier };
+    },
+  } as unknown as BrowserControl;
+  const ratios: (number | undefined)[] = [];
+  const media = new BrowserMedia(control, `${endpoint}/daemon`, async (_carrier, request) => {
+    const daemon = new WebSocket(`${endpoint}/daemon`);
+    sockets.add(daemon);
+    daemon.on("error", () => {});
+    daemon.on("message", raw => {
+      const ratio = JSON.parse(raw.toString()).pixel_ratio;
+      ratios.push(ratio);
+      daemon.send(JSON.stringify({ target_id: "page", document_id: "doc", frame_token: "frame", width: 800, height: 600,
+        image: "fixture", ...(ratio ? { image_format: "png" } : {}), targets: [] }));
+    });
+    await once(daemon, "open");
+    daemon.send(JSON.stringify({ ticket: request.command.ticket }));
+    return { ok: true, outcome: "completed", data: {} };
+  });
+  const hellos: string[] = [];
+  server.on("connection", (socket, request) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    if (request.url === "/daemon") media.attachDaemon(socket);
+    else viewerHandshake(socket, async hello => {
+      hellos.push(hello);
+      await media.attachViewer(socket, "alice", "browser", request.url!, async () => true);
+    });
+  });
+  t.after(async () => {
+    admit?.(); media.stop();
+    for (const socket of sockets) socket.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+  const viewer = new WebSocket(`${endpoint}/viewer`);
+  sockets.add(viewer);
+  let frames = 0;
+  viewer.on("message", raw => { if (JSON.parse(raw.toString()).type === "frame") frames++; });
+  await once(viewer, "open");
+  viewer.send('{"viewer_id":"hello"}');
+  viewer.send('{"type":"ack","pixel_ratio":2}');
+  await until(() => Boolean(admit));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  admit!();
+  await until(() => frames === 1);
+  assert.deepEqual(hellos, ['{"viewer_id":"hello"}']);
+  assert.equal(ratios[0], 2, "the early ack was dropped before the media listener existed");
+  assert.equal(viewer.readyState, WebSocket.OPEN);
+});

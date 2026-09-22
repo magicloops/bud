@@ -39,12 +39,12 @@ from optional attachment to a user's personal browser.
 | 3r — browser add-on | [Implemented locally](phase-3r-browser-addon.md) from the [add-on design](../../design/browser-addon.md): manifest under the base dir, installed Chrome/Chromium preferred, pinned Chrome for Testing as plan B, managed Node plus daemon-embedded helper, `bud browser prepare/status/remove`, `doctor` parity, `capabilities.browser.runtime`; macOS system and managed paths exercised, release-build and Ubuntu acceptance pending; Linux caveats stay tracked in 3o |
 | 3s — confirmed defects | [Implemented locally](phase-3s-confirmed-defects.md): best-effort hint removal on Close, provable-stale `SingletonLock` clearing so Reset works after a crash, CDP session pruning with detach, and image-set-fenced context accounting with a per-image estimate; unit regression tests pass, env-gated live confirmations pending |
 | 3t — review cleanups | [Implemented locally](phase-3t-review-cleanups.md): spec/proto drift corrected in all tiers, daemon clippy and web ESLint clean, dead web/service code removed, long lines wrapped; legacy `observe` action kept with a recorded removal follow-up, prose-string formatting left to a wording pass |
-| 3u — plausible defects | [Scoped](phase-3u-plausible-defects.md): reproduce-then-fix list (stuck `resizeBlocked`, `type=email` private typing, park-window heartbeat, commit-then-rollback, and five low items); not implemented |
+| 3u — plausible defects | [Implemented locally](phase-3u-plausible-defects.md): eight of nine reproduced and fixed with regression tests (stuck `resizeBlocked`, `type=email` private typing, park-window heartbeat, commit-then-rollback, renew ownership order, early viewer message, media busy flag); P5 did not reproduce (guard kept); P7 decided with no code change |
 | 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
 
-Recommended next sequence: **3u plausible defects (reproduce first) → 3p actual-agent acceptance → 3n visual acceptance → 3b → 4**, retaining
+Recommended next sequence: **3p actual-agent acceptance → 3n visual acceptance → 3b → 4**, retaining
 the remaining 3k/3l acceptance checks alongside
 the outstanding 3g reliability checks. Phase numbers reflect scoping order.
 Phase **3o** is a separate host-support track to pursue on an Ubuntu box before

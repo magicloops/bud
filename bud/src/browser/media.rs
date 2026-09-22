@@ -48,6 +48,12 @@ pub(super) fn start(args: MediaStart) {
         media_fence,
     } = args;
     tokio::spawn(async move {
+        // The busy flag must clear on every exit, including a panic in this
+        // task; otherwise the slot reports browser_media_busy until restart.
+        let _busy = OnDrop::new({
+            let slot = slot.clone();
+            move || slot.media.store(false, Ordering::SeqCst)
+        });
         let started = Instant::now();
         let mut phase = "connect";
         let mut frames = 0_u64;
@@ -306,6 +312,21 @@ pub(super) fn start(args: MediaStart) {
     });
 }
 
+/// Runs a closure when dropped, including during unwinding.
+pub(super) struct OnDrop<F: FnOnce()>(Option<F>);
+impl<F: FnOnce()> OnDrop<F> {
+    pub fn new(f: F) -> Self {
+        Self(Some(f))
+    }
+}
+impl<F: FnOnce()> Drop for OnDrop<F> {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f();
+        }
+    }
+}
+
 // Return only internal constants, never arbitrary exception or page content.
 fn media_error_code(error: &anyhow::Error) -> &'static str {
     match error.to_string().as_str() {
@@ -342,5 +363,23 @@ mod tests {
         ] {
             assert_eq!(media_error_code(&anyhow::anyhow!(message)), "redacted");
         }
+    }
+}
+
+#[cfg(test)]
+mod busy_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[tokio::test]
+    async fn busy_flag_clears_when_the_media_task_panics() {
+        let busy = Arc::new(AtomicBool::new(true));
+        let flag = busy.clone();
+        let task = tokio::spawn(async move {
+            let _guard = OnDrop::new(move || flag.store(false, Ordering::SeqCst));
+            panic!("simulated media task failure");
+        });
+        assert!(task.await.is_err(), "task must have panicked");
+        assert!(!busy.load(Ordering::SeqCst), "busy flag stuck after panic");
     }
 }

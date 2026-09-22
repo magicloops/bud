@@ -17,7 +17,7 @@ control, input and media; private input is not a transcript event.
 - `pane-state.ts` / `.test.ts`: strict first-party identities and reveal deduplication.
 - `pane.test.tsx`: mounted hook coverage for initial inventory, duplicate handoffs,
   explicit reopen and late responses after thread switch.
-- `viewer.test.tsx`: nine mounted regressions: private fit fences input and an
+- `viewer.test.tsx`: eleven mounted regressions: private fit fences input and an
   input failure survives a late renewal, releasing without return; passive media
   preserves agent epochs and fences handoffs; passive fit without acquisition and
   failed fitting preserving media/agent ownership; the chat return action uses the
@@ -27,7 +27,9 @@ control, input and media; private input is not a transcript event.
   replaying input; daemon restart offers explicit page recovery without
   polling-driven navigation; native window controls retain private media and a
   failed hide preserves Return to agent; explicit chat return recovers an orphaned
-  private lease after restart without restoring pages.
+  private lease after restart without restoring pages; an aborted private fit
+  cannot leave input silently blocked after re-taking control without fitting;
+  recovery is attempted on the first poll that reports the browser available.
 - `viewport-fit.ts` / `.test.ts`: bounded CSS dimensions, 150ms coalescing, one resize
   in flight plus the latest desired size; no automatic retry after uncertainty.
 
@@ -67,6 +69,17 @@ document and the returned viewport_id. Resize clears queued input/focus, waits
 for current input/renewal, and preserves the media connection and lease. Failure
 requires explicit reconnect; no uncertain gesture replay. Return keeps page size.
 Frames and raw geometry remain outside conversation state. No image diffing yet.
+
+The post-fit input fence (`resizeBlocked`) is mirrored into React state so the
+keyboard textarea is disabled and the canvas shows a wait cursor while it holds;
+the fence clears on every non-renew control transition and whenever media reports
+`unavailable`, so a fit aborted by a media drop cannot swallow input after the
+viewer re-takes control on a Bud that cannot fit (Phase 3u P1, mounted test).
+Phase 3u P5 (stale `session` closure delaying recovery by one poll) did not
+reproduce: a recovery ticket only exists after a control response, which requires
+a non-null session that never reverts to null, `latestControl` is refreshed
+before any poll tick, and the service ignores `revision` for `recover`; the
+mounted guard asserts recovery on the first available poll.
 
 See [Phase 3a](../../../../plan/bud-owned-browser/phase-3a-web-pane.md) for remaining
 visual, accessibility and hosted-network acceptance.

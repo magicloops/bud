@@ -782,7 +782,7 @@ impl Browser {
         }
         let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
             "objectId":object, "returnByValue":true, "arguments":[{"value":text}],
-            "functionDeclaration":"function(text) { if (!this.isConnected || this.ownerDocument.activeElement !== this || this.disabled || this.readOnly || this.selectionStart === null) return false; this.setRangeText(text, this.selectionStart, this.selectionEnd, 'end'); this.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})); return true; }"
+            "functionDeclaration":"function(text) { if (!this.isConnected || this.ownerDocument.activeElement !== this || this.disabled || this.readOnly ) return false; if (this.selectionStart === null) { this.value = this.value + text; } else { this.setRangeText(text, this.selectionStart, this.selectionEnd, 'end'); } this.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})); return true; }"
         })).await?;
         if result["result"]["value"] != true {
             bail!("browser_stale_or_unsupported_focus");
@@ -1200,7 +1200,7 @@ impl Browser {
                     .context("browser_stale_focus")?;
                 let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
                     "objectId":focus.object,"returnByValue":true,"arguments":[{"value":key}],"userGesture":true,
-                    "functionDeclaration":"function(key) { if (!this.isConnected || this.ownerDocument.activeElement !== this) return false; if (key === 'Enter') { if (this instanceof HTMLInputElement && this.form) { this.form.requestSubmit(); return true; } if (this instanceof HTMLButtonElement || this instanceof HTMLAnchorElement) { this.click(); return true; } return false; } if (key === 'Tab') { const items=[...document.querySelectorAll('input,textarea,button,select,a[href],[tabindex]')].filter(e=>!e.disabled && e.tabIndex>=0 && e.getClientRects().length); const next=items[(items.indexOf(this)+1)%items.length]; if (!next) return false; next.focus(); return true; } if (!(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) || this.disabled || this.readOnly || this.selectionStart === null) return false; let a=this.selectionStart,b=this.selectionEnd; if (key==='Backspace'||key==='Delete') { if(a===b) { if(key==='Backspace') a=Math.max(0,a-1); else b=Math.min(this.value.length,b+1); } this.setRangeText('',a,b,'end'); this.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:key==='Backspace'?'deleteContentBackward':'deleteContentForward'})); } else { const p=key==='Home'?0:key==='End'?this.value.length:key==='ArrowLeft'?Math.max(0,a-1):Math.min(this.value.length,b+1); this.setSelectionRange(p,p); } return true; }"
+                    "functionDeclaration":"function(key) { if (!this.isConnected || this.ownerDocument.activeElement !== this) return false; if (key === 'Enter') { if (this instanceof HTMLInputElement && this.form) { this.form.requestSubmit(); return true; } if (this instanceof HTMLButtonElement || this instanceof HTMLAnchorElement) { this.click(); return true; } return false; } if (key === 'Tab') { const items=[...document.querySelectorAll('input,textarea,button,select,a[href],[tabindex]')].filter(e=>!e.disabled && e.tabIndex>=0 && e.getClientRects().length); const next=items[(items.indexOf(this)+1)%items.length]; if (!next) return false; next.focus(); return true; } if (!(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) || this.disabled || this.readOnly) return false; if (this.selectionStart === null) { if (key==='Backspace') { this.value=this.value.slice(0,-1); this.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'})); } return true; } let a=this.selectionStart,b=this.selectionEnd; if (key==='Backspace'||key==='Delete') { if(a===b) { if(key==='Backspace') a=Math.max(0,a-1); else b=Math.min(this.value.length,b+1); } this.setRangeText('',a,b,'end'); this.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:key==='Backspace'?'deleteContentBackward':'deleteContentForward'})); } else { const p=key==='Home'?0:key==='End'?this.value.length:key==='ArrowLeft'?Math.max(0,a-1):Math.min(this.value.length,b+1); this.setSelectionRange(p,p); } return true; }"
                 })).await?;
                 if result["result"]["value"] != true {
                     bail!("browser_unsupported_field");
@@ -1210,8 +1210,10 @@ impl Browser {
         Ok(json!({"focus_token":self.remember_human_focus(target,&session,document).await?}))
     }
 
+    /// Close-time hint removal for a workspace without a live handle; best-effort
+    /// like `close`, so corrupt hints never block closing (Phase 3s D1).
     pub(super) fn forget_workspace(&mut self, workspace: &str) -> Result<()> {
-        self.recovery.lock().unwrap().save(workspace, None)
+        self.recovery.lock().unwrap().forget(workspace)
     }
 
     /// Checkpoint only at operation/shutdown boundaries; identical hints do not write.

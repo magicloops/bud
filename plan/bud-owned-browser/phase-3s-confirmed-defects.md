@@ -1,6 +1,6 @@
 # Phase 3s: Confirmed defects from the branch review
 
-Status: implemented locally with regression tests (D1–D4); env-gated live confirmations for D1/D2/D3 not yet run. Updated 2026-09-21.
+Status: implemented locally with regression tests (D1–D4); the env-gated live Chrome suite (41 tests, Chrome 153) passes with these changes, though no fixture yet SIGKILLs Chrome and asserts Reset (D2) or cycles 40 targets (D3). Updated 2026-09-21.
 
 ## Context
 

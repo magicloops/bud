@@ -408,3 +408,18 @@ workspace with a capable carrier exposes `can_take_control`, allowing explicit
 repair. Owner/Origin/cookie checks and row stamping are unchanged. Media accepts
 strict `{empty:true}`, applies the existing delivery authorization and ACK credit,
 and sends `{type:"empty"}` without ending control. No schema migration.
+
+## Confirmed low-severity defects (Phase 3u)
+
+P3: a timer heartbeat blocked on the invocation row during the durable park
+transaction fails after the park commits; the worker now ignores that lease
+loss once `browserWaitParked` has run instead of aborting the controller (a
+pre-commit renew hook would wait on the transaction's own row lock).
+P4: `repository.prepare` tracks whether its transaction is open, so the
+committed `browser_interrupted_reopen_required` path issues no stray rollback,
+and the `browser_dispatched` receipt is stamped only after that decision.
+P6: `control.renew` resolves owner-scoped session lookup before the in-memory
+controller, so foreign session IDs return 404 like `resizeViewport`.
+P9: `routes.ts` `viewerHandshake` holds up to 16 messages sent behind the
+viewer hello until `attachViewer` has registered its listener, then replays
+them; `media.test.ts` covers the early ACK.

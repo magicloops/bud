@@ -145,11 +145,13 @@ epochs, new frame tokens and renewal during capture after resizing.
 
 `independent_renewal:true` advertises authority-only renewal: authenticate the
 connection, owner/thread/generation and exact controller/epoch, then extend its
-lease without waiting for CDP or consuming page sequence. Close does not pause
-authority today: pause happens indirectly when the media task ends or the lease
-expires; [Phase 3u item P7](../../../plan/bud-owned-browser/phase-3u-plausible-defects.md)
-decides whether close should transition authority. Expiry/disconnect/close cannot
-be undone by a late heartbeat. The live fixture holds the page lock while renewing.
+lease without waiting for CDP or consuming page sequence. Close does not
+transition authority (decided in [Phase 3u item P7](../../../plan/bud-owned-browser/phase-3u-plausible-defects.md)):
+authority is Bud-wide, closing one thread's tabs must not pause a private session
+that may continue in another workspace, human input is already fenced by
+document/frame/focus tokens so nothing can land on a vanished target, and the
+media task that ends with the closed workspace pauses authority when its
+controller held it. Expiry/disconnect/close cannot be undone by a late heartbeat. The live fixture holds the page lock while renewing.
 
 ## Negotiated screenshot quality
 
@@ -427,3 +429,19 @@ rather than hidden; see [design](../../../design/browser-addon.md) and
   (`profile_flags`, unit-tested).
 
 See [Phase 3s](../../../plan/bud-owned-browser/phase-3s-confirmed-defects.md).
+
+## Plausible-defect outcomes (Phase 3u, daemon)
+
+- **P2 reproduced and fixed.** Inputs whose type has no selection API
+  (`email`, `number`, `date`, ...) report `selectionStart === null`; the private
+  text and key functions now append/trim `value` for those instead of failing
+  with `browser_stale_or_unsupported_focus`. Live fixture
+  `live_private_typing_into_email_input` types into a `type=email` field and
+  presses Backspace (every gesture returns the next focus token; the viewer
+  chains them).
+- **P7 decided: close does not transition authority** (see Independent
+  renewal above).
+- **P8 fixed.** The media task clears the slot's busy flag through a drop guard,
+  so a panic can no longer leave `browser_media_busy` until restart
+  (unit-tested with a panicking task).
+

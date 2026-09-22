@@ -1,6 +1,6 @@
 # Phase 3u: Plausible defects to confirm and fix
 
-Status: scoped, not implemented. Updated 2026-09-21.
+Status: implemented locally. Eight of nine items reproduced and are fixed with regression tests; P5 did not reproduce and keeps its test as a guard; P7 was decided with no code change. Updated 2026-09-21.
 
 ## Context
 
@@ -136,11 +136,60 @@ anything the client sends between its first message and the listener
 registration is dropped. Buffer messages from the socket until `attachViewer`
 has registered, or attach the listener before awaiting the first message.
 
+## Outcomes (2026-09-21)
+
+- **P2 (daemon): reproduced, fixed.** New env-gated fixture
+  `live_private_typing_into_email_input` failed with
+  `browser_stale_or_unsupported_focus` on unpatched code; both injected input
+  functions now handle a null selection by appending/trimming `value`
+  (`adapter.rs`). Passes against Chrome 153.
+- **P7 (daemon): decided, no code change.** Authority is Bud-wide; closing one
+  thread's tabs must not pause a private session elsewhere; input is already
+  fenced by document/frame/focus tokens; the media task that ends with the
+  workspace pauses authority when its controller held it. Spec updated.
+- **P8 (daemon): fixed.** `OnDrop` guard in `media.rs` clears the busy flag on
+  every task exit; unit test panics the task and asserts the flag is clear.
+- **P1 (web): reproduced, fixed.** `viewer.test.tsx` "aborted private fit cannot
+  leave input silently blocked after re-taking control without fitting" failed
+  on unchanged code (textarea enabled, click never dispatched). `viewer.tsx` now
+  clears the fence at the start of every non-renew control transition and on
+  media loss, and mirrors it into the textarea `disabled` prop and a waiting
+  cursor on the owned canvas; the ref stays the synchronous gate in `send()`.
+- **P5 (web): did not reproduce.** "recovery is attempted on the first poll
+  that reports the browser available, not one tick later" passed on unchanged
+  code and is kept as a guard. A recovery ticket only arrives in a control
+  response, which needs a non-null session; `session` never reverts to null;
+  the latest control callback is refreshed by effect before a poll tick can
+  run; and `recoverViewer` on the service does not check `revision`.
+- **P3 (service): reproduced, fixed differently than sketched.** Test "a
+  heartbeat blocked behind a browser park commit cannot abort the parked
+  worker" (`invocation-worker.test.ts`) showed a heartbeat rejecting with
+  `lease_lost` after `browserWaitParked()`, aborting the controller. The
+  proposed `beforePark` hook would deadlock: `prepare()` holds the invocation
+  row `for update` until commit and `heartbeat()` locks the same row. Fix:
+  `renew()` ignores lease loss once `parked` is set (the commit response and the
+  wait propagation are microtasks, so `parked` always precedes the rejection).
+- **P4 (service): reproduced, fixed.** A proxied client counted one `rollback`
+  after `commit`; `repository.ts` now tracks whether the transaction is open and
+  stamps `browser_dispatched:true` only after the interrupted-reopen branch.
+  The test also asserts the receipt is not `true` and the call id can reopen.
+- **P6 (service): reproduced, fixed.** "renew resolves ownership before
+  consulting controller state" (`control.test.ts`): a foreign owner got
+  `browser_control_expired`; `renew()` now resolves ownership first and the
+  independent-renewal path reuses that read.
+- **P9 (service): reproduced, fixed.** "a message sent right behind the viewer
+  hello reaches the media listener" (`media.test.ts`): an ack sent behind the
+  hello was dropped. `routes.ts` extracts `viewerHandshake`, which buffers up to
+  16 messages after the hello and replays them once `attachViewer` returns.
+- Also found while reproducing P2: `forget_workspace` (no-handle close) still
+  used the fail-closed hint save; routed through the best-effort `forget` from
+  Phase 3s D1.
+
 ## Spec Files to Update
 
-- [ ] `web/src/features/browser/browser.spec.md` (P1, P5)
-- [ ] `bud/src/browser/browser.spec.md` (P2, P7, P8)
-- [ ] `service/src/browser/browser.spec.md` (P3, P4, P6, P9)
+- [x] `web/src/features/browser/browser.spec.md` (P1, P5)
+- [x] `bud/src/browser/browser.spec.md` (P2, P7, P8)
+- [x] `service/src/browser/browser.spec.md` (P3, P4, P6, P9)
 
 ## Impacted Contracts
 

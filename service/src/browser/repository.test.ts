@@ -276,5 +276,46 @@ test(
         .rows[0].tenant_id,
       "tenant",
     );
+    // A workspace bound to the retired profile is closed and reported without
+    // a dispatch: the committed transaction is not rolled back and the action
+    // receipt must not claim a command left the service.
+    const otherThread = randomUUID();
+    await pool.query("insert into thread values($1,'bud','alice','tenant',null)", [otherThread]);
+    await pool.query(
+      "insert into agent_invocation(id,thread_id,turn_id,created_by_user_id,fence,worker_id,status,lease_expires_at,cancel_requested_at) values('inv2',$1,'turn2','alice',1,'worker','running',now()+interval '2 minutes',null)",
+      [otherThread],
+    );
+    await pool.query(
+      "insert into agent_invocation_action(id,invocation_id,call_id,fence,created_by_user_id,status,evidence) values('stale-call','inv2','stale-call',1,'alice','intent',null)",
+    );
+    await pool.query(
+      "insert into browser_session(id,thread_id,bud_id,created_by_user_id,tenant_id,generation,boot_id,browser_id) values('browser_stale',$1,'bud','alice','tenant','gen','boot',$2)",
+      [otherThread, oldResource],
+    );
+    const statements: string[] = [];
+    const observed = {
+      query: pool.query.bind(pool),
+      connect: async () => {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get: (target, key) => key === "query"
+            ? (...args: unknown[]) => { statements.push(String(args[0]).trim().toLowerCase()); return (target.query as (...a: unknown[]) => unknown)(...args); }
+            : Reflect.get(target, key),
+        });
+      },
+    } as unknown as Pool;
+    const staleCall: BrowserAgentContext = { ...context, threadId: otherThread, turnId: "turn2",
+      invocation: { id: "inv2", fence: 1, workerId: "worker" }, callId: "stale-call" };
+    await assert.rejects(new BrowserRepository(observed).prepare(staleCall, "boot", { action: "observe" }), /interrupted_reopen_required/);
+    assert.ok(statements.includes("commit"));
+    assert.equal(statements.filter((s) => s.startsWith("rollback")).length, 0, "rollback after commit");
+    assert.notEqual(
+      (await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where id='stale-call'")).rows[0].dispatched,
+      "true",
+    );
+    assert.equal((await pool.query("select state,desired_state from browser_session where id='browser_stale'")).rows[0].state, "interrupted");
+    // Nothing was dispatched for that call, so the same receipt can still open.
+    const reopened = await repo.prepare(staleCall, "boot", { action: "open" });
+    assert.notEqual(reopened.session_id, "browser_stale");
   },
 );

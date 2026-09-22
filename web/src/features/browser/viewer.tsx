@@ -81,7 +81,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   const menuButton = useRef<HTMLButtonElement>(null);
   const [fit, setFit] = useState(true);
   const [resizing, setResizing] = useState(false);
+  // Input stays fenced after a fit until a frame proves the new geometry. The
+  // ref is authoritative for dispatch; the state keeps the UI from looking live.
   const resizeBlocked = useRef(false);
+  const [blocked, setBlocked] = useState(false);
+  const blockInput = useCallback((value: boolean) => { resizeBlocked.current = value; setBlocked(value); }, []);
   const surface = useRef<HTMLDivElement>(null);
   const frameReady = useRef<((frame: BrowserFrame) => void) | null>(null);
   const ownsRef = useRef(false);
@@ -199,6 +203,8 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         setWorking(true);
         setReturning(operation === "return");
         resetInput();
+        // Any fence from an aborted fit ends here: new leases attach fresh media.
+        blockInput(false);
       }
       let returnLease: Session | undefined;
       try {
@@ -310,7 +316,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         }
       }
     },
-    [base, session, selectedTarget, resetInput, failPrivate],
+    [base, session, selectedTarget, resetInput, failPrivate, blockInput],
   );
   const latestControl = useRef(control);
   useEffect(() => {
@@ -375,10 +381,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         if (!mounted.current || media.current !== client) return;
         setConnected(state === "connected");
         setEmpty(state === "empty");
-        if (state === "empty") { resetInput(); resizeBlocked.current = false; setResizing(false); }
+        if (state === "empty") { resetInput(); blockInput(false); setResizing(false); }
         if (state === "connected" && client.frame) frameReady.current?.(client.frame);
         if (state === "unavailable") {
           resetInput();
+          blockInput(false); // Reconnection requires a fresh frame before input anyway.
           setTargets([]);
           setSelectedTarget("");
           if (ownsRef.current && !changingControl.current)
@@ -403,13 +410,13 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       if (media.current === client) media.current = null;
       client.close();
     };
-  }, [base, canView, mediaVersion, session?.generation, mediaEpoch, owns, resetInput, failPrivate]);
+  }, [base, canView, mediaVersion, session?.generation, mediaEpoch, owns, resetInput, failPrivate, blockInput]);
   useEffect(() => {
     const permitted = owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport;
     if (ended || !fit || !permitted || !connected || !selectedTarget || !surface.current) return;
     const abort = new AbortController();
     const fitter = new ViewportFitter(async (size) => {
-      resizeBlocked.current = true;
+      blockInput(true);
       setResizing(true);
       resetInput();
       try {
@@ -428,7 +435,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         abort.signal.throwIfAborted();
         // Passive fitting has no input to fence; the agent may navigate before
         // the next frame. Do not wait for an obsolete document in that case.
-        if (!owns) { resizeBlocked.current = false; return; }
+        if (!owns) { blockInput(false); return; }
         // An ACK alone is not proof that the displayed pixels use the new coordinates.
         await new Promise<void>((resolve, reject) => {
           const finish = (error?: Error) => {
@@ -446,7 +453,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           abort.signal.addEventListener("abort", cancelled, { once: true });
           if (media.current?.frame) check(media.current.frame);
         });
-        if (!abort.signal.aborted) resizeBlocked.current = false;
+        if (!abort.signal.aborted) blockInput(false);
       } finally {
         if (!abort.signal.aborted) setResizing(false);
       }
@@ -454,7 +461,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       if (!abort.signal.aborted) {
         if (owns) failPrivate("Page resizing was not confirmed. Private control is paused; take control again before interacting.", 2);
         else {
-          resizeBlocked.current = false;
+          blockInput(false);
           setFit(false);
           setError("Pane fitting was not applied. Another viewer may be sizing the page, or the page changed. Enable Fit pane to try again; the agent can continue.");
         }
@@ -470,7 +477,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       // Any already sent resize can still complete. Require a new frame before input.
       setResizing(false);
     };
-  }, [ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate]);
+  }, [ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput]);
   const send = useCallback(
     (action: Record<string, unknown>) => {
       if (!owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
@@ -622,7 +629,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         )}
         <canvas
           ref={canvas}
-          className="absolute inset-0 m-auto block max-h-full max-w-full object-contain"
+          className={`absolute inset-0 m-auto block max-h-full max-w-full object-contain${owns && blocked ? " cursor-wait" : ""}`}
           aria-label="Remote browser page"
           onClick={(event) => {
             const p = point(event);
@@ -653,7 +660,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           tabIndex={-1}
           autoComplete="off"
           spellCheck={false}
-          disabled={!owns || !connected || working || resizing}
+          disabled={!owns || !connected || working || resizing || blocked}
           className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none overflow-hidden opacity-0"
           onChange={(event) => {
             if (
@@ -820,7 +827,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         {!connected && !empty && (
           <button
             className={button}
-            onClick={() => { resizeBlocked.current = false; setMediaVersion((v) => v + 1); }}
+            onClick={() => { blockInput(false); setMediaVersion((v) => v + 1); }}
           >
             Reconnect view
           </button>

@@ -524,3 +524,16 @@ test("interrupted open workspaces allow explicit takeover but closed or offline 
   f.carrier.current = () => false;
   assert.equal(f.control.canTakeControl(f.session), false);
 });
+
+test("renew resolves ownership before consulting controller state", async () => {
+  for (const independent of [false, true]) {
+    const f = fixture();
+    f.carrier.independentRenewal = independent;
+    await assert.rejects(f.control.renew("bob", "browser", "viewer"), /not_found/);
+    await f.control.acquire("alice", "browser", "viewer", 1);
+    const count = f.requests.length;
+    await assert.rejects(f.control.renew("bob", "browser", "viewer"), /not_found/);
+    assert.equal(f.requests.length, count);
+    assert.equal(f.control.ownsControl("alice", "browser", "viewer"), true);
+  }
+});

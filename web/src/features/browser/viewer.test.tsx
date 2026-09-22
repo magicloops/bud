@@ -614,3 +614,150 @@ test('explicit chat return recovers an orphaned private lease after restart with
     globalThis.requestAnimationFrame=originalAnimationFrame;
   }
 });
+
+test('aborted private fit cannot leave input silently blocked after re-taking control without fitting', async () => {
+  const originalAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  const originalFetch = globalThis.fetch
+  const originalObserver = globalThis.ResizeObserver
+  const originalInterval = globalThis.setInterval
+  const originalClearInterval = globalThis.clearInterval
+  globalThis.setInterval = (() => 12345) as unknown as typeof setInterval
+  globalThis.clearInterval = (() => {}) as typeof clearInterval
+  const clients: FakeCanvas[] = []
+  class FakeCanvas {
+    frame: BrowserFrame | null = null
+    closed = false
+    status: (state: string, targets?: BrowserFrame['targets']) => void
+    constructor(_canvas: unknown, _url: string, _viewer: string, status: FakeCanvas['status']) { this.status = status; clients.push(this) }
+    show(viewport?: string) {
+      this.frame = { target_id: 'page', document_id: 'doc', frame_token: 'frame', viewport_id: viewport, width: 640, height: 480, targets: [{ target_id: 'page', origin: 'https://example.test' }] }
+      this.status('connected', this.frame.targets)
+    }
+    close() { this.closed = true; this.frame = null; this.status('unavailable') }
+  }
+  Object.assign(globalThis, { __testBrowserCanvas: FakeCanvas })
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} } as unknown as typeof ResizeObserver
+  let resizable = true
+  const metadata = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: 'agent', revision: 1, can_view: true, can_resize_viewport: resizable })
+  const operations: string[] = []
+  const sizes: unknown[] = []
+  const inputs: Record<string, unknown>[] = []
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/input')) { inputs.push(JSON.parse(String(init?.body)).input); return Response.json({ focus_token: 'focus' }) }
+    if (String(url).endsWith('/viewport')) { sizes.push(JSON.parse(String(init?.body))); return Response.json({ viewport_applied: true, viewport_id: 'new-size' }) }
+    if (String(url).endsWith('/control')) {
+      const operation = JSON.parse(String(init?.body)).operation
+      operations.push(operation)
+      return Response.json({ ...metadata(), control_state: operation === 'acquire' ? 'human_private' : 'paused', revision: operations.length + 1, can_view: false })
+    }
+    return Response.json(metadata())
+  }
+  const { BrowserViewer } = await import('./viewer')
+  let view!: ReactTestRenderer
+  const canvas = Object.assign(new EventTarget(), { getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 480 }) })
+  const take = async () => act(async () => view.root.findAllByType('button').find(button => button.children.includes('Take control'))!.props.onClick())
+  const click = async () => act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
+  try {
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', embedded: true }), { createNodeMock: element => {
+      if (element.type === 'canvas') return canvas
+      if (element.type === 'textarea') return { value: '', focus() {} }
+      if (element.type === 'div') return { getBoundingClientRect: () => ({ width: 640, height: 480 }) }
+      return null
+    } }) })
+    await act(async () => clients.at(-1)!.show())
+    await take()
+    await act(async () => clients.at(-1)!.show())
+    await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
+    assert.equal(sizes.length, 1) // Private fit acknowledged; waiting for the matching frame.
+    assert.equal(view.root.findByType('textarea').props.disabled, true)
+    await click()
+    assert.equal(inputs.length, 0)
+    // Media drops before the resized frame arrives: the fit is aborted and control is released.
+    await act(async () => clients.at(-1)!.close())
+    assert.deepEqual(operations, ['acquire', 'release'])
+    assert.equal(view.root.findByType('textarea').props.disabled, true)
+    // Re-take control on a Bud that cannot fit: no fitter runs, so nothing else may unblock input.
+    resizable = false
+    await take()
+    assert.deepEqual(operations, ['acquire', 'release', 'acquire'])
+    await act(async () => clients.at(-1)!.show())
+    await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
+    assert.equal(sizes.length, 1)
+    assert.equal(view.root.findByType('textarea').props.disabled, false)
+    await click()
+    assert.deepEqual(inputs, [{ kind: 'click', x: 10, y: 10 }]) // Enabled input must dispatch.
+    await act(async () => view.root.findByType('textarea').props.onChange({ nativeEvent: { isComposing: false }, target: { value: 'Hi' } }))
+    assert.deepEqual(inputs.at(-1), { kind: 'text', text: 'Hi', focus_token: 'focus' })
+  } finally {
+    if (view) await act(async () => view.unmount())
+    globalThis.requestAnimationFrame = originalAnimationFrame
+    globalThis.fetch = originalFetch
+    globalThis.ResizeObserver = originalObserver
+    globalThis.setInterval = originalInterval
+    globalThis.clearInterval = originalClearInterval
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
+  }
+})
+
+test('recovery is attempted on the first poll that reports the browser available, not one tick later', async () => {
+  const originalFetch = globalThis.fetch
+  const originalTimeout = globalThis.setTimeout
+  const originalClear = globalThis.clearTimeout
+  const originalAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  const timers = new Map<number, () => void>()
+  let timer = 0
+  globalThis.setTimeout = ((callback: () => void, delay: number, ...args: unknown[]) => {
+    if (delay !== 3000) return originalTimeout(callback, delay, ...args)
+    timers.set(++timer, callback); return timer
+  }) as typeof setTimeout
+  globalThis.clearTimeout = ((handle: number) => { if (!timers.delete(handle)) originalClear(handle) }) as typeof clearTimeout
+  const clients: { status: (state: string) => void }[] = []
+  Object.assign(globalThis, { __testBrowserCanvas: class {
+    frame = null
+    constructor(_canvas: unknown, _url: string, _viewer: string, readonly status: (state: string) => void) { clients.push(this) }
+    close() {}
+  } })
+  let revision = 1
+  let runtime = 'available'
+  let privateState = false
+  let ownsControl = false
+  const writes: { operation: string; recovery_ticket?: string }[] = []
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision, can_view: !privateState, owns_control: ownsControl, runtime_status: runtime })
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body))
+      writes.push(body)
+      if (body.operation === 'acquire') { privateState = true; ownsControl = true; revision = 2; return Response.json({ ...snapshot(), recovery_ticket: 'proof' }) }
+      if (body.operation === 'recover') { ownsControl = true; return Response.json({ ...snapshot(), recovery_ticket: 'rotated' }) }
+    }
+    return Response.json(snapshot())
+  }
+  const { BrowserViewer } = await import('./viewer')
+  let view!: ReactTestRenderer
+  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  try {
+    // Mount without a session: the first poll delivers it and must not write control.
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '' }) }) })
+    assert.deepEqual(writes, [])
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
+    assert.deepEqual(writes.map(w => w.operation), ['acquire'])
+    ownsControl = false; runtime = 'disconnected'
+    await act(async () => clients.at(-1)!.status('unavailable'))
+    await tick() // Still disconnected: nothing to recover yet.
+    assert.deepEqual(writes.map(w => w.operation), ['acquire'])
+    runtime = 'available'; revision = 3
+    await tick() // The first available poll recovers on the same tick.
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'recover'])
+    assert.equal(writes[1].recovery_ticket, 'proof')
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')), true)
+  } finally {
+    if (view) await act(async () => view.unmount())
+    globalThis.fetch = originalFetch
+    globalThis.setTimeout = originalTimeout
+    globalThis.clearTimeout = originalClear
+    globalThis.requestAnimationFrame = originalAnimationFrame
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas')
+  }
+})

@@ -53,8 +53,10 @@ export class BrowserRepository {
       throw new BrowserError("browser_invocation_required");
     await new BrowserResourceRepository(this.database).ensure(context.ownerUserId, context.budId);
     const client = await this.database.connect();
+    let open = false;
     try {
       await client.query("begin");
+      open = true;
       await client.query("select bud_id from bud where bud_id=$1 and created_by_user_id=$2 for update", [context.budId, context.ownerUserId]);
       let resource = (await client.query<BrowserResource>(`select r.* from browser_resource r join bud b on b.bud_id=r.bud_id
         where r.bud_id=$1 and r.created_by_user_id=$2 and b.created_by_user_id=$2 and r.retired_at is null for update of r`,
@@ -95,16 +97,6 @@ export class BrowserRepository {
         Date.now() + 30_000,
         new Date(authority.rows[0].lease_expires_at).getTime(),
       );
-      // The existing action intent is the durable no-replay receipt. Retrying
-      // after a process failure cannot mint a second dispatch for this call.
-      const receipt = await client.query(
-        `update agent_invocation_action set evidence=jsonb_build_object('browser_dispatched',true)
-        where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
-        and status='intent' and not coalesce((evidence->>'browser_dispatched')::boolean,false) returning id`,
-        [identity.id, context.callId, identity.fence, context.ownerUserId],
-      );
-      if (!receipt.rowCount)
-        throw new BrowserError("browser_call_already_dispatched");
       let session = (
         await client.query<Session>(
           `select * from browser_session where thread_id=$1
@@ -120,10 +112,22 @@ export class BrowserRepository {
         );
         session = undefined!;
         if (command.action !== "open") {
+          // Persist the closed workspace; nothing is dispatched for this call.
           await client.query("commit");
+          open = false;
           throw new BrowserError("browser_interrupted_reopen_required");
         }
       }
+      // The existing action intent is the durable no-replay receipt. Retrying
+      // after a process failure cannot mint a second dispatch for this call.
+      const receipt = await client.query(
+        `update agent_invocation_action set evidence=jsonb_build_object('browser_dispatched',true)
+        where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
+        and status='intent' and not coalesce((evidence->>'browser_dispatched')::boolean,false) returning id`,
+        [identity.id, context.callId, identity.fence, context.ownerUserId],
+      );
+      if (!receipt.rowCount)
+        throw new BrowserError("browser_call_already_dispatched");
       if (!session) {
         if (command.action !== "open")
           throw new BrowserError("browser_not_open");
@@ -161,6 +165,7 @@ export class BrowserRepository {
         await client.query(`update agent_invocation set work_duration_ms=${settledWorkDurationSql},work_started_at=null,status='waiting_for_user',reserves_thread=false,
           worker_id=null,lease_expires_at=null,fence=fence+1,updated_at=clock_timestamp() where id=$1`,[identity.id]);
         await client.query("commit");
+        open = false;
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });
       }
       const restarted = session.boot_id !== bootId;
@@ -195,6 +200,7 @@ export class BrowserRepository {
       const browserColor = command.action === "open"
         ? await resolveBrowserColor(client, context.ownerUserId, context.budId) : undefined;
       await client.query("commit");
+      open = false;
       return {
         ...(browserColor ? { browser_color: browserColor } : {}),
         browser_id: resource.id,
@@ -214,7 +220,7 @@ export class BrowserRepository {
         command,
       };
     } catch (error) {
-      if (!(error instanceof BrowserToolWait)) await client.query("rollback");
+      if (open) await client.query("rollback");
       throw error;
     } finally {
       client.release();
@@ -292,7 +298,7 @@ export class BrowserRepository {
 
   async prepareCleanup(
     session: Session,
-    bootId: string,
+    _bootId: string,
   ): Promise<BrowserCommand | null> {
     const resource = await new BrowserResourceRepository(this.database).get(session.created_by_user_id, session.bud_id);
     if (!resource || session.browser_id !== resource.id) {

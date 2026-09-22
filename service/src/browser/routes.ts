@@ -3,7 +3,7 @@ import { BrowserResourceRepository } from "./resource-repository.js";
 import { registerAgentCaptures } from "./agent-capture.js";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { and, eq, gt } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { authSessionTable } from "../db/schema.js";
@@ -105,6 +105,31 @@ async function alive(viewer: Viewer): Promise<boolean> {
     )
     .limit(1);
   return rows.length === 1;
+}
+
+/**
+ * Reads the viewer hello, then runs `attach`, which registers the media
+ * listener after authorization I/O. Messages sent behind the hello are held
+ * until that listener exists instead of being dropped by the bare emitter.
+ */
+export function viewerHandshake(socket: WebSocket, attach: (hello: string) => Promise<void>) {
+  const timer = setTimeout(() => socket.terminate(), 3000);
+  socket.once("message", (raw) => {
+    clearTimeout(timer);
+    const held: RawData[] = [];
+    const hold = (later: RawData) => {
+      if (held.push(later) > 16) socket.terminate();
+    };
+    socket.on("message", hold);
+    attach(raw.toString())
+      .then(() => {
+        socket.off("message", hold);
+        for (const later of held) socket.emit("message", later, false);
+      })
+      .catch(() => socket.terminate());
+  });
+  socket.on("close", () => clearTimeout(timer));
+  socket.on("error", () => {});
 }
 
 /** Browser session is owner/Bud/thread scoped. No page content is persisted here. */
@@ -332,31 +357,19 @@ export async function registerBrowserRoutes(
           await control.repository.get(actor.userId, sessionId(request));
         },
       },
-      (socket, request) => {
-        const timer = setTimeout(() => socket.terminate(), 3000);
-        socket.once("message", (raw) => {
-          clearTimeout(timer);
-          void (async () => {
-            if (Buffer.byteLength(raw.toString()) > 256)
-              throw new Error("size");
-            const body = z
-              .object(bodyBase)
-              .strict()
-              .parse(JSON.parse(raw.toString()));
-            const actor = await getOptionalViewer(request);
-            if (!actor || !(await alive(actor))) throw new Error("auth");
-            await media.attachViewer(
-              socket,
-              actor.userId,
-              sessionId(request),
-              identity(actor, body.viewer_id),
-              () => alive(actor),
-            );
-          })().catch(() => socket.terminate());
-        });
-        socket.on("close", () => clearTimeout(timer));
-        socket.on("error", () => {});
-      },
+      (socket, request) => viewerHandshake(socket, async (hello) => {
+        if (Buffer.byteLength(hello) > 256) throw new Error("size");
+        const body = z.object(bodyBase).strict().parse(JSON.parse(hello));
+        const actor = await getOptionalViewer(request);
+        if (!actor || !(await alive(actor))) throw new Error("auth");
+        await media.attachViewer(
+          socket,
+          actor.userId,
+          sessionId(request),
+          identity(actor, body.viewer_id),
+          () => alive(actor),
+        );
+      }),
     );
     // A one-use ticket from the authenticated daemon control carrier authorizes
     // this subordinate connection. No ticket appears in its URL/access log.

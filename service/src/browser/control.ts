@@ -445,9 +445,10 @@ export class BrowserControl {
   }
 
   async renew(owner: string, sessionId: string, viewer: string) {
+    // Foreign session IDs are 404 before any controller state is consulted.
+    const session = await this.repository.get(owner, sessionId);
     const existing = this.controller(owner, sessionId, viewer);
     if (existing.carrier.independentRenewal) {
-      const session = await this.repository.get(owner, sessionId);
       if (session.control_state !== "human_private") throw new BrowserError("browser_private_or_paused");
       const request = this.repository.command(session, {
         action: "control", operation: "renew", controller_id: existing.id,

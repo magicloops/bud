@@ -829,3 +829,94 @@ async fn static_idle_tab_preserves_minimized_navigation_capture() {
     root.close().await.unwrap();
     server.abort();
 }
+
+/// Phase 3u P2: `type=email` (and number/date) inputs report a null selection,
+/// which must not make private typing fail; text appends and Backspace edits.
+#[tokio::test]
+async fn live_private_typing_into_email_input() {
+    let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+        return;
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buffer = [0; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let body = "<!doctype html><style>body{margin:20px}input{width:300px;height:40px}</style><input aria-label='Email' type='email'>";
+                let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
+            });
+        }
+    });
+    let mut browser = Browser::launch(&crate::browser::addon::test_runtime(&executable))
+        .await
+        .unwrap();
+    let target = browser.targets().await.unwrap()[0].target_id.clone();
+    browser.navigate(&target, &url).await.unwrap();
+    for _ in 0..30 {
+        if browser
+            .observe(&target)
+            .await
+            .unwrap()
+            .elements
+            .iter()
+            .any(|e| e.name == "Email")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let frame = browser.capture(&target).await.unwrap();
+    let document = frame["document_id"].as_str().unwrap();
+    let token = frame["frame_token"].as_str().unwrap();
+    let focused = browser
+        .human_input(
+            &target,
+            document,
+            token,
+            &HumanInput::Click { x: 50.0, y: 40.0 },
+        )
+        .await
+        .unwrap();
+    let focus = focused["focus_token"].as_str().unwrap().to_owned();
+    // Every gesture returns the next focus token; the viewer chains them.
+    let typed = browser
+        .human_input(
+            &target,
+            document,
+            token,
+            &HumanInput::Text {
+                focus_token: focus,
+                text: "user@example.com".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let focus = typed["focus_token"].as_str().unwrap().to_owned();
+    browser
+        .human_input(
+            &target,
+            document,
+            token,
+            &HumanInput::Key {
+                focus_token: focus,
+                key: "Backspace".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let session = browser.session(&target).await.unwrap();
+    let value = browser
+        .cdp
+        .call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression":"document.querySelector('input').value","returnByValue":true}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(value["result"]["value"], "user@example.co");
+    browser.close().await.unwrap();
+}

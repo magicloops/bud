@@ -86,7 +86,14 @@ export class InvocationWorker {
       renewal = renewal.then(async () => {
         controller.signal.throwIfAborted();
         await this.repository.heartbeat(invocation);
-      }).catch(error => { controller.abort(error); throw error; });
+      }).catch(error => {
+        // A browser park commits fence+1 while a timer heartbeat is blocked on
+        // the same invocation row; that heartbeat then reports a lease the
+        // executor already released on purpose. It cannot renew inside the
+        // park transaction either (the row lock would wait on itself).
+        if (!parked) controller.abort(error);
+        throw error;
+      });
       return renewal;
     };
     const scheduleHeartbeat = () => {
