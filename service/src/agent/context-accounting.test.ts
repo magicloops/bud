@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { captureContextBaseline, contextInputTokens, resolveContextAccounting, type ContextRequestIdentity } from "./context-accounting.js";
 import { estimateCanonicalMessagesTokens } from "./context-budget.js";
+import { IMAGE_TOKEN_ESTIMATE } from "../browser/image-references.js";
 import type { CanonicalMessage } from "../llm/types.js";
 
 const identity: ContextRequestIdentity = { provider: "openai", model: "gpt-test", reasoning: { enabled: false },
@@ -59,9 +60,34 @@ test("cache reads and writes count once according to adapter usage conventions",
   assert.equal(contextInputTokens("anthropic", { input_tokens: 100, cache_read_input_tokens: -1 }), null);
   assert.equal(contextInputTokens("unsupported", { input_tokens: 100 }), null);
 });
-test("expiring browser image hydration cannot masquerade as an unchanged measured request", () => {
-  const args = fixture();
-  args.conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: "image",
-    content: JSON.stringify({ tool: "browser_observe", data: { image_artifact: "artifact" } }) }] });
-  assert.equal(resolveContextAccounting(args).fallbackReason, "image_hydration");
+const screenshot = (id: string): CanonicalMessage => ({ role: "user", content: [{ type: "tool_result", tool_use_id: id,
+  content: JSON.stringify({ tool: "browser_observe", ok: true, data: { image_artifact: { id } } }) }] });
+
+test("anchors without an image record fall back when the measured request held screenshots", () => {
+  const measured = [...messages, screenshot("a")];
+  const baseline = captureContextBaseline(measured, identity);
+  delete (baseline as { image_ids?: string[] }).image_ids;
+  const anchor = { llmCallId: "call", baseline, usage: { input_tokens: 12542, output_tokens: 1 } };
+  assert.equal(resolveContextAccounting({ conversation: measured, identity, anchor, fallbackTokens: 99 }).fallbackReason, "image_hydration");
+  // Without screenshots in the measured prefix an old anchor still stands.
+  const plain = { llmCallId: "call", baseline: (() => { const b = captureContextBaseline(messages, identity); delete (b as { image_ids?: string[] }).image_ids; return b; })(),
+    usage: { input_tokens: 12542, output_tokens: 1 } };
+  assert.equal(resolveContextAccounting({ conversation: [...messages, screenshot("a")], identity, anchor: plain, fallbackTokens: 99 }).fallbackReason, null);
+});
+
+test("hydrated screenshots are accounted: measured set keeps the anchor, new ones add the image estimate, drop-outs invalidate", () => {
+  const measured = [...messages, screenshot("a"), screenshot("b")];
+  const anchor = { llmCallId: "call", baseline: captureContextBaseline(measured, identity), usage: { input_tokens: 20000, output_tokens: 1 } };
+  assert.deepEqual(anchor.baseline.image_ids, ["a", "b"]);
+  // Unchanged request: provider count stands.
+  assert.equal(resolveContextAccounting({ conversation: structuredClone(measured), identity, anchor, fallbackTokens: 1 }).tokens, 20000);
+  // A new screenshot after the measured prefix is estimated, not ignored.
+  const extended = [...measured, screenshot("c")];
+  const result = resolveContextAccounting({ conversation: extended, identity, anchor, fallbackTokens: 1 });
+  assert.equal(result.fallbackReason, null);
+  assert.equal(result.tokens, 20000 + estimateCanonicalMessagesTokens([screenshot("c")]));
+  assert.ok(estimateCanonicalMessagesTokens([screenshot("c")]) >= IMAGE_TOKEN_ESTIMATE, "image reference counts as an image");
+  // Enough new screenshots to push a measured one out of the hydration window.
+  const overflow = [...measured, ...["c", "d", "e", "f", "g", "h", "i"].map(screenshot)];
+  assert.equal(resolveContextAccounting({ conversation: overflow, identity, anchor, fallbackTokens: 1 }).fallbackReason, "image_hydration");
 });

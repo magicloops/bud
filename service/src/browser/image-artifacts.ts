@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import { pool } from '../db/client.js';
 import type { CanonicalContentBlock, CanonicalMessage } from '../llm/types.js';
 import type { ProviderInvocationContext } from '../llm/provider.js';
+import { selectHydratedImageReferences } from './image-references.js';
 
 const directory = resolve(process.env.BUD_BROWSER_ARTIFACT_DIR ?? '.bud-data/browser-images');
 const TTL = 7 * 24 * 60 * 60 * 1000;
@@ -58,18 +59,9 @@ export async function hydrateBrowserImages(messages: CanonicalMessage[], context
       where t.thread_id=$1 and t.bud_id=$2 and t.created_by_user_id=$3 and b.created_by_user_id=$3 and t.deleted_at is null`, [thread, bud, owner]);
     return Boolean(result.rowCount);
   }): Promise<CanonicalMessage[]> {
-  // Limit provider payloads to the eight newest requested screenshots.
-  const selected = new Set<CanonicalContentBlock>();
-  for (const message of [...messages].reverse()) {
-    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
-    for (const block of [...message.content].reverse()) {
-      if (block.type !== 'tool_result' || typeof block.content !== 'string') continue;
-      try {
-        const payload = JSON.parse(block.content);
-        if (selected.size < 8 && payload?.tool === 'browser_observe' && payload?.ok === true && typeof payload?.data?.image_artifact?.id === 'string') selected.add(block);
-      } catch { /* Ordinary text tool output. */ }
-    }
-  }
+  // Limit provider payloads to the newest requested screenshots; the same
+  // selection feeds context accounting (image-references.ts).
+  const selected = selectHydratedImageReferences(messages);
   let owned: boolean | undefined;
   const result: CanonicalMessage[] = [];
   for (const message of messages) {
@@ -86,7 +78,9 @@ export async function hydrateBrowserImages(messages: CanonicalMessage[], context
         owned ??= await authorize(context.ownerUserId, context.threadId, context.budId);
         if (owned) image = await store.get(id, context.ownerUserId, context.threadId, block.tool_use_id);
       }
-      content.push({ type:'text', text: image ? `Screenshot from browser tool call ${block.tool_use_id}:` : `Screenshot from browser tool call ${block.tool_use_id} is unavailable (expired, unauthorized, outside the eight-image history budget, or this model lacks image support).` });
+      content.push({ type:'text', text: image
+        ? `Screenshot from browser tool call ${block.tool_use_id}:`
+        : `Screenshot from browser tool call ${block.tool_use_id} is unavailable (expired, unauthorized, outside the eight-image history budget, or this model lacks image support).` });
       if (image) content.push({ type:'image', source:{ type:'base64', media_type:image.mime_type, data:image.image } });
     }
     result.push({ ...message, content });

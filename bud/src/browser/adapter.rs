@@ -345,6 +345,33 @@ impl Browser {
                 }
                 process.idle_tab.as_ref().map(|(id, _)| id.clone())
             };
+        // Sessions attached to targets that no longer exist are detached and
+        // dropped so a long-lived workspace never exhausts its session table.
+        let live: std::collections::HashSet<String> = infos
+            .iter()
+            .filter_map(|t| t["targetId"].as_str().map(str::to_owned))
+            .collect();
+        for session in prune_sessions(&mut self.sessions, &live) {
+            let _ = self
+                .cdp
+                .call(
+                    None,
+                    "Target.detachFromTarget",
+                    json!({"sessionId":session}),
+                )
+                .await;
+        }
+        if let Some((cdp, sessions)) = self.screenshot.as_mut() {
+            for session in prune_sessions(sessions, &live) {
+                let _ = cdp
+                    .call(
+                        None,
+                        "Target.detachFromTarget",
+                        json!({"sessionId":session}),
+                    )
+                    .await;
+            }
+        }
         let owned_targets: Vec<String> = {
             let mut owners = self.ownership.lock().unwrap();
             owners.retain(|id, _| infos.iter().any(|t| t["targetId"].as_str() == Some(id)));
@@ -1363,6 +1390,18 @@ impl Browser {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 if self.process.lock().unwrap().child.try_wait()?.is_some() {
+                    // Our own child died by SIGKILL, so Chrome could not remove
+                    // its singleton files; ownership is certain here, clear them.
+                    let profile = self
+                        .process
+                        .lock()
+                        .unwrap()
+                        ._persistent
+                        .as_ref()
+                        .map(|p| p.path.clone());
+                    if let Some(path) = profile {
+                        super::profile::clear_singleton_files(&path);
+                    }
                     return Ok(());
                 }
                 if Instant::now() >= deadline {
@@ -1371,7 +1410,10 @@ impl Browser {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         } else {
-            self.recovery.lock().unwrap().save(&self.workspace, None)?;
+            // Best-effort: corrupt hints never block closing a workspace.
+            if let Err(error) = self.recovery.lock().unwrap().forget(&self.workspace) {
+                tracing::warn!(reason = %error, "Recovery hint removal failed; closing anyway");
+            }
             self.saved_pages = None;
             if self.process_exited()? {
                 return Ok(());
@@ -1435,6 +1477,24 @@ impl Browser {
             last_wheel: None,
         })
     }
+}
+
+/// Drop cached CDP sessions whose target vanished; returns the session ids to
+/// detach. The 32-entry caps in `session`/`screenshot` remain a backstop.
+pub(super) fn prune_sessions(
+    sessions: &mut HashMap<String, String>,
+    live: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut stale = Vec::new();
+    sessions.retain(|target, session| {
+        if live.contains(target) {
+            true
+        } else {
+            stale.push(session.clone());
+            false
+        }
+    });
+    stale
 }
 
 /// Disposable probe/fixture profiles use in-memory credential storage so a
@@ -1551,3 +1611,29 @@ mod viewer_tests;
 #[cfg(test)]
 #[path = "workspace_tests.rs"]
 mod workspace_tests;
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn stale_sessions_are_pruned_and_reported_for_detach() {
+        let mut sessions: HashMap<String, String> = [("t1", "s1"), ("t2", "s2"), ("t3", "s3")]
+            .into_iter()
+            .map(|(t, s)| (t.to_owned(), s.to_owned()))
+            .collect();
+        let live = ["t2".to_owned()].into_iter().collect();
+        let mut stale = prune_sessions(&mut sessions, &live);
+        stale.sort();
+        assert_eq!(stale, vec!["s1".to_owned(), "s3".to_owned()]);
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions.contains_key("t2"));
+        assert!(prune_sessions(&mut sessions, &live).is_empty());
+    }
+
+    #[test]
+    fn persistent_launches_never_carry_mock_keychain_flags() {
+        assert!(profile_flags(false).is_empty());
+        assert!(profile_flags(true).contains(&"--use-mock-keychain"));
+    }
+}

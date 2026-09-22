@@ -56,20 +56,16 @@ impl Profile {
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             bail!("browser_profile_in_use");
         }
-        // Chrome may survive a crashed daemon. Never remove its singleton lock
-        // or launch a second process against uncertain ownership, even if stale.
-        if std::fs::symlink_metadata(path.join("SingletonLock")).is_ok() {
-            bail!("browser_profile_recovery_required");
-        }
+        // Chrome may survive a crashed daemon. Never launch a second process
+        // against a live Chrome on this profile; only a provably stale lock is
+        // cleared (Phase 3s D2).
+        ensure_singleton_free(&path)?;
         seed_appearance(&path)?;
         Ok(Self { path, _lock: lock })
     }
 
     pub fn ensure_not_running(&self) -> Result<()> {
-        if std::fs::symlink_metadata(self.path.join("SingletonLock")).is_ok() {
-            bail!("browser_profile_recovery_required");
-        }
-        Ok(())
+        ensure_singleton_free(&self.path)
     }
 
     /// Launch-only cosmetic update under the profile lock. Never called for a
@@ -145,6 +141,73 @@ impl Profile {
             }
         }
         Ok(())
+    }
+}
+
+/// Chrome's `SingletonLock` is a symlink whose target is `<hostname>-<pid>`.
+pub(super) fn singleton_owner(profile: &Path) -> Option<(String, i32)> {
+    let target = std::fs::read_link(profile.join("SingletonLock")).ok()?;
+    let text = target.to_str()?;
+    let (host, pid) = text.rsplit_once('-')?;
+    Some((host.to_owned(), pid.parse().ok()?))
+}
+
+/// True only when the lock demonstrably belongs to nothing alive on this host:
+/// same hostname and either the pid is gone or it is not a process running
+/// with this profile's `--user-data-dir`. Anything uncertain is not stale.
+pub(super) fn singleton_stale(profile: &Path) -> bool {
+    let Some((host, pid)) = singleton_owner(profile) else {
+        return false;
+    };
+    let local = nix::unistd::gethostname()
+        .ok()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if host != local || pid <= 0 {
+        return false;
+    }
+    match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None) {
+        Err(nix::errno::Errno::ESRCH) => true,
+        Err(_) => false,
+        Ok(()) => !process_uses_profile(pid, profile),
+    }
+}
+
+fn process_uses_profile(pid: i32, profile: &Path) -> bool {
+    let needle = format!("--user-data-dir={}", profile.display());
+    #[cfg(target_os = "linux")]
+    let command = std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|bytes| String::from_utf8_lossy(&bytes).replace('\0', " "))
+        .unwrap_or_default();
+    #[cfg(not(target_os = "linux"))]
+    let command = std::process::Command::new("/bin/ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default();
+    command.contains(&needle)
+}
+
+fn ensure_singleton_free(profile: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(profile.join("SingletonLock")).is_err() {
+        return Ok(());
+    }
+    if singleton_stale(profile) {
+        tracing::warn!(
+            component = "browser_profile",
+            "Removing stale Chrome singleton lock left by an unclean exit"
+        );
+        clear_singleton_files(profile);
+        return Ok(());
+    }
+    bail!("browser_profile_recovery_required")
+}
+
+/// Remove Chrome's singleton files. Only called when ownership is certain:
+/// after our own child was killed, or when the lock is provably stale.
+pub(super) fn clear_singleton_files(profile: &Path) {
+    for name in ["SingletonLock", "SingletonSocket", "SingletonCookie"] {
+        let _ = std::fs::remove_file(profile.join(name));
     }
 }
 
@@ -258,8 +321,44 @@ mod tests {
         let profile = Profile::acquire(base.path(), "service", "resource", "alice").unwrap();
         let path = profile.path.clone();
         drop(profile);
-        symlink("host-1234", path.join("SingletonLock")).unwrap();
+        // Foreign host: never ours to judge.
+        symlink("other-host-1234", path.join("SingletonLock")).unwrap();
         assert!(Profile::acquire(base.path(), "service", "resource", "alice").is_err());
+        std::fs::remove_file(path.join("SingletonLock")).unwrap();
+        let host = nix::unistd::gethostname()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // Live process using this profile: refused.
+        // A loop keeps the shell (and its argv) alive; `sh -c 'sleep'` would
+        // exec straight into sleep and drop the profile argument.
+        let mut live = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "while :; do sleep 1; done",
+                "sh",
+                &format!("--user-data-dir={}", path.display()),
+            ])
+            .spawn()
+            .unwrap();
+        symlink(format!("{host}-{}", live.id()), path.join("SingletonLock")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!singleton_stale(&path));
+        assert!(Profile::acquire(base.path(), "service", "resource", "alice").is_err());
+        live.kill().unwrap();
+        live.wait().unwrap();
+        // Dead pid (the reaped child): stale, cleared, acquisition proceeds.
+        assert!(singleton_stale(&path));
+        let profile = Profile::acquire(base.path(), "service", "resource", "alice").unwrap();
+        assert!(std::fs::symlink_metadata(path.join("SingletonLock")).is_err());
+        drop(profile);
+        // Live pid that is not a Chrome on this profile (pid reuse): stale.
+        symlink(
+            format!("{host}-{}", std::process::id()),
+            path.join("SingletonLock"),
+        )
+        .unwrap();
+        assert!(singleton_stale(&path));
         std::fs::remove_file(path.join("SingletonLock")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(Profile::acquire(base.path(), "service", "resource", "alice").is_err());

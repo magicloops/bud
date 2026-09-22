@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CanonicalMessage, CanonicalTool, ReasoningConfig } from "../llm/types.js";
 import { estimateCanonicalMessagesTokens } from "./context-budget.js";
+import { hydratedImageIds } from "../browser/image-references.js";
 import type { ContextBudgetProviderUsageEstimate } from "./context-budget-state.js";
 
 /** Small request-boundary record; no prompt text or image bytes are persisted. */
@@ -9,6 +10,8 @@ export type ContextRequestBaseline = {
   identity: string;
   prefix_hash: string;
   message_count: number;
+  /** Screenshot artifacts hydrated into the measured request, in order. */
+  image_ids?: string[];
 };
 export type ContextUsageAnchor = {
   llmCallId: string;
@@ -35,7 +38,8 @@ function digest(value: unknown): string {
 export function captureContextBaseline(
   messages: CanonicalMessage[], identity: ContextRequestIdentity,
 ): ContextRequestBaseline {
-  return { version: 1, identity: digest(identity), prefix_hash: digest(messages), message_count: messages.length };
+  return { version: 1, identity: digest(identity), prefix_hash: digest(messages), message_count: messages.length,
+    image_ids: hydratedImageIds(messages) };
 }
 
 export function resolveContextAccounting(args: {
@@ -52,9 +56,13 @@ export function resolveContextAccounting(args: {
       typeof baseline.prefix_hash !== "string") return fallback("invalid_baseline");
   if (baseline.identity !== digest(args.identity)) return fallback("request_changed");
   if (baseline.prefix_hash !== digest(args.conversation.slice(0, baseline.message_count))) return fallback("prefix_changed");
-  // Browser image hydration changes with expiry and the eight-image history cap.
-  // Do not equate the durable artifact reference with the provider's image input.
-  if (hasBrowserImageReference(args.conversation)) return fallback("image_hydration");
+  // The measured request carried a specific set of hydrated screenshots. Newer
+  // references push older ones out of the eight-image window, so the anchor
+  // only stands while the prefix still hydrates exactly the images it measured;
+  // new references in the suffix are estimated at the per-image constant.
+  const anchored = Array.isArray(baseline.image_ids) ? baseline.image_ids : null;
+  const current = hydratedImageIds(args.conversation, baseline.message_count!);
+  if (anchored === null ? current.length > 0 : digest(anchored) !== digest(current)) return fallback("image_hydration");
   const usage = args.anchor.usage as Record<string, unknown> | null;
   const input = contextInputTokens(args.identity.provider, usage);
   if (input === null) return fallback("usage_unavailable");
@@ -87,11 +95,4 @@ export function contextInputTokens(provider: string, usage: Record<string, unkno
 }
 function nonNegative(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-function hasBrowserImageReference(messages: CanonicalMessage[]): boolean {
-  return messages.some(message => Array.isArray(message.content) && message.content.some(block => {
-    if (block.type !== "tool_result" || typeof block.content !== "string") return false;
-    try { const value = JSON.parse(block.content); return value?.tool === "browser_observe" && Boolean(value?.data?.image_artifact); }
-    catch { return false; }
-  }));
 }

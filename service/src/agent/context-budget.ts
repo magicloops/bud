@@ -1,3 +1,4 @@
+import { selectHydratedImageReferences, IMAGE_TOKEN_ESTIMATE } from "../browser/image-references.js";
 import { config } from "../config.js";
 import {
   getCatalogEntry,
@@ -211,6 +212,11 @@ export function emptyContextBreakdown(): ContextBreakdownTokens {
  */
 export function estimateCanonicalMessagesBreakdown(messages: CanonicalMessage[]): ContextBreakdownTokens {
   const breakdown = emptyContextBreakdown();
+  // Screenshot references are hydrated into image blocks right before the
+  // provider call; account for them here so the meter and the compaction
+  // trigger see what the provider will actually receive.
+  const hydrated = selectHydratedImageReferences(messages);
+  breakdown.images += hydrated.size * IMAGE_TOKEN_ESTIMATE;
   let systemPromptSeen = false;
   for (const message of messages) {
     let messageKind: ContextBreakdownKind;
@@ -302,7 +308,8 @@ function estimateBlockTokens(block: CanonicalContentBlock): number {
     case "reasoning_redacted":
       return estimateTextTokens(JSON.stringify(block.providerData ?? {}));
     case "image":
-      return estimateTextTokens(block.source.data);
+      // Providers charge by tiles/pixel area, not base64 length.
+      return IMAGE_TOKEN_ESTIMATE;
   }
 }
 

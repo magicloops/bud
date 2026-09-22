@@ -54,6 +54,21 @@ impl Recovery {
         self.writable
     }
 
+    /// Close-time hint removal is best-effort: a corrupt hints file must not
+    /// make a workspace impossible to close. `save` keeps failing closed so a
+    /// corrupt file is never overwritten with new authority.
+    pub fn forget(&mut self, workspace: &str) -> Result<()> {
+        if !self.writable {
+            tracing::warn!(
+                component = "browser_recovery",
+                workspace = %workspace,
+                "Recovery hints unavailable; closing without removing hints"
+            );
+            return Ok(());
+        }
+        self.save(workspace, None)
+    }
+
     pub fn get(&self, workspace: &str) -> Option<Pages> {
         self.manifest.workspaces.get(workspace).cloned()
     }
@@ -183,7 +198,10 @@ mod tests {
         let path = dir.path().join("bud-pages.json");
         std::fs::write(&path, "broken").unwrap();
         let mut store = Recovery::load(Some(dir.path()));
+        assert!(!store.available());
         assert!(store.save("a", None).is_err());
+        // Close must still succeed and must not touch the corrupt evidence.
+        store.forget("a").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "broken");
         std::fs::remove_file(&path).unwrap();
         symlink("missing", &path).unwrap();
