@@ -1,8 +1,9 @@
 # Delivery phases: Bud-owned browser
 
-Status: **Phase 0 closed; Phases 1–2 and web Phases 3a/3c–3f implemented for
-local development. Phase 3g reliability is in progress; Phase 3h viewing is implemented locally, with actual-agent acceptance pending before Phase 3b iOS.**
-Updated 2026-09-21. Local user validation and automated checks do not certify the
+Status: **Core service/web/macOS browser functionality is implemented locally;
+see the per-phase evidence below. Next tracks are packaged-daemon release
+validation, Ubuntu support and Phase 3b iOS. Broader acceptance remains open.**
+Updated 2026-09-22. Local user validation and automated checks do not certify the
 remaining hosted, multi-client, privacy, device and release acceptance matrix.
 Contract and defaults: [README](./README.md). Detailed phase documents and debug
 notes retain the evidence and limitations for each implementation.
@@ -40,13 +41,16 @@ from optional attachment to a user's personal browser.
 | 3s — confirmed defects | [Implemented locally](phase-3s-confirmed-defects.md): best-effort hint removal on Close, provable-stale `SingletonLock` clearing so Reset works after a crash, CDP session pruning with detach, and image-set-fenced context accounting with a per-image estimate; unit regression tests pass, env-gated live confirmations pending |
 | 3t — review cleanups | [Implemented locally](phase-3t-review-cleanups.md): spec/proto drift corrected in all tiers, daemon clippy and web ESLint clean, dead web/service code removed, long lines wrapped; the legacy `observe` action and its flat result removed from daemon and service (capability now required); prose-string formatting left to a wording pass |
 | 3u — plausible defects | [Implemented locally](phase-3u-plausible-defects.md): eight of nine reproduced and fixed with regression tests (stuck `resizeBlocked`, `type=email` private typing, park-window heartbeat, commit-then-rollback, renew ownership order, early viewer message, media busy flag); P5 did not reproduce (guard kept); P7 decided with no code change |
-| 3b — iOS viewer | Next major feature after 3g/3h; implementation and real-device acceptance outstanding |
+| 3b — iOS viewer | [Mobile team handoff scoped](phase-3b-ios-browser-viewer.md), with [API reference](mobile-viewer-contract.md) and [device acceptance checklist](mobile-viewer-acceptance.md); scoped native authentication, shared-viewer touch/lifecycle adaptations and mobile implementation outstanding |
 | 4 — release validation/cleanup | Packaging, hosted/device matrix, sustained performance, obsolete prototype cleanup and media efficiency |
 | 5 / later — WebRTC, optional user browser | Deferred; measurement-driven media upgrade and separately consented attachment |
 
-Recommended next sequence: **3p actual-agent acceptance → 3n visual acceptance → 3b → 4**, retaining
-the remaining 3k/3l acceptance checks alongside
-the outstanding 3g reliability checks. Phase numbers reflect scoping order.
+Next delivery direction: merge the settled browser work when approved, then pursue
+**daemon packaging/release acceptance (3r/4), monitorless Linux support (3o), and
+the iOS viewer (3b)** as separate tracks. The mobile handoff can start against the
+validated macOS development daemon; packaging and Linux do not block it. Retain
+remaining 3k/3l recovery, 3p/3n acceptance and 3g reliability checks in release
+validation. Phase numbers reflect scoping order.
 Phase **3o** is a separate host-support track to pursue on an Ubuntu box before
 advertising Linux persistent-browser support; it does not block the iOS track.
 3k deliberately changes browser ownership/private-control scope; 3l separately
@@ -149,8 +153,15 @@ private input is absent from transcript, ledger and logs.
 
 Deliver web first as [Phase 3a: automatic browser pane and viewport fitting](phase-3a-web-pane.md).
 Phase 3a automated checks and local user pane testing passed. Phase 3b adds native
-iOS hosting and device-specific behavior after the focused Phase-3g reliability
-pass. Broader hosted and Phase-2 acceptance remains tracked.
+iOS hosting and device-specific behavior using the shared viewer. Outstanding
+Phase-3g reliability and broader hosted/Phase-2 acceptance remain tracked alongside
+the mobile work.
+
+The [Phase-3b mobile handoff](phase-3b-ios-browser-viewer.md) is the implementation
+entry point, accompanied by the [current API contract](mobile-viewer-contract.md)
+and [acceptance checklist](mobile-viewer-acceptance.md). It distinguishes existing
+web behavior from the required scoped native authentication and lifecycle bridge;
+the current cookie-only viewer cannot simply consume the mobile OAuth token.
 
 - Reuse the Phase-2 viewer, input and handoff components; add the workbench Browser
   surface alongside app preview and refine navigation, layout and accessibility.
