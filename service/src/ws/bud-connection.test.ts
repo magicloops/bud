@@ -205,7 +205,7 @@ test("unknown protobuf payload fields fail with typed unsupported-payload errors
   });
 
   const handleIncoming = Reflect.get(connection, "handleIncoming") as (raw: string | Buffer) => Promise<void>;
-  await handleIncoming.call(connection, encodeEnvelopeWithUnknownPayloadField(190));
+  await handleIncoming.call(connection, encodeEnvelopeWithUnknownPayloadField(192)); // 190/191 are browser control.
 
   assert.equal(socket.readyState, 3);
   assert.equal(socket.sentFrames.length, 1);
@@ -214,7 +214,7 @@ test("unknown protobuf payload fields fail with typed unsupported-payload errors
   const errorFrame = decodeLegacyJsonFrame(encoded);
   assert.equal(errorFrame.type, "error");
   assert.equal(errorFrame.code, "UNSUPPORTED_PAYLOAD");
-  assert.match(errorFrame.message as string, /190/);
+  assert.match(errorFrame.message as string, /192/);
 });
 
 test("WebSocket stream frames dispatch into the shared data-plane runtime", async (t) => {
