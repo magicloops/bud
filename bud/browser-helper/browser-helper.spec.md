@@ -5,6 +5,8 @@ snapshots and exact semantic actions against Rust's managed Chrome for Testing.
 No browser is downloaded or launched by this helper. No model-supplied JavaScript
 or CDP is accepted. The Rust browser manager owns serialization and authority.
 
+- `README.md`: add-on setup, checkout development, tests, dependency pins,
+  diagnostics and removal, with links to the Rust installer/runtime.
 - `main.mjs`: serial, private stdio adapter; loopback CDP bootstrap, bounded
   commands and canonical errors without raw page-bearing exception text.
 - `engine.mjs`: snapshot hierarchy, value exclusion, visible geometry, metadata,
