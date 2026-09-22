@@ -59,12 +59,12 @@ async fn live_private_capture_input_and_stale_frame_guard() {
     );
     browser.navigate(&target, &url).await.unwrap();
     for _ in 0..30 {
+        // Readiness poll: a snapshot can transiently fail while the page is
+        // still navigating, which is not the behaviour under test.
         if browser
             .snapshot_nodes(&target)
             .await
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Test password")
+            .is_ok_and(|nodes| nodes.iter().any(|n| n["name"] == "Test password"))
         {
             break;
         }
@@ -859,12 +859,12 @@ async fn live_private_typing_into_email_input() {
     let target = browser.targets().await.unwrap()[0].target_id.clone();
     browser.navigate(&target, &url).await.unwrap();
     for _ in 0..30 {
+        // Readiness poll: a snapshot can transiently fail while the page is
+        // still navigating, which is not the behaviour under test.
         if browser
             .snapshot_nodes(&target)
             .await
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Email")
+            .is_ok_and(|nodes| nodes.iter().any(|n| n["name"] == "Email"))
         {
             break;
         }

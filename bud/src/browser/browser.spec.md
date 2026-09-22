@@ -404,7 +404,10 @@ refreshed; nothing else is written by the daemon. The helper is packed by
 build.rs into the binary (sources plus vendored `node_modules` when present at
 build time) and unpacked to `helper/<daemon version>/` by `prepare`; the
 compile-time checkout path is gone from production code. Ephemeral probe/fixture
-launches alone carry the mock-keychain flags (`profile_flags`). Linux caveats
+launches alone carry the mock-keychain flags (`profile_flags`). The override is
+resolved by a pure `override_from`, so no unit test mutates the process
+environment that live fixtures read at launch (see
+[debug note](../../../debug/browser-live-test-env-race.md)). Linux caveats
 (secure storage, display passthrough, sandbox) are reported by `status`/`doctor`
 rather than hidden; see [design](../../../design/browser-addon.md) and
 [Phase 3r](../../../plan/bud-owned-browser/phase-3r-browser-addon.md).

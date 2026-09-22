@@ -180,15 +180,29 @@ pub enum Resolution {
 }
 
 pub fn env_override() -> Option<Result<Runtime>> {
-    let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE")?;
-    let Some(helper) = std::env::var_os("BUD_BROWSER_HELPER") else {
+    override_from(
+        std::env::var_os("BUD_BROWSER_EXECUTABLE"),
+        std::env::var_os("BUD_BROWSER_HELPER"),
+        std::env::var_os("BUD_BROWSER_NODE"),
+    )
+}
+
+/// Pure form of the environment override so tests never mutate the process
+/// environment (live fixtures on other threads read the same variables).
+pub fn override_from(
+    executable: Option<std::ffi::OsString>,
+    helper: Option<std::ffi::OsString>,
+    node: Option<std::ffi::OsString>,
+) -> Option<Result<Runtime>> {
+    let executable = executable?;
+    let Some(helper) = helper else {
         return Some(Err(anyhow!(
             "BUD_BROWSER_EXECUTABLE is set without BUD_BROWSER_HELPER; either set both (development override) or unset them and run `bud browser prepare`"
         )));
     };
     Some(Ok(Runtime {
         executable: PathBuf::from(executable),
-        node: std::env::var_os("BUD_BROWSER_NODE")
+        node: node
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("node")),
         helper: PathBuf::from(helper),
@@ -952,31 +966,25 @@ mod tests {
 
     #[test]
     fn env_override_requires_the_helper_path() {
-        // Serialized by the test runner's single-thread env mutation guard: use
-        // unique variable state and restore it.
-        let previous: Vec<_> = [
-            "BUD_BROWSER_EXECUTABLE",
-            "BUD_BROWSER_HELPER",
-            "BUD_BROWSER_NODE",
-        ]
-        .iter()
-        .map(|key| (key, std::env::var_os(key)))
-        .collect();
-        std::env::remove_var("BUD_BROWSER_HELPER");
-        std::env::remove_var("BUD_BROWSER_NODE");
-        std::env::set_var("BUD_BROWSER_EXECUTABLE", "/tmp/chrome");
-        assert!(env_override().unwrap().is_err());
-        std::env::set_var("BUD_BROWSER_HELPER", "/tmp/main.mjs");
-        let runtime = env_override().unwrap().unwrap();
+        // Pure: never touches the process environment, which live fixtures on
+        // other test threads read at spawn time.
+        let os = |v: &str| Some(std::ffi::OsString::from(v));
+        assert!(override_from(os("/tmp/chrome"), None, None)
+            .unwrap()
+            .is_err());
+        let runtime = override_from(os("/tmp/chrome"), os("/tmp/main.mjs"), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(runtime.node, PathBuf::from("node"));
-        std::env::remove_var("BUD_BROWSER_EXECUTABLE");
-        assert!(env_override().is_none());
-        for (key, value) in previous {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
+        assert_eq!(runtime.helper, PathBuf::from("/tmp/main.mjs"));
+        assert_eq!(
+            override_from(os("/tmp/chrome"), os("/tmp/main.mjs"), os("/opt/node"))
+                .unwrap()
+                .unwrap()
+                .node,
+            PathBuf::from("/opt/node")
+        );
+        assert!(override_from(None, os("/tmp/main.mjs"), None).is_none());
     }
 
     #[test]
