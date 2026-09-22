@@ -267,23 +267,25 @@ pub fn absolute_existing(path: &Path) -> Result<PathBuf> {
     std::fs::canonicalize(path).with_context(|| format!("{} does not exist", path.display()))
 }
 
-/// Exclusive ownership of every profile under `base`, held for the caller's
-/// lifetime. Claiming fails when a daemon holds a profile's ownership lock, or
-/// when Chrome's own `SingletonLock` points at a live process on this host
-/// (a browser that survived a daemon crash). Callers that delete profile or
-/// managed-browser files must hold this until the deletion is done, so a
-/// daemon starting in between cannot acquire a profile mid-removal.
+/// Exclusive ownership of the profile tree, held for the caller's lifetime.
+/// Backed by the stable `browser-profiles.lock` in the base directory that
+/// `Profile::acquire` holds shared, so claiming fails while any daemon has a
+/// profile open, blocks every acquisition (including new profiles) until
+/// dropped, and survives deletion of the profile directories themselves.
+/// Claiming also fails when a profile's Chrome `SingletonLock` points at a live
+/// process on this host (a browser that outlived a crashed daemon).
 #[derive(Debug)]
 pub struct ProfileClaims {
     pub paths: Vec<PathBuf>,
-    _locks: Vec<std::fs::File>,
+    _lock: std::fs::File,
 }
 
 pub fn claim_profiles(base: &Path) -> Result<ProfileClaims> {
-    use std::os::unix::io::AsRawFd;
+    let lock = super::profile::profiles_lock(base, libc::LOCK_EX)
+        .map_err(|_| anyhow!("browser profiles are owned by a running daemon (or another removal); run `bud stop`, then retry"))?;
     let mut claims = ProfileClaims {
         paths: Vec::new(),
-        _locks: Vec::new(),
+        _lock: lock,
     };
     let Ok(entries) = std::fs::read_dir(profiles_dir(base)) else {
         return Ok(claims);
@@ -293,20 +295,7 @@ pub fn claim_profiles(base: &Path) -> Result<ProfileClaims> {
         if !dir.is_dir() {
             continue;
         }
-        if let Ok(lock) = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(dir.join("bud.lock"))
-        {
-            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                bail!(
-                    "browser profile {} is owned by a running daemon; run `bud stop`, then retry",
-                    dir.display()
-                );
-            }
-            claims._locks.push(lock);
-        }
-        // A daemon crash releases bud.lock but not Chrome. Reuse the singleton
+        // A daemon crash releases its locks but not Chrome. Reuse the singleton
         // liveness rule: anything not provably stale is treated as running.
         if std::fs::symlink_metadata(dir.join("SingletonLock")).is_ok()
             && !super::profile::singleton_stale(&dir)
@@ -1028,6 +1017,23 @@ mod tests {
             super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
                 .is_err(),
             "claim must hold exclusive ownership"
+        );
+        assert!(
+            super::super::profile::Profile::acquire(base.path(), "service", "resource", "bob")
+                .is_err(),
+            "new profiles are blocked while a claim is held"
+        );
+        assert!(
+            claim_profiles(base.path()).is_err(),
+            "a second removal cannot claim concurrently"
+        );
+        // Deleting the profile tree does not weaken the claim: the lock lives
+        // outside it, so a daemon still cannot re-create and take the profile.
+        std::fs::remove_dir_all(profiles_dir(base.path())).unwrap();
+        assert!(
+            super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
+                .is_err(),
+            "claim must survive deletion of the profile directories"
         );
         drop(claims);
         super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")

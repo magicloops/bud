@@ -167,12 +167,19 @@ Three findings from review of the implementation, all confirmed and fixed:
   and holds it through the deletion. Claiming refuses when a daemon holds a
   profile's `bud.lock`, and, because a daemon crash releases that lock but not
   Chrome, also when the profile's `SingletonLock` points at a live process on
-  this host (the same `singleton_stale` rule Reset uses). The held claim keeps
-  a starting daemon from acquiring a profile mid-removal. A second review
-  round found the first version only probed `bud.lock` and released it
-  immediately; both gaps are closed. Unit test covers daemon lock, surviving
-  Chrome, stale lock, and exclusivity while held; verified end to end with a
-  simulated surviving browser process.
+  this host (the same `singleton_stale` rule Reset uses). The claim is backed by
+  a stable `browser-profiles.lock` in the base directory (outside every
+  profile), which `Profile::acquire` holds shared for a profile's lifetime and
+  removal holds exclusive for the whole deletion, so a daemon cannot re-create
+  and lock a replacement profile while the old directory is being deleted, new
+  profiles cannot appear after the scan, and two removals cannot run at once.
+  Earlier versions probed only the per-profile `bud.lock` and released it at
+  once (second review round), then held a lock that died with the deleted
+  directory (third round); both are superseded by the stable lock. Unit test covers daemon lock, surviving
+  Chrome, stale lock, new-profile blocking, concurrent-claim refusal, and that
+  the claim survives deleting the profile tree; verified end to end with a
+  simulated surviving browser process and a simulated daemon holding the
+  shared lock.
 - **Relative `--browser`/`--node`/`--helper-dir` were persisted as given** and
   broke daemon startup from another working directory. `prepare` now resolves
   them to canonical absolute paths before probing and saving

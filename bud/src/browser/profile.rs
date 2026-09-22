@@ -9,6 +9,38 @@ use std::{
 pub(super) struct Profile {
     pub path: PathBuf,
     _lock: File,
+    /// Shared hold on the stable profiles lock (see `profiles_lock`), so
+    /// removal cannot run while any profile is open.
+    _profiles: File,
+}
+
+/// Stable lock file outside every profile directory. Profile acquisition holds
+/// it shared for the profile's lifetime; `bud browser remove` takes it
+/// exclusive for the whole deletion. Because it is never deleted, a removal in
+/// progress cannot be raced by a daemon re-creating a profile and its per-profile
+/// lock, and profiles created after a scan are covered too.
+pub(super) fn profiles_lock_path(base: &Path) -> PathBuf {
+    base.join("browser-profiles.lock")
+}
+
+/// Open the stable profiles lock and take it in `mode` (`LOCK_SH` or `LOCK_EX`)
+/// without blocking. Fails with `browser_profile_in_use` when the other side
+/// holds it.
+pub(super) fn profiles_lock(base: &Path, mode: libc::c_int) -> Result<File> {
+    use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
+    std::fs::create_dir_all(base)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(profiles_lock_path(base))?;
+    if unsafe { libc::flock(file.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
+        bail!("browser_profile_in_use");
+    }
+    Ok(file)
 }
 
 impl Profile {
@@ -22,6 +54,8 @@ impl Profile {
             "{:x}",
             Sha256::digest(serde_json::to_vec(&(environment, resource, owner))?)
         );
+        // Shared hold: many profiles may be open at once, but never during removal.
+        let profiles = profiles_lock(base, libc::LOCK_SH)?;
         let root = base.join("browser-profiles");
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -61,7 +95,11 @@ impl Profile {
         // cleared (Phase 3s D2).
         ensure_singleton_free(&path)?;
         seed_appearance(&path)?;
-        Ok(Self { path, _lock: lock })
+        Ok(Self {
+            path,
+            _lock: lock,
+            _profiles: profiles,
+        })
     }
 
     pub fn ensure_not_running(&self) -> Result<()> {

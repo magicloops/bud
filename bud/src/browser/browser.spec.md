@@ -25,7 +25,8 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   Chrome regressions for isolation, stale references, cancellation and reconnect,
   plus continuous private capture through two five-second renewals.
 - `profile.rs`: Persistent-profile ownership: owner/environment/resource
-  identity, private-directory checks, exclusive ownership lock, reset primitive and
+  identity, private-directory checks, exclusive per-profile ownership lock plus a
+  shared hold on the stable base-directory profiles lock, reset primitive and
   macOS secure-store preflight, first-creation appearance defaults and atomic
   launch-only color synchronization. Used by production admission; non-macOS
   persistent launch is explicitly unsupported pending credential-store acceptance.
@@ -408,11 +409,13 @@ launches alone carry the mock-keychain flags (`profile_flags`). The override is
 resolved by a pure `override_from`, so no unit test mutates the process
 environment that live fixtures read at launch (see
 [debug note](../../../debug/browser-live-test-env-race.md)). `prepare` persists
-only canonical absolute paths (`absolute_existing`), and `remove` claims exclusive
-ownership of every profile for the whole deletion (`claim_profiles`), refusing
-while a daemon holds a profile lock or a Chrome that outlived a crashed daemon
-still holds a live `SingletonLock`, so files are never deleted under a running
-browser and no daemon can acquire a profile mid-removal. Linux caveats
+only canonical absolute paths (`absolute_existing`), and `remove` claims the
+profile tree for the whole deletion (`claim_profiles`) through the stable
+`<base_dir>/browser-profiles.lock`, which `Profile::acquire` holds shared and
+removal holds exclusive. Claiming refuses while any daemon has a profile open
+or a Chrome that outlived a crashed daemon still holds a live `SingletonLock`;
+while held, no profile (new or re-created) can be acquired, and the lock
+outlives the deleted directories. Linux caveats
 (secure storage, display passthrough, sandbox) are reported by `status`/`doctor`
 rather than hidden; see [design](../../../design/browser-addon.md) and
 [Phase 3r](../../../plan/bud-owned-browser/phase-3r-browser-addon.md).
