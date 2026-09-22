@@ -27,6 +27,26 @@ Responsibilities:
 - generate static promotion assets for the `get.bud.dev` Worker
 - verify archive SHA-256 values for installer checksum tests
 
+### `browser-addon-pins.mjs`
+
+Generates `bud/src/browser/pins.rs` for the browser add-on (Phase 3r): the
+pinned Node version (constant in the script), the playwright-core version from
+`bud/browser-helper/package.json`, the Chrome for Testing build from that
+package's `browsers.json`, the derived system-browser version floor, and
+per-target URL/SHA-256/size/executable for every download. Streams and hashes
+each artifact (Node cross-checked against nodejs.org `SHASUMS256.txt`);
+`--check` parses the committed `pins.rs` and compares values (versions,
+per-target URL/executable, well-formed hash and size) without downloading, so
+rustfmt reflow cannot fail it (run in the release workflow); the generator runs
+`rustfmt` on its output; `--no-hash` scaffolds URLs without checksums for
+development. `browser-addon-pins.test.mjs` covers the render/parse round trip.
+
+### `browser-addon-pins.test.mjs`
+
+Node tests for the pin generator: rendered pins parse back to the same values
+(also after `rustfmt` reflows the file when rustfmt is installed), and drift
+reports changed versions, URLs, executables and missing hashes.
+
 ### `bud-release.test.mjs`
 
 Node test coverage for artifact packaging, manifest generation, platform

@@ -96,7 +96,10 @@ export type ApiMessage = {
   created_at: string
 }
 
+export type ApiTurnTiming = { turn_id: string; work_duration_ms: number | null }
+
 export type ApiMessagePage = {
+  turn_timings?: ApiTurnTiming[]
   messages: ApiMessage[]
   page: {
     limit: number
@@ -251,7 +254,7 @@ export type ApiContextBreakdownKind =
 export type ApiContextBudgetBreakdownEntry = {
   kind: ApiContextBreakdownKind
   tokens: number
-  /** Share of estimated_input_tokens (0..1). */
+  /** Share of the heuristic composition sum (0..1), not measured attribution. */
   percent_of_estimated_input: number
 }
 
@@ -280,7 +283,7 @@ export type ApiContextBudgetAvailable = {
   message_estimated_tokens: number
   tool_schema_tokens: number
   estimated_input_tokens: number
-  /** Per-category split summing to estimated_input_tokens (absent on older services). */
+  /** Heuristic composition; may differ from anchored primary usage (absent on older services). */
   breakdown?: ApiContextBudgetBreakdownEntry[]
   /** Completed compactions; null when the snapshot source did not count them. */
   compaction_count?: number | null
@@ -377,6 +380,7 @@ export type ApiDraftReasoning = {
 }
 
 export type ApiAgentInvocation = {
+  work_duration_ms?: number | null
   invocation_id: string
   turn_id: string
   input_message_id: string
@@ -481,6 +485,7 @@ export type ApiOutputActivity = { llm_call_id: string; state: "working" | "text"
 export type ApiAgentState = {
   output_activity?: ApiOutputActivity | null
   invocations?: ApiAgentInvocation[]
+  pending_browser_waits?: Array<{ turn_id: string; invocation_id: string; pending_tool: NonNullable<ApiAgentState["pending_tool"]> }>
   pending_questions?: ApiPendingQuestion[]
   pending_automation_requests?: ApiPendingAutomationRequest[]
   pending_bootstrap_requests?: ApiPendingBootstrapRequest[]

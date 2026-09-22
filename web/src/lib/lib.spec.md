@@ -79,7 +79,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, model-facing `pending_tool.args` for terminal tools (`terminal.wait` carries `until?`), `waiting_for_user` and `waiting_for_terminal` phase support, `draft_assistant.client_id`, `draft_assistant.started_at`, `draft_reasoning`, optional `context_budget`, and optional runtime-only `last_error` |
 | `ApiDraftReasoning` | Visible in-flight provider reasoning segment from `/agent/state.draft_reasoning`, keyed by `client_id` for reconciliation with persisted `role: "reasoning"` rows |
 | `ApiAgentLastError` | Runtime-only non-cancel agent failure snapshot from `/agent/state` with stable code, sanitized message, retryability, and timestamp |
-| `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, an additive per-category `breakdown` (`ApiContextBudgetBreakdownEntry[]`, summing to `estimated_input_tokens`) and `compaction_count`, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
+| `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, an additive per-category `breakdown` (`ApiContextBudgetBreakdownEntry[]`, summing to heuristic message + tool-schema composition, independently of the provider-anchored primary total) and `compaction_count`, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
 | `ApiModelContext` (+ `ApiModelContextMessage`, `ApiModelContextBlock`, `ApiModelContextSource`) | `GET /api/threads/:id/model-context`: the exact canonical conversation the next request carries, with per-message provenance and token estimates, tools, compaction boundary, prompt scope/version, and the budget snapshot |
 | `ApiAgentCompactionStartEvent` / `ApiAgentCompactionDoneEvent` / `ApiAgentCompactionFailedEvent` | Agent SSE activity markers for automatic context compaction, including token counts, phase/reason, checkpoint id on success, optional post-compaction `context_budget`, the optional persisted `role: "compaction"` `message` row on success, and sanitized failure metadata |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
@@ -124,11 +124,11 @@ the content payload). Tested in `agent-message-metadata.test.ts`.
 
 ### `agent-work-duration.ts`
 
-`Worked for …` duration for one agent-work group, mobile-parity semantics:
-union of authoritative `service_wall_clock` intervals (overlaps counted
-once), legacy pure-tool payload-`duration_ms` sum as fallback, else null
-(render `Worked`, never an estimate). Plus `formatWorkDuration` (`42s`,
-`1m 28s`). Tested in `agent-work-duration.test.ts`.
+`formatWorkDuration` formats service-owned totals (`42s`, `1m 28s`).
+Artifact interval aggregation and legacy tool-duration fallback are removed from
+the top-level label. Individual message timing accessors remain available.
+`ApiTurnTiming` and optional message-page/state fields carry settled turn totals;
+validation/merging live in `features/threads/turn-timing.ts`.
 
 ### `relative-time.ts`
 
@@ -439,3 +439,8 @@ not persisted warning flags or permission changes.
 `api-types.ts` exports `ApiOutputActivity` and exposes `ApiAgentState.output_activity`
 for runtime spinner suppression. The activity is independent of draft lifecycle;
 see [contract](../../../design/assistant-output-activity.md).
+
+## Browser waiting metadata
+
+`ApiAgentState.pending_browser_waits` is an optional collection of turn/invocation
+identity plus the original pending-tool envelope. Older services may omit it.

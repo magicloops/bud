@@ -154,13 +154,17 @@ custom widths.
 One turn's presentation under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
 
 - `ActivitySection` renders one initially collapsed header: newest introduced
-  tool/reasoning summary, Cpu/Wrench icon, unique count and running/failure counts.
+  tool/reasoning summary while live, or reasoning-step/tool-call counts when completed,
+  Cpu/Wrench icon, and running/failure counts. Reasoning item titles strip leading,
+  trailing and paired inline Markdown decoration; expanded details keep Markdown.
   Opening shows compact item rows; full existing tool/Markdown details mount only
   after opening an item. Hidden large payloads are not eagerly formatted.
 - Commentary remains at the timeline root with stable message keys through
   streaming and intermediate classification. Explicit completed final folds prior
   work into a closed `AgentWorkGroup`; final Markdown retains its host identity.
 - Expanded Worked for bodies have 8px top padding below the disclosure button.
+- The full Worked for label, including duration, is italic when collapsed and
+  normal when expanded.
 - The full-width Worked for section uses the message hover background (`secondary/40`)
   and retains that background across its header and contents while expanded.
 - Inner disclosure choices survive the final fold. Reopening no-commentary work
@@ -286,16 +290,14 @@ Circular composer submit control with the context-budget ring and popover.
   focus for keyboard users, and on tap when the button is disabled (empty
   composer) — a tap on an enabled button is the send action and is never
   intercepted. Escape / outside click close it.
-- Popover content, from `getContextBudgetMeterPresentation`: headline
-  (`Model · 44% of auto-compact limit`), subline (`108k of 245k · compacts at
-  90% of the 272k window`), a segmented bar plus legend of the token
-  breakdown (tool output, messages, system prompt, tool calls, reasoning,
-  compaction summary, tool schemas, other), and a two-line footer (estimate
-  basis + last measured request; compaction count + output reserve). Segment
-  / swatch colors are fixed per category from the bud accent palette
-  (`DEFAULT_AVATAR_COLORS`: messages pink, tool calls orange, tool output
-  cyan, system prompt purple, reasoning green; minor categories gray) so the
-  legend reads the same on every bud
+- Popover leads with utilization, used tokens against the effective limit,
+  remaining capacity. The model name is omitted visually (retained in the send
+  button’s accessible summary). The provider-usage-plus-additions label is omitted; measured
+  and estimate-only basis labels remain visible.
+- **Estimated composition** is always visible (not collapsible). It contains
+  the existing segmented bar/category legend plus compaction count and reply reserve.
+  Category colors remain fixed across Buds; category shares describe estimated
+  composition, not provider-measured attribution. Model-view access stays visible.
 - policy/provenance diagnostics (Bud cap, hard window, basis/confidence,
   source/phase) render only behind a "Diagnostics" disclosure when
   `config.showSystemMessages` is on
@@ -306,6 +308,12 @@ Circular composer submit control with the context-budget ring and popover.
 
 Pure presentation helpers for the context budget send-button popover and ring.
 
+Utilization uses the service primary total. Category shares use their own heuristic
+sum, not that primary total; they are not measured provider token attribution.
+The popover omits the anchored-total basis label; unchanged measured input retains
+the measured basis. No proportional category rescaling.
+
+
 **Responsibilities**:
 - map usage percentage to normal/elevated/near/over/unknown tones
 - format visual percentages and rounded token counts such as `312k`
@@ -315,10 +323,10 @@ Pure presentation helpers for the context budget send-button popover and ring.
   categories under 0.5% fold into "Other"; older services without a
   `breakdown` fall back to the messages / tool-schemas split), `footer`, and
   `diagnostics`
-- footer copy: `Estimated (~4 chars/token)` / `Measured by provider` plus
-  `last request Xk in / Yk out` from `provider_usage_estimate`; `Compacted N×`
-  (or `Compacted earlier` when only a checkpoint id is known) and
-  `Xk reserved for the reply`
+- first footer line: `Estimated`, `Measured by provider`, or
+  `Provider usage + estimated additions`; remaining footer details contain
+  compaction count and reply reserve, rendered below the always-visible composition.
+  The anchored basis line is not displayed in the popover
 - keep policy numbers and provenance out of product copy (diagnostics only)
 - clamp radial ring progress from 0-100%
 
@@ -326,7 +334,7 @@ Pure presentation helpers for the context budget send-button popover and ring.
 
 Node-runner coverage for rounded token formatting, ring clamping, headline /
 subline copy, breakdown grouping + sorting + "Other" folding, footer variants
-(measured request, compaction count fallbacks, disabled compaction, stale),
+(accounting basis, compaction count fallbacks, disabled compaction, stale),
 the no-breakdown fallback, the diagnostics/product-copy split, and unknown
 snapshots.
 
@@ -583,6 +591,10 @@ Header bar with workspace title and view toggle.
 - View mode toggle buttons: square icon-only (`size="icon-sm"`, label kept
   as aria-label + title tooltip); the file toggle appears only when an
   active file is available
+- Web view is shown only when `webAvailable` indicates an attached thread proxy;
+  it stays available during proxy connection errors so users can recover.
+- Terminal is always the rightmost view button; Web, Browser and File appear
+  to its left so conditional buttons do not shift Terminal's position.
 - Exports the shared `ViewMode` and `WorkbenchStatus` unions used by the workbench frame and child controls
 
 ## Dependencies
@@ -618,3 +630,29 @@ Assistant draft and commentary rows omit the entire Bud/timestamp header, includ
 persisted intermediate commentary, without reserving empty header space. Completed
 final responses retain their normal header. The spinner likewise has no invisible
 header, matching the one-line streaming body reservation.
+
+## Bud-owned Browser pane
+
+`ViewMode` includes `browser`; `WorkspaceShell.browserAvailable` exposes a Globe
+Browser tab alongside Web (proxied apps), Terminal and File. Existing split and
+narrow peer-pane layout is reused. Browser selection is visit-local, not persisted.
+The existing-thread route hosts `features/browser/BrowserViewer` in the right
+pane; browser lifecycle/media belongs to that feature, not terminal or chat state.
+Hiding Browser unmounts it to release private input/media while terminal and app
+preview retain their existing mounted behavior. New-thread creation does not show
+Browser until an owned session exists in the resulting conversation.
+
+
+Pending original browser calls with `wait_kind=return_control` select the inline
+handoff renderer and remain visible outside collapsed work. Canonical results
+return to normal tool rendering using the same stable client identity.
+
+
+Pending browser waits render directly as an action row without the tool label, timestamp, copy control or payload toggle. Completed tool receipts retain normal work-group rendering.
+
+## Authoritative work duration
+
+`ChatTimeline.turnTimings` passes the thread-owned service timing map into the
+memoized projector. Timing updates change the completed label only; grouping,
+streaming, disclosure and viewport policy are unchanged. Mounted parity tests
+cover merging and retention without requiring transcript rows to change.

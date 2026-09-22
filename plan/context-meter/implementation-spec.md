@@ -1,5 +1,8 @@
 # Implementation Spec: Conversation Context Budget Meter
 
+> Accounting update: [provider-anchored context accounting](../provider-anchored-context-accounting.md) supersedes the independent provider diagnostic and the assumption that category estimates equal primary utilization. Categories now describe estimated composition.
+
+
 **Status**: Phases 0-14 implemented/validated in part; Phase 15 tool-schema overhead in progress
 **Created**: 2026-05-24
 **Design Doc**: [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md)

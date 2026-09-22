@@ -189,3 +189,34 @@ test('viewport ignores passive near-bottom changes after inspection and raw scro
       requestAnimationFrame: originalRaf, cancelAnimationFrame: originalCancel })
   }
 })
+
+test('mounted timing survives final/refresh and older pages, but resets with thread identity', async () => {
+  let store!: ReturnType<typeof useThreadMessages>
+  const initial: ApiMessagePage = { messages: [msg('tool', 'tool', 'done')], page,
+    turn_timings: [{ turn_id: 'T', work_duration_ms: 95000 }] }
+  function Harness({ threadId, data = initial }: { threadId: string; data?: ApiMessagePage }) {
+    store = useThreadMessages({ initialMessagePage: data, initialAgentState: state, threadId, onError: noError, shouldAbortForUnauthorized: authorized })
+    return null
+  }
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(Harness, { threadId: 'A' })) })
+  assert.equal(store.turnTimings.get('T'), 95000)
+  await act(async () => {
+    store.applyTurnTimings([{ turn_id: 'new', work_duration_ms: 5000 }])
+    store.finalizeTurn('new', 'succeeded')
+    store.mergeLatestBootstrap({ messages: [], page }, state)
+  })
+  assert.equal(store.turnTimings.get('T'), 95000)
+  assert.equal(store.turnTimings.get('new'), 5000)
+  const original = globalThis.fetch
+  try {
+    globalThis.fetch = async () => Response.json({ messages: [], page, turn_timings: [{ turn_id: 'older', work_duration_ms: 100 }] })
+    await act(async () => store.loadOlderMessages())
+    assert.equal(store.turnTimings.get('older'), 100)
+    await act(async () => view.update(createElement(Harness, { threadId: 'B', data: { messages: [], page } })))
+    assert.equal(store.turnTimings.size, 0)
+  } finally {
+    globalThis.fetch = original
+    await act(async () => view.unmount())
+  }
+})

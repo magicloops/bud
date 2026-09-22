@@ -484,3 +484,50 @@ Generated custom migration metadata remains Drizzle-owned. Reviewed SQL applied
 locally in a transaction and validated with replay/provenance tests.
 New admission snapshots live in the input message's `metadata.model_resolution`
 and existing agent_invocation model/effort columns, avoiding duplicate storage.
+
+## Browser sessions
+
+Phase 3k uses `browserResourceTable` / `browser_resource` as the durable owner/Bud
+root: global privacy/authority, profile generation, revision and exact lifecycle
+receipts. `browserSessionTable` is a thread workspace with invocation sequence,
+boot/generation and desired lifecycle. Its composite resource/Bud/owner FK rejects
+foreign bindings; open workspaces must have a resource. The squashed
+`0039_bud_browser.sql` creates all three browser tables in this final shape;
+the superseded per-session profile/control/privacy columns from the earlier
+per-thread model never ship. No cookies or credentials enter the database.
+A migration-owned trigger (`0040_browser_claim_retirement.sql`, a custom Drizzle
+migration) retires the active resource when Bud ownership or device secret
+changes, including same-owner reclaims. `db:push` neither creates nor drops this
+trigger; edit it only through another custom migration. Browser admission must
+use the new resource after reclaim; the old on-disk profile stays quarantined.
+See [Phase 3q](../../../plan/bud-owned-browser/phase-3q-migration-squash.md).
+
+Controller leases remain process-local; durable browser private intent survives
+restart and can only clear after explicit acknowledged return or reset.
+`browserHandoffTable` / `browser_handoff` binds session/thread/Bud/owner/tenant to
+an optional invocation and call/client ID, reason, agent/user kind and pending/
+returned/canceled decision. Owner-context FKs, invocation/call uniqueness and one
+pending handoff per session initially prevented cross-scope or duplicate continuations
+(the latter is replaced by per-invocation uniqueness in Phase 3e below).
+`returned_by_user_id` stamps the explicit returning actor. No input, screenshots,
+cookies or media tickets are stored. The table ships in `0039_bud_browser.sql`;
+the original Phase 2 validation is in the
+[validation note](../../../debug/bud-browser-phase-2.md).
+
+## Multiple browser waits
+
+`browser_handoff` uses pending-invocation uniqueness
+(`browser_handoff_pending_invocation_idx`) rather than pending-session
+uniqueness, has a session/status lookup index, and permits `kind=return_control`.
+Ownership FKs and explicit-return actor stamps are unchanged. All of this is in
+`0039_bud_browser.sql`; no private browser content is stored.
+
+## Invocation running duration
+
+`agent_invocation.work_duration_ms` is nullable bigint (JS number, safe-integer
+validation at serialization); `work_started_at` is nullable timestamptz. Neither
+has a DB default. New admissions explicitly initialize duration to zero; historical
+and older-writer rows remain null. DB-clock lifecycle transitions settle running
+intervals atomically with status. Unknown execution ends invalidate the whole total.
+Migration: the two `agent_invocation` columns ride in `0039_bud_browser.sql`. No
+historical backfill or new timing table.

@@ -1,3 +1,4 @@
+import { BROWSER_CANONICAL_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools.js";
 import { WEB_CANONICAL_TOOLS } from "./web-retrieval-tools.js";
 import { retrievalAvailable } from "../web-retrieval/config.js";
 import { AUTOMATION_CANONICAL_TOOLS, EXISTING_CONTACTS_REVIEW_TOOL } from "./automation-tools.js";
@@ -227,6 +228,7 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
 ];
 
 const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
+  ...BROWSER_TOOL_NAMES,
   "terminal_send",
   "terminal_observe",
   "terminal_wait",
@@ -237,9 +239,12 @@ const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 export function resolveAgentToolsForEnvironment(
   environment: AgentEnvironmentSnapshot,
-  options: { webRetrieval?: boolean; appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
+  options: { browser?: boolean; browserHandoff?: boolean; webRetrieval?: boolean; appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
-  const tools = [...AGENT_CANONICAL_TOOLS, ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []), ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
+  const tools = [...AGENT_CANONICAL_TOOLS,
+    ...(options.browser ? BROWSER_CANONICAL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []),
+    ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []),
+    ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
     ...(options.automations ? AUTOMATION_CANONICAL_TOOLS : []),
     ...(options.automations && options.existingContactReviews ? [EXISTING_CONTACTS_REVIEW_TOOL] : [])];
   if (environment.mode === "normal") {

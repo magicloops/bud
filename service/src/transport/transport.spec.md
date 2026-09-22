@@ -135,3 +135,7 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Browser carrier capture
+
+`grpc-daemon-router.ts` retains the browser capability on active trackers. The browser broker uses the existing control preference order but captures one tracker and never invokes generic cross-carrier retry after send; uncertain mutations cannot be replayed. See [browser transport](../browser/browser.spec.md).

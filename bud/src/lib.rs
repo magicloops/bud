@@ -1,4 +1,6 @@
 pub mod app;
+pub mod browser;
+pub mod browser_cli;
 pub mod claim;
 pub mod config;
 pub mod doctor;
@@ -19,7 +21,7 @@ pub mod upgrade;
 pub mod util;
 pub mod version;
 
-pub use config::{BudArgs, BudCommand, LlmCommand, ServiceCommand};
+pub use config::{BrowserCommand, BudArgs, BudCommand, LlmCommand, ServiceCommand};
 pub use util::setup_tracing;
 
 pub async fn run(args: BudArgs) -> anyhow::Result<()> {
@@ -55,6 +57,11 @@ pub async fn run(args: BudArgs) -> anyhow::Result<()> {
             )
             .await
         }
+        Some(BudCommand::Browser(browser_cmd)) => match browser_cmd {
+            BrowserCommand::Prepare(prepare) => browser_cli::prepare(&args, &prepare).await,
+            BrowserCommand::Status(status) => browser_cli::status(&args, &status).await,
+            BrowserCommand::Remove(remove) => browser_cli::remove(&args, &remove),
+        },
         Some(BudCommand::Llm(llm_cmd)) => {
             let paths = LifecyclePaths::resolve(&args)?;
             match llm_cmd {

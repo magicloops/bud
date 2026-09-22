@@ -1,3 +1,4 @@
+import { resolveContextAccounting, type ContextUsageAnchor, type ContextRequestIdentity } from "./context-accounting.js";
 import type { CanonicalMessage } from "../llm/index.js";
 import {
   CONTEXT_BREAKDOWN_KINDS,
@@ -44,7 +45,7 @@ export type ContextBudgetProviderUsageEstimate = {
 export type ContextBudgetBreakdownEntry = {
   kind: ContextBreakdownKind;
   tokens: number;
-  /** Share of `estimated_input_tokens` (0..1), so entries read as "what is in context". */
+  /** Share of the heuristic composition total (0..1), not provider-measured attribution. */
   percent_of_estimated_input: number;
 };
 
@@ -69,7 +70,7 @@ export type ContextBudgetSnapshot =
       message_estimated_tokens: number;
       tool_schema_tokens: number;
       estimated_input_tokens: number;
-      /** Every category (zeros included), summing to `estimated_input_tokens`. */
+      /** Every heuristic category (zeros included); may differ from the anchored total. */
       breakdown: ContextBudgetBreakdownEntry[];
       /** Completed compactions for the thread; null when the snapshot source did not count them. */
       compaction_count: number | null;
@@ -113,7 +114,8 @@ export function buildContextBudgetStateFromConversation(args: {
   phase?: ContextBudgetSnapshotPhase | null;
   reason?: ContextBudgetSnapshotReason | null;
   turnId?: string | null;
-  providerUsageEstimate?: ContextBudgetProviderUsageEstimate | null;
+  usageAnchor?: ContextUsageAnchor | null;
+  requestIdentity?: ContextRequestIdentity;
   toolSchemaTokens?: number;
   compactionCount?: number | null;
   stale?: boolean;
@@ -136,10 +138,13 @@ export function buildContextBudgetStateFromConversation(args: {
     CONTEXT_BREAKDOWN_KINDS.reduce((total, kind) => total + messageBreakdown[kind], 0),
   );
   const toolSchemaTokens = Math.max(0, Math.floor(args.toolSchemaTokens ?? 0));
-  const estimatedInputTokens = messageEstimatedTokens + toolSchemaTokens;
+  const compositionTokens = messageEstimatedTokens + toolSchemaTokens;
+  const accounting = resolveContextAccounting({ conversation: args.conversation, identity: args.requestIdentity,
+    anchor: args.usageAnchor, fallbackTokens: compositionTokens });
+  const estimatedInputTokens = accounting.tokens;
   const breakdown: ContextBudgetBreakdownEntry[] = CONTEXT_BREAKDOWN_KINDS.map((kind) => {
     const tokens = kind === "tool_schemas" ? toolSchemaTokens : messageBreakdown[kind];
-    return { kind, tokens, percent_of_estimated_input: safeRatio(tokens, estimatedInputTokens) };
+    return { kind, tokens, percent_of_estimated_input: safeRatio(tokens, compositionTokens) };
   });
 
   if (args.budget.contextWindowTokens === null) {
@@ -191,14 +196,14 @@ export function buildContextBudgetStateFromConversation(args: {
     remaining_context_tokens: remainingContextTokens,
     percent_of_context_budget: safeRatio(estimatedInputTokens, effectiveBudgetTokens),
     percent_of_model_window: safeRatio(estimatedInputTokens, args.budget.contextWindowTokens),
-    basis: "model_agnostic_estimate",
-    confidence: "medium",
+    basis: accounting.providerUsage ? (accounting.providerUsage.delta_tokens === 0 ? "provider_token_count" : "provider_usage_trigger") : "model_agnostic_estimate",
+    confidence: accounting.providerUsage?.confidence ?? "medium",
     ...common,
     reason: args.reason ?? null,
     latest_checkpoint_id: args.checkpoint?.checkpointId ?? null,
     compacted_through_message_id: args.checkpoint?.compactedThroughMessageId ?? null,
     compacted_through_llm_call_id: args.checkpoint?.compactedThroughLlmCallId ?? null,
-    provider_usage_estimate: args.providerUsageEstimate ?? null,
+    provider_usage_estimate: accounting.providerUsage,
   };
 }
 

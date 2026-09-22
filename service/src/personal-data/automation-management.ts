@@ -1,3 +1,4 @@
+import { invocationTimingTransaction } from "../agent/invocation-timing.js";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db, type Database } from "../db/client.js";
@@ -56,7 +57,7 @@ export class AutomationManagement {
 
   async mutate(context: AutomationProposalContext, name: Mutation, input: unknown) {
     const args = parseAutomationToolInput(name, input);
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await tx.insert(owners).values({ createdByUserId: context.owner }).onConflictDoNothing();
       await tx.select().from(owners).where(eq(owners.createdByUserId, context.owner)).for("update");
       const [row] = await tx.select({ invocation: invocations }).from(invocations)

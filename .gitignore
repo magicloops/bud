@@ -34,3 +34,6 @@ coverage/
 *.swo
 
 /old/
+
+# Owner-scoped development browser image artifacts
+.bud-data/

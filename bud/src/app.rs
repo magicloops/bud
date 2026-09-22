@@ -67,6 +67,7 @@ pub struct BudApp {
     proxy_manager: ProxyManager,
     file_manager: FileManager,
     local_llm_manager: LocalLlmManager,
+    browser_manager: crate::browser::BrowserManager,
     debug_enabled: bool,
 }
 
@@ -132,6 +133,11 @@ impl BudApp {
             debug_enabled,
         };
         let device_name = args.device_name();
+        let browser_manager = crate::browser::BrowserManager::configured_for(
+            resolved_paths.base_dir,
+            args.server.clone(),
+        )
+        .await;
         Self {
             args,
             device_name,
@@ -148,11 +154,22 @@ impl BudApp {
             proxy_manager: ProxyManager::default(),
             file_manager: FileManager::new(default_cwd),
             local_llm_manager,
+            browser_manager,
             debug_enabled,
         }
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let browser = self.browser_manager.clone();
+        let result = tokio::select! {
+            result = self.run_loop() => result,
+            result = shutdown_signal() => result,
+        };
+        browser.shutdown().await?;
+        result
+    }
+
+    async fn run_loop(mut self) -> Result<()> {
         self.installation_id = load_or_create_installation_id(&self.installation_id_path).await?;
         self.identity = load_identity(&self.identity_path).await?;
         if let Some(identity) = &self.identity {
@@ -632,6 +649,7 @@ impl BudApp {
     ) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(meta.heartbeat_sec.max(5)));
 
+        self.browser_manager.connect(meta.session_id.clone());
         self.run_executor.set_sender(sender.clone()).await;
         self.terminal_manager.set_sender(sender.clone()).await;
         if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
@@ -710,6 +728,7 @@ impl BudApp {
     }
 
     async fn cleanup_transport_bound_tasks(&self, reason: &str) {
+        self.browser_manager.disconnect();
         let proxy_summary = self
             .proxy_manager
             .abort_all_for_transport_disconnect(reason)
@@ -906,6 +925,7 @@ impl BudApp {
             }
         });
 
+        self.browser_manager.connect(meta.session_id.clone());
         self.run_executor.set_sender(sender.clone()).await;
         self.terminal_manager.set_sender(sender.clone()).await;
         if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
@@ -1027,6 +1047,26 @@ impl BudApp {
         let envelope: Envelope = serde_json::from_str(text)?;
         validate_inbound_envelope_proto(&envelope)?;
         match envelope.kind.as_str() {
+            "browser_command" => {
+                let value: Value = serde_json::from_str(text)?;
+                if value["browser_version"] != 1 || text.len() > 24 * 1024 {
+                    return Ok(());
+                }
+                let Ok(request) =
+                    serde_json::from_value::<crate::browser::Request>(value["request"].clone())
+                else {
+                    return Ok(());
+                };
+                let manager = self.browser_manager.clone();
+                let sender = sender.clone();
+                task::spawn_local(async move {
+                    let reply = manager.execute(request).await;
+                    let frame = json!({"proto":PROTO_VERSION, "type":"browser_result",
+                        "id":new_message_id(), "ts":now_millis(), "ext":{},
+                        "browser_version":1, "result":reply});
+                    let _ = send_transport_frame(&sender, frame);
+                });
+            }
             "run" => {
                 let frame: RunFrame = serde_json::from_str(text)?;
                 self.handle_run_frame(frame).await?;
@@ -1351,6 +1391,7 @@ impl BudApp {
     }
 
     async fn clear_identity(&mut self) -> Result<()> {
+        self.browser_manager.shutdown().await?;
         self.identity = None;
         clear_identity(&self.identity_path).await?;
         info!(path = %self.identity_path.display(), "Removed invalid bud identity");
@@ -1523,8 +1564,24 @@ impl BudApp {
                 capabilities["llm"] = llm;
             }
         }
+        capabilities["browser"] = self.browser_manager.capability();
         capabilities
     }
+}
+
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await?;
+    Ok(())
 }
 
 fn grpc_error_allows_websocket_fallback(err: &anyhow::Error) -> bool {

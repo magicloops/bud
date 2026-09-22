@@ -22,13 +22,19 @@ export const ActivitySection = memo(function ActivitySection({ sections, live, e
   const open = direct || expandedItems.has(id)
   const active = live ? sections.filter(({ message }) => isPendingToolMessage(message) || isDraftReasoningMessage(message)).length : 0
   const failed = sections.filter(({ message }) => message.metadata?.outcome === 'failed' || message.metadata?.status === 'failed').length
+  const tools = sections.filter(({ message }) => message.role === 'tool').length
+  const reasoning = sections.filter(({ message }) => message.role === 'reasoning').length
+  const summary = [
+    reasoning > 0 ? `${reasoning} reasoning ${reasoning === 1 ? 'step' : 'steps'}` : null,
+    tools > 0 ? `${tools} tool ${tools === 1 ? 'call' : 'calls'}` : null,
+  ].filter(Boolean).join(' and ')
   return <div data-activity-section={id}>
     {!direct && <button type="button" aria-expanded={open} aria-controls={`${id}:body`}
       onClick={() => onToggleItem(id)} className="flex w-full min-w-0 items-center gap-2 py-1.5 text-left text-xs text-muted-foreground">
       <ChevronRight aria-hidden className={cn('h-3 w-3 shrink-0', open && 'rotate-90')} />
-      {latest.role === 'reasoning' ? <Cpu aria-hidden className="h-3 w-3 shrink-0" /> : <Wrench aria-hidden className="h-3 w-3 shrink-0" />}
-      <span className="min-w-0 flex-1 truncate">{itemSummary(latest) || itemKindLabel(latest)}</span>
-      <span className="shrink-0 tabular-nums" aria-label={`${sections.length} activities`}>{sections.length}</span>
+      {(live ? latest.role === 'reasoning' : tools === 0) ? <Cpu aria-hidden className="h-3 w-3 shrink-0" /> : <Wrench aria-hidden className="h-3 w-3 shrink-0" />}
+      <span className="min-w-0 flex-1 truncate">{live ? itemSummary(latest) || itemKindLabel(latest) : summary}</span>
+      {live && <span className="shrink-0 tabular-nums" aria-label={`${sections.length} activities`}>{sections.length}</span>}
       {active > 0 && <span className="shrink-0">{active} running</span>}
       {failed > 0 && <span className="shrink-0 text-destructive">{failed} failed</span>}
     </button>}
@@ -77,7 +83,7 @@ export const AgentWorkGroup = memo(function AgentWorkGroup({ row, expanded, onTo
       {row.canFold && <button id={`${row.id}:toggle`} type="button" onClick={() => onToggle(row.id)} aria-expanded={expanded} aria-controls={`${row.id}:body`}
         className="flex w-full items-center gap-2 text-left text-xs text-muted-foreground">
         <ChevronRight aria-hidden className={cn('h-3.5 w-3.5', expanded && 'rotate-90')} />
-        <span>{row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}</span>
+        <span className={expanded ? 'not-italic' : 'italic'}>{row.durationMs !== null ? `Worked for ${formatWorkDuration(row.durationMs)}` : 'Worked'}</span>
         <SectionCounts sections={row.sections} />
         {row.status !== 'ok' && <span>{row.status === 'no_final' ? 'Ended early' : row.status}</span>}
       </button>}
@@ -169,7 +175,11 @@ const computeItemSummary = (message: ApiMessage): string => {
     return command ?? raw ?? (key ? `Press ${key}` : text) ?? (typeof payload?.tool === 'string' ? payload.tool : message.display_role) ?? 'Tool'
   }
   const firstLine = message.content.split('\n').find((line) => line.trim().length > 0) ?? ''
-  return firstLine.replace(/^[#>*\-`_\s]+/, '').trim()
+  return firstLine
+    .replace(/^[#>*\-`_\s]+/, '')
+    .replace(/[*_`]+\s*$/, '')
+    .replace(/(\*\*|__|\*|_|`)(.+?)\1/g, '$2')
+    .trim()
 }
 
 const SectionCounts = ({ sections }: { sections: TimelineWorkSection[] }) => {

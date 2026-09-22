@@ -6,6 +6,7 @@ export type TimeoutHandle = ReturnType<typeof setTimeout>;
 export interface SessionTracker {
   budId: string;
   sessionId: string;
+  browserCapability?: unknown;
   deviceSessionId?: string;
   transportSessionId?: string;
   drainState?: "active" | "draining";

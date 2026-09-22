@@ -274,6 +274,20 @@
       "when": 1788992897387,
       "tag": "0038_automation_model_inheritance",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790035269073,
+      "tag": "0039_bud_browser",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790035269596,
+      "tag": "0040_browser_claim_retirement",
+      "breakpoints": true
     }
   ]
 }

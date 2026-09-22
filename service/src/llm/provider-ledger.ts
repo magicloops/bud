@@ -1,5 +1,6 @@
+import type { ContextRequestBaseline, ContextUsageAnchor } from "../agent/context-accounting.js";
 import { ulid } from "ulid";
-import { and, asc, eq, gt, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, or, type SQL } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { llmCallItemTable, llmCallTable } from "../db/schema.js";
 import type {
@@ -74,6 +75,7 @@ export type RecordLlmCallArgs = {
   assistantMessageId?: string | null;
   promptCacheKey?: string | null;
   reconstruction?: LlmReconstructionDiagnostics | null;
+  contextBaseline?: ContextRequestBaseline | null;
 };
 
 export type RecordLlmToolResultItemArgs = {
@@ -112,7 +114,8 @@ export type ProviderLedgerBoundary = {
 
 export async function recordLlmCall(args: RecordLlmCallArgs): Promise<{ llmCallId: string }> {
   const llmCallId = args.llmCallId ?? ulid();
-  const cacheMetadata = cacheMetadataFromUsage(args.usage, args.reconstruction);
+  const cacheMetadata = { ...cacheMetadataFromUsage(args.usage, args.reconstruction),
+    ...(args.contextBaseline ? { context_baseline: args.contextBaseline } : {}) };
 
   const items = args.output.map((block, index) =>
     buildOutputItemValue({
@@ -724,4 +727,13 @@ export function createCanonicalAssistantMessageFromLedger(
     role: "assistant",
     content,
   };
+}
+
+/** Internal caller must already have resolved thread ownership. One latest call, no historical calibration. */
+export async function loadLatestContextUsageAnchor(threadId: string): Promise<ContextUsageAnchor | null> {
+  const [row] = await db.select({ llmCallId: llmCallTable.llmCallId, usage: llmCallTable.usage,
+    metadata: llmCallTable.cacheMetadata }).from(llmCallTable)
+    .where(and(eq(llmCallTable.threadId, threadId), eq(llmCallTable.status, "completed")))
+    .orderBy(desc(llmCallTable.createdAt), desc(llmCallTable.llmCallId)).limit(1);
+  return row ? { llmCallId: row.llmCallId, usage: row.usage, baseline: row.metadata?.context_baseline } : null;
 }

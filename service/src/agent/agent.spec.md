@@ -145,7 +145,6 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - checkpointed reconstruction uses fresh system prompt, checkpoint replacement history, and post-checkpoint transcript delta
 - provider switches are reconstructed through canonical transcript fallback with explicit degradation diagnostics
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`, and retired `terminal.run` rows replay as canonical `terminal_send { text }`
-- the system prompt describes the unified terminal surface (send/wait/observe, two send result shapes, mode model, still-running semantics), never mentions `terminal.run`, and contains none of the retired readiness/wait vocabulary
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
 - `sources` is parallel to `messages` (system prompt, checkpoint summary vs kept history, one provenance per replayed row even when a tool row becomes two messages) and `repairOrphanedToolCalls` tags injected results as `repair`
@@ -693,7 +692,7 @@ Token-estimation helper for automatic compaction and browser-visible context bud
 - default `reservedOutputTokens` to `maxOutputTokens` unless a catalog entry
   overrides it
 - apply automatic-compaction enablement and ratio configuration, clamped to
-  `0.9` (Codex parity; the margin also absorbs chars/4 estimate error)
+  `0.9` (policy unchanged; the margin does not bound estimator error)
 - expose request-kind budget semantics so normal agent turns use the proactive
   threshold while compaction-summary calls can use the larger usable input window
 - decide whether a candidate provider request should compact before invocation
@@ -721,17 +720,39 @@ Browser-facing context budget snapshot builder used by the owned `/agent/state` 
 - resolve the thread's effective model/reasoning selection and selected-model compaction budget
 - load context through `AgentConversationLoader` using the same latest completed checkpoint boundary as the agent loop
 - delegate primary budget math to `context-budget-state.ts` so durable snapshots and active compaction decisions agree
-- include the normal agent tool-schema estimate by default so durable snapshots match provider requests for ordinary agent turns
+- accept the actual environment and resolved tool catalog from `AgentService.getContextTools`, shared with provider invocation
 - count completed checkpoints for `compaction_count` (diagnostic: a count failure yields null, never an unknown snapshot)
 - expose hard model window, Bud usable context window, output reserve, usable
   input window, compaction threshold, and effective budget fields
 - expose the effective budget as the auto-compaction threshold when compaction
   is enabled, or the usable input window when compaction is disabled
-- load the latest same-provider completed `llm_call.usage` anchor after the checkpoint boundary and add estimated delta messages after that call as optional provider diagnostics
-- include both provider input and output tokens from the usage anchor because output tokens are part of the visible conversation before the next request
-- keep `estimated_input_tokens` and `percent_of_context_budget` aligned with the backend trigger estimate rather than provider diagnostics, with `message_estimated_tokens` and `tool_schema_tokens` exposing the current split
+- load the latest completed ledger baseline and usage; validate identity and request prefix through the shared accounting resolver
+- apply the same runtime instructions as the agent; count actual appended canonical content, never raw output usage
+- expose heuristic message/tool composition separately from the provider-anchored primary total
 - return an `unknown` snapshot instead of failing `/agent/state` when model-window metadata is missing, context policy is invalid, or counting fails
 - mark snapshots stale while an agent turn is active so clients can avoid treating them as live intra-turn telemetry
+
+### `context-accounting.ts` / `context-accounting.test.ts`
+
+Pure shared request-prefix accounting. A versioned SHA-256 identity/prefix digest
+and message count are frozen before invocation and persisted with completed usage.
+Identity includes provider, effective model, reasoning, request mode, checkpoint
+and actual tools; prefix includes runtime instructions and native replay content.
+JSON object key order is stable across JSONB reconstruction; array order matters.
+OpenAI/ds4 input already includes cache hits; Anthropic adds cache reads/writes
+once. Missing/invalid usage, incompatible history/settings, unsupported providers
+use the full fallback estimate. Browser screenshots (Phase 3s D4): the request
+baseline records the artifact ids hydrated into the measured request
+(`image_ids`, via `browser/image-references.ts`); the provider anchor stands
+while the measured prefix still hydrates exactly that set, new references after
+it are estimated at `IMAGE_TOKEN_ESTIMATE` per image, and a changed set (or an
+older anchor that measured screenshots without recording them) falls back with
+reason `image_hydration`. The estimator charges the same constant per hydrated
+reference and per real image block instead of base64 length, so the meter and
+compaction trigger see what the provider receives; hydration itself stays in
+`model-runner.ts`. Raw output/reasoning
+usage is never added to input. Tests cover these cases and appended user/tool data.
+No tokenizer, historical calibration or request-content archive is introduced.
 
 ### `context-budget-state.ts`
 
@@ -739,13 +760,13 @@ Shared context budget state builder for active agent decisions and durable agent
 
 **Responsibilities**:
 - build client-safe available/unknown context budget snapshots from resolved `ContextBudget` plus `CanonicalMessage[]`
-- keep the primary estimate on the model-agnostic canonical-message estimator plus normal agent tool-schema overhead used by the automatic compaction trigger
+- resolve primary usage through `context-accounting.ts`: compatible provider input plus estimated suffix, otherwise the full canonical-message/tool-schema estimate
 - expose provenance fields (`source`, `phase`, `reason`, `turn_id`, `checked_at`) so clients can distinguish durable reconstruction, active decisions, and post-compaction snapshots
 - expose `message_estimated_tokens` and `tool_schema_tokens` alongside total `estimated_input_tokens`
 - expose `breakdown` (every category incl. `tool_schemas`, with
-  `percent_of_estimated_input`, summing to `estimated_input_tokens`) and
+  `percent_of_estimated_input`, normalized against the heuristic composition sum) and
   `compaction_count` (null when the caller did not count — active-turn decisions)
-- attach optional provider usage diagnostics without letting those diagnostics drive compaction threshold percentages
+- use the same resolved total for utilization and compaction; optional provider usage details describe that same anchor
 - return `{ snapshot, shouldCompact, estimatedTokens }` for agent compaction decisions without exposing raw conversation content
 
 ### `context-budget-snapshot.test.ts`
@@ -756,11 +777,11 @@ Direct tests for snapshot math and fallback behavior.
 - unknown model context windows return an `unknown` snapshot
 - disabled compaction uses the usable input window as the effective budget
 - invalid context policy returns an `unknown` snapshot
-- provider-usage diagnostics include output tokens but do not change primary budget math
-- provider-usage diagnostics above threshold do not make the primary percent exceed the backend trigger estimate
+- compatible provider usage drives identical active/durable totals and compaction decisions
+- raw output usage is diagnostic only; actual appended content contributes once
 - normal agent tool-schema overhead contributes to `estimated_input_tokens`
 - checkpoint ids and stale state are carried into the snapshot
-- `breakdown` sums to `estimated_input_tokens` (tool schemas included) and `compaction_count` passes through
+- `breakdown` sums to heuristic composition (independent of anchored usage) and `compaction_count` passes through
 
 ### `compaction-message.ts`
 
@@ -1263,3 +1284,152 @@ Provider adapters and tool execution/approval boundaries are unchanged.
 `output-activity.test.ts` covers paused argument generation, live/snapshot/replay
 consistency, interleaving, local Chat Completions, final persistence, errors and
 stale-call cleanup. See [design](../../../design/assistant-output-activity.md).
+
+## Bud-owned browser integration
+
+- `browser-tools.ts`: canonical browser schemas with strict action-specific
+  validation, nullable optional normalization and static correction guidance.
+- `browser-tool-executor.ts`: matching owner/thread/Bud SQL authorization before
+  and after execution, abort handling and narrow backend boundary.
+- `browser-tools.test.ts`: catalog/parser/replay/provider encoding, ordinary
+  agent-loop pairing, unsupported handoff without parking, plus opt-in prototype
+  handoff fixtures. `browser-ownership.test.ts` tests the real ownership SQL.
+
+`server.ts` injects the production `BrowserBroker`. `invocation-worker.ts` supplies
+its existing invocation ID/fence/worker through execution hooks; `AgentService`
+passes that identity and each tool call ID to the browser executor. Only capable
+online Buds receive open/observe/act/close. `browser_request_handoff` additionally
+requires the daemon's `handoff` capability and durable execution hooks. A stale
+handoff call on an unsupported Bud gets a paired unsupported result without waiting.
+
+The default prompt distinguishes external live browsing from localhost previews
+and explains daemon upgrade/runtime configuration when browser tools are absent.
+Unknown outcomes prohibit automatic replay. Browser records and tool transcripts
+inherit invocation ownership. Semantic observations use ordinary canonical tool
+results across providers; screenshots are hydrated into provider image blocks
+before provider invocation (Phase 3d).
+Phase 2 implements real durable parking and a standalone authenticated web viewer.
+See [browser broker](../browser/browser.spec.md) and
+[Phase 1](../../../plan/bud-owned-browser/phase-1-agent-browser.md).
+
+`parkBrowserHandoff` retains the waiting invocation but releases both its worker
+lease and thread reservation, allowing follow-up chat. `parkUserBrowserHandoff` handles takeover before a provider
+request or the next tool dispatch; in-flight work is accounted for before parking.
+Claim serializes chat invocations independently of browser control. Browser
+prepare and post-dispatch evidence checks reject private/paused access, including
+close and boot replacement. Explicit return makes the waiting original invocation
+eligible again, serialized with any intervening chat; no browser action is replayed. Continuation writes each remaining provider tool result once;
+undispatched calls are marked `not_executed_due_to_browser_handoff`. A takeover at
+a boundary with no tool inserts a system context note to observe the current page,
+without inventing a provider call/result. Cancel/abandon/expired-running recovery
+closes pending handoffs, never authorizing replay of uncertain mutations.
+
+`emitBrowserHandoff` uses existing `agent.tool_call` and waiting-user runtime state.
+The authorized agent-state route recovers the prompt from durable handoff/action
+rows after restart; stale process-local browser prompts are removed. Media/input
+stay outside model context and transcripts. Tests are in `browser/continuation.test.ts`
+and `browser/control.test.ts`; actual signed-in flow acceptance is tracked in
+[Phase 2](../../../plan/bud-owned-browser/phase-2-private-handoff.md).
+
+See [private-control chat](../../../plan/bud-owned-browser/private-control-chat.md).
+Browser rejections explain how to return control; the model can answer normally
+without a retry loop. Handoff catalog availability excludes private/paused sessions.
+
+
+## Phase 3d browser evidence
+
+`browser-tools.ts` retains five tools and adds requested snapshot/visible_dom/
+page_info/screenshot modes plus exact semantic click/fill and scroll. Flat provider
+schemas normalize nullable optional fields before action-specific validation.
+`browser-tool-executor.ts` publishes compact representation-specific summaries.
+`model-runner.ts` hydrates authenticated immutable browser image references after
+context diagnostics and before provider invocation. It reuses canonical image
+blocks, limits hydration to eight newest screenshots, and reports missing/expired/
+unsupported images explicitly. No bytes enter the ordinary tool-result ledger.
+See [browser implementation](../browser/browser.spec.md) for ownership and storage.
+
+## Browser wait continuation (Phase 3e)
+
+`browserWaitParked` acknowledges an already committed pre-dispatch park and stops
+worker renewal. The loop emits waiting metadata with the original tool/call/client
+identity, then exits without a final refusal. `pendingBrowserWaitsForThread`
+recovers up to 50 owner-scoped waits independently of the active turn.
+Return resumes through existing claim/continuation logic: original and trailing
+undispatched provider calls receive paired not-executed results; fresh observation
+is required before acting. Browser continuations deferred for availability release
+thread reservations. Ended/closed/revoked browser waits cancel without fake return.
+
+## Compact browser observation results (Phase 3f)
+
+`browser-tools.ts` explains document/subtree snapshots, frozen continuation,
+viewport-only visible DOM and metadata-only page_info. The browser broker opts
+into compact output only when the connected daemon advertises support.
+`browser-tool-executor.ts` preserves that single representation and guards the
+complete serialized compact tool envelope at 36 KiB (32 KiB observation plus envelope allowance), returning explicit limit
+guidance instead of silently truncating evidence. Existing stored history and
+provider replay remain unchanged; screenshot hydration and private-control
+authorization are unaffected.
+
+`browser-observation-budget.test.ts` verifies the final envelope limit with
+Unicode content and exact replay through `AgentConversationLoader`. See
+[Phase 3f](../../../plan/bud-owned-browser/phase-3f-compact-browser-observations.md)
+and [measurements](../../../debug/browser-compact-observations.md).
+
+## Focused browser reliability (Phase 3g)
+
+Reference clicks may provide both target_id and observation_id with reference.
+The parser retains this identity pair; the broker uses existing semantic inspect
+so the helper validates it instead of dropping freshness checks. Bare reference
+clicks retain their original path. `browser-reference-input.test.ts` reproduces
+the nullable provider input and rejects partial IDs, ambiguous targets and extra
+fields. Tool guidance clarifies snapshot replacement and partial reading. See
+[findings](../../../debug/browser-agent-reliability.md).
+
+## Service-owned turn timing
+
+`invocation-timing.ts` owns the two DB-clock start/settle fragments, terminal
+serialization and post-commit timing publication. `InvocationRepository` initializes
+new admissions at zero, starts on fenced leased→running, settles every durable
+park/finish, and invalidates unknown execution ends. `invocationTimingTransaction`
+collects settled rows inside the existing transaction and publishes only after
+commit; outer automation cancellation transactions use the same helper. Rollbacks
+and stale fences publish nothing. No per-token writes or provider clocks.
+
+`timingsForTurns` reads only requested page turn IDs with owner/thread predicates.
+`serializeInvocation` exposes terminal/review timing; live and waiting entries omit
+it. `invocation-timing.test.ts` covers real PostgreSQL migration, lifecycle, owner
+scope, cancellation rollback, restart/lease boundaries and SSE replay. Browser
+continuation tests also verify accumulated timing across all handoff paths.
+See [contract](../../../plan/service-owned-turn-timing.md).
+
+### `context-tool-catalog.test.ts`
+
+Regression coverage for the shared provider/accounting tool catalog with the real
+browser broker: durable active and idle catalogs agree, legacy/offline/incapable
+contexts omit browser tools, and discovery never dispatches. `getContextTools`
+forwards live invocation context and gates browser eligibility on execution hooks
+(or durable configuration for read-only previews). Runtime capability discovery
+must not require an invented invocation for idle meter reads.
+
+## Shared browser authority (Phase 3k)
+
+Invocation browser waits join the owner-bound `browser_resource` through the
+thread workspace. Claim requires acknowledged global agent authority; private
+control does not reserve unrelated chat. Recovery cancels waits for canceled
+handoffs, closed/deleted workspaces or retired resources (including same-owner
+Bud reclaim). No new scheduler is introduced. See [browser broker](../browser/browser.spec.md).
+
+### Browser empty workspace recovery (Phase 3p)
+
+Browser tool guidance describes the shared persistent browser and thread-owned
+pages. `browser_open` ensures a page, optionally navigates, and is the explicit
+recovery entry point after closure/restart. It does not replay uncertain actions;
+private authority still parks calls for human return. `browser_close` closes only
+this thread's pages and preserves other threads and saved sign-ins.
+
+Browser deferred continuation results distinguish action non-execution from an
+acknowledged handoff return: `executed:false` plus a `handoff` receipt with
+`status:returned`, `control_state:agent`, and `private_content:false`. Recovery
+guidance discovers current pages without stale target IDs, then explicitly opens
+the requested URL for an empty/blank workspace. The receipt is historical evidence;
+every subsequent operation still checks live authority. No daemon contract changes.

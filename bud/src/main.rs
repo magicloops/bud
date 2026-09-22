@@ -23,5 +23,6 @@ async fn daemon_main() -> Result<()> {
 
     setup_tracing();
     let args = BudArgs::parse();
-    LocalSet::new().run_until(run(args)).await
+    let local = LocalSet::new();
+    local.run_until(run(args)).await
 }

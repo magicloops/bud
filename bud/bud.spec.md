@@ -59,6 +59,12 @@ Cargo build script for generated protobuf bindings and release metadata.
 
 ## Subfolders
 
+### `browser-helper/` → [browser-helper.spec.md](./browser-helper/browser-helper.spec.md)
+
+Private Node 22+/Playwright semantic snapshot and locator runtime for managed
+Chrome. Install its locked dependencies before enabling the browser.
+
+
 ### `src/` -> [src.spec.md](./src/src.spec.md)
 
 Modular daemon implementation split across:
@@ -245,3 +251,23 @@ after `mkcert -install`.
 ---
 
 *Parent spec: [../bud.spec.md](../bud.spec.md)*
+
+## Managed browser capability (Phases 1–2)
+
+The daemon can launch one owner-bound persistent Chrome with thread tab workspaces for ordinary
+agent chats. Configure `BUD_BROWSER_EXECUTABLE` with the full executable path,
+run `bud doctor`, then restart the daemon. The probe must succeed before browser
+availability is advertised. Two concurrent thread sessions are supported; terminal
+holders remain independent. Private handoff fences agent access while the owner
+uses the web viewer; bounded screenshots travel over a separate media WebSocket,
+and private input never enters the agent transcript. Losing the viewer or its
+control lease leaves the browser paused until an explicit return of control.
+Profile persistence and mobile viewer support remain later phases. See
+[browser runtime](./src/browser/browser.spec.md),
+[setup/validation](../plan/bud-owned-browser/phase-1-agent-browser.md), and
+[private handoff](../plan/bud-owned-browser/phase-2-private-handoff.md).
+
+Shared browser shutdown drains page work and confirms owned Chrome exit before
+releasing the profile lock. Persistent native-store support is currently macOS-only;
+probes/tests retain disposable profiles. See the browser runtime spec for privacy,
+stop/reset and surviving-process recovery limits.

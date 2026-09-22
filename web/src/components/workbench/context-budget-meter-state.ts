@@ -26,7 +26,7 @@ export type ContextBudgetMeterRow = {
   label: string
   tokens: number
   tokensLabel: string
-  /** Share of estimated input, 0..1. */
+  /** Share of estimated composition, 0..1. */
   percent: number
   percentLabel: string
   /** CSS color for the bar segment and legend swatch. */
@@ -38,7 +38,7 @@ export type ContextBudgetMeterPresentation = {
   percent: number | null
   percentLabel: string
   compactLabel: string
-  /** Screen-reader / aria summary; same text as the popover headline. */
+  /** Screen-reader / aria summary, including the model for context. */
   title: string
   headline: string
   subline: string | null
@@ -85,13 +85,13 @@ export function getContextBudgetMeterPresentation(
 
   if (!budget || budget.status === 'unknown') {
     const reason = budget?.status === 'unknown' ? formatUnknownReason(budget.reason) : 'No budget snapshot'
-    const headline = `${modelLabel}: context unavailable`
+    const headline = 'Context unavailable'
     return {
       tone: 'unknown',
       percent: null,
       percentLabel: '--',
       compactLabel: 'Context --',
-      title: headline,
+      title: `${modelLabel}: ${headline}`,
       headline,
       subline: null,
       rows: [],
@@ -104,20 +104,18 @@ export function getContextBudgetMeterPresentation(
   const tone = getBudgetTone(percent)
   const percentLabel = formatPercent(percent)
   const visualLimit = budget.compaction_enabled ? 'auto-compact limit' : 'usable input window'
-  const headline = `${modelLabel} · ${percentLabel} of ${visualLimit}${budget.stale ? ' · Refreshing…' : ''}`
+  const headline = `${percentLabel} of ${visualLimit}${budget.stale ? ' · Refreshing…' : ''}`
   const used = formatRoundedTokenCount(budget.estimated_input_tokens)
   const limit = formatRoundedTokenCount(budget.effective_budget_tokens)
-  const window = formatRoundedTokenCount(budget.usable_input_window_tokens)
-  const subline = budget.compaction_enabled
-    ? `${used} of ${limit} · compacts at ${Math.round(budget.compaction_threshold_ratio * 100)}% of the ${window} window`
-    : `${used} of ${limit} · ${window} window`
+  const remaining = formatRoundedTokenCount(budget.remaining_context_tokens)
+  const subline = `${used} of ${limit} tokens · ${remaining} remaining`
 
   return {
     tone,
     percent,
     percentLabel,
     compactLabel: `Context ${percentLabel}`,
-    title: headline,
+    title: `${modelLabel} · ${headline}`,
     headline,
     subline,
     rows: buildRows(budget),
@@ -133,7 +131,6 @@ export function getContextBudgetMeterPresentation(
 }
 
 function buildRows(budget: Extract<ApiContextBudget, { status: 'available' }>): ContextBudgetMeterRow[] {
-  const total = Math.max(0, budget.estimated_input_tokens)
   const byKind = new Map<ApiContextBreakdownKind, number>()
   const breakdown: ApiContextBudgetBreakdownEntry[] | undefined = budget.breakdown
   if (breakdown && breakdown.length > 0) {
@@ -146,6 +143,7 @@ function buildRows(budget: Extract<ApiContextBudget, { status: 'available' }>): 
     byKind.set('tool_schemas', Math.max(0, budget.tool_schema_tokens))
   }
 
+  const total = Array.from(byKind.values()).reduce((sum, tokens) => sum + tokens, 0)
   const rows: ContextBudgetMeterRow[] = []
   let otherTokens = 0
   for (const group of ROW_GROUPS) {
@@ -188,12 +186,8 @@ function buildFooter(budget: Extract<ApiContextBudget, { status: 'available' }>)
     budget.basis === 'provider_token_count'
       ? 'Measured by provider'
       : budget.basis === 'provider_usage_trigger'
-        ? 'Provider usage'
-        : 'Estimated (~4 chars/token)'
-  const measured = budget.provider_usage_estimate
-    ? ` · last request ${formatRoundedTokenCount(budget.provider_usage_estimate.input_tokens)} in / ${formatRoundedTokenCount(budget.provider_usage_estimate.output_tokens)} out`
-    : ''
-
+        ? 'Provider usage + estimated additions'
+        : 'Estimated'
   const secondLine: string[] = []
   if (typeof budget.compaction_count === 'number' && budget.compaction_count > 0) {
     secondLine.push(`Compacted ${budget.compaction_count}×`)
@@ -202,7 +196,7 @@ function buildFooter(budget: Extract<ApiContextBudget, { status: 'available' }>)
   }
   secondLine.push(`${formatRoundedTokenCount(budget.reserved_output_tokens)} reserved for the reply`)
 
-  return [`${basis}${measured}`, secondLine.join(' · ')]
+  return [basis, secondLine.join(' · ')]
 }
 
 export function formatRoundedTokenCount(value: number): string {

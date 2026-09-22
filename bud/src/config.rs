@@ -116,6 +116,80 @@ pub enum BudCommand {
     /// Self-update from the stable release channel (checksum-verified
     /// atomic swap; restarts the daemon, terminal sessions survive).
     Upgrade(UpgradeArgs),
+    /// Manage optional browser support (system Chrome/Chromium preferred,
+    /// managed Chrome for Testing as plan B, managed Node runtime + helper).
+    #[command(subcommand)]
+    Browser(BrowserCommand),
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum BrowserCommand {
+    /// Detect or install a browser, install the pinned Node runtime and helper,
+    /// probe the result and write `<base_dir>/browser/manifest.json`.
+    Prepare(BrowserPrepareArgs),
+    /// Show the prepared browser add-on with a fresh launch probe.
+    Status(BrowserStatusArgs),
+    /// Remove the manifest and managed runtime (profiles stay unless asked).
+    Remove(BrowserRemoveArgs),
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct BrowserPrepareArgs {
+    /// Use this browser executable instead of detecting one.
+    #[arg(long)]
+    pub browser: Option<String>,
+
+    /// Install the pinned managed Chrome for Testing build even if a system
+    /// browser exists.
+    #[arg(long, default_value_t = false)]
+    pub managed: bool,
+
+    /// Development: use this checkout's `bud/browser-helper` directory
+    /// (must contain node_modules) instead of the embedded helper.
+    #[arg(long)]
+    pub helper_dir: Option<String>,
+
+    /// Development: use this Node executable instead of the managed runtime.
+    #[arg(long)]
+    pub node: Option<String>,
+
+    /// Accept the managed download and the daemon restart without prompting.
+    #[arg(short = 'y', long, default_value_t = false)]
+    pub yes: bool,
+
+    /// Do not restart the daemon; print the command instead.
+    #[arg(long, default_value_t = false)]
+    pub no_restart: bool,
+
+    /// Print the resulting manifest as JSON.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct BrowserStatusArgs {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct BrowserRemoveArgs {
+    /// Keep the managed Chrome for Testing download (Node/helper still go).
+    #[arg(long, default_value_t = false)]
+    pub keep_managed_browser: bool,
+
+    /// Also delete browser profiles under `<base_dir>/browser-profiles`
+    /// (site sign-ins). Never implied.
+    #[arg(long, default_value_t = false)]
+    pub profiles: bool,
+
+    /// Accept the daemon restart without prompting.
+    #[arg(short = 'y', long, default_value_t = false)]
+    pub yes: bool,
+
+    /// Do not restart the daemon; print the command instead.
+    #[arg(long, default_value_t = false)]
+    pub no_restart: bool,
 }
 
 #[derive(Debug, Args, Clone)]

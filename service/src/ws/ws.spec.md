@@ -314,3 +314,7 @@ routing, but it must not contain the daemon-local URL.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Browser control
+
+`protocol.ts` preserves optional browser capability; `session-trackers.ts` retains it on the authenticated connection. `bud-connection.ts` routes version-1 browser results to exact-tracker correlation before ordinary dispatch. Missing capability omits tools.

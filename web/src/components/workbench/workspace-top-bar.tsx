@@ -3,12 +3,12 @@ import {
   TRANSCRIPT_ROW_TEXT_PADDING_PX,
   useComposerColumnAlignment,
 } from '@/components/workbench/chat-pane-resize'
-import { FileText, FoldVertical, Menu, MessageSquare, Monitor, TerminalIcon, UnfoldVertical } from 'lucide-react'
+import { Globe, FileText, FoldVertical, Menu, MessageSquare, Monitor, TerminalIcon, UnfoldVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 /** `none` = viewer collapsed (desktop only): chat fills the workspace and no tab is active. */
-export type ViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'none'
+export type ViewMode = 'chat' | 'terminal' | 'web' | 'file' | 'browser' | 'none'
 /** What the chat pane renders: the transcript, or the exact model context. */
 export type TranscriptMode = 'chat' | 'model'
 export type WorkbenchStatus =
@@ -26,6 +26,8 @@ type WorkspaceTopBarProps = {
   onToggleThreads: () => void
   /** While the thread panel is open it hosts the hamburger itself. */
   threadsOpen?: boolean
+  webAvailable?: boolean
+  browserAvailable?: boolean
   fileViewLabel?: string | null
   /** Below md the chat pane is a peer view with its own tab. */
   showChatTab?: boolean
@@ -51,6 +53,8 @@ export function WorkspaceTopBar({
   onToggleThreads,
   threadsOpen = false,
   fileViewLabel = null,
+  webAvailable = false,
+  browserAvailable = false,
   showChatTab = false,
   alignToPaneRef,
   transcriptMode,
@@ -170,17 +174,24 @@ export function WorkspaceTopBar({
             Chat
           </ViewToggleButton>
         )}
-        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4" />}>
-          Terminal
-        </ViewToggleButton>
-        <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4" />}>
-          Web view
-        </ViewToggleButton>
+        {webAvailable && (
+          <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="h-4 w-4" />}>
+            Web view
+          </ViewToggleButton>
+        )}
+        {(browserAvailable || view === 'browser') && (
+          <ViewToggleButton active={view === 'browser'} onClick={() => onViewChange('browser')} icon={<Globe className="h-4 w-4" />}>
+            Browser
+          </ViewToggleButton>
+        )}
         {(fileViewLabel || view === 'file') && (
           <ViewToggleButton active={view === 'file'} onClick={() => onViewChange('file')} icon={<FileText className="h-4 w-4" />}>
             {fileViewLabel ?? 'File'}
           </ViewToggleButton>
         )}
+        <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="h-4 w-4" />}>
+          Terminal
+        </ViewToggleButton>
       </div>
     </div>
   )

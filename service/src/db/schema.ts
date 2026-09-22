@@ -1518,6 +1518,8 @@ export const agentInvocationTable = pgTable("agent_invocation", {
   workerId: text("worker_id"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }),
+  workDurationMs: bigint("work_duration_ms", { mode: "number" }),
+  workStartedAt: timestamp("work_started_at", { withTimezone: true }),
   outcomeCode: text("outcome_code"),
   cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
   canceledByUserId: text("canceled_by_user_id").references(() => authUserTable.id),
@@ -1839,4 +1841,90 @@ export const webRetrievalArtifactTable = pgTable("web_retrieval_artifact", {
   expiryIdx: index("web_retrieval_artifact_expiry_idx").on(t.expiresAt),
   threadFk: foreignKey({ name: "web_retrieval_artifact_thread_fk", columns: [t.threadId, t.budId, t.createdByUserId], foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }).onDelete("cascade"),
   sizeCheck: check("web_retrieval_artifact_size_check", sql`${t.byteLength} between 0 and 524288`),
+}));
+
+// One managed profile and authority per currently owning Bud. The resource is
+// independent of thread workspaces; control intent survives service/daemon loss.
+export const browserResourceTable = pgTable("browser_resource", {
+  id: text("id").primaryKey(),
+  budId: text("bud_id").notNull().references(() => budTable.budId),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  profileGeneration: integer("profile_generation").notNull().default(1),
+  controlState: text("control_state").notNull().default("agent"),
+  privateContent: boolean("private_content").notNull().default(false),
+  controlEpoch: integer("control_epoch").notNull().default(1),
+  controlSessionId: text("control_session_id"),
+  revision: integer("revision").notNull().default(0),
+  controlRequestId: text("control_request_id"),
+  controlOperation: text("control_operation"),
+  desiredState: text("desired_state").notNull().default("open"),
+  lifecycleRequestId: text("lifecycle_request_id"),
+  requestedByUserId: text("requested_by_user_id"),
+  retiredAt: timestamp("retired_at", {withTimezone:true}),
+  createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", {withTimezone:true}).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("browser_resource_owner_key").on(t.id,t.budId,t.createdByUserId),
+  activeBud: uniqueIndex("browser_resource_active_bud_idx").on(t.budId).where(sql`${t.retiredAt} is null`),
+  ownerIdx: index("browser_resource_owner_idx").on(t.createdByUserId,t.budId),
+  pendingIdx: index("browser_resource_pending_idx").on(t.desiredState,t.updatedAt),
+  controlCheck: check("browser_resource_control_check",sql`${t.controlState} in ('agent','paused','human_private','resume_pending') and (${t.controlState} <> 'agent' or not ${t.privateContent}) and (${t.controlState} <> 'human_private' or (${t.privateContent} and ${t.controlSessionId} is not null))`),
+  operationCheck: check("browser_resource_operation_check",sql`${t.controlOperation} is null or ${t.controlOperation} in ('pause','acquire','prepare_return','finish_return')`),
+  stateCheck: check("browser_resource_state_check",sql`${t.desiredState} in ('open','stop_pending','stopped','reset_pending') and (${t.desiredState} not in ('stop_pending','reset_pending') or ${t.lifecycleRequestId} is not null)`),
+  countersCheck: check("browser_resource_counters_check",sql`${t.controlEpoch} > 0 and ${t.revision} >= 0 and ${t.profileGeneration} > 0`),
+  actorCheck: check("browser_resource_actor_check",sql`${t.requestedByUserId} is null or ${t.requestedByUserId} = ${t.createdByUserId}`),
+}));
+
+// Browser lifecycle is independent of terminals and app-preview proxies. Keep
+// cleanup intent until the daemon confirms close (including offline deletion).
+export const browserSessionTable = pgTable("browser_session", {
+  id: text("id").primaryKey(), threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  browserId: text("browser_id"),
+  generation: text("generation").notNull(), bootId: text("boot_id").notNull(),
+  state: text("state").notNull().default("opening"),
+  desiredState: text("desired_state").notNull().default("open"),
+  controlEpoch: integer("control_epoch").notNull().default(1),
+  sequence: integer("sequence").notNull().default(0),
+  invocationId: text("invocation_id"), invocationFence: integer("invocation_fence"),
+  pendingUntil: timestamp("pending_until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+}, t => ({
+  browserFk: foreignKey({name:"browser_session_resource_owner_fk", columns:[t.browserId,t.budId,t.createdByUserId], foreignColumns:[browserResourceTable.id,browserResourceTable.budId,browserResourceTable.createdByUserId]}),
+  linkedCheck: check("browser_session_linked_check", sql`${t.closedAt} is not null or ${t.browserId} is not null`),
+  resourceIdx: index("browser_session_resource_idx").on(t.browserId,t.closedAt),
+  ownerKey: unique("browser_session_context_key").on(t.id, t.threadId, t.budId, t.createdByUserId),
+  activeThread: uniqueIndex("browser_session_active_thread_idx").on(t.threadId).where(sql`${t.closedAt} is null`),
+  ownerIdx: index("browser_session_owner_idx").on(t.createdByUserId, t.budId),
+  cleanupIdx: index("browser_session_cleanup_idx").on(t.budId, t.desiredState, t.closedAt),
+  threadFk: foreignKey({ name: "browser_session_thread_owner_fk", columns: [t.threadId, t.budId, t.createdByUserId],
+    foreignColumns: [threadTable.threadId, threadTable.budId, threadTable.createdByUserId] }),
+  stateCheck: check("browser_session_state_check", sql`${t.state} in ('opening','ready','interrupted','closed') and ${t.desiredState} in ('open','closed')`),
+  countersCheck: check("browser_session_counters_check", sql`${t.controlEpoch} > 0 and ${t.sequence} >= 0`),
+}));
+
+// No input, frames or credentials are stored in durable handoff records.
+export const browserHandoffTable = pgTable("browser_handoff", {
+  id: text("id").primaryKey(), sessionId: text("session_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  invocationId: text("invocation_id"), callId: text("call_id"), clientId: uuid("client_id"),
+  reason: text("reason").notNull(), kind: text("kind").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  returnedByUserId: text("returned_by_user_id"),
+  createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", {withTimezone:true}),
+}, t => ({
+  pendingInvocation: uniqueIndex("browser_handoff_pending_invocation_idx").on(t.invocationId).where(sql`${t.status} = 'pending'`),
+  sessionStatus: index("browser_handoff_session_status_idx").on(t.sessionId,t.status),
+  callKey: unique("browser_handoff_call_key").on(t.invocationId,t.callId),
+  ownerIdx: index("browser_handoff_owner_idx").on(t.createdByUserId,t.threadId,t.status),
+  sessionFk: foreignKey({name:"browser_handoff_session_owner_fk", columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
+    foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
+  invocationFk: foreignKey({name:"browser_handoff_invocation_owner_fk",columns:[t.invocationId,t.threadId,t.budId,t.createdByUserId],
+    foreignColumns:[agentInvocationTable.id,agentInvocationTable.threadId,agentInvocationTable.budId,agentInvocationTable.createdByUserId]}),
+  statusCheck: check("browser_handoff_status_check",sql`${t.status} in ('pending','returned','canceled') and ${t.kind} in ('agent','user','return_control')`),
+  actorCheck: check("browser_handoff_actor_check",sql`${t.returnedByUserId} is null or ${t.returnedByUserId} = ${t.createdByUserId}`),
 }));

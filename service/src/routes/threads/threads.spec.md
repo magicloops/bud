@@ -64,10 +64,11 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
 - enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
-- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
+- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, actual environment/tool catalog, provider-prefix accounting, and compaction threshold as the agent loop
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - passes through `draft_assistant.started_at` so refreshes can recover active assistant draft timing from service timestamps
 - passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
+- reconstructs a pending `browser_request_handoff` in the existing `pending_tool` shape from the owned durable handoff and waiting invocation, including its turn identity; stale browser prompts are removed after resolution even when process-local runtime state is empty or outdated
 - `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; they omit replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot and (additive) `message`, the persisted `role: "compaction"` transcript row for the checkpoint.
 - `/agent/stream` emits `agent.reasoning_start`, `agent.reasoning_delta`, and `agent.reasoning_done` for visible provider reasoning, with `agent.reasoning_done.message` carrying the persisted `role: "reasoning"` row
 - `/agent/stream` failed `final` events carry sanitized `error`, `error_code`, and `retryable` fields rather than raw provider or daemon transport messages
@@ -99,6 +100,7 @@ Read-only "model view" route: `GET /api/threads/:threadId/model-context`
 - authorizes the owning thread first (`401` unauthenticated, `404` non-owner) before any load
 - resolves the thread's effective model/reasoning exactly like the agent loop, runs `AgentConversationLoader.loadWithDiagnostics` for that provider, then inserts the Bud environment's runtime instructions with `applyRuntimeInstructionsWithSources`
 - serializes canonical messages to snake_case blocks with per-message provenance (`source`) and per-message token estimates; adds the environment's tool list, tool-schema tokens, compaction boundary, the system prompt `scope`/`version`, `turn_active`, and the same `context_budget` snapshot `/agent/state` returns
+- model-view per-message/top-level token counts remain heuristic composition; nested `context_budget` is the shared provider-anchored utilization total when compatible
 - `buildModelContextDocument` / `serializeCanonicalBlock` are pure and unit-tested; the handler is thin
 
 ### `model-context.test.ts`
@@ -230,3 +232,25 @@ Known retired client submissions may fall back at message admission. Serialized
 threads add nullable `model_warning`; message selection metadata records
 `model_fallback_from` and `reasoning_adjusted` when applicable. All reads/writes
 retain the existing authenticated owner checks and owner stamping.
+
+Browser handoff recovery does not overwrite a different running or completed
+turn's runtime identity. Stop can also cancel a non-reserving browser handoff when
+no active/queued run takes priority. Browser inventory remains the separate source
+for the paused-browser notice; private control no longer prevents chat admission.
+
+## Inline browser waits
+
+Authorized `/agent/state` adds `pending_browser_waits` with original turn,
+invocation and pending-tool identity (bounded 50, owner/thread SQL scoped).
+`POST /cancel` optionally accepts `{invocation_id}`; the ID is re-resolved by
+owner/thread. Missing/foreign IDs return 404. Canceling an older waiting invocation
+does not stop a different active runtime turn. Existing bodyless cancel is unchanged.
+
+## Settled turn timing
+
+The paged messages response adds `turn_timings: [{turn_id,work_duration_ms}]`.
+After existing viewer/thread authorization, one bounded invocation query uses the
+page's distinct turn IDs plus owner and thread predicates. Nonterminal turns are
+omitted; unknown terminal/review totals are null. `/agent/state.invocations` exposes
+the same optional settled field through invocation serialization. No model context
+or message payload is rewritten; no additional endpoint or ownership authority.

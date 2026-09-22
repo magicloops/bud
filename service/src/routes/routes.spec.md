@@ -611,6 +611,31 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
 }
 ```
 
+### Browser routes (`../browser/routes.ts`, `../browser/agent-capture.ts`)
+
+Registered by `registerBrowserRoutes(...)` from the browser broker rather than
+this folder; listed here so the route inventory is complete. Details live in
+[../browser/browser.spec.md](../browser/browser.spec.md). "Live viewer" below
+means `requireViewer(...)` plus a still-unexpired Better Auth session row;
+"Origin" means the request `Origin` must be in `betterAuthTrustedOrigins`
+(enforced for every non-GET request and every WebSocket upgrade). All replies
+are `Cache-Control: no-store`. `BrowserError` maps to `404 browser_not_found`,
+zod failures to `400 browser_invalid_request`, and other broker errors to `409`.
+
+| Method | Path | Authorization |
+|--------|------|---------------|
+| `GET` | `/api/buds/:bud_id/browser` | Live viewer; `getAuthorizedBud(...)` else `404`; reads the owner's active browser resource |
+| `POST` | `/api/buds/:bud_id/browser/lifecycle` | Live viewer + Origin; `getAuthorizedBud(...)` else `404`; body `{revision, operation: stop\|reset, confirmed}`; `202` persists intent, does not mean completion |
+| `GET` | `/api/threads/:thread_id/browser-sessions` | Live viewer; `getAuthorizedThread(...)` else `404`; inventory filtered by owner in SQL, includes pending handoff |
+| `GET` | `/api/browser/sessions/:session_id` | Live viewer; owner-scoped SQL lookup (`control.repository.get(owner, id)`) else `404`; optional `viewer_id` query adds `owns_control` |
+| `POST` | `/api/browser/sessions/:session_id/control` | Live viewer + Origin; owner-scoped lookup inside the coordinator; `operation` is one of acquire, renew, release, return, close, recover (`recovery_ticket`), reopen, show_window, hide_window; controller identity is auth session + `viewer_id` |
+| `POST` | `/api/browser/sessions/:session_id/viewport` | Live viewer + Origin; owner-scoped; private controller must match auth session + `viewer_id` |
+| `POST` | `/api/browser/sessions/:session_id/input` | Live viewer + Origin; owner-scoped; frame/document/focus-bound gestures, 24 KiB body |
+| `GET` (WebSocket) | `/api/browser/sessions/:session_id/media` | `preValidation`: live viewer + Origin and owner-scoped session lookup before upgrade; first message `{viewer_id}` within three seconds re-resolves the viewer and liveness; bounded receiver (1,420,000 bytes) |
+| `GET` (WebSocket) | `/ws/browser-media` | Daemon leg, no browser auth: first message `{ticket}` is a one-use five-second ticket issued over the authenticated control carrier and bound to carrier/session/generation/epoch |
+| `POST` | `/api/browser/captures` | Daemon upload: `Authorization: Bearer <one-use ticket>` bound to live carrier/invocation/session/epoch/owner, rechecked before storage; `403 browser_capture_revoked`; 1.42 MB body |
+| `GET` | `/api/threads/:thread_id/browser-images/:image_id` | `requireViewer(...)` (cookie or bearer); `getAuthorizedThread(...)` else `404`; image lookup scoped by owner and thread |
+
 ## Response Formats
 
 **Thread Response**:

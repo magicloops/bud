@@ -10,8 +10,12 @@ export type AgentTurnOutcome = {
 // Internal worker hooks. None of these callbacks or identities come from model
 // arguments or browser request bodies. Rejection must prevent the next dispatch.
 export interface AgentExecutionHooks {
+  invocation?: { id: string; fence: number; workerId: string };
   checkpoint(): Promise<void>;
   beforeTool(directive: AgentToolCallDirective): Promise<void>;
+  parkBrowserHandoff?(callId: string, handoffId: string): Promise<void>;
+  browserWaitParked?(): void;
+  parkUserBrowserHandoff?(nextCall?:AgentToolCallDirective): ReturnType<InvocationRepository["parkUserBrowserHandoff"]>;
   parkQuestion?(directive: AgentToolCallDirective, questionRequestId: string): Promise<void>;
   parkAppDataRequest?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAppDataRequest"]>;
   parkAutomationProposal?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAutomationProposal"]>;

@@ -83,15 +83,15 @@ test('getContextBudgetRingProgress clamps the radial send-button ring', () => {
   assert.equal(getContextBudgetRingProgress({ percent: 1.25 }), 100)
 })
 
-test('headline and subline lead with the limit, using the model display name', () => {
+test('headline and subline show usage; the model name stays in the accessible summary', () => {
   const presentation = getContextBudgetMeterPresentation(AVAILABLE_BUDGET, { modelLabel: 'GPT Test' })
 
   assert.equal(presentation.tone, 'normal')
   assert.equal(presentation.percentLabel, '50%')
   assert.equal(presentation.compactLabel, 'Context 50%')
-  assert.equal(presentation.headline, 'GPT Test · 50% of auto-compact limit')
-  assert.equal(presentation.title, presentation.headline)
-  assert.equal(presentation.subline, '45k of 90k · compacts at 90% of the 100k window')
+  assert.equal(presentation.headline, '50% of auto-compact limit')
+  assert.equal(presentation.title, 'GPT Test · 50% of auto-compact limit')
+  assert.equal(presentation.subline, '45k of 90k tokens · 45k remaining')
 })
 
 test('rows group the breakdown, sort largest first, and fold tiny categories into Other', () => {
@@ -120,10 +120,10 @@ test('rows group the breakdown, sort largest first, and fold tiny categories int
   assert.equal(rows.find((row) => row.id === 'compaction_summary')?.color, rows.find((row) => row.id === 'other')?.color)
 })
 
-test('footer states the basis, last measured request, compaction count, and reserve', () => {
+test('footer separates the concise basis from compaction and reserve details', () => {
   const { footer } = getContextBudgetMeterPresentation(AVAILABLE_BUDGET)
   assert.deepEqual(footer, [
-    'Estimated (~4 chars/token) · last request 40k in / 10k out',
+    'Estimated',
     'Compacted 2× · 10k reserved for the reply',
   ])
 })
@@ -179,7 +179,7 @@ test('copy changes when auto-compaction is disabled and when the snapshot is sta
     percent_of_context_budget: 0.45,
   })
   assert.match(disabled.headline, /of usable input window$/)
-  assert.equal(disabled.subline, '45k of 100k · 100k window')
+  assert.equal(disabled.subline, '45k of 100k tokens · 55k remaining')
 
   const stale = getContextBudgetMeterPresentation({ ...AVAILABLE_BUDGET, stale: true })
   assert.match(stale.headline, /· Refreshing…$/)
@@ -202,7 +202,7 @@ test('unknown budgets render a reason instead of a breakdown', () => {
   assert.equal(presentation.tone, 'unknown')
   assert.equal(presentation.percent, null)
   assert.equal(presentation.compactLabel, 'Context --')
-  assert.equal(presentation.headline, 'local-model: context unavailable')
+  assert.equal(presentation.headline, 'Context unavailable')
   assert.deepEqual(presentation.rows, [])
   assert.ok(presentation.footer.some((line) => line.includes('metadata is missing')))
   assert.ok(presentation.footer.some((line) => line.includes('current turn settles')))
@@ -224,4 +224,14 @@ test('invalid context policy is reported as unknown', () => {
 
   assert.equal(presentation.tone, 'unknown')
   assert.ok(presentation.footer.some((line) => line.includes('policy metadata is invalid')))
+})
+
+test('provider total drives utilization while estimated composition has its own denominator', () => {
+  const presentation = getContextBudgetMeterPresentation({ ...AVAILABLE_BUDGET,
+    estimated_input_tokens: 60_000, percent_of_context_budget: 2 / 3, basis: 'provider_usage_trigger' })
+  assert.equal(presentation.percentLabel, '67%')
+  assert.match(presentation.subline!, /^60k of 90k/)
+  assert.ok(Math.abs(presentation.rows.reduce((n, row) => n + row.percent, 0) - 1) < 1e-9)
+  assert.equal(presentation.rows.reduce((n, row) => n + row.tokens, 0), TOTAL)
+  assert.match(presentation.footer[0]!, /^Provider usage \+ estimated additions/)
 })

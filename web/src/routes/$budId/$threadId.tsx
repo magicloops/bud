@@ -1,3 +1,6 @@
+import { BrowserWaitActionsContext, BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
+import { BrowserViewer, type BrowserReturnAction } from '@/features/browser/viewer'
+import { useAuthSession } from '@/contexts/auth-session-context'
 import { ChatDataContext } from '@/components/chat-data-context'
 /**
  * Thread View - workspace for an existing thread
@@ -100,7 +103,8 @@ export const Route = createFileRoute('/$budId/$threadId')({
 
 function ThreadView() {
   const { threadId } = Route.useParams()
-  return <ThreadViewContent key={threadId} />
+  const { currentUser } = useAuthSession()
+  return <ThreadViewContent key={`${currentUser?.user.id}:${threadId}`} />
 }
 
 function ThreadViewContent() {
@@ -178,6 +182,11 @@ function ThreadViewContent() {
       readStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null),
     ),
   )
+  const revealBrowser = useCallback(() => setViewMode('browser'), [])
+  const browserPane = useBrowserPane(threadId, initialMessagePage.messages, initialAgentState, revealBrowser)
+  const browserNotice = browserPane.notice
+  const [browserControlError, setBrowserControlError] = useState<{sessionId: string; message: string} | null>(null)
+  const [browserReturnAction, setBrowserReturnAction] = useState<BrowserReturnAction | null>(null)
   const handleViewChange = useCallback((view: ViewMode) => {
     // Clicking the already-active viewer tab collapses the viewer: chat
     // fills the workspace on desktop; on mobile it returns to the chat view.
@@ -223,6 +232,8 @@ function ThreadViewContent() {
   }, [])
   const {
     messages,
+    turnTimings,
+    applyTurnTimings,
     messagePage,
     isLoadingOlderMessages,
     olderMessagesLoadFailed,
@@ -557,6 +568,9 @@ function ThreadViewContent() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
+    if (message.role === 'tool') {
+      try { browserNotice(JSON.parse(message.content)) } catch { /* Not a browser result. */ }
+    }
     if (message.metadata?.tool === 'ask_user_questions') {
       setQuestionSubmitError(null)
       setStatus((current) => (current === 'dispatching' ? current : 'streaming'))
@@ -566,7 +580,7 @@ function ThreadViewContent() {
       setViewMode('web')
       void refreshThreadWebView()
     }
-  }, [applyToolResultMessage, refreshThreadWebView])
+  }, [applyToolResultMessage, refreshThreadWebView, browserNotice])
 
   const handleAssistantMessageStart = applyAssistantMessageStart
   const handleAssistantMessageDelta = applyAssistantMessageDelta
@@ -679,6 +693,7 @@ function ThreadViewContent() {
     onStatusChange: setStatus,
     onError: setError,
     onToolCall: (event) => {
+      if (event.name === 'browser_request_handoff' && event.args) browserPane.notice(event.args)
       if (event.name === 'data_request_api_key' || event.name === 'automations_request_activation' ||
         (event.name === 'automations_request_existing_contacts' && event.args?.kind === 'existing_contacts' && event.args?.status === 'pending')) {
         setStatus('waiting_for_user')
@@ -717,6 +732,7 @@ function ThreadViewContent() {
     onCompactionFailed: handleCompactionFailed,
     onThreadTitle: handleThreadTitleUpdate,
     onFinalizeTurn: handleFinalizeTurn,
+    onTurnTiming: timing => applyTurnTimings([timing]),
     refreshBootstrap: refreshAgentBootstrap,
   })
   agentStreamCursorSetterRef.current = setAgentStreamCursor
@@ -784,7 +800,7 @@ function ThreadViewContent() {
   } = useTerminalSession({
     budId,
     threadId,
-    viewMode,
+    viewMode: viewMode === 'browser' ? 'file' : viewMode,
     threadPanelOpen,
     onError: handleFeatureError,
     shouldAbortForUnauthorized,
@@ -1037,9 +1053,16 @@ function ThreadViewContent() {
   })
 
   return (
+    <BrowserPaneContext.Provider value={browserPane.open}>
+    <BrowserWaitActionsContext.Provider value={{ visibleSessionId: viewMode === 'browser' ? browserPane.sessionId : null, returnAction: browserReturnAction, error: browserControlError, stop: async (invocationId) => {
+      await apiFetchJson(`/api/threads/${threadId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invocation_id: invocationId }) })
+      await refreshAgentBootstrap(threadId)
+    } }}>
     <WorkspaceShell
       title={currentThread.title ?? 'Untitled thread'}
       view={viewMode}
+      webAvailable={Boolean(webViewActiveSite)}
+      browserAvailable={Boolean(browserPane.sessionId)}
       onViewChange={handleViewChange}
       isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
@@ -1097,6 +1120,7 @@ function ThreadViewContent() {
             notices={contextCompactionNotices}
             liveTurnId={liveTurnId}
             turnOutcomes={turnOutcomes}
+            turnTimings={turnTimings}
             activityIndicatorVisible={activityIndicatorVisible}
             activityIndicatorWorkStarted={assistantActivityGate.workStarted}
             activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
@@ -1175,6 +1199,13 @@ function ThreadViewContent() {
             onFocusTerminal={focusTerminal}
             onInterruptTerminal={sendTerminalCtrlC}
           />
+          {viewMode === 'browser' && (
+            <div className="absolute inset-0 z-20 flex min-h-0 bg-background">
+              {browserPane.sessionId ? (
+                <BrowserViewer key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onReturnActionChange={setBrowserReturnAction} onControlErrorChange={setBrowserControlError} onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
+              ) : <p className="p-4 text-sm text-muted-foreground">No active browser. Ask your Bud to open a page.</p>}
+            </div>
+          )}
           {viewMode === 'file' && (
             <div className="absolute inset-0 z-20 flex">
               <FileViewerPane
@@ -1205,7 +1236,7 @@ function ThreadViewContent() {
           contextBudget={contextBudget}
           onViewModelContext={() => setTranscriptMode('model')}
           alignToPaneRef={chatPaneRef}
-          autoFocusKey={`${threadId}:${viewMode}`}
+          autoFocusKey={threadId}
         />
       )}
       debugPanel={(
@@ -1216,5 +1247,7 @@ function ThreadViewContent() {
         />
       )}
     />
+    </BrowserWaitActionsContext.Provider>
+    </BrowserPaneContext.Provider>
   )
 }

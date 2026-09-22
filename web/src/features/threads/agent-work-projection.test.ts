@@ -218,3 +218,32 @@ test('late intermediate classification splits activity without duplicate section
     assert.equal(row.sections[2].sectionId, 'activity:last')
   }
 })
+
+test('service total arrives after final without rebuilding unrelated rows or duplicating split totals', () => {
+  const project = createTimelineProjector()
+  const before = buildMessage({ client_id: 'before' })
+  const boundary = buildMessage({ client_id: 'question', role: 'user', content: 'answer' })
+  const after = buildMessage({ client_id: 'after' })
+  const final = buildMessage({ client_id: 'final', role: 'assistant', content: 'Done', metadata: { turn_id: 'T1', segment_kind: 'final' } })
+  const input = { messages: [before, boundary, after, final], liveTurnId: null }
+  const first = project(input)
+  assert.equal(first[2].kind === 'work' && first[2].durationMs, null)
+  const timed = project({ ...input, turnTimings: new Map([['T1', 95000]]) })
+  assert.equal(timed[0], first[0])
+  assert.equal(timed[1], first[1])
+  assert.equal(timed[3], first[3])
+  assert.equal(timed[2].kind === 'work' && timed[2].durationMs, 95000)
+  const duplicate = project({ ...input, turnTimings: new Map([['T1', 95000]]) })
+  assert.equal(duplicate[2], timed[2])
+  const invalidated = project({ ...input, turnTimings: new Map([['T1', null]]) })
+  assert.equal(invalidated[2].kind === 'work' && invalidated[2].durationMs, null)
+  const paged = project({ messages: [after, final], liveTurnId: null, turnTimings: new Map([['T1', 95000]]) })
+  assert.equal(paged[0].kind === 'work' && paged[0].durationMs, 95000)
+})
+
+test('timing received before final does not create a final or a live ticking counter', () => {
+  const tool = buildMessage({ client_id: 'tool' })
+  const rows = projectTimeline({ messages: [tool], liveTurnId: 'T1', turnTimings: new Map([['T1', 90000]]) })
+  assert.equal(rows[0].kind === 'work' && rows[0].durationMs, null)
+  assert.equal(rows[0].kind === 'work' && rows[0].canFold, false)
+})

@@ -253,3 +253,34 @@ test("unavailable model records an actionable failure before running", async () 
   assert.equal(outcome, "invalid_model");
   assert.ok(!events.includes("running"));
 });
+
+test("a heartbeat blocked behind a browser park commit cannot abort the parked worker", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events: string[] = [];
+  const repo = repository(events);
+  let held = false;
+  let release: ((error: Error) => void) | undefined;
+  repo.heartbeat = async () => {
+    events.push("fence");
+    // The repository park transaction holds the invocation row lock; the
+    // heartbeat's locked-lease select waits until that commit advances fence.
+    if (held) await new Promise<void>((_, reject) => { release = reject; });
+  };
+  let abortedAfterPark: boolean | undefined;
+  const worker = new InvocationWorker({ preflight: async () => "ready", execute: async (_row, signal, hooks) => {
+    await hooks.beforeTool({ ...directive, tool: "browser_observe" } as never);
+    held = true;
+    t.mock.timers.tick(15_000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.ok(release, "heartbeat fired during the park transaction");
+    hooks.browserWaitParked!();
+    release(new InvocationError("lease_lost"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    abortedAfterPark = signal.aborted;
+    return { status: "waiting_for_user" };
+  } }, repo);
+  assert.equal(await worker.runOnce(), true);
+  assert.equal(abortedAfterPark, false, "committed park must not abort the controller");
+  assert.ok(!events.includes("failed"));
+  assert.ok(!events.includes("needs_review"));
+});

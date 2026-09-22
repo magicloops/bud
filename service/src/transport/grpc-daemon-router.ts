@@ -17,6 +17,7 @@ export type GrpcControlCall = grpc.ServerDuplexStream<GrpcBudEnvelope, GrpcBudEn
 export interface GrpcSessionTracker {
   budId: string;
   sessionId: string;
+  browserCapability?: unknown;
   deviceSessionId?: string;
   transportSessionId?: string;
   drainState?: "active" | "draining";

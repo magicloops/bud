@@ -1,3 +1,4 @@
+import { selectHydratedImageReferences, IMAGE_TOKEN_ESTIMATE } from "../browser/image-references.js";
 import { config } from "../config.js";
 import {
   getCatalogEntry,
@@ -8,9 +9,7 @@ import {
   type ResolvedModelReasoning,
 } from "../llm/index.js";
 
-// Codex parity (90% of the active window). Also the clamp: our trigger is a
-// chars/4 estimate of the next request, and code tokenizes closer to 3
-// chars/token, so the 10% margin absorbs estimate error.
+// Preserve the 90% policy; heuristic error is not bounded by this margin.
 const DEFAULT_AUTO_COMPACTION_RATIO = 0.9;
 const MESSAGE_TOKEN_OVERHEAD = 8;
 const CONTENT_BLOCK_TOKEN_OVERHEAD = 4;
@@ -213,6 +212,11 @@ export function emptyContextBreakdown(): ContextBreakdownTokens {
  */
 export function estimateCanonicalMessagesBreakdown(messages: CanonicalMessage[]): ContextBreakdownTokens {
   const breakdown = emptyContextBreakdown();
+  // Screenshot references are hydrated into image blocks right before the
+  // provider call; account for them here so the meter and the compaction
+  // trigger see what the provider will actually receive.
+  const hydrated = selectHydratedImageReferences(messages);
+  breakdown.images += hydrated.size * IMAGE_TOKEN_ESTIMATE;
   let systemPromptSeen = false;
   for (const message of messages) {
     let messageKind: ContextBreakdownKind;
@@ -304,7 +308,8 @@ function estimateBlockTokens(block: CanonicalContentBlock): number {
     case "reasoning_redacted":
       return estimateTextTokens(JSON.stringify(block.providerData ?? {}));
     case "image":
-      return estimateTextTokens(block.source.data);
+      // Providers charge by tiles/pixel area, not base64 length.
+      return IMAGE_TOKEN_ESTIMATE;
   }
 }
 
