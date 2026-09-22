@@ -2,7 +2,7 @@
 
 Date: 2026-09-14. **Closed by scope decision; not a production-readiness certification.**
 
-Implementation: [spikes/bud-browser](../../spikes/bud-browser/README.md).
+Implementation: `spikes/bud-browser` (removed after Phase 0 closed; the harness, README and Rust host are in git history at `df6268c`).
 The daemon, normal service composition, database, web workbench and mobile app
 remain unchanged. Canonical agent tools now have an explicitly injected
 experimental integration, exercised by fixtures. The production phases in
@@ -53,7 +53,7 @@ real credentials or external account writes were used. An earlier Chrome for
 Testing comparison triggered a Keychain prompt; it was stopped without granting
 access, and disposable fixtures now use mock/basic credential storage.
 
-Commands are reproducible in the [harness README](../../spikes/bud-browser/README.md).
+Commands were reproducible from the harness README, which is preserved in git history at `df6268c`.
 
 | Check | Evidence |
 | --- | --- |

@@ -48,7 +48,7 @@ Largest new modules: `bud/src/browser/manager.rs` (2,385 lines),
 | `cargo test` (bud) | 147 lib + 32 integration pass; **6 browser tests ignored** (need `BUD_BROWSER_EXECUTABLE` and installed helper); 8 more manager tests silently `return` early without it |
 | `cargo clippy --all-targets` (bud) | 8 warnings, all in `browser/manager.rs` and `browser/media.rs` (unnecessary `u64` casts ×6, 10-arg function, collapsible `if`, `match` → `if let`) |
 | `cargo fmt --check` | clean |
-| `pnpm test` (service) | **721 pass, 2 fail, 30 skipped** (see blockers). The 30 skips are Postgres-backed tests gated on `BUD_DATA_DB_TEST=1`; with the flag set, `browser/resource-repository.test.ts` also failed at HEAD (`column "accent_color" does not exist`: its stub `bud` table predates Phase 3n colour sync). Fixed during Phase 3q. Two further DB-gated failures are outside this branch: `personal-data/automation-delete.test.ts` fails identically at HEAD and on untouched files, and `personal-data/contact-processor.test.ts` passes alone but failed once in the full run (order-dependent) |
+| `pnpm test` (service) | **721 pass, 2 fail, 30 skipped** at review time (see blockers; both fixed the same day, suite green afterwards). The 30 skips are Postgres-backed tests gated on `BUD_DATA_DB_TEST=1`; with the flag set, `browser/resource-repository.test.ts` also failed at HEAD (`column "accent_color" does not exist`: its stub `bud` table predates Phase 3n colour sync). Fixed during Phase 3q. Two further DB-gated failures are outside this branch: `personal-data/automation-delete.test.ts` fails identically at HEAD and on untouched files, and `personal-data/contact-processor.test.ts` passes alone but failed once in the full run (order-dependent) |
 | `pnpm exec tsc --noEmit` (service) | clean |
 | `pnpm lint` (service) | 7 errors / 200 warnings, all in files **untouched** by this branch (`personal-data/*`) |
 | `pnpm test` + `pnpm test:render` (web) | 225 + 36 pass |
@@ -58,7 +58,13 @@ Largest new modules: `bud/src/browser/manager.rs` (2,385 lines),
 
 ## Merge blockers
 
-1. **Stale regression test: `service/src/agent/context-tool-catalog.test.ts`.**
+Blockers 1–4 were resolved on 2026-09-21 after this review was written; they
+are kept below for the record. Blocker 5 (PR description) is refreshed as the
+branch changes.
+
+1. ~~**Stale regression test: `service/src/agent/context-tool-catalog.test.ts`.**~~
+   **Resolved:** fixture now advertises `profile_mode: "persistent"`; test passes.
+   Original finding: **Stale regression test.**
    The fixture advertises `profile_mode: "ephemeral"` but
    `service/src/browser/transport.ts:19` now requires `z.literal("persistent")`
    (Phase 3k), so `browser_open` never enters the catalog and the assertion at
@@ -67,12 +73,17 @@ Largest new modules: `bud/src/browser/manager.rs` (2,385 lines),
    [agent-tools-and-context-building.md](./agent-tools-and-context-building.md);
    as written it no longer proves anything. Fix: update the fixture (and consider
    asserting on the exported capability schema instead of a literal).
-2. **Stale wire test: `service/src/ws/bud-connection.test.ts:208`.** Uses
+2. ~~**Stale wire test: `service/src/ws/bud-connection.test.ts:208`.**~~
+   **Resolved:** test now uses field 192 like `wire.test.ts`; passes.
+   Original finding: uses
    protobuf field 190 as "unknown payload", but `proto/bud/v1/bud.proto` now
    assigns 190/191 to `browser_command`/`browser_result`. `wire.test.ts` was
    bumped to 192; this file was not. Expected `UNSUPPORTED_PAYLOAD`, gets
    `PROTO_VERSION_MISMATCH`. Passes on `main`.
-3. **Committed prototype `spikes/bud-browser/`** (~3,460 lines incl. a Rust
+3. ~~**Committed prototype `spikes/bud-browser/`**~~ **Resolved:** the spike and
+   the env-gated "real browser host" test in `browser-tools.test.ts` that
+   spawned its binary are removed; `spikes/spikes.spec.md` and
+   `phase-0-findings.md` point at git history. Original finding: (~3,460 lines incl. a Rust
    crate with its own `Cargo.lock`, `target/` present locally). Phase 4 in
    `plan/bud-owned-browser/phases.md` explicitly lists "remove spike code";
    `spikes/spikes.spec.md` exists but the plan's Phase 0 is closed and nothing
@@ -194,10 +205,9 @@ lock, saves recovery hints, and escalates Chrome close to SIGKILL. Findings:
   on SIGINT/SIGTERM. `bud.spec.md` says profile persistence "remains a later
   phase" directly above the paragraph saying 3k implemented it.
 
-**Spike dependency.** `spikes/bud-browser` is not dead: `service/src/agent/
-browser-tools.test.ts:241,264` imports its `relay.mjs` and spawns its prebuilt
-`target/debug/bud-browser-spike` binary (env-gated). Removing the spike must
-also remove or rewrite that test.
+**Spike dependency (resolved).** `spikes/bud-browser` was not dead at review
+time: `browser-tools.test.ts` imported its `relay.mjs` and spawned its prebuilt
+binary (env-gated). Both the spike and that test have since been removed.
 
 ### Service (`service/src/browser`, `service/src/agent`, DB)
 
@@ -484,8 +494,8 @@ their own branch or leave them out.
 
 ## Recommended pre-merge sequence
 
-1. Fix the two stale tests (blockers 1–2); rerun `pnpm test` in `service/`.
-2. Remove `spikes/bud-browser` (or justify keeping it in `spikes.spec.md`).
+1. ~~Fix the two stale tests (blockers 1–2)~~ Done.
+2. ~~Remove `spikes/bud-browser`~~ Done, together with its service test.
 3. ~~Regenerate migrations 0039–0046~~ Done (Phase 3q).
 4. Address the CONFIRMED correctness items in the tier sections below.
 5. Clear the 8 clippy warnings and the one new web lint warning.
