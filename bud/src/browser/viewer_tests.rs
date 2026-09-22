@@ -20,7 +20,9 @@ async fn live_private_capture_input_and_stale_frame_guard() {
             });
         }
     });
-    let mut browser = Browser::launch(Path::new(&executable)).await.unwrap();
+    let mut browser = Browser::launch(&crate::browser::addon::test_runtime(&executable))
+        .await
+        .unwrap();
     let target = browser.targets().await.unwrap()[0].target_id.clone();
     let mut timing = CaptureTiming::default();
     let blank = browser
@@ -441,7 +443,9 @@ async fn live_table_observation_reads_story_links_in_order() {
     let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
         return;
     };
-    let mut browser = Browser::launch(Path::new(&executable)).await.unwrap();
+    let mut browser = Browser::launch(&crate::browser::addon::test_runtime(&executable))
+        .await
+        .unwrap();
     let target = browser.ensure_page(None).await.unwrap();
     let session = browser.session(&target).await.unwrap();
     let tree = browser
@@ -518,7 +522,7 @@ async fn live_table_observation_reads_story_links_in_order() {
 #[ignore = "headed macOS Chrome fixture; requires BUD_BROWSER_EXECUTABLE"]
 async fn minimized_windows_preserve_capture_and_private_input() {
     let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
-    let mut root = Browser::launch_mode(Path::new(&executable), true)
+    let mut root = Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), true)
         .await
         .unwrap();
     let mut browser = root.workspace("test-workspace").await.unwrap();
@@ -669,9 +673,10 @@ async fn live_screenshot_timeout_recovers_without_recovering_commands() {
     let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
         return;
     };
-    let mut browser = Browser::launch_mode(Path::new(&executable), false)
-        .await
-        .unwrap();
+    let mut browser =
+        Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), false)
+            .await
+            .unwrap();
     let target = browser.targets().await.unwrap()[0].target_id.clone();
     let initial = browser.capture(&target).await.unwrap();
     // A CDP peer acknowledges attachment but never answers the screenshot.
@@ -749,7 +754,7 @@ async fn static_idle_tab_preserves_minimized_navigation_capture() {
             });
         }
     });
-    let mut root = Browser::launch_mode(Path::new(&executable), true)
+    let mut root = Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), true)
         .await
         .unwrap();
     let mut a = root.workspace("idle-test-a").await.unwrap();

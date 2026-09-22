@@ -132,6 +132,13 @@ jobs:
           echo "target=${{ matrix.target }}"
           echo "commit=${GITHUB_SHA}"
 
+      - name: Vendor the browser helper (embedded into the daemon) and verify pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --prefix bud/browser-helper
+          node scripts/browser-addon-pins.mjs --check
+
       - name: Build release binary
         shell: bash
         env:

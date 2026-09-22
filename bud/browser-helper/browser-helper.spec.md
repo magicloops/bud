@@ -35,11 +35,17 @@ Closed shadow roots/inaccessible frames are explicitly outside coverage.
 The helper's operation deadline is eight seconds, with a 128 MiB V8 heap limit; interruption kills the helper
 and poisons the adapter, never replays a mutation.
 
-Setup: `npm ci --ignore-scripts --prefix bud/browser-helper` from repo root.
-Source builds find `main.mjs` relative to the Cargo manifest. Installed builds
-must set `BUD_BROWSER_HELPER` to the deployed helper and supply Node on PATH or
-`BUD_BROWSER_NODE`. Packaging this optional runtime into release installers is
-still release work. Missing helper disables browser readiness, not terminals.
+Setup: `npm ci --ignore-scripts --prefix bud/browser-helper` from repo root,
+then build the daemon: `bud/build.rs` packs the sources plus vendored
+`node_modules` into the binary, and `bud browser prepare` unpacks them to
+`<base_dir>/browser/helper/<daemon version>/` next to a pinned managed Node
+(Phase 3r). Installed daemons never need `npm` or a host Node. A checkout can
+skip the download path with `bud browser prepare --helper-dir bud/browser-helper
+--node $(which node)`; `BUD_BROWSER_HELPER`/`BUD_BROWSER_NODE` (with
+`BUD_BROWSER_EXECUTABLE`) remain a logged development override. The pinned
+playwright-core and its `browsers.json` also define the daemon's managed Chrome
+for Testing build and system-browser version floor via
+`scripts/browser-addon-pins.mjs`. Missing helper disables browser readiness, not terminals.
 
 See [Phase 3d](../../plan/bud-owned-browser/phase-3d-agent-observations-and-targeting.md).
 

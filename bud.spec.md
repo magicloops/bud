@@ -830,6 +830,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/send-keys-leading-dash.md](./debug/send-keys-leading-dash.md) | Debug note for the daemon `tmux send-keys` leading-dash literal failure, including the markdown bullet reproduction and `-l --` fix |
 | [debug/neutral-terminal-wire-contract-gateway-transform-error.md](./debug/neutral-terminal-wire-contract-gateway-transform-error.md) | Debug note documenting the `tsx` transform failure introduced during the neutral terminal wire-contract rollout, where `service/src/ws/gateway.ts` left the `CapabilitiesSchema.transform(...)` call one `)` short and prevented `pnpm dev` from booting |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
+| [design/browser-addon.md](./design/browser-addon.md) | Browser support as an opt-in daemon add-on: prefer an installed system Chrome/Chromium, managed Chromium download only as plan B, managed Node and helper under the base dir, `bud browser prepare/status/remove`, manifest-driven capability, and tracked Linux caveats |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
 | [design/backend-web-better-auth-oauth-provider-spec.md](./design/backend-web-better-auth-oauth-provider-spec.md) | Native mobile auth design review for turning Better Auth into an OAuth 2.1 / OIDC provider, including current blockers and open questions |
@@ -901,3 +902,10 @@ Phase 3k adds acknowledged Bud-level Stop/Reset, claim-bound profile quarantine 
 graceful daemon shutdown. macOS native-store preflight is required; Linux persistent
 runtime is unavailable pending secure-store validation. Exact tab/history restoration
 is Phase 3l. See [shared-browser implementation and acceptance](./plan/bud-owned-browser/phase-3k-shared-persistent-browser.md).
+
+Phase 3r makes browser support an opt-in add-on: the daemon stays light until
+`bud browser prepare` writes `<base_dir>/browser/manifest.json`, preferring an
+installed Google Chrome/Chromium and installing the pinned Chrome for Testing
+only as plan B, with a managed Node runtime and the daemon-embedded helper under
+`<base_dir>/browser/`. See [design](./design/browser-addon.md) and
+[Phase 3r](./plan/bud-owned-browser/phase-3r-browser-addon.md).

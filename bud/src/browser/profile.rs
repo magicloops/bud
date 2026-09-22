@@ -192,7 +192,7 @@ fn seed_appearance(path: &Path) -> Result<()> {
 
 /// Refuse an unavailable native keychain instead of selecting Chrome's basic store.
 #[cfg(target_os = "macos")]
-pub(super) fn secure_storage_ready() -> Result<()> {
+pub fn secure_storage_ready() -> Result<()> {
     use std::ffi::c_void;
     #[link(name = "Security", kind = "framework")]
     extern "C" {
@@ -220,7 +220,7 @@ pub(super) fn secure_storage_ready() -> Result<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn secure_storage_ready() -> Result<()> {
+pub fn secure_storage_ready() -> Result<()> {
     // Explicitly unsupported until the pinned Linux distribution's Secret Service
     // failure behavior is validated; never permit an implicit plaintext fallback.
     bail!("browser_secure_storage_unsupported")

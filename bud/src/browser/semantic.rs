@@ -1,7 +1,7 @@
 //! Private Playwright helper. The BrowserManager page lock serializes every call.
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -26,16 +26,12 @@ pub(super) struct Semantic {
     poisoned: bool,
 }
 impl Semantic {
-    pub async fn connect(endpoint: &str) -> Result<Self> {
-        let helper = std::env::var_os("BUD_BROWSER_HELPER")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("browser-helper/main.mjs")
-            });
-        let node = std::env::var_os("BUD_BROWSER_NODE").unwrap_or_else(|| "node".into());
-        let mut child = Command::new(node)
+    /// Node and the helper come from the prepared add-on manifest (or an
+    /// explicit development override); nothing is resolved from the checkout.
+    pub async fn connect(endpoint: &str, runtime: &super::addon::Runtime) -> Result<Self> {
+        let mut child = Command::new(&runtime.node)
             .arg("--max-old-space-size=128")
-            .arg(helper)
+            .arg(&runtime.helper)
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .stdin(Stdio::piped())

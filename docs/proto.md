@@ -3508,3 +3508,24 @@ result fields and retains its restrictive restart admission. An old media relay
 rejects the new empty payload and ends that media stream, matching its previous
 empty-workspace unavailability; the control transport/authority remain intact.
 No profile reset or data migration is required.
+
+## Browser add-on runtime capability (Phase 3r)
+
+Additive `hello.capabilities.browser.runtime` describes where the daemon's
+browser came from, so operators and (later) the web UI can explain readiness:
+
+```json
+{"browser":{"version":1,"available":true,"runtime":{"kind":"system","product":"chrome","version":"Chrome/153.0.8010.53"}}}
+```
+
+- `kind`: `system` (installed Google Chrome/Chromium), `managed` (pinned Chrome
+  for Testing installed by `bud browser prepare --managed`), or `override`
+  (`BUD_BROWSER_*` development environment).
+- `product`: `chrome`, `chromium`, `chrome-for-testing`, or `custom`.
+- `version`: the `Browser.getVersion` product string observed by the startup
+  probe; `null` when the browser is unavailable.
+
+`runtime` is `null` when the add-on is not prepared. The service ignores the
+field today; no command, result, SSE or table changes. Availability semantics
+are unchanged: the capability is only `available:true` after the daemon's own
+launch probe succeeded, met the pinned version floor and secure storage is ready.

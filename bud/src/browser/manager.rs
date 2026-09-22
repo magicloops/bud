@@ -200,7 +200,8 @@ pub(super) struct Entry {
 /// Page operations share a bounded FIFO lock with viewer sizing and capture.
 #[derive(Clone)]
 pub struct BrowserManager {
-    executable: Option<PathBuf>,
+    runtime: Option<super::addon::Runtime>,
+    runtime_info: Option<Value>,
     boot_id: String,
     entries: Arc<Mutex<HashMap<String, Arc<Slot>>>>,
     connection: watch::Sender<Option<String>>,
@@ -213,9 +214,10 @@ pub struct BrowserManager {
 }
 
 impl BrowserManager {
-    pub fn new(executable: Option<PathBuf>) -> Self {
+    pub fn new(runtime: Option<super::addon::Runtime>) -> Self {
         Self {
-            executable,
+            runtime,
+            runtime_info: None,
             boot_id: ulid::Ulid::new().to_string(),
             entries: Arc::default(),
             connection: watch::channel(None).0,
@@ -228,34 +230,69 @@ impl BrowserManager {
         }
     }
 
+    /// Resolve the prepared add-on (or a development override), prove it can
+    /// launch, answer CDP and close, then require secure storage for the
+    /// persistent profile. Any failure leaves the capability unavailable.
     pub async fn configured_for(base: PathBuf, environment: String) -> Self {
-        let mut manager = Self::configured().await;
+        let (runtime, info) = match super::addon::resolve(&base) {
+            super::addon::Resolution::EnvOverride(runtime) => {
+                tracing::warn!("Browser runtime taken from BUD_BROWSER_* environment overrides");
+                (
+                    runtime,
+                    json!({"kind":"override","product":"custom","version":null}),
+                )
+            }
+            super::addon::Resolution::Manifest(runtime, manifest) => {
+                for reason in manifest.stale() {
+                    tracing::warn!(reason = %reason, "Browser add-on is stale; run `bud browser prepare`");
+                }
+                (
+                    runtime,
+                    json!({"kind":manifest.browser.kind,"product":manifest.browser.product,
+                    "version":manifest.browser.version}),
+                )
+            }
+            super::addon::Resolution::Unavailable(reason) => {
+                tracing::info!(reason = %reason, "Browser support unavailable");
+                let mut manager = Self::new(None);
+                manager.persistent = Some((base, environment));
+                return manager;
+            }
+        };
+        let probed = match Browser::launch_probe(&runtime).await {
+            Ok(mut browser) => {
+                let version = browser.version().await.ok();
+                let closed = browser.close().await.is_ok();
+                match version {
+                    Some(version) if closed && super::addon::meets_floor(&version) => Some(version),
+                    Some(version) => {
+                        tracing::warn!(%version, floor = super::pins::BROWSER_MIN_MAJOR,
+                            "Browser unavailable: below the supported version floor or failed to close");
+                        None
+                    }
+                    None => None,
+                }
+            }
+            Err(error) => {
+                tracing::warn!(reason = %error, "Browser unavailable: probe launch failed; run `bud browser prepare`");
+                None
+            }
+        };
+        let mut manager = Self::new(probed.is_some().then_some(runtime));
+        if let Some(version) = &probed {
+            super::addon::record_observed_version(&base, version);
+            let mut info = info;
+            info["version"] = json!(version);
+            manager.runtime_info = Some(info);
+        }
         manager.persistent = Some((base, environment));
-        if manager.executable.is_some() {
+        if manager.runtime.is_some() {
             if let Err(error) = super::profile::secure_storage_ready() {
                 tracing::warn!(reason = %error, "Persistent browser unavailable");
-                manager.executable = None;
+                manager.runtime = None;
             }
         }
         manager
-    }
-
-    pub async fn configured() -> Self {
-        let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").map(PathBuf::from);
-        if let Some(path) = &executable {
-            match Browser::launch_probe(path).await {
-                Ok(mut browser) => {
-                    let ready = browser.version().await.is_ok();
-                    let closed = browser.close().await.is_ok();
-                    if ready && closed {
-                        return Self::new(executable);
-                    }
-                }
-                Err(_) => {}
-            }
-            tracing::warn!("Browser unavailable: verify BUD_BROWSER_EXECUTABLE points to a supported Chrome for Testing executable");
-        }
-        Self::new(None)
     }
 
     /// Stop capture/admission before draining page work and flushing Chrome's profile.
@@ -296,7 +333,7 @@ impl BrowserManager {
     }
 
     pub fn capability(&self) -> Value {
-        json!({"version":1, "available":self.executable.is_some(), "boot_id":self.boot_id,
+        json!({"version":1, "available":self.runtime.is_some(), "boot_id":self.boot_id, "runtime":self.runtime_info,
             "native_window":cfg!(target_os = "macos") && std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1"),
             "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
             "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":2})
@@ -344,7 +381,7 @@ impl BrowserManager {
         if connection.borrow_and_update().as_deref() != Some(&request.device_session_id) {
             return Reply::error(&request, "browser_stale_connection", false);
         }
-        let Some(executable) = &self.executable else {
+        let Some(runtime) = &self.runtime else {
             return Reply::error(&request, "browser_not_configured", false);
         };
         {
@@ -726,7 +763,7 @@ impl BrowserManager {
             _ = async { loop { if cancellation.changed().await.is_err() || cancellation.borrow_and_update().as_deref() == Some(&request.request_id) { break; } } } => Err(anyhow::anyhow!("browser_canceled")),
             result = tokio::time::timeout(Duration::from_millis(request.expires_at_ms.saturating_sub(crate::util::now_millis() as u64)),
                 async {
-                    let result = self.perform(&mut entry, executable, &request).await;
+                    let result = self.perform(&mut entry, runtime, &request).await;
                     if result.is_ok()
                         && matches!(
                             request.command,
@@ -916,7 +953,7 @@ impl BrowserManager {
     async fn perform(
         &self,
         entry: &mut Entry,
-        executable: &std::path::Path,
+        runtime: &super::addon::Runtime,
         request: &Request,
     ) -> anyhow::Result<Value> {
         let action = &request.command;
@@ -965,15 +1002,18 @@ impl BrowserManager {
                         &request.browser_id,
                         &request.owner_user_id,
                     )?;
-                    Browser::launch_persistent(
-                        executable,
-                        profile,
-                        request.browser_color.as_deref(),
-                    )
-                    .await?
+                    Browser::launch_persistent(runtime, profile, request.browser_color.as_deref())
+                        .await?
                 } else {
-                    Browser::launch(executable).await?
+                    Browser::launch(runtime).await?
                 });
+                // A system browser may have updated since prepare; keep the
+                // manifest's recorded version honest without any other change.
+                if let (Some((base, _)), Some(browser)) = (&self.persistent, root.as_mut()) {
+                    if let Ok(version) = browser.version().await {
+                        super::addon::record_observed_version(base, &version);
+                    }
+                }
             }
             if entry.browser.is_none() {
                 entry.browser = Some(
@@ -1410,7 +1450,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         assert!(
             manager
@@ -1548,7 +1588,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         assert!(
             manager
@@ -1636,7 +1676,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         assert!(
             manager
@@ -1837,7 +1877,7 @@ mod tests {
             return;
         };
         let (url, server) = fixture().await;
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         assert!(
             manager
@@ -1937,7 +1977,7 @@ mod tests {
             return;
         };
         let (url, server) = fixture().await;
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         assert!(
             manager
@@ -2033,7 +2073,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         let first = manager
             .execute(request(1, Action::Open { url: None }))
@@ -2178,7 +2218,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         let workspace = |id: &str, sequence, epoch, command| {
             let mut r = request(sequence, command);
@@ -2324,7 +2364,7 @@ mod tests {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
-        let manager = BrowserManager::new(Some(executable.into()));
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
         manager.connect("device".into());
         let open = request(1, Action::Open { url: None });
         let (first, duplicate) =

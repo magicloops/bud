@@ -5,9 +5,10 @@ use super::*;
 #[ignore = "requires BUD_BROWSER_EXECUTABLE and the installed browser helper"]
 async fn shared_process_keeps_workspaces_separate_and_shares_site_cookies() {
     let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
-    let mut runtime = Browser::launch_mode(Path::new(&executable), false)
-        .await
-        .unwrap();
+    let mut runtime =
+        Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), false)
+            .await
+            .unwrap();
     let mut a = runtime.workspace("thread-a").await.unwrap();
     let mut b = runtime.workspace("thread-b").await.unwrap();
     assert!(Arc::ptr_eq(&a.process, &b.process));
@@ -141,9 +142,10 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
             });
         }
     });
-    let mut runtime = Browser::launch_mode(Path::new(&executable), false)
-        .await
-        .unwrap();
+    let mut runtime =
+        Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), false)
+            .await
+            .unwrap();
     runtime.recovery = Arc::new(Mutex::new(super::super::recovery::Recovery::load(Some(
         hints.path(),
     ))));
@@ -179,9 +181,10 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
     drop(a);
     drop(b);
     drop(runtime);
-    let mut runtime = Browser::launch_mode(Path::new(&executable), false)
-        .await
-        .unwrap();
+    let mut runtime =
+        Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), false)
+            .await
+            .unwrap();
     runtime.recovery = Arc::new(Mutex::new(super::super::recovery::Recovery::load(Some(
         hints.path(),
     ))));
@@ -219,7 +222,7 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
 #[ignore = "requires BUD_BROWSER_EXECUTABLE and the installed browser helper"]
 async fn native_tab_close_and_broken_channel_allow_explicit_ensure_without_adoption() {
     let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").unwrap();
-    let mut root = Browser::launch_mode(Path::new(&executable), false)
+    let mut root = Browser::launch_mode(&crate::browser::addon::test_runtime(&executable), false)
         .await
         .unwrap();
     let mut a = root.workspace("a").await.unwrap();

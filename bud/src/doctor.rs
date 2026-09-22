@@ -126,15 +126,82 @@ async fn build_doctor_report(args: &BudArgs) -> DoctorReport {
     checks.push(check_shell(default_shell()).await);
     checks.push(check_service_manager());
     checks.push(check_supervision_directives());
-    let browser = crate::browser::BrowserManager::configured().await;
-    checks.push(if browser.capability()["available"] == true {
-        check_ok("browser", "Chrome for Testing launched, answered CDP, and closed; ephemeral profile mode".into())
-    } else {
-        check_warning("browser", "Optional managed browser is unavailable".into(), vec![
-            "Set BUD_BROWSER_EXECUTABLE to a Chrome for Testing executable in the daemon environment, then restart Bud. No personal profile or automatic download is used.".into(),
-        ])
-    });
+    checks.push(check_browser_addon(&paths.base_dir, &args.server).await);
     DoctorReport::new(checks)
+}
+
+/// Optional browser add-on: reports exactly what the daemon will do with the
+/// same resolution and probe path (`BrowserManager::configured_for`).
+async fn check_browser_addon(base_dir: &Path, server: &str) -> DoctorCheck {
+    use crate::browser::addon;
+    let manifest = match addon::resolve(base_dir) {
+        addon::Resolution::Unavailable(reason) if addon::env_override().is_none() => {
+            let prepared = addon::read_manifest(base_dir).ok().flatten().is_some();
+            return check_warning(
+                "browser",
+                if prepared {
+                    format!("Browser add-on is not usable: {reason}")
+                } else {
+                    "Browser support is not prepared (optional)".into()
+                },
+                vec![
+                    "Run `bud browser prepare` to detect or install a browser, then restart Bud."
+                        .into(),
+                ],
+            );
+        }
+        addon::Resolution::Unavailable(reason) => {
+            return check_error("browser", format!("Browser override is invalid: {reason}"), vec![
+                "Unset BUD_BROWSER_EXECUTABLE/BUD_BROWSER_HELPER or set both, then restart Bud.".into(),
+            ]);
+        }
+        addon::Resolution::EnvOverride(_) => None,
+        addon::Resolution::Manifest(_, manifest) => Some(manifest),
+    };
+    let manager =
+        crate::browser::BrowserManager::configured_for(base_dir.to_path_buf(), server.to_string())
+            .await;
+    let capability = manager.capability();
+    let mut remediation = Vec::new();
+    if let Some(manifest) = &manifest {
+        for reason in manifest.stale() {
+            remediation.push(format!("Stale: {reason}. Run `bud browser prepare` again."));
+        }
+    }
+    if let Err(error) = crate::browser::secure_storage_ready() {
+        remediation.push(format!(
+            "Persistent profile unsupported on this host ({error}); the daemon will not advertise the browser until secure storage is validated (Phase 3o)."
+        ));
+    }
+    let describe = match &manifest {
+        Some(manifest) => format!(
+            "{} {} ({}) at {}",
+            manifest.browser.kind,
+            manifest.browser.product,
+            manifest.browser.version,
+            manifest.browser.path.display()
+        ),
+        None => "BUD_BROWSER_* environment override".into(),
+    };
+    if capability["available"] == true && remediation.is_empty() {
+        check_ok(
+            "browser",
+            format!("{describe}: launched, answered CDP, closed; persistent profile ready"),
+        )
+    } else if capability["available"] == true {
+        check_warning(
+            "browser",
+            format!("{describe}: usable, with notes"),
+            remediation,
+        )
+    } else {
+        remediation.insert(
+            0,
+            "Run `bud browser prepare` (or `bud browser status` for details), then restart Bud."
+                .into(),
+        );
+        check_warning("browser", format!("{describe}: probe failed or unsupported host; the daemon will not advertise the browser"), remediation)
+    }
 }
 
 /// The stem terminal registry base (`<terminal base dir>/term`, the same path

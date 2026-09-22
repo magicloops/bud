@@ -6,7 +6,6 @@ use serde::Serialize;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -97,6 +96,7 @@ pub struct Browser {
     semantic_target: Option<String>,
     process: Arc<Mutex<Process>>,
     endpoint: String,
+    runtime: Arc<super::addon::Runtime>,
     workspace: String,
     ownership: Arc<Mutex<HashMap<String, String>>>,
     recovery: Arc<Mutex<super::recovery::Recovery>>,
@@ -112,22 +112,22 @@ pub struct Browser {
 
 impl Browser {
     /// Startup readiness must not open a window, even for headed browsing.
-    pub(super) async fn launch_probe(executable: &Path) -> Result<Self> {
-        Self::launch_mode(executable, false).await
+    pub(super) async fn launch_probe(runtime: &super::addon::Runtime) -> Result<Self> {
+        Self::launch_mode(runtime, false).await
     }
 
-    pub async fn launch(executable: &Path) -> Result<Self> {
+    pub async fn launch(runtime: &super::addon::Runtime) -> Result<Self> {
         let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
-        Self::launch_mode(executable, headed).await
+        Self::launch_mode(runtime, headed).await
     }
 
-    async fn launch_mode(executable: &Path, headed: bool) -> Result<Self> {
+    async fn launch_mode(runtime: &super::addon::Runtime, headed: bool) -> Result<Self> {
         let profile = tempfile::Builder::new().prefix("bud-browser-").tempdir()?;
-        Self::launch_profile(executable, headed, Some(profile), None).await
+        Self::launch_profile(runtime, headed, Some(profile), None).await
     }
 
     pub(super) async fn launch_persistent(
-        executable: &Path,
+        runtime: &super::addon::Runtime,
         profile: super::profile::Profile,
         color: Option<&str>,
     ) -> Result<Self> {
@@ -138,11 +138,11 @@ impl Browser {
             tracing::warn!("Browser profile color update unavailable");
         }
         let headed = std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1");
-        Self::launch_profile(executable, headed, None, Some(profile)).await
+        Self::launch_profile(runtime, headed, None, Some(profile)).await
     }
 
     async fn launch_profile(
-        executable: &Path,
+        runtime: &super::addon::Runtime,
         headed: bool,
         temporary: Option<TempDir>,
         persistent: Option<super::profile::Profile>,
@@ -172,13 +172,11 @@ impl Browser {
             .map(|socket| socket.local_addr().map(|addr| addr.port()))
             .transpose()?
             .unwrap_or(0);
-        let mut command = Command::new(executable);
+        let mut command = Command::new(&runtime.executable);
         if !headed {
             command.arg("--headless=new");
         }
-        if ephemeral {
-            command.args(["--use-mock-keychain", "--password-store=basic"]);
-        }
+        command.args(profile_flags(ephemeral));
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -267,7 +265,7 @@ impl Browser {
                     if !targets["targetInfos"].is_array() {
                         bail!("browser_invalid_targets");
                     }
-                    let semantic = super::semantic::Semantic::connect(&endpoint).await?;
+                    let semantic = super::semantic::Semantic::connect(&endpoint, runtime).await?;
                     return Ok((cdp, semantic, endpoint));
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -306,6 +304,7 @@ impl Browser {
                 _persistent: persistent,
             })),
             endpoint,
+            runtime: Arc::new(runtime.clone()),
             workspace: String::new(),
             ownership: Arc::default(),
             recovery,
@@ -1297,7 +1296,8 @@ impl Browser {
             self.targets().await?;
         }
         if self.semantic.interrupted() {
-            self.semantic = super::semantic::Semantic::connect(&self.endpoint).await?;
+            self.semantic =
+                super::semantic::Semantic::connect(&self.endpoint, &self.runtime).await?;
             self.semantic_target = None;
             self.invalidate_references();
         }
@@ -1412,7 +1412,7 @@ impl Browser {
         }
         self.recover_channel().await?;
         let cdp = Cdp::connect(&self.endpoint).await?;
-        let semantic = super::semantic::Semantic::connect(&self.endpoint).await?;
+        let semantic = super::semantic::Semantic::connect(&self.endpoint, &self.runtime).await?;
         Ok(Self {
             cdp,
             screenshot: None,
@@ -1421,6 +1421,7 @@ impl Browser {
             semantic_target: None,
             process: self.process.clone(),
             endpoint: self.endpoint.clone(),
+            runtime: self.runtime.clone(),
             workspace: id.to_owned(),
             ownership: self.ownership.clone(),
             recovery: self.recovery.clone(),
@@ -1433,6 +1434,17 @@ impl Browser {
             fitted_sizes: HashMap::new(),
             last_wheel: None,
         })
+    }
+}
+
+/// Disposable probe/fixture profiles use in-memory credential storage so a
+/// throwaway launch never touches the keychain. A persistent profile must never
+/// carry these flags: site sign-ins would be stored unprotected.
+pub(super) fn profile_flags(ephemeral: bool) -> &'static [&'static str] {
+    if ephemeral {
+        &["--use-mock-keychain", "--password-store=basic"]
+    } else {
+        &[]
     }
 }
 
@@ -1475,9 +1487,10 @@ mod launch_tests {
     #[ignore = "launches a visible Chrome window; requires BUD_BROWSER_EXECUTABLE"]
     async fn visible_chrome_supports_semantics_and_capture_without_webdriver() {
         let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
-        let mut browser = super::Browser::launch_mode(std::path::Path::new(&executable), true)
-            .await
-            .expect("visible browser launch");
+        let mut browser =
+            super::Browser::launch_mode(&crate::browser::addon::test_runtime(executable), true)
+                .await
+                .expect("visible browser launch");
         let target = browser.targets().await.unwrap().remove(0).target_id;
         let session = browser.session(&target).await.unwrap();
         browser.cdp.call(Some(&session), "Page.navigate", serde_json::json!({

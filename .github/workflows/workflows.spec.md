@@ -23,6 +23,7 @@ The workflow:
 - bakes `BUD_BUILD_VERSION` (the release tag) into the binary for `bud upgrade`'s self-comparison
 - installs `protoc` in CI so end-user machines do not need protobuf tooling
 - records Rust, target, runner, and commit metadata in logs
+- vendors the browser helper (`npm ci --ignore-scripts --prefix bud/browser-helper`) so `bud/build.rs` embeds it, and verifies `bud/src/browser/pins.rs` is current (`scripts/browser-addon-pins.mjs --check`)
 - builds release binaries with `BUD_BUILD_COMMIT` and `BUD_BUILD_TARGET`
 - packages archives through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
 - optionally generates GitHub artifact attestations when

@@ -469,6 +469,8 @@ to be a product surface rather than a local development capability.
 - **No packaging story**: Chrome for Testing is not discovered or installed;
   the Node helper path is compile-time; Node 22+ and Playwright Core must be
   present on the host. The release-flow handoff notes do not cover this.
+  Scoped on 2026-09-21 as [design/browser-addon.md](../design/browser-addon.md)
+  and [Phase 3r](../plan/bud-owned-browser/phase-3r-browser-addon.md).
 - **No self-healing after hard termination**: stale `SingletonLock` blocks
   Reset (H2), corrupt hints block Close (H1), no orphan scavenging.
 - **Single-instance authority**: control leases, tickets, and pending commands

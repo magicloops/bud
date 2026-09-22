@@ -39,5 +39,10 @@ flate2 = "1.1.9"
 tar = "0.4.46"
 tempfile = "3"
 
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 [build-dependencies]
 tonic-prost-build = "0.14"
+flate2 = "1.1.9"
+tar = "0.4.46"
