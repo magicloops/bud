@@ -163,10 +163,16 @@ Three findings from review of the implementation, all confirmed and fixed:
   generator runs `rustfmt` on its output. `browser-addon-pins.test.mjs` covers
   the render/parse round trip including a rustfmt reflow.
 - **`bud browser remove` could delete a profile Chrome was using.** `remove`
-  now refuses before touching anything when any profile's ownership lock is
-  held (`addon::profiles_in_use`, a non-blocking `flock` probe), with
-  guidance to `bud stop` and retry. Verified by holding the lock from another
-  process. Unit test acquires a real `Profile` and asserts detection and release.
+  now takes exclusive ownership of every profile (`addon::claim_profiles`)
+  and holds it through the deletion. Claiming refuses when a daemon holds a
+  profile's `bud.lock`, and, because a daemon crash releases that lock but not
+  Chrome, also when the profile's `SingletonLock` points at a live process on
+  this host (the same `singleton_stale` rule Reset uses). The held claim keeps
+  a starting daemon from acquiring a profile mid-removal. A second review
+  round found the first version only probed `bud.lock` and released it
+  immediately; both gaps are closed. Unit test covers daemon lock, surviving
+  Chrome, stale lock, and exclusivity while held; verified end to end with a
+  simulated surviving browser process.
 - **Relative `--browser`/`--node`/`--helper-dir` were persisted as given** and
   broke daemon startup from another working directory. `prepare` now resolves
   them to canonical absolute paths before probing and saving

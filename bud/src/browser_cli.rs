@@ -269,20 +269,10 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
 
 pub fn remove(args: &BudArgs, opts: &BrowserRemoveArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
-    // A held profile lock means a daemon has the browser open, possibly running
-    // Chrome from the managed directory and writing to the profile. Never pull
-    // files out from under it.
-    let in_use = addon::profiles_in_use(&base);
-    if !in_use.is_empty() {
-        bail!(
-            "browser profile in use by a running daemon ({}); run `bud stop` or wait for the browser to close, then retry",
-            in_use
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
+    // Take exclusive ownership of every profile for the whole removal: refuses
+    // while a daemon owns one or a Chrome (even one that outlived a crashed
+    // daemon) is still running, and keeps a starting daemon out until we are done.
+    let claims = addon::claim_profiles(&base)?;
     let removed_manifest = addon::remove_manifest(&base)?;
     println!(
         "{}",
@@ -320,6 +310,7 @@ pub fn remove(args: &BudArgs, opts: &BrowserRemoveArgs) -> Result<()> {
             profiles.display()
         );
     }
+    drop(claims);
     if addon::addon_dir(&base).exists()
         && std::fs::read_dir(addon::addon_dir(&base))?.next().is_none()
     {

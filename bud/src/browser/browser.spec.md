@@ -408,9 +408,11 @@ launches alone carry the mock-keychain flags (`profile_flags`). The override is
 resolved by a pure `override_from`, so no unit test mutates the process
 environment that live fixtures read at launch (see
 [debug note](../../../debug/browser-live-test-env-race.md)). `prepare` persists
-only canonical absolute paths (`absolute_existing`), and `remove` refuses while
-any profile ownership lock is held (`profiles_in_use`) so files are never
-deleted under a running Chrome. Linux caveats
+only canonical absolute paths (`absolute_existing`), and `remove` claims exclusive
+ownership of every profile for the whole deletion (`claim_profiles`), refusing
+while a daemon holds a profile lock or a Chrome that outlived a crashed daemon
+still holds a live `SingletonLock`, so files are never deleted under a running
+browser and no daemon can acquire a profile mid-removal. Linux caveats
 (secure storage, display passthrough, sandbox) are reported by `status`/`doctor`
 rather than hidden; see [design](../../../design/browser-addon.md) and
 [Phase 3r](../../../plan/bud-owned-browser/phase-3r-browser-addon.md).

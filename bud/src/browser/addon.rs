@@ -267,30 +267,58 @@ pub fn absolute_existing(path: &Path) -> Result<PathBuf> {
     std::fs::canonicalize(path).with_context(|| format!("{} does not exist", path.display()))
 }
 
-/// Profile directories whose ownership lock is currently held (a daemon has
-/// the profile open, so Chrome may be running from it).
-pub fn profiles_in_use(base: &Path) -> Vec<PathBuf> {
+/// Exclusive ownership of every profile under `base`, held for the caller's
+/// lifetime. Claiming fails when a daemon holds a profile's ownership lock, or
+/// when Chrome's own `SingletonLock` points at a live process on this host
+/// (a browser that survived a daemon crash). Callers that delete profile or
+/// managed-browser files must hold this until the deletion is done, so a
+/// daemon starting in between cannot acquire a profile mid-removal.
+#[derive(Debug)]
+pub struct ProfileClaims {
+    pub paths: Vec<PathBuf>,
+    _locks: Vec<std::fs::File>,
+}
+
+pub fn claim_profiles(base: &Path) -> Result<ProfileClaims> {
     use std::os::unix::io::AsRawFd;
-    let mut held = Vec::new();
+    let mut claims = ProfileClaims {
+        paths: Vec::new(),
+        _locks: Vec::new(),
+    };
     let Ok(entries) = std::fs::read_dir(profiles_dir(base)) else {
-        return held;
+        return Ok(claims);
     };
     for entry in entries.flatten() {
         let dir = entry.path();
-        let Ok(lock) = std::fs::OpenOptions::new()
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(lock) = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(dir.join("bud.lock"))
-        else {
-            continue;
-        };
-        let busy = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
-        if busy {
-            held.push(dir);
+        {
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                bail!(
+                    "browser profile {} is owned by a running daemon; run `bud stop`, then retry",
+                    dir.display()
+                );
+            }
+            claims._locks.push(lock);
         }
-        // On success the lock is released when `lock` drops here.
+        // A daemon crash releases bud.lock but not Chrome. Reuse the singleton
+        // liveness rule: anything not provably stale is treated as running.
+        if std::fs::symlink_metadata(dir.join("SingletonLock")).is_ok()
+            && !super::profile::singleton_stale(&dir)
+        {
+            bail!(
+                "a browser is still running on profile {} (Chrome singleton lock is live); quit it or wait for it to exit, then retry",
+                dir.display()
+            );
+        }
+        claims.paths.push(dir);
     }
-    held
+    Ok(claims)
 }
 
 // ---------------------------------------------------------------------------
@@ -953,19 +981,57 @@ mod tests {
     }
 
     #[test]
-    fn profiles_in_use_reports_held_ownership_locks_only() {
+    fn claiming_profiles_refuses_daemon_locks_and_live_chrome_and_holds_ownership() {
+        use std::os::unix::fs::symlink;
         let base = tempfile::tempdir().unwrap();
-        assert!(profiles_in_use(base.path()).is_empty());
+        assert!(claim_profiles(base.path()).unwrap().paths.is_empty());
         let profile =
             super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
                 .unwrap();
-        let held = profiles_in_use(base.path());
-        assert_eq!(held, vec![profile.path.clone()]);
+        let path = profile.path.clone();
+        // Daemon holds the ownership lock: refused.
+        assert!(claim_profiles(base.path())
+            .unwrap_err()
+            .to_string()
+            .contains("running daemon"));
         drop(profile);
+        // Daemon crashed (lock released) but Chrome survived: refused.
+        let host = nix::unistd::gethostname()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut chrome = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "while :; do sleep 1; done",
+                "sh",
+                &format!("--user-data-dir={}", path.display()),
+            ])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        symlink(
+            format!("{host}-{}", chrome.id()),
+            path.join("SingletonLock"),
+        )
+        .unwrap();
+        assert!(claim_profiles(base.path())
+            .unwrap_err()
+            .to_string()
+            .contains("still running"));
+        chrome.kill().unwrap();
+        chrome.wait().unwrap();
+        // Stale singleton lock: claimable, and the claim keeps daemons out.
+        let claims = claim_profiles(base.path()).unwrap();
+        assert_eq!(claims.paths, vec![path.clone()]);
         assert!(
-            profiles_in_use(base.path()).is_empty(),
-            "released lock is not in use"
+            super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
+                .is_err(),
+            "claim must hold exclusive ownership"
         );
+        drop(claims);
+        super::super::profile::Profile::acquire(base.path(), "service", "resource", "alice")
+            .unwrap();
     }
 
     #[test]
