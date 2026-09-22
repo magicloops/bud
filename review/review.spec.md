@@ -14,6 +14,15 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `bud-owned-browser-branch-review.md`
+
+Merge-readiness review of `feat/bud-owned-browser` against `main` (2026-09-21):
+verification results, five merge blockers (two stale tests, spike residue,
+migration squash, PR prerequisites), per-tier findings for daemon/service/web
+with confirmed vs plausible ranking, remaining plan items, consolidated
+technical debt, and major product gaps (Linux, iOS, packaging, hard-termination
+recovery, single-instance authority).
+
 ### `agent-tools-and-context-building.md`
 
 Current request-building review: conversation reconstruction, dynamic tool selection,
