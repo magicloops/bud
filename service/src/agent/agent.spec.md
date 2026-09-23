@@ -1457,3 +1457,45 @@ automatic fallback navigation or mutation retry occurs. URL strings pass through
 existing bounded payload serialization and replay, with the same page-content
 privacy/ownership checks. `browser-observation-budget.test.ts` covers exact URL
 replay and the blocked result with one dispatch and retryable=false.
+
+## Browser REPL Phase 1 receipts and continuation
+
+`BrowserBroker.executeCell` (internal in Phase 1, development-default catalog in Phase 2) consumes
+an existing `browser_exec` action intent. `invocation-repository.completeAction`
+preserves the immutable `evidence.browser_cell` receipt while settling other action
+evidence; it must not discard the saved result or allow redispatch.
+`continuation-results.ts` labels parked REPL cells `execution_state:not_executed`,
+with fresh-observation and memory-lifetime guidance. Normal Return preserves
+bindings; confirmed runtime replacement does not promise surviving handles.
+`conversation-loader.ts` replays stored cell results (including undispatched
+continuations) without requiring an executable catalog entry. Ledger and canonical
+paths preserve exact tool pairing. Existing ownership, invocation leases, wait
+cancellation and message owner stamping apply; no new scheduler/table/route.
+
+
+## Browser REPL selective observations — Phase 2
+
+`browser-tools.ts` provides strict `browser_exec({code})` (64 KiB UTF-8), detailed
+facade/output guidance and `selectedBrowserTools()`. Non-production
+services default to exec plus the existing handoff tool; set
+`BUD_BROWSER_TOOL_MODE=tools` for old-family comparison. Production retains old
+tools until comparison acceptance.
+Snapshot guidance starts with an unscoped read; optional `scope` is a returned
+container reference, not an observation mode. See the
+[viewer/status investigation](../../../debug/browser-repl-viewer-status.md).
+The executor, contracts and conversation loader recognize both historical names
+and the new executable name. Broker availability requires a capable daemon.
+`context-budget.ts` shares per-image selection with hydration: at most eight
+newest images, allowing two per cell. No new compaction or provider accounting.
+AgentService scripted-provider tests verify cell pairing, bounded result delivery
+and owner-stamped transcript writes. A real-provider observation/navigation run
+passed; interaction and device acceptance remain in the implementation plan.
+
+## Browser REPL interactions — Phase 3
+
+The development REPL catalog documents exact semantic/reference handles,
+fill/focus/committed text/scroll, and explicit owned-tab create/select/close.
+Handles bind observation evidence at construction; refresh/navigation/Return
+requires new handles. A failed mixed cell may retain earlier effects and is never
+automatically replayed. The service tool/envelope/control flow is unchanged;
+these operations are inside the daemon's existing authorized execution path.

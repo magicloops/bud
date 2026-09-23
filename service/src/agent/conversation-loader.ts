@@ -321,21 +321,20 @@ export class AgentConversationLoader {
         messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: automation.call_id as string, content: row.content }] });
         return;
       }
-      // Permission decisions are durable continuation results, not executable
-      // query directives. Preserve the actual decision instead of letting the
-      // orphan repair replace it with an unknown execution outcome.
-      let permission: Record<string, unknown> | null = null;
+      // Permission continuation results retain the original request.
+      let recorded: Record<string, unknown> | null = null;
       try {
         const parsed = JSON.parse(row.content);
-        if (parsed?.tool === "data_request_api_key" && typeof parsed.call_id === "string") permission = parsed;
+        if (parsed?.tool === "data_request_api_key" && typeof parsed.call_id === "string") recorded = parsed;
       } catch { /* Other historical tool payloads use the normal parser. */ }
-      if (permission) {
+      if (recorded) {
+        const input = recorded.request;
         if (!options.toolUseFromProviderLedger) messages.push({ role: "assistant", content: [{
-          type: "tool_use", id: permission.call_id as string, name: "data_request_api_key",
-          input: permission.request && typeof permission.request === "object" ? permission.request as Record<string, unknown> : {},
+          type: "tool_use", id: recorded.call_id as string, name: recorded.tool as string,
+          input: input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {},
         }] });
         messages.push({ role: "user", content: [{ type: "tool_result",
-          tool_use_id: permission.call_id as string, content: row.content }] });
+          tool_use_id: recorded.call_id as string, content: row.content }] });
         return;
       }
       const directive = this.parseStoredToolDirective(row.content);
@@ -434,6 +433,7 @@ export class AgentConversationLoader {
           : `tool_${ulid()}`;
 
       switch (payload.tool) {
+        case "browser_exec":
         case "browser_open":
         case "browser_observe":
         case "browser_act":

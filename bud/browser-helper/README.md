@@ -67,7 +67,11 @@ To use this checkout's helper and local Node instead of extracted/managed copies
 Add `--browser /absolute/path/to/chrome` to choose the executable. Preparation
 records absolute paths, so the daemon can start from another working directory.
 Restart your development daemon after helper changes; running helpers do not
-reload their modules.
+reload their modules. For embedded helpers, rebuild first, then run
+`./bud/target/debug/bud browser prepare --no-restart`, then restart. Managed
+helpers are cached by archive SHA-256, so different dirty builds cannot reuse
+stale code merely because their Git version labels match. A mismatched managed
+helper is unavailable until prepared with the matching daemon binary.
 
 ## Tests
 
@@ -154,3 +158,35 @@ See the [helper spec](browser-helper.spec.md),
 [add-on design](../../design/browser-addon.md), and
 [Phase 3r](../../plan/bud-owned-browser/phase-3r-browser-addon.md) for contracts,
 decisions and remaining release acceptance.
+
+
+## Development REPL experiment
+
+Phase 2 defaults to REPL on a non-production service; no environment setting is
+required. Build the matching daemon, prepare its
+helper with the checkout command above (or re-extract with `bud browser prepare`),
+then restart the daemon. It advertises REPL support only if all new helper modules
+are present. Set `BUD_BROWSER_TOOL_MODE=tools` to compare the existing tool family.
+Production retains the existing family until the planned cutover.
+
+The agent gets `browser_exec` plus the existing handoff tool. A typical cell:
+
+```js
+var tab = await browser.tabs.open('https://example.com');
+var snapshot = await tab.snapshot();
+repl.write(snapshot.nodes.filter(n => n.role === 'link').slice(0, 5));
+```
+
+Later cells can filter `snapshot` without reading the page again. Screenshots are
+explicit: `await repl.emitImage(await tab.screenshot())`. `tabs.open` ensures and
+navigates the current workspace page. `tabs.create(url?)` creates an additional
+owned tab; `tab.select()` selects it in the viewer; `tab.close()` closes only that
+tab and preserves variables. After a snapshot, use
+`tab.getByReference(reference)` or `tab.getByRole(role, {name, exact:true})`, then
+`click()`, `fill(text)` or `focus()`. `tab.insertText(text)` requires focus on that
+tab; `tab.scroll(delta_y)` requires a current observation. Recreate element handles
+after a new snapshot, navigation or Return; old handles cannot be revived.
+New modules `repl-worker.mjs`, `repl-api.mjs`, `repl-artifacts.mjs` are embedded in
+the daemon add-on. The worker executes trusted host JavaScript, not sandboxed code.
+See the [plan](../../plan/bud-owned-browser/repl-implementation.md) for limits,
+private-control behavior and outstanding real-agent acceptance.

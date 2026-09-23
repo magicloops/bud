@@ -7,6 +7,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+export function developmentTrustedOrigins(appOrigin) {
+  return [...new Set([appOrigin, 'https://localhost:3443', 'http://localhost:5173', 'http://localhost:3000'])].join(',');
+}
+
 export function profileEnvironment(profile, env) {
   if (!['http', 'https', 'ngrok'].includes(profile)) throw new Error('Choose http, https or ngrok.');
   const origin = profile === 'http' ? 'http://localhost:5173'
@@ -22,7 +26,7 @@ export function profileEnvironment(profile, env) {
     APP_BASE_URL: appOrigin,
     BETTER_AUTH_URL: appOrigin,
     API_AUDIENCE: `${appOrigin}/api`,
-    BETTER_AUTH_TRUSTED_ORIGINS: [...new Set([appOrigin, 'http://localhost:5173', 'http://localhost:3000'])].join(','),
+    BETTER_AUTH_TRUSTED_ORIGINS: developmentTrustedOrigins(appOrigin),
     HOST: '127.0.0.1', PORT: '3000',
     VITE_API_BASE_URL: profile === 'http' ? 'http://localhost:3000' : '',
     VITE_API_PROXY_TARGET: 'http://localhost:3000',

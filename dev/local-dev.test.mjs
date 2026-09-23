@@ -31,6 +31,12 @@ test('ngrok uses only its named URL setting and preserves independent preview se
   assert.equal(result.BUD_DEV_PROXY_BASE_DOMAIN, 'bud.systems');
   assert.equal(result.BUD_DEV_PROXY_PUBLIC_PORT, '');
   assert.equal(result.VITE_API_BASE_URL, '');
+  assert.deepEqual(result.BETTER_AUTH_TRUSTED_ORIGINS.split(','), [
+    'https://example.ngrok.app', 'https://localhost:3443',
+    'http://localhost:5173', 'http://localhost:3000',
+  ]);
+  assert.equal(result.BETTER_AUTH_URL, 'https://example.ngrok.app');
+  assert.equal(result.API_AUDIENCE, 'https://example.ngrok.app/api');
 });
 
 test('invalid profiles and non-origin ngrok URLs fail before spawning anything', () => {

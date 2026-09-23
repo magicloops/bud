@@ -10,6 +10,7 @@ mod media;
 pub mod pins;
 mod profile;
 mod recovery;
+mod repl;
 mod semantic;
 mod viewer;
 pub use addon::Runtime;

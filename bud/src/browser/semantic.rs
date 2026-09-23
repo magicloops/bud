@@ -77,7 +77,7 @@ impl Semantic {
             self.input.flush().await?;
             let mut bytes = Vec::new();
             (&mut self.output)
-                .take(128 * 1024)
+                .take(16 * 1024 * 1024)
                 .read_until(b'\n', &mut bytes)
                 .await?;
             if bytes.last() != Some(&b'\n') {

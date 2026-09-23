@@ -1,6 +1,10 @@
 # Design: Persistent browser REPL
 
-Status: Proposed scope; no implementation yet
+Status: Phases 1–3 implemented with REPL as the development catalog default.
+Live observation/navigation acceptance passed; interaction/device acceptance and
+Phase 4 comparison/cutover remain.
+
+Implementation: [phased delivery plan](../plan/bud-owned-browser/repl-implementation.md).
 
 Date: 2026-09-23
 
@@ -331,7 +335,7 @@ artifact recall separately from live browser observation.
 
 Update helper, daemon browser, agent, service browser and relevant runtime/LLM
 specs when implemented; update protocol/client docs if their contracts change.
-Create a concrete implementation plan before coding. No schema migration is
+Follow the linked implementation plan before coding. No schema migration is
 assumed by this scope.
 
 ## Decisions and remaining implementation checks
@@ -343,9 +347,9 @@ Normal private takeover preserves REPL memory. Reset only when execution cannot
 stop cleanly or the worker's lifetime ends; existing daemon restart and workspace
 destruction rules still apply.
 
-Before coding, resolve the smallest facade-to-helper bridge, receipt integration,
-the exact takeover deadline/UI state, and measured worker memory limit. Keeping
-an idle worker alive requires no heap checkpoint or suspended-cell recovery
+Phase 1 settled the internal bridge, durable receipt integration, takeover deadline
+and initial measured worker memory limit. Phase 2 implements the typed observation facade and bounded artifacts.
+Keeping an idle worker alive requires no heap checkpoint or suspended-cell recovery
 system. Rebuild bindings only after an actual reset.
 
 Stronger isolation from malicious generated code would require a separate design

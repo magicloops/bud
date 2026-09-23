@@ -1049,7 +1049,9 @@ impl BudApp {
         match envelope.kind.as_str() {
             "browser_command" => {
                 let value: Value = serde_json::from_str(text)?;
-                if value["browser_version"] != 1 || text.len() > 24 * 1024 {
+                if value["browser_version"] != 1
+                    || !browser_command_size_allowed(&value, text.len())
+                {
                     return Ok(());
                 }
                 let Ok(request) =
@@ -1569,6 +1571,17 @@ impl BudApp {
     }
 }
 
+// JSON escaping can expand 64 KiB of cell source sixfold. The manager still
+// enforces the decoded code limit; ordinary commands retain their smaller cap.
+fn browser_command_size_allowed(frame: &Value, bytes: usize) -> bool {
+    bytes
+        <= if frame["request"]["command"]["action"] == "exec" {
+            512 * 1024
+        } else {
+            24 * 1024
+        }
+}
+
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -1627,6 +1640,20 @@ mod tests {
             debug: false,
             command: None,
         }
+    }
+
+    #[test]
+    fn browser_cell_envelope_accepts_escaped_source_without_widening_other_commands() {
+        let frame =
+            json!({"request":{"command":{"action":"exec","code":"\u{0001}".repeat(64 * 1024)}}});
+        let bytes = serde_json::to_string(&frame).unwrap().len();
+        assert!(bytes > 24 * 1024);
+        assert!(browser_command_size_allowed(&frame, bytes));
+        assert!(!browser_command_size_allowed(&frame, 512 * 1024 + 1));
+        assert!(!browser_command_size_allowed(
+            &json!({"request":{"command":{"action":"open"}}}),
+            bytes
+        ));
     }
 
     #[tokio::test]

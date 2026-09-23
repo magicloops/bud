@@ -26,6 +26,9 @@ control connection. It launches no service-local Chrome and imports no spike cod
   control-carrier preference, captures its tracker, dispatches at most once and
   correlates replies to request/session/generation and that exact live tracker.
   Abort/deadline sends best-effort cancel; post-send disconnect/errors are unknown.
+- `repl.test.ts`: isolated PostgreSQL plus real broker/transport receipt coverage:
+  concurrent duplicate delivery, lost acknowledgements, cancellation, partial
+  failures, output limits, late completion and private/owner/lease fencing.
 - `repository.test.ts`: opt-in local isolated PostgreSQL migration, ownership,
   action receipt, fence, restart, session reuse and soft-delete cleanup coverage.
 - `transport.test.ts`: WS/gRPC encoding, exact tracker/generation correlation,
@@ -465,3 +468,55 @@ revision and healthy media. Unknown results remain unknown and cannot replay a
 mutation. `repository.test.ts` verifies preservation in the isolated database
 fixture alongside ownership/stale-action checks. No new route, table, viewer
 identity, or permission path is introduced.
+
+## Internal browser REPL — Phase 1
+
+`BrowserBroker.executeCell(context, code)` uses existing authorized admission,
+ensure and dispatch; Phase 2 exposes it through the development catalog, without
+a new public route. Callers
+record a `browser_exec` action intent through the existing invocation repository.
+It requires matching service/daemon/helper builds and `browser.repl:true`;
+unsupported peers reject before cell dispatch.
+
+`repository.ts` atomically stamps `evidence.browser_cell` with a SHA-256 code hash
+and full dispatch identity (excluding source). It stores the first bounded result
+immutably, even after takeover fences delivery. `completeAction` preserves this
+receipt when settling the action. Same-call retries, including while the daemon is offline, return the saved result after
+current ownership/lease checks and evidence authorization; missing results return
+unknown, never another dispatch. Reusing the call ID with different source rejects.
+Expired invocations retain existing needs-review recovery; no cell stack is resumed.
+
+Cells preserve existing Chrome health regardless of local success/failure. Their
+worker lifetime is independent of the browser. Private admission parks through the
+existing durable Return/Cancel flow; normal Return and confirmed restart produce
+not-executed continuation results with fresh-observation guidance, never code replay.
+`continuation.test.ts` includes REPL Return, cancel, restart and provider-ledger /
+canonical transcript pairing. Owner/tenant stamps inherit the existing invocation.
+
+Code is at most 64 KiB UTF-8 (512 KiB encoded daemon envelope); results have 32 KiB
+UTF-8 text plus 2 KiB exception, within a 256 KiB serialized result bound for JSON
+escaping. `transport.ts` validates the cell data allowlist and attaches execution
+state to transport-only outcomes: `not_executed` for pre-send rejection, `unknown`
+for ambiguous sends. Operational diagnostics contain no code or page data.
+No DB migration, new route, viewer identity, or web/mobile change.
+
+
+## REPL observation experiment — Phase 2
+
+`broker.ts` admits `browser_exec` through the same invocation, wait and receipt
+path, including creation/recovery of an owned workspace. Availability requires the
+REPL capability when the non-production catalog switch selects it. For vision
+models it issues two single-use agent-capture tickets in service-owned
+`repl_images` envelope metadata; source/receipts never contain tickets. Text-only
+models receive no slots. Existing upload evidence checks still apply.
+
+Cell results add up to two `images` references and an optional `output_artifact`
+(relative opaque file name, bounded byte count, truncation flag). Transport parsing
+validates these fields and the existing 256 KiB result envelope. Local files have
+no browser route. `image-references.ts` selects the newest eight images across old
+observe results and new cells, including authorized images emitted before a later
+cell exception. Hydration rechecks owner/thread/call and vision/evidence authority.
+Context accounting counts selected images, not tool-result blocks.
+No new table, migration or client contract; deploy the matching prepared add-on
+and daemon before using the development-default REPL catalog.
+`BUD_BROWSER_TOOL_MODE=tools` explicitly selects the old-family comparison.

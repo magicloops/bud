@@ -149,11 +149,11 @@ impl Manifest {
                 pins::NODE_VERSION
             ));
         }
-        if self.helper.version != daemon_version() {
+        if self.helper.version != helper_version() {
             reasons.push(format!(
-                "helper {} recorded, daemon is {}",
+                "helper {} recorded, daemon embeds {}",
                 self.helper.version,
-                daemon_version()
+                helper_version()
             ));
         }
         // Recorded as a `Browser.getVersion` product string ("Chrome/153.0.8010.12").
@@ -225,6 +225,11 @@ pub fn resolve_manifest(base: &Path) -> Resolution {
             if !manifest.probe.ok {
                 return Resolution::Unavailable(
                     "browser manifest records a failed probe; run `bud browser prepare`".into(),
+                );
+            }
+            if !manifest.dev && manifest.helper.version != helper_version() {
+                return Resolution::Unavailable(
+                    "browser helper does not match this daemon; run `bud browser prepare` with this binary, then restart".into(),
                 );
             }
             Resolution::Manifest(manifest.runtime(), Box::new(manifest))
@@ -480,7 +485,7 @@ pub fn node_dir(base: &Path) -> PathBuf {
 }
 
 pub fn helper_dir(base: &Path) -> PathBuf {
-    addon_dir(base).join("helper").join(daemon_version())
+    addon_dir(base).join("helper").join(helper_version())
 }
 
 pub fn managed_browser_dir(base: &Path) -> PathBuf {
@@ -599,15 +604,32 @@ pub fn extract_zip(archive: &Path, into: &Path) -> Result<()> {
 const EMBEDDED_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/browser-helper.tar.gz"));
 pub const EMBEDDED_HELPER_COMPLETE: bool = matches!(env!("BUD_HELPER_VENDORED").as_bytes(), b"1");
 
-/// Unpack the embedded helper into `helper/<daemon version>/`. Returns `main.mjs`.
+/// Archive identity includes helper sources and vendored dependencies, even when
+/// two development builds share the same Git version label.
+fn helper_version() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| helper_archive_id(EMBEDDED_HELPER))
+}
+
+fn helper_archive_id(archive: &[u8]) -> String {
+    format!("sha256-{}", hex(Sha256::digest(archive)))
+}
+
+/// Unpack into `helper/sha256-<archive digest>/`. Returns `main.mjs`.
 pub fn install_embedded_helper(base: &Path) -> Result<RuntimeRecord> {
     if !EMBEDDED_HELPER_COMPLETE {
         bail!(
             "this daemon build has no vendored browser helper (bud/browser-helper/node_modules was absent at build time); pass --helper-dir <checkout>/bud/browser-helper"
         );
     }
-    let dir = helper_dir(base);
+    install_helper_archive(base, EMBEDDED_HELPER)
+}
+
+fn install_helper_archive(base: &Path, archive: &[u8]) -> Result<RuntimeRecord> {
+    let version = helper_archive_id(archive);
+    let dir = addon_dir(base).join("helper").join(&version);
     let main = dir.join("main.mjs");
+    std::fs::create_dir_all(addon_dir(base))?;
     if !main.is_file()
         || !dir
             .join("node_modules/playwright-core/package.json")
@@ -616,7 +638,7 @@ pub fn install_embedded_helper(base: &Path) -> Result<RuntimeRecord> {
         let staging = tempfile::Builder::new()
             .prefix(".helper-")
             .tempdir_in(addon_dir(base))?;
-        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(EMBEDDED_HELPER));
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
         tar.unpack(staging.path())
             .context("embedded helper extraction failed")?;
         if dir.exists() {
@@ -627,7 +649,7 @@ pub fn install_embedded_helper(base: &Path) -> Result<RuntimeRecord> {
     }
     Ok(RuntimeRecord {
         path: main,
-        version: daemon_version(),
+        version,
     })
 }
 
@@ -843,7 +865,7 @@ mod tests {
             },
             helper: RuntimeRecord {
                 path: "/tmp/main.mjs".into(),
-                version: daemon_version(),
+                version: helper_version().into(),
             },
             probe: ProbeRecord {
                 ok: true,
@@ -852,6 +874,71 @@ mod tests {
             },
             dev: false,
         }
+    }
+
+    #[test]
+    fn changed_helper_archives_do_not_reuse_same_daemon_version_cache() {
+        fn archive(source: &[u8]) -> Vec<u8> {
+            let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+                Vec::new(),
+                flate2::Compression::default(),
+            ));
+            for (path, contents) in [
+                ("main.mjs", source),
+                (
+                    "node_modules/playwright-core/package.json",
+                    b"{}".as_slice(),
+                ),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append_data(&mut header, path, contents).unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap()
+        }
+        let base = tempfile::tempdir().unwrap();
+        let old = install_helper_archive(base.path(), &archive(b"phase2")).unwrap();
+        let updated_archive = archive(b"phase3");
+        let updated = install_helper_archive(base.path(), &updated_archive).unwrap();
+        assert_ne!(old.path, updated.path);
+        assert_ne!(old.version, updated.version);
+        assert_eq!(std::fs::read(&old.path).unwrap(), b"phase2");
+        assert_eq!(std::fs::read(&updated.path).unwrap(), b"phase3");
+        let marker = updated.path.with_file_name("reuse-marker");
+        std::fs::write(&marker, "keep").unwrap();
+        assert_eq!(
+            install_helper_archive(base.path(), &updated_archive).unwrap(),
+            updated
+        );
+        assert!(marker.is_file(), "identical bundles are not re-extracted");
+    }
+
+    #[test]
+    fn old_version_cache_cannot_silently_advertise_new_helper_api() {
+        let base = tempfile::tempdir().unwrap();
+        let mut manifest = sample();
+        manifest.helper.version = daemon_version();
+        write_manifest(base.path(), &manifest).unwrap();
+        assert_eq!(manifest.stale().len(), 1);
+        assert!(
+            matches!(resolve_manifest(base.path()), Resolution::Unavailable(reason)
+            if reason.contains("browser prepare"))
+        );
+        manifest.helper.version = helper_version().into();
+        write_manifest(base.path(), &manifest).unwrap();
+        assert!(matches!(
+            resolve_manifest(base.path()),
+            Resolution::Manifest(..)
+        ));
+        manifest.helper.version = "dev:checkout".into();
+        manifest.dev = true;
+        write_manifest(base.path(), &manifest).unwrap();
+        assert!(matches!(
+            resolve_manifest(base.path()),
+            Resolution::Manifest(..)
+        ));
     }
 
     #[test]

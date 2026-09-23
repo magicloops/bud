@@ -344,6 +344,7 @@ export function toolNameForConversation(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "browser_exec":
     case "browser_open":
     case "browser_observe":
     case "browser_act":
@@ -430,6 +431,7 @@ export function buildToolArgs(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "browser_exec":
     case "browser_open":
     case "browser_observe":
     case "browser_act":

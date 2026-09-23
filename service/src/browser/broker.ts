@@ -7,8 +7,9 @@ import type {
   BrowserAgentContext,
   BrowserBackendResult,
 } from "../agent/browser-tool-executor.js";
+import { browserReplEnabled } from "../agent/browser-tools.js";
 import type { BrowserToolName } from "../agent/browser-tools.js";
-import { BrowserRepository, BrowserError } from "./repository.js";
+import { BrowserRepository, BrowserError, BrowserReplay } from "./repository.js";
 import { browserCarrier, dispatchBrowser } from "./transport.js";
 import { BrowserControl } from "./control.js";
 import { BrowserToolWait } from "../agent/browser-tool-executor.js";
@@ -32,16 +33,41 @@ export class BrowserBroker implements BrowserAgentBackend {
   }
   async available(context: BrowserAgentContext): Promise<boolean> {
     // Catalog discovery also runs outside a turn; dispatch validates the real lease.
-    return Boolean(browserCarrier(context.budId));
+    const carrier = browserCarrier(context.budId);
+    return Boolean(carrier && (!browserReplEnabled() || carrier.repl));
   }
   async execute(
     context: BrowserAgentContext,
     tool: Exclude<BrowserToolName, "browser_request_handoff">,
     args: Record<string, unknown>,
   ): Promise<BrowserBackendResult> {
+    return tool === "browser_exec" ? this.executeCell(context, args.code as string) : this.executeInternal(context, tool, args);
+  }
+  /** Durable cell receipt path shared by the catalog and integration fixtures. */
+  async executeCell(context: BrowserAgentContext, code: string): Promise<BrowserBackendResult> {
+    const result = await this.executeInternal(context, "browser_exec", { code });
+    return { ...result, data: { ...result.data,
+      execution_state: result.data?.execution_state ?? (result.outcome === "rejected" ? "not_executed" : "unknown") } };
+  }
+  private async executeInternal(
+    context: BrowserAgentContext,
+    tool: Exclude<BrowserToolName, "browser_request_handoff">,
+    args: Record<string, unknown>,
+  ): Promise<BrowserBackendResult> {
     const carrier = browserCarrier(context.budId);
-    if (!carrier)
+    if (!carrier) {
+      if (tool === "browser_exec") {
+        try { await this.repository.prepare(context, "", { action: "exec", ...args }, "receipt_only"); }
+        catch (error) {
+          if (error instanceof BrowserReplay) return this.deliver(error.request, error.result);
+          if (error instanceof BrowserError) return { ok:false, outcome:"rejected", error:error.code };
+          throw error;
+        }
+      }
       return { ok: false, outcome: "rejected", error: "browser_unavailable" };
+    }
+    if (tool === "browser_exec" && !carrier.repl)
+      return { ok:false, outcome:"rejected", error:"browser_repl_unsupported" };
     const capture = tool === "browser_observe" && args.mode === "screenshot";
     if (capture) {
       if (!carrier.agentCapture)
@@ -78,24 +104,39 @@ export class BrowserBroker implements BrowserAgentBackend {
       request = await this.repository.prepare(carrier.handoff ? context : { ...context, waitClientId: undefined }, carrier.bootId, command);
     } catch (error) {
       if (error instanceof BrowserToolWait) throw error;
+      if (error instanceof BrowserReplay)
+        return this.deliver(error.request, error.result);
       if (error instanceof BrowserError)
         return { ok: false, outcome: "rejected", error: error.code };
       throw error;
     }
     const transfer = capture ? beginAgentCapture(request, carrier, context.callId!, context.budId, args.target_id as string | undefined) : null;
+    const cellTransfers: ReturnType<typeof beginAgentCapture>[] = [];
     let result: BrowserBackendResult;
     try {
-      result = await dispatchBrowser(carrier, transfer ? { ...request, command:transfer.command } : request, context.signal);
-    } finally { transfer?.dispose(); }
+      if (tool === "browser_exec" && carrier.agentCapture) {
+        const model = await this.repository.modelForCapture(context);
+        let vision = false;
+        try { vision = Boolean(model && providerRegistry.getProviderForModel(model).getModelCapabilities(model).supportsVision); }
+        catch { /* Unavailable provider cannot receive images. */ }
+        if (vision) for (let i = 0; i < 2; i++) {
+          cellTransfers.push(beginAgentCapture(request, carrier, context.callId!, context.budId));
+        }
+      }
+      result = await dispatchBrowser(carrier, transfer ? { ...request, command:transfer.command } : { ...request, ...(tool === "browser_exec" ? { repl_images:cellTransfers.map(t => ({ endpoint:t.command.endpoint, ticket:t.command.ticket })) } : {}) }, context.signal);
+    } finally { transfer?.dispose(); for (const t of cellTransfers) t.dispose(); }
     await this.repository.complete(request, result);
-    if (
-      tool !== "browser_close" &&
-      !(await this.repository.evidenceAllowed(request))
-    ) {
+    return tool === "browser_close" ? result : this.deliver(request, result);
+  }
+  private async deliver(request: Parameters<BrowserRepository["complete"]>[0], result: BrowserBackendResult) {
+    if (!(await this.repository.evidenceAllowed(request))) {
       return {
-        ok: false,
-        outcome: "unknown",
+        ok: false, outcome: "unknown" as const,
         error: "browser_private_or_paused",
+        ...(request.command.action === "exec" ? { data: {
+          execution_state: result.data?.execution_state ?? (result.outcome === "rejected" ? "not_executed" : "unknown"),
+          output_withheld: true,
+        } } : {}),
       };
     }
     return result;

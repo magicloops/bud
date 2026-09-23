@@ -17,6 +17,10 @@ for HTTPS localhost:3443, and `pnpm dev:ngrok` for BUD_DEV_NGROK_URL. Reads
 optional ignored `dev/.env.local` without replacing shell settings. Presets override
 old app/auth/audience env values; service secrets remain in service/.env.
 HTTPS modes reuse local-https.mjs, while HTTP starts only service and web.
+Both launchers use `developmentTrustedOrigins()` for an explicit app origin plus
+local HTTPS/HTTP origins, allowing local HTTPS browser viewing during ngrok runs
+without changing the public OAuth issuer/audience. Environment changes require a
+launcher restart. See [origin rejection investigation](../debug/browser-repl-viewer-status.md).
 Ngrok validates/reuses an existing matching tunnel via its localhost inspector,
 or starts a managed tunnel. Independent ngrok/cloudflared processes are preserved.
 Occupied application ports fail before spawning; child process groups shut down
