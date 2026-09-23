@@ -156,6 +156,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
   const requests: string[] = []
   globalThis.fetch = async (url, init) => {
     requests.push(init?.method ?? 'GET')
+    if (String(url).endsWith('/ensure')) return Response.json(metadata)
     assert.equal(String(url).split('?')[0].endsWith('/browser'), true)
     if (statusFailed) throw new TypeError('Network interrupted')
     return absent ? Response.json({ error: 'browser_not_found' }, { status: 404 }) : Response.json(metadata)
@@ -202,16 +203,16 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     assert.equal(clients.length, recovered + 1)
     metadata = { ...metadata, runtime_status: 'daemon_restarted' }
     await poll()
-    assert.equal(view.root.findByType('h1').children.join(''), 'Recover browser pages')
+    assert.equal(view.root.findByType('h1').children.join(''), 'Browser unavailable')
     assert.equal(view.root.findAllByType('select').length, 0)
     assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Reconnect view') || b.children.includes('Take control')), false)
-    assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), true)
+    assert.ok(requests.includes('POST'))
     assert.equal(clients.length, recovered + 1)
     absent = true
     await poll()
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), false)
     assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Close this thread’s tabs')), false)
-    assert.equal(requests.every(method => method === 'GET'), true)
+    assert.ok(requests.includes('POST'))
   } finally {
     if (view) await act(async () => view.unmount())
     globalThis.requestAnimationFrame = originalAnimationFrame
@@ -245,6 +246,7 @@ test('passive pane fits without acquisition; failed fitting preserves media and 
   const writes: string[] = [];
   let fail = false;
   globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
       writes.push(String(url));
       return fail ? Response.json({ error: 'browser_viewport_unconfirmed' }, { status: 409 }) : Response.json({ viewport_applied: true, viewport_id: 'size' });
@@ -362,6 +364,7 @@ test('service restart reconnects passive media and invalidates private ownership
   const writes: string[] = []
   const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
   globalThis.fetch = async (_url, init) => {
+    if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
       const operation = JSON.parse(String(init.body)).operation
       writes.push(operation)
@@ -431,6 +434,7 @@ test('previously authorized viewer restores its private lease after service rest
   const writes: { operation: string; viewer_id: string; recovery_ticket?: string }[] = []
   const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
   globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
       assert.ok(String(url).endsWith('/control')) // No page input is replayed.
       const body = JSON.parse(String(init.body))
@@ -485,40 +489,30 @@ test('previously authorized viewer restores its private lease after service rest
 })
 
 
-test('daemon restart offers explicit page recovery without polling-driven navigation', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalAnimationFrame = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (()=>0) as typeof requestAnimationFrame;
-  Object.assign(globalThis,{__testBrowserCanvas:class { close() {} }});
-  const writes: string[] = [];
-  let metadata = {session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'old',state:'ready',control_state:'agent',revision:1,can_view:false,runtime_status:'daemon_restarted',can_take_control:true};
-  globalThis.fetch = async (_url,init) => {
-    if (init?.method === 'POST') {
-      const body = JSON.parse(String(init.body)); writes.push(body.operation);
-      metadata = {...metadata,generation:'new',revision:3,runtime_status:'available',control_state:'human_private'};
+test('active viewer automatically restores after restart without acquiring or returning control', async () => {
+  const originalFetch=globalThis.fetch;
+  Object.assign(globalThis,{__testBrowserCanvas:class {close(){}}});
+  let metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'old',state:'ready',control_state:'paused',revision:1,can_view:false,runtime_status:'daemon_restarted'};
+  const writes:string[]=[];
+  globalThis.fetch=async(url,init)=>{
+    if(init?.method==='POST') {
+      writes.push(String(url));
+      assert.ok(String(url).endsWith('/ensure'));
+      metadata={...metadata,generation:'new',control_state:'agent',revision:2,can_view:true,runtime_status:'available'};
+      return Response.json({...metadata,private_progress_lost:true,recovery_status:'restored'});
     }
     return Response.json(metadata);
   };
-  const {BrowserViewer} = await import('./viewer');
-  let view!: ReactTestRenderer;
+  const {BrowserViewer}=await import('./viewer');
+  let view!:ReactTestRenderer;
   try {
     await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser'}),{createNodeMock:()=>({value:''})})});
-    assert.deepEqual(writes,[]);
-    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Start blank workspace') || b.children.includes('Close this thread’s tabs')), false);
-    await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('More options'))!.props.onClick());
-    assert.match(JSON.stringify(view.toJSON()),/Back history and unsaved edits are not restored/);
-    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Start blank workspace')));
-    assert.deepEqual(writes,[]); // Expanding options does not recover or change authority.
-    await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Reopen saved pages'))!.props.onClick());
-    assert.deepEqual(writes,['reopen']);
-    assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
+    assert.equal(writes.length,1);
+    assert.match(JSON.stringify(view.toJSON()),/Unfinished private browsing was not recovered/);
+    assert.equal(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent') || b.children.includes('Reopen saved pages') || b.children.includes('Start blank workspace')),false);
     await act(async()=>view.unmount());
-    assert.deepEqual(writes,['reopen','release']);
-  } finally {
-    if(view) await act(async()=>view.unmount());
-    globalThis.fetch=originalFetch; globalThis.requestAnimationFrame=originalAnimationFrame;
-    Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
-  }
+    assert.equal(writes.length,1);
+  } finally {if(view)await act(async()=>view.unmount());globalThis.fetch=originalFetch;Reflect.deleteProperty(globalThis,'__testBrowserCanvas');}
 });
 
 test('native window controls retain private media and a failed hide preserves Return to agent', async () => {
@@ -532,6 +526,7 @@ test('native window controls retain private media and a failed hide preserves Re
   let failHide = false;
   const snapshot = () => ({session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:privateControl?'human_private':'agent',revision:privateControl?3:1,can_view:!privateControl,can_show_window:true,owns_control:privateControl});
   globalThis.fetch = async (_url,init) => {
+    if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
       const body = JSON.parse(String(init.body)); writes.push(body.operation);
       if (body.operation === 'show_window') privateControl = true;
@@ -564,54 +559,6 @@ test('native window controls retain private media and a failed hide preserves Re
     if(view) await act(async()=>view.unmount());
     globalThis.fetch=originalFetch; globalThis.requestAnimationFrame=originalAnimationFrame;
     Reflect.deleteProperty(globalThis,'__testBrowserCanvas');
-  }
-});
-
-test('explicit chat return recovers an orphaned private lease after restart without restoring pages', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalAnimationFrame = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
-  const writes: { operation: string; viewer_id: string; revision: number }[] = [];
-  let action: import('./viewer').BrowserReturnAction | null = null;
-  const publish = (next: typeof action) => { action = next; };
-  let metadata = { session_id:'browser', thread_id:'thread', bud_id:'bud', generation:'old', state:'ready', control_state:'paused', revision:12, can_view:false, runtime_status:'daemon_restarted', can_take_control:true };
-  let blocked = true;
-  globalThis.fetch = async (_url, init) => {
-    if (init?.method === 'POST') {
-      const body = JSON.parse(String(init.body)); writes.push(body);
-      if (body.operation === 'acquire') {
-        if (blocked) return Response.json({error:'browser_controller_exists'}, {status:409});
-        metadata = {...metadata, generation:'new', revision:14, runtime_status:'available', control_state:'human_private'};
-      } else if (body.operation === 'return') {
-        assert.equal(body.revision,14);
-        metadata = {...metadata, revision:16, control_state:'agent'};
-      }
-    }
-    return Response.json(metadata);
-  };
-  const {BrowserViewer} = await import('./viewer');
-  let view!: ReactTestRenderer;
-  try {
-    await act(async () => { view=create(createElement(BrowserViewer,{sessionId:'browser',onReturnActionChange:publish}),{createNodeMock:()=>({value:''})}); });
-    assert.deepEqual(writes,[]); // Mount/status never changes authority.
-    assert.ok(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')));
-    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Reopen saved pages') || b.children.includes('Start blank workspace')), false);
-    const first = action as unknown as import('./viewer').BrowserReturnAction;
-    assert.equal(first.disabled,false);
-    await act(async () => { first.run(); first.run(); });
-    assert.deepEqual(writes.map(w=>w.operation),['acquire']); // Duplicate click fenced; competing controller blocks return.
-    assert.match(JSON.stringify(view.toJSON()),/Another viewer has control/);
-    blocked = false;
-    await act(async () => (action as unknown as import('./viewer').BrowserReturnAction).run());
-    assert.deepEqual(writes.map(w=>w.operation),['acquire','acquire','return']);
-    assert.equal(writes.every(w=>w.viewer_id===writes[0].viewer_id),true);
-    assert.equal(action,null);
-    await act(async () => first.run());
-    assert.equal(writes.length,3); // A stale callback cannot return again.
-  } finally {
-    if(view) await act(async () => view.unmount());
-    globalThis.fetch=originalFetch;
-    globalThis.requestAnimationFrame=originalAnimationFrame;
   }
 });
 
@@ -726,6 +673,7 @@ test('recovery is attempted on the first poll that reports the browser available
   const writes: { operation: string; recovery_ticket?: string }[] = []
   const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision, can_view: !privateState, owns_control: ownsControl, runtime_status: runtime })
   globalThis.fetch = async (_url, init) => {
+    if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
       writes.push(body)

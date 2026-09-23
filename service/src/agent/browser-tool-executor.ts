@@ -107,7 +107,9 @@ export class BrowserToolExecutor {
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"
         ? "Browser actions are paused while the user has private control. Ask the user to choose Return to agent in the browser controls. You can continue chatting and using non-browser tools; do not bypass the pause through terminal or another browser."
-        : "Browser operation was rejected.";
+        : result.error === "browser_click_blocked"
+          ? "Click was not sent: no safe point on that exact target was available. Observe again and choose another observed target or navigate to its observed HTTP(S) URL."
+          : "Browser operation was rejected.";
     const payload = { tool: directive.tool, call_id: directive.callId, args, kind: "browser", ...result, summary };
     // Enforce the final persisted/model-facing envelope, not only helper nodes.
     if (observation?.format === "compact_v1" && Buffer.byteLength(JSON.stringify(payload)) > 36 * 1024) {

@@ -53,6 +53,8 @@ the tmux backend and the proto `0.2` readiness vocabulary.
 Cargo build script for generated protobuf bindings and release metadata.
 
 - compiles `../proto/bud/v1/bud.proto` through `tonic-prost-build`
+- embeds the prepared browser helper and vendored dependencies; the explicit
+  source/watch list includes `click-point.mjs` alongside the engine and serializers
 - emits build commit, target triple, and Cargo profile into the compiled binary
   from CI-provided `BUD_BUILD_*` environment variables or local build
   fallbacks

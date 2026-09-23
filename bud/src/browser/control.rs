@@ -23,6 +23,7 @@ pub enum Mode {
     ResumePending,
 }
 
+#[derive(Clone)]
 pub struct Authority {
     pub epoch: u64,
     pub mode: Mode,
@@ -52,6 +53,10 @@ impl Default for Authority {
 }
 
 impl Authority {
+    pub(super) fn private_content(&self) -> bool {
+        self.private
+    }
+
     pub fn restore(&mut self, private: bool, paused: bool) {
         self.private = private;
         if private || paused {

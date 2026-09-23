@@ -77,33 +77,54 @@ export class BrowserResourceRepository {
     return this.withLocked(owner, bud, async (_client, resource) => resource, true);
   }
 
+  /** Commit only daemon-confirmed runtime replacement against the captured authority. */
+  acknowledgeRecovery(expected: BrowserResource, workspace: {id:string; generation:string}): Promise<BrowserResource> {
+    return this.releaseAuthority(expected, true, workspace);
+  }
+
   /** Call only for an acknowledged finish_return from the exact captured carrier. */
   acknowledgeReturn(expected: BrowserResource): Promise<BrowserResource> {
+    return this.releaseAuthority(expected, false);
+  }
+
+  private releaseAuthority(expected: BrowserResource, restarted: boolean, workspace?: {id:string; generation:string}): Promise<BrowserResource> {
     return this.withLocked(expected.created_by_user_id, expected.bud_id, async (client, resource) => {
-      this.receipt(resource, expected, "control");
-      if (resource.control_state !== "resume_pending" || resource.control_operation !== "finish_return") throw new BrowserError("browser_control_conflict");
+      if (restarted) {
+        this.revision(resource, expected.revision);
+        if (resource.id !== expected.id || resource.control_epoch !== expected.control_epoch || resource.profile_generation !== expected.profile_generation || resource.desired_state !== "open")
+          throw new BrowserError("browser_stale_acknowledgement");
+      } else this.receipt(resource, expected, "control");
+      if (!restarted && (resource.control_state !== "resume_pending" || resource.control_operation !== "finish_return")) throw new BrowserError("browser_control_conflict");
       await this.lockThreads(client, resource);
       // Lock invocations before handoffs, matching cancellation and continuation.
       await client.query(`select i.id from agent_invocation i join browser_handoff h on h.invocation_id=i.id
         join browser_session s on s.id=h.session_id where s.browser_id=$1
         and h.created_by_user_id=$2 and i.created_by_user_id=$2 and h.status='pending'
         order by i.id for update of i`, [resource.id, resource.created_by_user_id]);
+      if (workspace) {
+        const ready = await client.query(`update browser_session s set state='ready',updated_at=now()
+          from thread t where s.id=$1 and s.generation=$2 and s.browser_id=$3
+          and s.created_by_user_id=$4 and s.desired_state='open' and s.closed_at is null
+          and t.thread_id=s.thread_id and t.created_by_user_id=$4 and t.deleted_at is null returning s.id`,
+          [workspace.id,workspace.generation,resource.id,resource.created_by_user_id]);
+        if (!ready.rowCount) throw new BrowserError("browser_not_found");
+      }
       await client.query(`update browser_handoff h set status=case when
           i.cancel_requested_at is null and i.status='waiting_for_user' and t.deleted_at is null
           and s.closed_at is null and s.desired_state='open' then 'returned' else 'canceled' end,
-          returned_by_user_id=$2,resolved_at=now()
+          returned_by_user_id=case when $3 then null else $2 end,resolved_at=now()
         from agent_invocation i,browser_session s,thread t where h.invocation_id=i.id
         and s.id=h.session_id and t.thread_id=s.thread_id and s.browser_id=$1
         and h.created_by_user_id=$2 and i.created_by_user_id=$2 and s.created_by_user_id=$2
-        and t.created_by_user_id=$2 and h.status='pending'`, [resource.id, resource.created_by_user_id]);
+        and t.created_by_user_id=$2 and h.status='pending'`, [resource.id, resource.created_by_user_id, restarted]);
       await client.query(`update browser_handoff h
         set status=case when s.closed_at is null and s.desired_state='open' and t.deleted_at is null then 'returned' else 'canceled' end,
-        returned_by_user_id=$2,resolved_at=now()
+        returned_by_user_id=case when $3 then null else $2 end,resolved_at=now()
         from browser_session s,thread t where s.id=h.session_id and t.thread_id=s.thread_id and t.created_by_user_id=$2 and s.browser_id=$1
         and h.created_by_user_id=$2 and h.invocation_id is null and h.status='pending'`,
-        [resource.id, resource.created_by_user_id]);
+        [resource.id, resource.created_by_user_id, restarted]);
       return (await client.query<BrowserResource>(`update browser_resource set control_state='agent',private_content=false,
-        control_session_id=null,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id])).rows[0];
+        control_session_id=null,control_epoch=control_epoch+$2,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id, Number(restarted)])).rows[0];
     });
   }
 

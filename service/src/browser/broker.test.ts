@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { BrowserBroker } from './broker.js';
+import { BrowserControl } from './control.js';
 import { BrowserRepository } from './repository.js';
 import { decodeBudFrame } from '../proto/wire.js';
 import { sessions, type SessionTracker } from '../ws/session-trackers.js';
@@ -10,6 +11,7 @@ import { receiveBrowserResult } from './transport.js';
 test('new observations are capability gated; legacy default and new default use supported forms', async t => {
   const budId = randomUUID();
   const commands: Record<string, unknown>[] = [];
+  let runtimeReplaced = false;
   const capability = {version:1, available:true, boot_id:'boot', managed:true, profile_mode:'persistent', semantic_observations:true};
   const tracker = {
     budId, sessionId:'device', browserCapability:capability,
@@ -27,7 +29,7 @@ test('new observations are capability gated; legacy default and new default use 
     },
     async complete() {}, async evidenceAllowed() { return true; },
   } as unknown as BrowserRepository;
-  const broker = new BrowserBroker(repository);
+  const broker = new BrowserBroker(repository, { async ensure() { return {runtime_replaced:runtimeReplaced}; } } as unknown as BrowserControl);
   const context = {budId,threadId:'thread',ownerUserId:'alice',turnId:'turn',callId:'call',signal:new AbortController().signal};
   // A daemon without structured observations is not a browser carrier at all.
   tracker.browserCapability = {...capability, semantic_observations: undefined};
@@ -52,4 +54,11 @@ test('new observations are capability gated; legacy default and new default use 
   assert.deepEqual(commands[6],{action:'inspect',operation:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'});
   await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1'});
   assert.deepEqual(commands[7],{action:'click',reference:'obs:e1'});
+  runtimeReplaced = true;
+  const beforeRecovery = commands.length;
+  const rejected = await broker.execute(context,'browser_act',{action:'click',reference:'old:e1'});
+  assert.equal(rejected.error,'browser_recovery_required');
+  assert.equal(commands.length,beforeRecovery,'replacement must not replay stale page actions');
+  assert.equal((await broker.execute(context,'browser_observe',{mode:'page_info'})).ok,true);
+
 });

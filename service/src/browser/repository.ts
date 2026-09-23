@@ -47,6 +47,7 @@ export class BrowserRepository {
     context: BrowserAgentContext,
     bootId: string,
     command: Record<string, unknown>,
+    ensureOnly = false,
   ): Promise<BrowserCommand> {
     const identity = context.invocation;
     if (!identity || !context.callId)
@@ -118,16 +119,6 @@ export class BrowserRepository {
           throw new BrowserError("browser_interrupted_reopen_required");
         }
       }
-      // The existing action intent is the durable no-replay receipt. Retrying
-      // after a process failure cannot mint a second dispatch for this call.
-      const receipt = await client.query(
-        `update agent_invocation_action set evidence=jsonb_build_object('browser_dispatched',true)
-        where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
-        and status='intent' and not coalesce((evidence->>'browser_dispatched')::boolean,false) returning id`,
-        [identity.id, context.callId, identity.fence, context.ownerUserId],
-      );
-      if (!receipt.rowCount)
-        throw new BrowserError("browser_call_already_dispatched");
       if (!session) {
         if (command.action !== "open")
           throw new BrowserError("browser_not_open");
@@ -149,6 +140,34 @@ export class BrowserRepository {
           )
         ).rows[0];
       }
+      if (ensureOnly) {
+        // Validate the same lease and undispatched intent before recovery I/O.
+        // Recovery does not consume the action; normal admission rechecks both.
+        const intent = await client.query(`select id from agent_invocation_action
+          where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
+          and status='intent' and not coalesce((evidence->>'browser_dispatched')::boolean,false)`,
+          [identity.id,context.callId,identity.fence,context.ownerUserId]);
+        if (!intent.rowCount) throw new BrowserError("browser_call_already_dispatched");
+        if (session.desired_state !== "open") throw new BrowserError("browser_close_pending");
+        await client.query("commit");
+        open = false;
+        return {browser_id:resource.id,browser_epoch:resource.control_epoch,
+          private_content:resource.private_content,browser_paused:resource.control_state !== "agent",
+          request_id:ulid(),session_id:session.id,generation:session.generation,
+          thread_id:context.threadId,owner_user_id:context.ownerUserId,
+          control_epoch:Math.max(1,session.control_epoch),sequence:Math.max(1,session.sequence),
+          invocation_id:identity.id,invocation_fence:identity.fence,expires_at_ms:expires,command};
+      }
+      // The existing action intent is the durable no-replay receipt. Retrying
+      // after a process failure cannot mint a second dispatch for this call.
+      const receipt = await client.query(
+        `update agent_invocation_action set evidence=jsonb_build_object('browser_dispatched',true)
+        where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
+        and status='intent' and not coalesce((evidence->>'browser_dispatched')::boolean,false) returning id`,
+        [identity.id, context.callId, identity.fence, context.ownerUserId],
+      );
+      if (!receipt.rowCount)
+        throw new BrowserError("browser_call_already_dispatched");
       if (resource.control_state !== "agent" || resource.private_content) {
         if (!context.waitClientId || session.desired_state !== "open")
           throw new BrowserError("browser_private_or_paused");
@@ -236,19 +255,25 @@ export class BrowserRepository {
       (result.ok ||
         ["browser_closed", "browser_interrupted"].includes(result.error ?? ""));
     const recoverable = result.outcome === "rejected" && [
-      "browser_locator_ambiguous", "browser_locator_not_found", "browser_stale_reference",
+      "browser_locator_ambiguous", "browser_locator_not_found", "browser_click_blocked", "browser_stale_reference",
       "browser_observation_limit", "browser_target_not_found", "browser_document_changed",
       "browser_invalid_arguments", "browser_busy",
     ].includes(result.error ?? "");
+    // An admitted page action can time out while Chrome and passive media remain
+    // healthy. Its unknown outcome is not runtime-loss evidence. Preserve prior
+    // health (including interruption); the receipt still forbids action replay.
+    const uncertainPage = !result.ok && result.outcome === "unknown" &&
+      result.error === "browser_outcome_unknown" &&
+      ["inspect", "navigate", "click", "insert_text"].includes(String(request.command.action));
     await this.database.query(
-      `update browser_session set state=$4,pending_until=null,
+      `update browser_session set state=coalesce($4,state),pending_until=null,
       closed_at=case when $5 then now() else closed_at end,updated_at=now()
       where id=$1 and generation=$2 and sequence=$3 and created_by_user_id=$6`,
       [
         request.session_id,
         request.generation,
         request.sequence,
-        closed ? "closed" : result.ok || recoverable ? "ready" : "interrupted",
+        closed ? "closed" : uncertainPage ? null : result.ok || recoverable ? "ready" : "interrupted",
         closed,
         request.owner_user_id,
       ],

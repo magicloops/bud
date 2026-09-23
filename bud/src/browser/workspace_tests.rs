@@ -127,11 +127,14 @@ async fn shared_process_keeps_workspaces_separate_and_shares_site_cookies() {
 
 #[tokio::test]
 #[ignore = "requires BUD_BROWSER_EXECUTABLE and the installed browser helper"]
-async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_history() {
+async fn public_checkpoints_restore_only_the_authorized_workspace_without_replaying_history() {
     let executable = std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("browser executable");
     let hints = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/fixture", listener.local_addr().unwrap());
+    let url = format!(
+        "http://{}/fixture?q=a%2Fb&q=c#route",
+        listener.local_addr().unwrap()
+    );
     let server = tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         while let Ok((mut socket, _)) = listener.accept().await {
@@ -188,21 +191,36 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
     runtime.recovery = Arc::new(Mutex::new(super::super::recovery::Recovery::load(Some(
         hints.path(),
     ))));
+    let mut saved = runtime.recovery.lock().unwrap().get("a").unwrap();
+    saved
+        .urls
+        .push("https://example.test/oauth/callback?code=unloaded#private".into());
+    runtime
+        .recovery
+        .lock()
+        .unwrap()
+        .save("a", Some(saved))
+        .unwrap();
     let mut a = runtime.workspace("a").await.unwrap();
     let mut b = runtime.workspace("b").await.unwrap();
-    a.ensure_page(None).await.unwrap();
-    assert_eq!(a.targets().await.unwrap()[0].url, "about:blank");
-    // Acquiring/observing a blank workspace must not overwrite unused hints.
+    assert!(a.targets().await.unwrap().is_empty());
     a.save_pages(None).await.unwrap();
-    assert_eq!(b.reopen_pages().await.unwrap().1, 0);
-    let (target, restored, available) = a.reopen_pages().await.unwrap();
+    assert_eq!(b.restore_pages(false).await.unwrap().1, 0);
+    let (target, restored, status) = a.restore_pages(false).await.unwrap();
+    let target = target.unwrap();
     assert_eq!(restored, 1);
-    assert!(available);
+    assert_eq!(status, "partial");
+    a.save_pages(Some(&target)).await.unwrap();
+    assert_eq!(
+        a.checkpoint_for_test().unwrap().urls.len(),
+        2,
+        "partial restore must preserve unloaded checkpoint pages"
+    );
     assert_ne!(target, old_a);
     assert!(a.session(&old_a).await.is_err());
     assert!(b.session(&target).await.is_err());
     assert_eq!(
-        a.reopen_pages().await.unwrap().1,
+        a.restore_pages(false).await.unwrap().1,
         0,
         "recovery was replayed"
     );
@@ -214,6 +232,31 @@ async fn page_hints_reopen_only_the_authorized_workspace_without_replaying_histo
         .await
         .unwrap();
     assert!(history["entries"].as_array().unwrap().len() <= 2);
+    a.cdp
+        .call(None, "Target.closeTarget", json!({"targetId":target}))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if a.targets().await.unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(a.targets().await.unwrap().is_empty());
+    a.save_pages(None).await.unwrap();
+    assert_eq!(
+        a.restore_pages(false).await.unwrap().2,
+        "empty",
+        "viewer ensure must not undo native closure"
+    );
+    a.restore_closed_page().await.unwrap();
+    let (replacement, count, _) = a.restore_pages(false).await.unwrap();
+    assert_eq!(count, 1);
+    assert_ne!(
+        replacement.unwrap(),
+        target,
+        "explicit Open should restore the retained URL into a new target"
+    );
     runtime.close().await.unwrap();
     server.abort();
 }
@@ -275,7 +318,11 @@ async fn native_tab_close_and_broken_channel_allow_explicit_ensure_without_adopt
     a.recovery = Arc::new(Mutex::new(super::super::recovery::Recovery::load(Some(
         hints.path(),
     ))));
-    assert_eq!(a.reopen_pages().await.unwrap(), (replacement, 0, false));
+    assert_eq!(
+        a.restore_pages(false).await.unwrap().2,
+        "ready",
+        "live pages do not depend on the recovery file"
+    );
     assert_eq!(std::fs::read_to_string(path).unwrap(), "corrupt-fixture");
     root.close().await.unwrap();
 }

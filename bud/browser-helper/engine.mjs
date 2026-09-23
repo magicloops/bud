@@ -1,6 +1,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { compactNodes, compactPage } from './compact.mjs';
+import { selectClickPoint } from './click-point.mjs';
 
 const referenceNamespace = randomBytes(8).toString('base64url');
 let observationSequence = 0;
@@ -17,6 +18,7 @@ export function sanitize(nodes, prefix, refs, depth = 0, result = []) {
     if (!node || typeof node !== 'object') continue;
     const item = { depth, role: node.role ?? 'text' };
     if (typeof node.name === 'string') item.name = node.name;
+    if (item.role === 'link' && typeof node.url === 'string') item.url = node.url;
     if (!fields.has(item.role) && typeof node.text === 'string') item.text = node.text;
     if (typeof node.ref === 'string') {
       item.reference = `${prefix}:${node.ref}`;
@@ -99,12 +101,13 @@ export class Engine {
     const nodes = s.nodes.slice(offset, end);
     const cursor = end < s.nodes.length ? `${s.id}:${end}` : null;
     return { target_id: s.target, document_id: s.document, observation_id: s.id,
-      viewport: s.viewport, nodes, text: nodes.map(n => `${'  '.repeat(Math.min(n.depth, 24))}${n.role}${n.name ? ` ${JSON.stringify(n.name)}` : ''}${n.text ? `: ${JSON.stringify(n.text)}` : ''}${n.reference ? ` [ref=${n.reference}]` : ''}`).join('\n'),
+      viewport: s.viewport, nodes, text: nodes.map(n => `${'  '.repeat(Math.min(n.depth, 24))}${n.role}${n.name ? ` ${JSON.stringify(n.name)}` : ''}${n.text ? `: ${JSON.stringify(n.text)}` : ''}${n.reference ? ` [ref=${n.reference}]` : ''}${n.url !== undefined ? ` url=${JSON.stringify(n.url)}` : ''}`).join('\n'),
       truncated: cursor !== null, continuation: cursor, expires_in_ms: Math.max(0, TTL - (Date.now() - s.at)),
       coverage: 'accessible_dom', limitations: ['Closed shadow roots and inaccessible embedded documents may be omitted.'] };
   }
   async execute(c) {
     this.stage = 'resolve_page';
+    this.clickDiagnostic = undefined;
     if (c.operation === 'invalidate') { this.snapshot = null; return {}; }
     const page = await this.page(c.target_id);
     if (c.operation === 'page_info') return { target_id: c.target_id, document_id: await this.document(page), title: await page.title(), url: page.url() };
@@ -165,7 +168,26 @@ export class Engine {
       this.stage = 'validate_action';
       await this.current(page, c);
       this.stage = c.operation;
-      if (c.operation === 'click') await handle.click({ timeout: 3000 });
+      if (c.operation === 'click') {
+        const started = performance.now();
+        const remaining = () => {
+          const ms = Math.ceil(3000 - (performance.now() - started));
+          if (ms <= 0) throw Error('browser_click_blocked');
+          return ms;
+        };
+        this.stage = 'prepare_click';
+        const diagnostic = this.clickDiagnostic = {};
+        let position;
+        try {
+          position = await selectClickPoint(handle, { remaining, diagnostic });
+          await this.current(page, c);
+        } finally {
+          diagnostic.preparation_ms = Math.round(performance.now() - started);
+        }
+        const timeout = remaining();
+        this.stage = 'click';
+        await handle.click({ position, timeout, scroll: 'none' });
+      }
       else if (c.operation === 'fill') await handle.fill(c.text, { timeout: 3000 });
       else if (c.operation === 'focus') await handle.focus();
       else fail('browser_invalid_arguments');

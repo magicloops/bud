@@ -1,6 +1,8 @@
 # Design: Automatic browser recovery and complete URL checkpoints
 
-Status: scoped, not implemented. Updated 2026-09-23.
+Status: implemented locally; physical-device and deployed-stack acceptance pending. Updated 2026-09-23.
+
+Implementation and validation: [plan](../plan/bud-owned-browser/automatic-recovery-implementation.md).
 
 ## Objective
 
@@ -12,7 +14,7 @@ sign-ins continue to use the existing persistent profile.
 This proposal replaces the explicit recovery and restart-private-intent rules in
 [Phase 3l](../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md) and
 [Phase 3p](../plan/bud-owned-browser/phase-3p-empty-workspace-recovery.md).
-Those documents describe current behavior until this design is implemented.
+Those documents remain historical descriptions of the superseded recovery flow.
 It retains the shared profile and thread workspace model from
 [Phase 3k](../plan/bud-owned-browser/phase-3k-shared-persistent-browser.md).
 

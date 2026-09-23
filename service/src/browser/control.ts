@@ -27,6 +27,7 @@ type Controller = {
 /** Single-service coordinator. DB revisions persist decisions; leases never survive restart. */
 export class BrowserControl {
   private readonly busy = new Set<string>();
+  private readonly ensures = new Map<string, Promise<{session:BrowserSession;runtime_replaced:boolean;recovery_status:unknown;private_progress_lost:boolean}>>();
   private readonly controllers = new Map<string, Controller>();
   onDiagnostic: (fields: Record<string, string | number | boolean>) => void = () => {};
   isSizingViewer: (owner: string, session: BrowserSession, viewer: string) => boolean = () => false;
@@ -111,7 +112,8 @@ export class BrowserControl {
         result.outcome === "rejected" &&
           ["browser_busy", "browser_control_expired", "browser_stale_request",
             "browser_stale_control", "browser_control_conflict", "browser_interrupted",
-            "browser_closed", "browser_stale_connection", "browser_window_unconfirmed"].includes(result.error ?? "")
+            "browser_closed", "browser_stale_connection", "browser_window_unconfirmed",
+            "browser_recovery_required", "browser_checkpoint_unavailable"].includes(result.error ?? "")
           ? result.error!
           : "browser_control_uncertain",
       );
@@ -157,12 +159,44 @@ export class BrowserControl {
     return { handoff_id: id, viewer_path: `/browser/${session.id}` };
   }
 
+  /** Idempotent active-demand coordinator shared by viewer and agent admission. */
+  async ensure(owner: string, sessionId: string, explicitUrl = false) {
+    await this.repository.get(owner,sessionId);
+    const key=JSON.stringify([owner,sessionId,explicitUrl]);
+    const pending=this.ensures.get(key);
+    if(pending) return pending;
+    const attempt=this.ensureWorkspace(owner,sessionId,explicitUrl);
+    this.ensures.set(key,attempt);
+    try { return await attempt; } finally { if(this.ensures.get(key)===attempt) this.ensures.delete(key); }
+  }
+
+  private async ensureWorkspace(owner:string,sessionId:string,explicitUrl:boolean) {
+    return this.exclusive(owner, sessionId, async () => {
+      const initial = await this.repository.get(owner, sessionId);
+      const carrier = this.carrier(initial, true);
+      const {session,resource,request} = await this.repository.prepareEnsure(owner,sessionId,carrier.bootId,explicitUrl);
+      const result = await this.dispatch(carrier,request,AbortSignal.timeout(30_000));
+      if (!result.ok || result.data?.ensured !== true)
+        throw new BrowserError(result.outcome === "rejected" ? result.error ?? "browser_recovery_unavailable" : "browser_recovery_uncertain");
+      const replaced = result.data.runtime_replaced === true;
+      if (replaced) {
+        // Only the daemon can attest that profile/process ownership was checked
+        // and the former runtime is gone. A boot mismatch alone proves nothing.
+        await this.repository.acknowledgeRecovery(resource,session);
+        for (const [id, control] of this.controllers) if (control.browser === session.browser_id) this.controllers.delete(id);
+        this.onFence(session.browser_id);
+      }
+      const current = replaced ? await this.repository.get(owner,sessionId) : await this.repository.ensured(owner,session);
+      return {session:current, runtime_replaced:replaced, recovery_status:result.data.recovery_status,
+        private_progress_lost:replaced && resource.private_content};
+    });
+  }
+
   async acquire(
     owner: string,
     sessionId: string,
     viewer: string,
     revision: number,
-    reopenPages = false,
   ) {
     return this.exclusive(owner, sessionId, async () => {
       let session = await this.repository.get(owner, sessionId);
@@ -173,48 +207,21 @@ export class BrowserControl {
         throw new BrowserError("browser_controller_exists");
       if ([...this.controllers.values()].some(c => c.browser === session.browser_id && c.expires > Date.now() && c.carrier.current()))
         throw new BrowserError("browser_controller_exists");
-      return this.acquireSession(session, viewer, undefined, reopenPages);
+      return this.acquireSession(session, viewer);
     });
   }
 
-  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string, reopenPages = false) {
+  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string) {
     this.controllers.delete(session.id);
     const signal = AbortSignal.timeout(35_000);
     session = await this.pause(session, signal);
     const id = randomUUID();
     session = await this.transition(session, "acquire", "human_private", signal, id);
-    let pageRecovery: { restored_pages: number; hints_available: boolean } | undefined;
-    if (reopenPages) {
-      // Explicit human recovery after acknowledged private takeover. No automatic
-      // replay from metadata polling, signed recovery tickets, or agent calls.
-      const prepared = await this.repository.prepare(session.created_by_user_id, session.id,
-        this.carrier(session).bootId, session.revision, randomUUID(),
-        { action: "reopen_pages", controller_id: id }, "human_private");
-      const result = await this.dispatch(this.carrier(session), prepared.request, AbortSignal.timeout(10_000));
-      if (!result.ok || result.data?.pages_reopened !== true) {
-        await this.repository.pauseAfterFailure(session.created_by_user_id, session.id, prepared.session.revision);
-        this.onFence(session.browser_id);
-        throw new BrowserError(result.outcome === "rejected" && result.error === "browser_recovery_unavailable"
-          ? result.error : "browser_recovery_uncertain");
-      }
-      if (typeof result.data.restored_pages === "number") pageRecovery = {
-        restored_pages: result.data.restored_pages,
-        hints_available: result.data.recovery_hints_available !== false,
-      };
-      session = prepared.session;
-      // Start the visible controller lease after recovery, not before page creation.
-      const renewed = await this.dispatch(this.carrier(session), this.repository.command(session,
-        { action: "control", operation: "renew", controller_id: id }), AbortSignal.timeout(5000));
-      if (!renewed.ok || renewed.data?.control_acknowledged !== true) {
-        await this.repository.pauseAfterFailure(session.created_by_user_id, session.id, session.revision);
-        throw new BrowserError("browser_control_uncertain");
-      }
-    }
     this.controllers.set(session.id, {
       owner: session.created_by_user_id, browser: session.browser_id, viewer, id, recoveredTicket,
       expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
     });
-    return { ...session, ...(pageRecovery ? { page_recovery: pageRecovery } : {}) };
+    return session;
   }
 
   recoveryTicket(session: BrowserSession, viewer: string): string | undefined {

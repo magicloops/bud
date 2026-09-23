@@ -17,19 +17,9 @@ control, input and media; private input is not a transcript event.
 - `pane-state.ts` / `.test.ts`: strict first-party identities and reveal deduplication.
 - `pane.test.tsx`: mounted hook coverage for initial inventory, duplicate handoffs,
   explicit reopen and late responses after thread switch.
-- `viewer.test.tsx`: eleven mounted regressions: private fit fences input and an
-  input failure survives a late renewal, releasing without return; passive media
-  preserves agent epochs and fences handoffs; passive fit without acquisition and
-  failed fitting preserving media/agent ownership; the chat return action uses the
-  owning viewer and clears after return or dismissal; service restart reconnects
-  passive media and drops private ownership without reacquiring; a previously
-  authorized viewer restores its private lease after service restart without
-  replaying input; daemon restart offers explicit page recovery without
-  polling-driven navigation; native window controls retain private media and a
-  failed hide preserves Return to agent; explicit chat return recovers an orphaned
-  private lease after restart without restoring pages; an aborted private fit
-  cannot leave input silently blocked after re-taking control without fitting;
-  recovery is attempted on the first poll that reports the browser available.
+- `viewer.test.tsx`: mounted regressions for ownership/input fencing, passive fit,
+  service proof recovery, automatic runtime ensure, late responses and native
+  window controls. Mobile fixtures cover foreground-only ensure and suspension.
 - `viewport-fit.ts` / `.test.ts`: bounded CSS dimensions, 150ms coalescing, one resize
   in flight plus the latest desired size; no automatic retry after uncertainty.
 
@@ -146,14 +136,12 @@ media/agent ownership intact. Epoch/state changes cancel obsolete fitting. Repea
 same-size fits are daemon no-ops, avoiding unnecessary observation invalidation.
 
 
-## Ended browser presentation
+## Browser availability presentation
 
-Owner-authorized metadata adds runtime_status (available, disconnected,
-daemon_restarted, ended). Compare the current capable carrier boot with the
-stored session boot; absence alone never claims restart. The web pane clears
-stale private/media/page controls on confirmed end, explains lost live tabs while retaining saved website sign-ins, and retains explicit close with its stop-run semantics. Missing-session
-404 shows generic unavailable recovery; no automatic browser recreation or
-private resume. Temporary disconnects retain reconnect. No DB/wire migration.
+Runtime metadata distinguishes temporary disconnect, restart and logical close.
+Visible open workspaces use ensure before reconnecting media. A 404 or logical
+close stops recovery and clears sensitive state. Capture failure alone cannot
+recreate Chrome or release private protection.
 
 ## Hover takeover
 
@@ -202,8 +190,8 @@ services without tickets retain manual recovery. No ticket goes in URLs or chat.
 `BrowserWaitActionsContext` shares the mounted viewer's return callback, error and
 thread-scoped Stop action with waiting chat rows. It adds no controller, heartbeat,
 media subscription or polling loop. Another session/viewer cannot use the callback.
-Errors stay visible on matching pending cards; recoverable missing ownership uses
-the explicit acquire-then-return flow. The redundant top-of-chat return banner is removed.
+Errors stay visible on matching pending cards; Return is available only from
+the owning viewer. Automatic ensure reconciles extinct control separately. The redundant top-of-chat return banner is removed.
 
 
 The wait-action context includes the currently visible pane session ID for presentation only; this hides redundant Open browser links without granting control.
@@ -221,8 +209,8 @@ Temporary Vite development-only `browser-media` console diagnostics emit copyabl
 ## Shared persistent browser (Phase 3k)
 
 Threads own tabs while website sign-ins/storage belong to the Bud. The viewer
-states that private control pauses browser work across this Bud. Explicit recovery
-after a daemon restart is available without implicitly releasing the private latch.
+states that private control pauses browser work across this Bud. Automatic recovery releases obsolete private authority only after the daemon
+confirms replacement of the managed process.
 `lifecycle.tsx` supplies Bud-level Stop/Reset controls in the viewer menu and ended
 state, separately from closing a thread's tabs. Confirmation identifies all-thread
 impact; reset explicitly deletes stored site data. Owner-authorized resource status
@@ -232,15 +220,26 @@ acknowledged completion, and older revisions cannot overwrite a newer response.
 ordering and discarded responses after a Bud switch. No screenshot or per-frame
 state is added to React.
 
-## Explicit page recovery (Phase 3l)
+## Automatic browser recovery
 
-Confirmed daemon restart offers Reopen saved pages or Start blank workspace without
-requiring a chat message. Only explicit activation posts `operation:reopen`; metadata
-polling never reopens pages. Recovery uses existing private-control/media/input paths
-and requires Return to agent afterward. The pane explains URL exclusions and loss
-of Back history/unsaved edits. Errors do not imply successful restoration. Mounted
-tests cover no mutation on restart metadata, explicit recovery and lease release.
+The active mounted viewer calls owner-authorized POST `/:id/ensure` with its
+stable viewer UUID before media attachment and after a recoverable runtime end.
+Hidden/background viewers and inventory polls never launch Chrome. Suspension,
+thread switch and disposal abort/fence late responses. Agent admission uses the
+same service coordinator, avoiding duplicate restoration.
 
+A healthy private runtime keeps its protection and proof-based lease recovery.
+Confirmed replacement clears extinct input/media/control evidence and shows a
+concise private-progress-loss notice when relevant. Restored/empty/partial states
+use normal media. Real ensure failure offers Retry and Dismiss/Conversation.
+There is no Reopen saved pages, Start blank workspace, or compound acquire/return
+repair. Return requires actual current ownership; Take control remains the normal
+explicit action for a live private workspace. Unknown input is never replayed.
+
+The hosted mobile viewer shares this lifecycle and existing suspend/resume bridge;
+no native browser renderer or recovery implementation is added. See
+[design](../../../../design/browser-automatic-recovery.md) and the updated
+[mobile contract](../../../../plan/bud-owned-browser/mobile-viewer-contract.md).
 
 ## Native window escape hatch (Phase 3m)
 
@@ -254,36 +253,12 @@ No added metadata loop or inferred native visibility state. Return hides before
 resuming on the service/daemon path, including inline chat Return. Mounted tests
 cover canvas continuity and retained control following failed hide.
 
-## Empty workspace recovery (Phase 3p)
+## Empty workspace behavior
 
-An authorized media `empty` message clears the canvas, references and pending input,
-acknowledges delivery and shows “No page is open” without reconnecting or dropping
-private control. Return to agent remains available. An optional `page_recovery`
-result distinguishes zero saved pages from unreadable hints using informational copy.
-Restart recovery explains that asking Bud to open a page is valid; saved-page
-restoration is optional. Interrupted workspaces expose server-authorized takeover.
-
-### Failed-takeover return recovery
-
-Return remains actionable for server-reported recoverable paused/private workspaces,
-including daemon restart. Only the explicit click acquires a controller and then
-returns with the acquired revision; existing owner/Origin/competing-controller and
-daemon acknowledgement checks remain authoritative. No page restoration or input
-replay is requested. Duplicate clicks are fenced. Unmount after acquisition or
-failed compound return best-effort releases the lease without resuming the agent.
-Transient status errors are separate from control failures and clear on successful
-polling. Mounted tests cover these decisions and status recovery.
-
-### Focused recovery presentation
-
-The ended/restarted/interrupted screen shows one primary action: Return to agent
-when recoverable private authority remains, otherwise Reopen saved pages after a
-restart or Take control for an interrupted recoverable workspace. Dismiss (or
-Conversation in standalone mode) remains visible. More options reveals alternate
-recovery, restoration limitations, thread close and the existing confirmed Bud-wide
-Stop/Reset controls; their status polling mounts only while options are expanded.
-Missing sessions offer navigation only. Existing authorization and control flows
-are unchanged; mounted tests cover primary return and explicit alternate recovery.
+An authorized `empty` media marker clears pixels, focus, queued input and target
+selection while retaining the socket and current authority. Show No page open;
+the agent may explicitly open a URL. No saved-page action or private takeover is
+required to repair a runtime restart.
 
 ## Mobile host mode (Phase 3b)
 

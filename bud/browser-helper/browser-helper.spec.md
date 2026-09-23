@@ -14,7 +14,8 @@ or CDP is accepted. The Rust browser manager owns serialization and authority.
   `ariaSnapshotJSON({mode:'ai'})` and `aria-ref` selectors from that snapshot.
   Reference locators retain the observed iframe ancestry; a document-root selector
   prevents Playwright from routing cached references through obsolete frame IDs.
-  Scoped observations inherit their source frame. No mutation is retried.
+  Scoped observations inherit their source frame. Bud never replays mutations;
+  Playwright may internally retry actionability/input within a click invocation.
 - `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context. Removes empty row leaves and redundant single-cell table nesting while preserving real/ambiguous table structure. Text uses one-space depth and `[opaque-reference]` annotations; identities and map lookup are unchanged.
 - `compact.test.mjs`: structure/state preservation (including blank cells and named containers), deep hierarchy, pagination, Unicode and limits.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
@@ -67,3 +68,31 @@ serializer follow-up. Nested 30-story fixture drops from three pages to two;
 all-30-in-8-KiB is not claimed. Restart the helper/daemon to load this change.
 
 Temporary failure diagnostics (`diagnostics.mjs`, privacy regression in `diagnostics.test.mjs`) send only a fixed stage index and boolean Playwright error signals over private helper stdio. Rust logs these without returning diagnostics to the model; raw exception text is never emitted.
+
+## Click targeting and link destinations
+
+- `click-point.mjs`: bounded pre-click geometry selection on the exact resolved
+  element; 25 jittered points plus 25 grid centers per pass, at most two passes
+  sharing the three-second action budget. Clips visible rects, excludes nested
+  controls/media for links, traverses slots/open shadow roots and checks ancestor
+  iframe hits (including cross-origin frames). Transforms/zoom or unsupported
+  geometry reject conservatively. Uses CSS padding-box coordinates.
+- `click-point.test.mjs`: disposable Chrome tests for layered cards versus images,
+  same-URL siblings, deterministic fallback/randomness, small/clipped/multiline
+  targets, shadow slots, frames and dynamic overlays.
+- `diagnostics.mjs` / `diagnostics.test.mjs`: fixed failure stage/flags and bounded
+  numeric candidate/point/preparation fields; no page text or raw exception output.
+
+The engine rechecks document/reference freshness after selecting a point, then
+invokes Playwright once with normal actionability checks and no forced click.
+`browser_click_blocked` means preparation found no verified point before this
+click invocation; scrolling may already have changed the page. Later failures
+remain uncertain. Bud does not replay a click, but Playwright may internally
+retry actionability/input; successful dispatch does not prove navigation.
+
+Link URLs are retained exactly as supplied by Playwright, including queries,
+fragments and relative forms. Compact text renders one escaped `url=...`; visible
+DOM nodes retain `url` without duplicate text. URL bytes count toward the existing
+32 KiB serialized observation budget and frozen continuation pages. Form values
+remain excluded. URLs are untrusted evidence, not permission to navigate.
+See [design](../../design/browser-click-targeting-and-link-urls.md).

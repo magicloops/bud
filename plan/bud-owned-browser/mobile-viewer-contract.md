@@ -1,6 +1,6 @@
 # iOS browser handoff: current API and integration reference
 
-Updated 2026-09-22 for the Phase 3b implementation. Companion to
+Updated 2026-09-23 for automatic browser recovery. Companion to
 [Phase 3b](phase-3b-ios-browser-viewer.md). Implementation is local; hosted physical-device
 acceptance and deployment remain outstanding.
 Recheck these source files at the merged implementation revision:
@@ -100,7 +100,6 @@ Allowed operations:
 | `release` | Relinquish the live controller and leave private browser work paused |
 | `return` | Explicit confirmed return to agent; requires current controller and revision |
 | `recover` | Restore the same previously authorized viewer using `recovery_ticket`; never returns to agent |
-| `reopen` | Acquire private control, then explicitly reopen eligible saved URLs; zero restored pages is valid |
 | `close` | Close this thread's tabs/workspace; not merely dismiss the viewer |
 | `show_window`, `hide_window` | Change window visibility on the Bud host; optional `target_id` for Show; Show takes private control |
 
@@ -108,8 +107,7 @@ The strict body accepts optional `target_id` (1–128 characters) and
 `recovery_ticket` (1–2048). `revision` is a nonnegative integer and is required
 by the request schema even for operations that primarily validate the live lease.
 
-Responses contain public metadata, `can_show_window`, optional `recovery_ticket`,
-and optional `page_recovery:{restored_pages,hints_available}`. They do not carry
+Responses contain public metadata, `can_show_window`, and optional `recovery_ticket`. They do not carry
 all GET fields. Do not clear a pending handoff merely because the control reply
 omits `handoff`; reconcile it from metadata/chat state.
 
@@ -119,10 +117,29 @@ in-memory in the viewer, bound to auth identity/viewer/generation/epoch, and exp
 after 10 minutes. They cannot displace another valid controller or resurrect
 authority after an explicit release/return. Never persist them in app restoration.
 
-The shared web Return action handles a recoverable paused workspace with no live
-lease by explicitly acquiring and then returning, releasing on partial failure.
-Reuse this behavior rather than disabling Return solely because `owns_control`
-is false. Repeated taps must not submit concurrent transitions.
+Return requires current confirmed ownership; do not acquire and return merely to
+repair a restart. A live private browser without this viewer's lease still uses
+normal explicit Take control/proof recovery. Repeated taps cannot race transitions.
+
+## Automatic runtime recovery
+
+An active visible viewer POSTs `/api/browser/sessions/:session_id/ensure` with
+`{viewer_id}` (strict 1 KiB body), under the same scoped cookie, bound UUID, owner
+checks and allowed Origin. Response is public session metadata plus
+`runtime_replaced:boolean`, `recovery_status` (ready/private/restored/partial/empty/
+unavailable), and `private_progress_lost:boolean`. It contains no saved URLs.
+Inventory GETs and hidden/background visits must never call ensure or launch Chrome.
+
+Ensure reuses healthy Chrome and its live private fence. Confirmed process loss
+invalidates old proof/input/media state and restores the last agent-visible URLs,
+including query/fragment, without taking private control. Lost unfinished private
+browsing receives a concise notice. Empty workspaces remain usable; the agent can
+open an explicit URL. Failures use Retry, not Reopen saved pages/Start blank.
+The existing shared hosted viewer implements this; native continues to supply
+stable visit identity and suspend/resume. No new Swift recovery logic or bridge
+command is needed. Old recovery service/daemon pairs are unsupported: deploy the
+matching service/shared web and daemon/add-on together. No new DB migration.
+Version 1 local checkpoints are backed up without import; Chrome sign-ins remain.
 
 ## Media socket
 
@@ -228,11 +245,11 @@ authentication, 403 disallowed Origin, 404 unavailable/foreign resource, general
 | `browser_viewport_other_viewer` | Preserve local scaling; do not fight another viewer's dimensions |
 | `browser_busy` | Show bounded temporary busy state; no blanket automatic mutation retries |
 | `browser_no_previous_page` | Nonfatal “No previous page” |
-| `browser_recovery_unavailable`, `browser_recovery_uncertain` | Explicit inspect/recovery choice; do not assume no page opened after uncertain outcome |
-| `runtime_status=daemon_restarted` | Old live page identity is invalid; saved-page reopening is explicit and may restore zero pages |
+| `browser_recovery_unavailable`, `browser_recovery_uncertain` | Show truthful unavailable/uncertain state; allow explicit new URL and never replay uncertain mutations |
+| `runtime_status=daemon_restarted` | Active viewer ensures the workspace; only confirmed runtime replacement releases old private authority |
 | `browser_not_found` / 404 | Clear sensitive state, stop retrying this session, return to conversation |
 
-Use a single relevant primary action with details under More. Distinguish
+Use Retry for a genuine ensure failure; otherwise use normal live controls. Distinguish
 “Reconnecting,” “Private control,” “Paused,” “No page open,” and “Unavailable.”
 Screenshot transport loss does not prove Chrome closed or private control ended.
 
@@ -254,9 +271,8 @@ Screenshot transport loss does not prove Chrome closed or private control ended.
 - Persisted `browser_viewer_visit` stores hashed secrets, owner/tenant, workspace,
   viewer UUID and expiry. Migration `0041_demonic_stephen_strange.sql` creates its
   composite workspace/owner FK and indexes. Visits survive service restart.
-- Scoped cookies authenticate only the bound workspace's metadata/control/input/
-  viewport/media. Control allowlist: acquire, renew, release, return, recover,
-  reopen. Close, host window controls, Bud Stop/Reset and account/chat APIs are
+- Scoped cookies authenticate only the bound workspace's metadata/ensure/control/input/
+  viewport/media. Control allowlist: acquire, renew, release, return, recover. Close, host window controls, Bud Stop/Reset and account/chat APIs are
   excluded. Wrong workspace/viewer returns 404; disallowed control returns 403.
 - Resolve rechecks thread/Bud ownership, soft deletion, workspace closure and
   resource retirement, including media idle authorization. Minting never acquires.
@@ -264,8 +280,8 @@ Screenshot transport loss does not prove Chrome closed or private control ended.
   Offline sign-out is bounded by the remaining 15-minute credential validity;
   server lease expiry preserves private intent. Native privacy cover is immediate.
 
-Run migration before the updated service/shared web, then rebuild mobile. No new
-Bud↔Service frame, SSE family or daemon release is required for this slice.
+Run migration before the updated service/shared web, then rebuild mobile. The original visit-authentication slice adds no daemon frame; the automatic
+recovery contract above now requires matching service/daemon/shared web versions.
 
 ## Native ↔ hosted viewer bridge (implemented)
 

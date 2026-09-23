@@ -1,5 +1,5 @@
 import { resolveBrowserColor } from "./color.js";
-import { BrowserResourceRepository } from "./resource-repository.js";
+import { BrowserResourceRepository, type BrowserResource } from "./resource-repository.js";
 import { ulid } from "ulid";
 import type { Pool } from "pg";
 import { pool } from "../db/client.js";
@@ -142,6 +142,45 @@ export class BrowserControlRepository {
     } finally {
       client.release();
     }
+  }
+
+  /** Active demand only. Inventory reads never call this method. */
+  async prepareEnsure(owner: string, id: string, boot: string, explicitUrl: boolean) {
+    const initial = await this.get(owner, id);
+    return new BrowserResourceRepository(this.database).withLocked(owner, initial.bud_id, async (client, resource) => {
+      if (resource.desired_state !== "open") throw new BrowserError("browser_stopped");
+      await client.query("select thread_id from thread where thread_id=$1 and created_by_user_id=$2 for update", [initial.thread_id,owner]);
+      const current = (await client.query<BrowserSession>(`${owned} and s.id=$2 for update of s`, [owner,id])).rows[0];
+      if (!current || current.desired_state !== "open") throw new BrowserError("browser_not_found");
+      if (current.boot_id !== boot) {
+        await client.query(`update browser_session set generation=$2,boot_id=$3,
+          control_epoch=control_epoch+1,sequence=sequence+1,pending_until=null,
+          invocation_id=null,invocation_fence=null,updated_at=now() where id=$1`, [id,ulid(),boot]);
+      }
+      await client.query("update browser_session set control_epoch=greatest(1,control_epoch),sequence=greatest(1,sequence) where id=$1",[id]);
+      const session = (await client.query<BrowserSession>(`${owned} and s.id=$2`,[owner,id])).rows[0];
+      const request = this.command(session, {action:"ensure", explicit_url:explicitUrl});
+      request.sequence = Math.max(1,request.sequence);
+      request.control_epoch = Math.max(1,request.control_epoch);
+      request.browser_color = await resolveBrowserColor(client, owner, session.bud_id);
+      return {session,resource,request};
+    });
+  }
+
+  acknowledgeRecovery(resource: BrowserResource, session: BrowserSession) {
+    return new BrowserResourceRepository(this.database).acknowledgeRecovery(resource,session);
+  }
+
+  async ensured(owner: string, session: BrowserSession) {
+    await new BrowserResourceRepository(this.database).withLocked(owner, session.bud_id, async (client, resource) => {
+      if (resource.desired_state !== "open") throw new BrowserError("browser_stopped");
+      const updated = await client.query(`update browser_session s set state='ready',updated_at=now()
+        from thread t where s.id=$1 and s.generation=$2 and s.created_by_user_id=$3
+        and s.desired_state='open' and s.closed_at is null and t.thread_id=s.thread_id
+        and t.created_by_user_id=$3 and t.deleted_at is null returning s.id`, [session.id,session.generation,owner]);
+      if (!updated.rowCount) throw new BrowserError("browser_not_found");
+    });
+    return this.get(owner, session.id);
   }
 
   async prepare(

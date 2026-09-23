@@ -318,6 +318,18 @@ export async function registerBrowserRoutes(
         can_take_control: control.canTakeControl(session),
       };
     });
+    routes.post("/api/browser/sessions/:session_id/ensure", {bodyLimit:1024}, async (request,reply) => {
+      const actor = await viewer(request,reply);
+      if (!actor) return;
+      const body = z.object(bodyBase).strict().parse(request.body);
+      identity(actor,body.viewer_id);
+      const result = await control.ensure(actor.userId,sessionId(request));
+      const session = result.session;
+      return {...publicSession(session,control.viewportAvailable(session),control.captureAvailable(session),
+        control.historyAvailable(session),control.agentViewportAvailable(session),control.runtimeStatus(session)),
+        runtime_replaced:result.runtime_replaced,recovery_status:result.recovery_status,
+        private_progress_lost:result.private_progress_lost};
+    });
     routes.post(
       "/api/browser/sessions/:session_id/control",
       { bodyLimit: 4096 },
@@ -337,7 +349,6 @@ export async function registerBrowserRoutes(
               "return",
               "close",
               "recover",
-              "reopen",
               "show_window",
               "hide_window",
             ]),
@@ -361,15 +372,14 @@ export async function registerBrowserRoutes(
                 sessionId(request),
                 body.revision,
               )
-            : body.operation === "acquire" || body.operation === "reopen"
-              ? await control.acquire(...args, body.revision, body.operation === "reopen")
+            : body.operation === "acquire"
+              ? await control.acquire(...args, body.revision)
               : body.operation === "renew"
                 ? await control.renew(...args)
                 : body.operation === "release"
                   ? await control.release(...args)
                   : await control.returnToAgent(...args, body.revision);
         return {
-          ...("page_recovery" in result ? { page_recovery: result.page_recovery } : {}),
           can_show_window: control.windowAvailable(result),
           ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result),
             control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),

@@ -61,6 +61,7 @@ test(
       "cancel",
       "user-tool",
       "return-control",
+      "restart",
       "stop-browser",
     ]) {
       const returnControl = provider === "return-control" || provider === "user-tool";
@@ -241,6 +242,13 @@ test(
         await repo.finish(chatting, "succeeded", "done");
         continue;
       }
+      if (provider === "restart") {
+        await pool.query("update browser_session set state='interrupted' where id=$1",[sessionId]);
+        await repo.recoverExpired("alice");
+        assert.equal((await repo.findForThread("alice",thread,lease.id))?.status,"waiting_for_user");
+        const candidate=await controls.prepareEnsure("alice",sessionId,"new-boot",false);
+        await controls.acknowledgeRecovery(candidate.resource,candidate.session);
+      } else {
       let returning = await controls.prepare(
         "alice",
         sessionId,
@@ -253,6 +261,7 @@ test(
       returning = await controls.prepare("alice", sessionId, "boot", returning.session.revision,
         "finish", { action: "control", operation: "finish_return" }, "resume_pending");
       await controls.returned("alice", sessionId, returning.session.revision);
+      }
       // Return does not run two model loops in the same conversation.
       assert.equal(await repo.claim("while-chatting", "alice"), null);
       await repo.finish(chatting, "succeeded", "done");
@@ -283,7 +292,8 @@ test(
           );
         else {
           assert.equal(results[0].clientId, clientId);
-          assert.equal(JSON.parse(results[0].content).ok, true);
+          assert.equal(JSON.parse(results[0].content).ok, provider !== "restart");
+          if(provider === "restart") assert.equal(JSON.parse(results[0].content).error,"browser_handoff_interrupted");
         }
         assert.match(results[1].content, /not_executed_due_to_browser_handoff/);
         for (const result of userTakeover ? results : results.slice(1)) {
@@ -301,7 +311,7 @@ test(
             assert.equal(blocks[0]?.type === "tool_result" && blocks[0].content, result.content);
           }
           assert.deepEqual(payload.handoff, {
-            status: "returned", control_state: "agent", private_content: false,
+            status: provider === "restart" ? "interrupted" : "returned", control_state: "agent", private_content: false,
           });
         }
       }

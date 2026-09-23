@@ -49,5 +49,5 @@ export class BrowserMobileAuth {
   }
 }
 export function scopedBrowserOperation(operation: string) {
-  return ["acquire","renew","release","return","recover","reopen"].includes(operation);
+  return ["acquire","renew","release","return","recover"].includes(operation);
 }

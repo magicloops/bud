@@ -9,8 +9,8 @@ import { BrowserResourceRepository } from "./resource-repository.js";
 import { BrowserMobileAuth, scopedBrowserOperation } from "./mobile-auth.js";
 
 test("mobile control scope excludes destructive and host-window operations", () => {
-  for (const op of ["acquire", "renew", "release", "return", "recover", "reopen"]) assert.ok(scopedBrowserOperation(op));
-  for (const op of ["close", "reset", "stop", "show_window", "hide_window", "unknown"]) assert.equal(scopedBrowserOperation(op), false);
+  for (const op of ["acquire", "renew", "release", "return", "recover"]) assert.ok(scopedBrowserOperation(op));
+  for (const op of ["reopen", "close", "reset", "stop", "show_window", "hide_window", "unknown"]) assert.equal(scopedBrowserOperation(op), false);
 });
 
 test("mobile visit: one-use grant, persistent identity, owner/secret checks, expiry and revocation", {

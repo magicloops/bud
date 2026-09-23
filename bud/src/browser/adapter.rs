@@ -86,6 +86,8 @@ pub struct Browser {
     ownership: Arc<Mutex<HashMap<String, String>>>,
     recovery: Arc<Mutex<super::recovery::Recovery>>,
     saved_pages: Option<super::recovery::Pages>,
+    recovery_uncertain: bool,
+    recovery_status: Option<&'static str>,
     sessions: HashMap<String, String>,
     focus: Option<Focus>,
     viewport: Option<Viewport>,
@@ -293,6 +295,8 @@ impl Browser {
             ownership: Arc::default(),
             recovery,
             saved_pages: None,
+            recovery_uncertain: false,
+            recovery_status: None,
             sessions: HashMap::new(),
             focus: None,
             viewport: None,
@@ -406,7 +410,7 @@ impl Browser {
             .map(|target| Target {
                 target_id: target["targetId"].as_str().unwrap_or_default().into(),
                 title: bounded(target["title"].as_str().unwrap_or_default(), 256),
-                url: bounded(target["url"].as_str().unwrap_or_default(), 2048),
+                url: target["url"].as_str().unwrap_or_default().to_owned(),
             })
             .collect())
     }
@@ -890,8 +894,7 @@ impl Browser {
             scale *= 0.5;
         }
         timing.stage = "document_after";
-        if !image_fits
-            || timed(&mut timing.document_ms, self.document(&session)).await? != document
+        if !image_fits || timed(&mut timing.document_ms, self.document(&session)).await? != document
         {
             bail!("browser_frame_discarded");
         }
@@ -1152,46 +1155,130 @@ impl Browser {
         self.recovery.lock().unwrap().forget(workspace)
     }
 
-    /// Checkpoint only at operation/shutdown boundaries; identical hints do not write.
+    /// The manager holds the page lock and disclosure fence for this entire write.
     pub(super) async fn save_pages(&mut self, selected: Option<&str>) -> Result<()> {
-        if self.workspace.is_empty() || self.saved_pages.is_some() {
-            return Ok(());
+        if let Some(pages) = self.checkpoint_pages(selected, false).await? {
+            self.recovery
+                .lock()
+                .unwrap()
+                .save(&self.workspace, Some(pages))?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn checkpoint_pages(
+        &mut self,
+        selected: Option<&str>,
+        disclose: bool,
+    ) -> Result<Option<super::recovery::Pages>> {
+        if self.workspace.is_empty()
+            || (!disclose
+                && (self.saved_pages.is_some()
+                    || self.recovery_uncertain
+                    || matches!(self.recovery_status, Some("unavailable" | "partial"))))
+        {
+            return Ok(None);
         }
         let mut targets = self.targets().await?;
-        targets.retain(|t| super::recovery::eligible(&t.url));
         targets.sort_by(|a, b| a.target_id.cmp(&b.target_id));
-        let pages = (!targets.is_empty()).then(|| super::recovery::Pages {
+        // Native closure retains fallback; logical close explicitly forgets it.
+        if targets.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(super::recovery::Pages {
             selected: targets
                 .iter()
                 .position(|t| Some(t.target_id.as_str()) == selected)
                 .unwrap_or(0),
-            urls: targets.into_iter().map(|t| t.url).collect(),
-        });
-        self.recovery.lock().unwrap().save(&self.workspace, pages)
+            urls: targets
+                .into_iter()
+                .map(|t| {
+                    if super::recovery::storable(&t.url) {
+                        t.url
+                    } else {
+                        String::new()
+                    }
+                })
+                .collect(),
+        }))
     }
 
-    /// Explicit human recovery. Validate before consuming hints; uncertain mutations
-    /// remain consumed and are never replayed by subsequent recovery requests.
-    pub(super) async fn reopen_pages(&mut self) -> Result<(String, usize, bool)> {
-        let available = self.recovery.lock().unwrap().available();
-        if self.saved_pages.is_none() {
-            let target = self.ensure_page(None).await?;
-            return Ok((target, 0, available));
+    pub(super) fn save_checkpoint_batch(
+        &mut self,
+        changes: Vec<(String, Option<super::recovery::Pages>)>,
+    ) -> Result<()> {
+        self.recovery.lock().unwrap().save_batch(changes)
+    }
+
+    #[cfg(test)]
+    pub(super) fn checkpoint_for_test(&self) -> Option<super::recovery::Pages> {
+        self.recovery.lock().unwrap().get(&self.workspace)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn same_document_for_test(
+        &mut self,
+        target: &str,
+        expression: &str,
+    ) -> Result<()> {
+        let session = self.session(target).await?;
+        self.cdp
+            .call(
+                Some(&session),
+                "Runtime.evaluate",
+                json!({"expression":expression}),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub(super) fn checkpoint_endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// One reconstruction attempt per live workspace. Keep durable hints intact.
+    /// A lost create/navigation acknowledgement is never automatically replayed.
+    pub(super) async fn restore_pages(
+        &mut self,
+        explicit_url: bool,
+    ) -> Result<(Option<String>, usize, &'static str)> {
+        if explicit_url {
+            self.saved_pages = None;
+            self.recovery_uncertain = false;
+            self.recovery_status = None;
+            return Ok((None, 0, "empty"));
         }
-        let blanks = self.targets().await?;
-        if blanks.len() > 1 || blanks.first().is_some_and(|t| t.url != "about:blank") {
-            bail!("browser_recovery_unavailable");
+        if self.recovery_uncertain {
+            bail!("browser_recovery_uncertain");
         }
-        self.recovery.lock().unwrap().save(&self.workspace, None)?;
-        let pages = self.saved_pages.take().unwrap();
+        if self.recovery_status == Some("unavailable") {
+            return Ok((None, 0, "unavailable"));
+        }
+        let existing = self.targets().await?;
+        if !existing.is_empty() {
+            return Ok((None, 0, "ready"));
+        }
+        if !self.recovery.lock().unwrap().available() {
+            return Ok((None, 0, "unavailable"));
+        }
+        let Some(pages) = self.saved_pages.take() else {
+            return Ok((None, 0, "empty"));
+        };
+        self.recovery_uncertain = true;
         let mut selected = None;
+        let mut restored = 0;
         for (index, url) in pages.urls.iter().enumerate() {
+            if !super::recovery::eligible(url) {
+                continue;
+            }
+            // Bind a blank page before navigation, so a navigation timeout leaves
+            // a known owned target rather than creating another copy on retry.
             let result = self
                 .cdp
                 .call(
                     None,
                     "Target.createTarget",
-                    json!({"url":url,"background":true}),
+                    json!({"url":"about:blank","background":true}),
                 )
                 .await?;
             let target = result["targetId"]
@@ -1202,26 +1289,51 @@ impl Browser {
                 .lock()
                 .unwrap()
                 .insert(target.clone(), self.workspace.clone());
+            self.navigate(&target, url).await?;
             if index == pages.selected {
                 selected = Some(target);
             }
-        }
-        if let Some(blank) = blanks.first() {
-            self.cdp
-                .call(
-                    None,
-                    "Target.closeTarget",
-                    json!({"targetId":blank.target_id}),
-                )
-                .await?;
-            self.ownership.lock().unwrap().remove(&blank.target_id);
+            restored += 1;
         }
         self.invalidate_references();
-        Ok((
-            selected.context("browser_recovery_unavailable")?,
-            pages.urls.len(),
-            true,
-        ))
+        self.targets().await?;
+        self.recovery_uncertain = false;
+        let status = if selected.is_none() {
+            "unavailable"
+        } else if restored < pages.urls.len() {
+            "partial"
+        } else {
+            "restored"
+        };
+        self.recovery_status = Some(status);
+        Ok((selected, restored, status))
+    }
+
+    pub(super) fn selection_unavailable(&self) -> bool {
+        self.recovery_status == Some("unavailable")
+    }
+
+    pub(super) fn selected_explicitly(&mut self) {
+        self.recovery_status = None;
+    }
+
+    pub(super) fn disclose_pages(&mut self) {
+        self.saved_pages = None;
+        self.recovery_status = None;
+        self.recovery_uncertain = false;
+    }
+
+    /// A native final-tab close retains a public fallback, but only explicit open
+    /// may recreate it. Viewer ensure and inventory never do so in a live runtime.
+    pub(super) async fn restore_closed_page(&mut self) -> Result<()> {
+        if self.saved_pages.is_none()
+            && !self.recovery_uncertain
+            && !self.selection_unavailable()
+            && self.targets().await?.is_empty()
+        {
+            self.saved_pages = self.recovery.lock().unwrap().get(&self.workspace);
+        }
+        Ok(())
     }
 
     pub fn invalidate_references(&mut self) {
@@ -1406,6 +1518,8 @@ impl Browser {
             ownership: self.ownership.clone(),
             recovery: self.recovery.clone(),
             saved_pages: self.recovery.lock().unwrap().get(id),
+            recovery_uncertain: false,
+            recovery_status: None,
             sessions: HashMap::new(),
             focus: None,
             viewport: None,

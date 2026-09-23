@@ -119,6 +119,48 @@ test(
     assert.equal((await pool.query("select state from browser_session where id=$1", [busy.session_id])).rows[0].state, "interrupted");
     // Restore fixture state to continue testing the unrelated handoff paths.
     await repo.complete(afterRejection, { ok:true, outcome:"completed" });
+    const blocked = await repo.prepare(await next(), "boot", { action: "inspect", operation: "click" });
+    const beforeBlocked = (await pool.query("select * from browser_session where id=$1", [blocked.session_id])).rows[0];
+    await repo.complete(blocked, { ok:false, outcome:"rejected", error:"browser_click_blocked" });
+    const afterBlocked = (await pool.query("select * from browser_session where id=$1", [blocked.session_id])).rows[0];
+    assert.equal(afterBlocked.state, "ready");
+    assert.equal(afterBlocked.pending_until, null);
+    for (const key of ["id", "generation", "control_epoch", "control_state", "private_content", "revision", "closed_at"])
+      assert.deepEqual(afterBlocked[key], beforeBlocked[key]);
+    const uncertain = { ok: false, outcome: "unknown" as const, error: "browser_outcome_unknown" };
+    for (const command of [
+      { action: "inspect", operation: "click" },
+      { action: "navigate", url: "https://example.com" },
+      { action: "click", reference: "ref" },
+      { action: "insert_text", text: "example" },
+    ]) {
+      const intent = await next();
+      const request = await repo.prepare(intent, "boot", command);
+      const before = (await pool.query("select * from browser_session where id=$1", [request.session_id])).rows[0];
+      await repo.complete(request, uncertain);
+      const after = (await pool.query("select * from browser_session where id=$1", [request.session_id])).rows[0];
+      assert.equal(after.state, "ready");
+      assert.equal(after.pending_until, null);
+      for (const key of ["id", "generation", "control_epoch", "control_state", "private_content", "revision", "closed_at"])
+        assert.deepEqual(after[key], before[key]);
+      assert.deepEqual(uncertain, { ok: false, outcome: "unknown", error: "browser_outcome_unknown" });
+      await assert.rejects(repo.prepare(intent, "boot", command), /already_dispatched/);
+      const observe = await repo.prepare(await next(), "boot", { action: "inspect", operation: "snapshot" });
+      assert.equal(observe.session_id, request.session_id);
+      await repo.complete(observe, { ok: true, outcome: "completed" });
+      // A late completion cannot change the newer request's lifecycle state.
+      await repo.complete(request, { ok: false, outcome: "rejected", error: "browser_interrupted" });
+      assert.equal((await pool.query("select state from browser_session where id=$1", [request.session_id])).rows[0].state, "ready");
+      await repo.complete(observe, { ok: false, outcome: "rejected", error: "browser_interrupted" });
+      assert.equal((await pool.query("select state from browser_session where id=$1", [request.session_id])).rows[0].state, "interrupted");
+      await repo.complete(observe, uncertain);
+      assert.equal((await pool.query("select state from browser_session where id=$1", [request.session_id])).rows[0].state, "interrupted");
+      await repo.complete(observe, { ok: true, outcome: "completed" });
+    }
+    const uncertainOpen = await repo.prepare(await next(), "boot", { action: "open" });
+    await repo.complete(uncertainOpen, uncertain);
+    assert.equal((await pool.query("select state from browser_session where id=$1", [uncertainOpen.session_id])).rows[0].state, "interrupted");
+    await repo.complete(uncertainOpen, { ok: true, outcome: "completed" });
     const controls = new BrowserControlRepository(pool);
     assert.equal((await controls.list("bob", thread)).length, 0);
     await assert.rejects(controls.get("bob", r.session_id), /not_found/);
@@ -265,6 +307,11 @@ test(
     const close = await repo.prepareCleanup(candidates[0], "another-boot");
     assert.ok(close);
     assert.ok(close.control_epoch > r.control_epoch);
+    await repo.complete(close, uncertain);
+    const uncertainClose = (await pool.query("select state,desired_state,closed_at from browser_session where id=$1", [close.session_id])).rows[0];
+    assert.equal(uncertainClose.state, "interrupted");
+    assert.equal(uncertainClose.desired_state, "closed");
+    assert.equal(uncertainClose.closed_at, null);
     await repo.complete(close, { ok: true, outcome: "completed" });
     assert.equal((await repo.cleanupCandidates()).length, 0);
     // Claim rotation quarantines even the same owner's existing profile.

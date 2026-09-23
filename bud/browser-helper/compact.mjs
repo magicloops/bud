@@ -63,7 +63,7 @@ export function compactNodes(nodes) {
 
 function line(node) {
   const state = states.filter(key => node[key] !== undefined).map(key => `${key}=${node[key]}`).join(' ');
-  return `${' '.repeat(node.depth)}${node.role}${node.name ? ` ${JSON.stringify(node.name)}` : ''}${node.text ? `: ${JSON.stringify(node.text)}` : ''}${state ? ` [${state}]` : ''}${node.reference ? ` [${node.reference}]` : ''}`;
+  return `${' '.repeat(node.depth)}${node.role}${node.name ? ` ${JSON.stringify(node.name)}` : ''}${node.text ? `: ${JSON.stringify(node.text)}` : ''}${state ? ` [${state}]` : ''}${node.reference ? ` [${node.reference}]` : ''}${node.url !== undefined ? ` url=${JSON.stringify(node.url)}` : ''}`;
 }
 
 export function compactPage(s, offset) {

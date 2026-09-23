@@ -37,7 +37,7 @@ function fixture() {
   const requests: BrowserCommand[] = [];
   let fitReply: BrowserBackendResult | undefined;
   let windowReply: BrowserBackendResult | undefined;
-  let reopenReply: BrowserBackendResult | undefined;
+  let ensureReply: BrowserBackendResult | Promise<BrowserBackendResult> | undefined;
   let inputReply: Promise<BrowserBackendResult> | undefined;
   let renewalReply: Promise<BrowserBackendResult> | undefined;
   const repository = {
@@ -54,6 +54,14 @@ function fixture() {
     async requestUser() {
       return { session: { ...session }, created: true };
     },
+    async prepareEnsure(owner:string, _id:string, boot:string, explicitUrl:boolean) {
+      if(owner !== "alice") throw new BrowserError("browser_not_found");
+      return {session:{...session},resource:{...session},request:{command:{action:"ensure",explicit_url:explicitUrl}}};
+    },
+    async acknowledgeRecovery() {
+      session={...session,control_state:"agent",private_content:false,revision:session.revision+1,browser_epoch:session.browser_epoch+1};
+    },
+    async ensured() { return {...session}; },
     async prepare(
       _owner: string,
       _id: string,
@@ -117,7 +125,7 @@ function fixture() {
   const dispatch = async (_carrier: BrowserCarrier, request: BrowserCommand): Promise<BrowserBackendResult> => {
       requests.push(request);
       if (request.command.action === "native_window" && windowReply) return windowReply;
-      if (request.command.action === "reopen_pages" && reopenReply) return reopenReply;
+      if (request.command.action === "ensure" && ensureReply) return ensureReply;
       if (request.command.action === "fit_viewport" && fitReply) return fitReply;
       if (request.command.operation === "renew" && renewalReply) return renewalReply;
       if (request.command.action === "human_input" && inputReply) return inputReply;
@@ -130,7 +138,7 @@ function fixture() {
       return {
         ok: true,
         outcome: "completed",
-        data: { window_acknowledged: true, pages_reopened: true, control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
+        data: { window_acknowledged: true, ensured: true, runtime_replaced:false, recovery_status:"ready", control_acknowledged: true, viewport_applied: true, viewport_id: "viewport" },
       };
     };
   const control = new BrowserControl(repository, () => carrier, dispatch);
@@ -138,7 +146,7 @@ function fixture() {
     control,
     restart: () => new BrowserControl(repository, () => carrier, dispatch),
     set windowReply(value: BrowserBackendResult) { windowReply = value; },
-    set reopenReply(value: BrowserBackendResult) { reopenReply = value; },
+    set ensureReply(value: BrowserBackendResult | Promise<BrowserBackendResult>) { ensureReply = value; },
     set fitReply(value: BrowserBackendResult) { fitReply = value; },
     set inputReply(value: Promise<BrowserBackendResult>) { inputReply = value; },
     set renewalReply(value: Promise<BrowserBackendResult>) { renewalReply = value; },
@@ -432,30 +440,24 @@ test('signed viewer recovery survives coordinator restart, fences old tickets an
 });
 
 
-test("explicit page recovery takes private control first and never resumes agent work", async () => {
-  const f = fixture();
-  await assert.rejects(f.control.acquire("bob","browser","viewer",1,true), /not_found/);
-  assert.equal(f.requests.length,0);
-  await f.control.acquire("alice","browser","viewer",1,true);
-  assert.deepEqual(f.requests.map(r=>r.command.operation ?? r.command.action),["pause","acquire","reopen_pages","renew"]);
+test("ensure clears private authority only after confirmed runtime replacement", async () => {
+  const f=fixture();
+  await f.control.acquire("alice","browser","viewer",1);
+  await assert.rejects(f.control.ensure("bob","browser"),/not_found/);
+  await f.control.ensure("alice","browser");
   assert.equal(f.session.private_content,true);
-  assert.equal(f.returned,0);
   assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
+  f.carrier.bootId="new-boot";
+  f.ensureReply={ok:false,outcome:"rejected",error:"browser_profile_recovery_required"};
+  await assert.rejects(f.control.ensure("alice","browser"),/profile_recovery_required/);
+  assert.equal(f.session.private_content,true);
+  f.ensureReply={ok:true,outcome:"completed",data:{ensured:true,runtime_replaced:true,recovery_status:"restored"}};
+  const result=await f.control.ensure("alice","browser");
+  assert.equal(result.private_progress_lost,true);
+  assert.equal(f.session.private_content,false);
+  assert.equal(f.control.ownsControl("alice","browser","viewer"),false);
+  assert.equal(f.returned,0,"restart is not a user return");
 });
-
-test("unknown or unavailable page recovery is not retried and leaves private state paused", async () => {
-  for (const outcome of ["unknown","rejected"] as const) {
-    const f = fixture();
-    f.reopenReply = {ok:false,outcome,error:"browser_recovery_unavailable"};
-    await assert.rejects(f.control.acquire("alice","browser","viewer",1,true), /browser_recovery_/);
-    assert.equal(f.requests.filter(r=>r.command.action==="reopen_pages").length,1);
-    assert.equal(f.session.private_content,true);
-    assert.equal(f.session.control_state,"paused");
-    assert.equal(f.control.ownsControl("alice","browser","viewer"),false);
-    assert.equal(f.returned,0);
-  }
-});
-
 
 test("native reveal takes private authority first; hide preserves it and return hides before releasing", async () => {
   const f = fixture(); f.carrier.nativeWindow = true;
@@ -496,23 +498,6 @@ test("unsupported native windows cannot acquire control or dispatch", async () =
 });
 
 
-test("zero-page recovery installs a renewable controller and reports unreadable hints separately", async () => {
-  for (const available of [true, false]) {
-    const f = fixture();
-    f.reopenReply = { ok: true, outcome: "completed", data: {
-      pages_reopened: true, restored_pages: 0, recovery_hints_available: available,
-    } };
-    const acquired = await f.control.acquire("alice", "browser", "viewer", 1, true);
-    assert.deepEqual(acquired.page_recovery, { restored_pages: 0, hints_available: available });
-    assert.equal(f.control.ownsControl("alice", "browser", "viewer"), true);
-    await f.control.renew("alice", "browser", "viewer");
-    assert.equal(f.returned, 0);
-    await f.control.returnToAgent("alice", "browser", "viewer", f.session.revision);
-    assert.equal(f.returned, 1);
-  }
-});
-
-
 test("interrupted open workspaces allow explicit takeover but closed or offline ones do not", () => {
   const f = fixture();
   f.session.state = "interrupted";
@@ -536,4 +521,20 @@ test("renew resolves ownership before consulting controller state", async () => 
     assert.equal(f.requests.length, count);
     assert.equal(f.control.ownsControl("alice", "browser", "viewer"), true);
   }
+});
+
+
+test("concurrent ensures share a single recovery; uncertain acknowledgements keep privacy", async () => {
+  const f = fixture();
+  await f.control.acquire("alice", "browser", "viewer", 1);
+  let finish!: (result: BrowserBackendResult) => void;
+  f.ensureReply = new Promise(resolve => { finish = resolve; });
+  const first = f.control.ensure("alice", "browser");
+  const second = f.control.ensure("alice", "browser");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.requests.filter(r => r.command.action === "ensure").length, 1);
+  finish({ok:false, outcome:"unknown", error:"browser_outcome_unknown"});
+  await Promise.all([assert.rejects(first, /recovery_uncertain/), assert.rejects(second, /recovery_uncertain/)]);
+  assert.equal(f.session.private_content, true);
+  assert.equal(f.returned, 0);
 });

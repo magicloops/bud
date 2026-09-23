@@ -12,12 +12,14 @@ Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
 test('mobile suspension fences a late takeover and resumes passively with stable viewer identity',async()=>{
  const original=globalThis.fetch, intervals=globalThis.setInterval, clear=globalThis.clearInterval;
  const ops:string[]=[], identities:string[]=[];
+ let ensures=0;
  let acquired!:(r:Response)=>void;
  class Canvas {frame=null;close(){} }
  Object.assign(globalThis,{__mobileCanvas:Canvas});
  globalThis.setInterval=(()=>12345) as typeof setInterval;globalThis.clearInterval=(()=>{}) as typeof clearInterval;
  const metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:'agent',revision:1,can_view:true,can_resize_viewport:true,can_resize_agent_viewport:true};
  globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/ensure')) { ensures++; return Response.json(metadata); }
   assert.ok(!String(url).endsWith('/viewport'),'no fit before a displayed frame');
   if(String(url).endsWith('/control')){const body=JSON.parse(String(init?.body));ops.push(body.operation);identities.push(body.viewer_id);
    if(body.operation==='acquire')return new Promise(resolve=>{acquired=resolve});
@@ -29,11 +31,15 @@ test('mobile suspension fences a late takeover and resumes passively with stable
  const props={sessionId:'browser',mobile:true,hostViewerId:'stable-viewer',embedded:true};
  const canvas=Object.assign(new EventTarget(),{style:{},setPointerCapture(){}});
  try{
-  await act(async()=>{view=create(createElement(BrowserViewer,{...props,active:true}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:null})});
+  await act(async()=>{view=create(createElement(BrowserViewer,{...props,active:false}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:null})});
+  assert.equal(ensures,0,'hidden visit must not ensure or launch Chrome');
+  await act(async()=>view.update(createElement(BrowserViewer,{...props,active:true})));
+  assert.equal(ensures,1);
   await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Take control'))!.props.onClick());
   await act(async()=>view.update(createElement(BrowserViewer,{...props,active:false})));
   await act(async()=>acquired(Response.json({...metadata,control_state:'human_private',revision:2,can_view:false})));
   assert.deepEqual(ops,['acquire','release']);
+  assert.equal(ensures,1,'suspension must not launch another recovery');
   assert.ok(view.root.findByType('textarea').props.disabled);
   await act(async()=>view.update(createElement(BrowserViewer,{...props,active:true})));
   assert.deepEqual(ops,['acquire','release'],'foreground must not reacquire or return');
@@ -57,6 +63,7 @@ test('mobile fits the phone surface while agent-controlled, stops on suspension 
  globalThis.ResizeObserver=class {constructor(callback:()=>void){measure=callback}observe(){}disconnect(){}} as unknown as typeof ResizeObserver;
  const metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:'agent',revision:1,can_view:true,can_resize_viewport:true,can_resize_agent_viewport:true};
  globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/ensure')) return Response.json(metadata);
   if(init?.method==='POST'){
    writes.push({path:String(url),body:JSON.parse(String(init.body))});
    assert.ok(String(url).endsWith('/viewport'),'fitting must not acquire control');
