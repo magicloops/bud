@@ -1,10 +1,10 @@
-// Private, serial stdio protocol. Never expose an evaluate/CDP surface to agents.
+// Private, serial stdio protocol. REPL evaluation is frame-scoped; raw CDP remains private.
 import { createInterface } from 'node:readline';
 import { Engine } from './engine.mjs';
 import { failureDiagnostic } from './diagnostics.mjs';
 let engine;
 for await (const line of createInterface({ input: process.stdin })) {
-  if (Buffer.byteLength(line) > 32 * 1024) process.exit(1);
+  if (Buffer.byteLength(line) > 512 * 1024) process.exit(1);
   try {
     const command = JSON.parse(line);
     if (!engine) {

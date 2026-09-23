@@ -3681,3 +3681,130 @@ schema change. Existing owner/workspace/document/epoch/private-control checks
 apply to URL disclosure and clicking. Deploy updated service with the rebuilt
 daemon and prepared helper; no mixed-version compatibility path is added. Native
 mobile needs no release. See [design](../design/browser-click-targeting-and-link-urls.md).
+
+## Browser REPL runtime foundation (Phases 1–3)
+
+The daemon accepts `request.command:{action:"exec",code:string}` within the
+existing version-1 browser envelope, for an already allocated workspace. Code is
+nonempty UTF-8, at most 64 KiB. Phase 2 advertises the REPL capability and
+exposes the typed facade through a development-only catalog selection. Authorized
+`executeCell` requires matching service, daemon and prepared helper builds. The encoded daemon
+command envelope permits 512 KiB for exec only (JSON escaping); other commands
+remain bounded to 24 KiB. Decoded source is still bounded to 64 KiB.
+
+Owner/resource/thread/generation, connection, invocation, deadline and sequence
+checks run before evaluation. One cell owns a workspace-local worker mutex;
+concurrent cells reject `browser_busy`. Admission briefly takes the existing
+page lock; execution releases it and each browser bridge operation reacquires it
+with authority/sequence checks. A duplicate sequence rejects without evaluation;
+the service remains responsible for returning retained durable receipts, not
+redispatching a missing/unknown cell. JavaScript exceptions and operation errors
+after evaluation starts have `outcome:unknown`, never safe-retry semantics.
+
+The private worker protocol is newline JSON over child stdio (no network port):
+`execute {cell_id,code}`, `operation {cell_id,operation_id,command}`,
+`operation_result {cell_id,operation_id,ok,data,error}` and
+`result {cell_id,ok,text,truncated,error?,images?,output_artifact?}`. Worker-to-host
+frames are bounded to 3 MiB, host-to-worker replies to 16 MiB; console
+output uses the explicit-output budget, not the protocol stream. Bridge calls are
+limited to existing agent open/navigate/inspect/click/focus/text operations;
+plus Phase 2 full snapshots, evaluation, frame inventory and ticket-bound image
+emission and Phase 3 owned-tab creation/selection/close and target-bound text.
+Control, lifecycle, media and nested exec are rejected. The daemon supplies
+all authority from the admitted outer request; the worker cannot substitute it.
+This is cooperative trusted host execution, not a security sandbox.
+
+Results add `data.runtime_generation`, `runtime_created`, nullable `reset_reason`,
+`execution_state` (`completed|failed|interrupted|not_executed|unknown`), and up to 32 KiB
+UTF-8 `text`, `truncated` and a separately bounded 2 KiB exception. Not every
+pre-admission rejection has runtime metadata. Silence is `(no output)`; the final
+expression is not printed implicitly. Ordinary exceptions retain variables.
+Reset reasons currently include `worker_exit`, `deadline`, `canceled`,
+`connection_lost`, `takeover_timeout`, `browser_stopped`, `workspace_closed` and
+`interrupted`. Reset is reported on the interrupted result and next fresh runtime.
+
+Pause fences admission and delivery Bud-wide before draining workspace cells.
+Clean cells retain their heap. A single two-second graceful deadline is shared by
+all workspaces; forced termination then waits up to 500 ms for each owned worker's
+exit (bounded workspace count), with a one-second mutex-drain guard. Failure to
+confirm termination returns `browser_repl_stop_unconfirmed` and cannot acknowledge
+private acquisition. A clean but now-fenced completion returns only safe runtime
+and `execution_state` metadata with `output_withheld:true`, never emitted text or
+exception content. Returning control invalidates action references independently
+of retained JavaScript data. The cell deadline is at most 30 seconds and no later
+than the admitted request expiry; active disconnect/cancel interrupts without replay.
+
+The matching worker ships in the existing prepared helper archive. This checkpoint
+changes no web/mobile API or database schema. Phase 2 defaults the non-production provider catalog to REPL
+(`BUD_BROWSER_TOOL_MODE=tools` selects old tools); existing running services are not automatically restarted.
+See [implementation plan](../plan/bud-owned-browser/repl-implementation.md).
+
+Service receipts live in existing `agent_invocation_action.evidence.browser_cell`:
+`code_hash` (SHA-256 UTF-8 source), `request` (authorized identity/sequence/deadline,
+with only `{action:"exec"}` as command), and optional immutable `result`. Identity
+is committed before send. Matching retries return the receipt only after current
+owner/Bud/thread/lease and evidence checks; mismatched source rejects
+`browser_cell_conflict`. Missing results are `unknown`, never resubmitted source.
+The first outcome is retained after takeover/cancel, even if output cannot be
+delivered; stale callers receive only safe execution state and output withholding.
+Action completion preserves the receipt. No new schema or persistence of a JS stack.
+
+Service validates cell output fields and the decoded text/error ceilings within a
+256 KiB serialized result envelope (JSON escaping). A transport failure after send
+adds `execution_state:unknown`; a rejection before send adds `not_executed`.
+A JavaScript exception can have partial effects (`failed`, `outcome:unknown`).
+Local cell success or worker failure does not change Chrome health. Private
+admission uses existing durable handoff records without dispatching code. Return
+resolves parked and trailing cells as `executed:false`, `execution_state:not_executed`
+for fresh planning; cancellation and confirmed restart reuse existing semantics.
+Historical tool pairing works independently of the selected model-facing catalog.
+
+
+### Browser REPL selective observations (Phase 2)
+
+The `browser` capability adds `repl:boolean`, true only when the prepared worker,
+facade and artifact modules exist. The service requires it before dispatching
+`exec`; unsupported peers reject clearly, with no cell execution. Coordinated
+service/daemon/add-on upgrade; no schema migration or viewer protocol change.
+
+The existing browser request envelope optionally carries service-owned
+`repl_images:[{endpoint,ticket}]`, at most two single-use agent-capture uploads.
+These are not tool arguments, code, diagnostics or immutable source receipts.
+Only supported vision models receive slots; existing upload authorization and
+post-operation evidence fences apply independently to each image.
+
+Cell `data` may include `images:[{id,mime_type,expires_at,path?}]` (at most two,
+PNG/JPEG references; no base64) and
+`output_artifact:{path,bytes,truncated}` (opaque UUID `.txt`, at most 1 MiB).
+They remain within the 256 KiB encoded result envelope alongside 32 KiB UTF-8
+text and bounded error/reset metadata. Local output files are worker-lifetime,
+private and capped at 16; there is no service file-read endpoint. Withheld results
+contain neither image nor artifact references.
+
+Full snapshots/evaluation use private daemon/helper stdio, not browser-command
+results: 2 MiB structured node/JSON ceilings, 16 MiB encoded IPC ceiling. Model
+context receives only explicitly written text and emitted images. Provider replay
+hydrates up to eight newest authorized images across observe and exec results.
+
+### Browser REPL interactions (Phase 3)
+
+No new public request, database or viewer contract. Private worker stdio adds
+`action:repl` operations `create_tab` (optional HTTP(S) `url`), `select_tab`,
+`close_tab` and `insert_text` (`text`, nonempty, at most 8192 UTF-8 bytes).
+Except creation, these require an owned `target_id`. The admitted outer cell
+supplies authority; worker-supplied tab IDs never confer ownership.
+
+The facade provides `tabs.create(url?)`, `tab.select()`, `tab.close()`,
+`tab.getByReference(reference)` and `tab.getByRole(role,{name,exact:true,scope?})`.
+Element handles expose click/fill/focus via existing inspect actions and bind an
+observation ID at construction. `tab.scroll(delta_y)` binds the latest observation;
+`tab.insertText(text)` requires a live focus guard on that same tab. New snapshots,
+navigation and control changes invalidate old action evidence independently of
+retained JavaScript/tab identity. Selection is logical, never native activation.
+
+Tab close updates recovery hints and retains the worker even with no tabs left;
+explicit open/create can create a replacement. Workspace close/lifecycle shutdown
+still destroys its worker. Browser errors retain uncertain partial-effect outcomes
+and trigger at most one coalesced viewer refresh, not transport replacement.
+Upgrade the service catalog, rebuilt daemon and prepared helper together; no
+mobile/web build or schema migration is required for these facade methods.

@@ -56,6 +56,9 @@ fn embed_browser_helper() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("browser-helper.tar.gz");
     for file in [
         "main.mjs",
+        "repl-worker.mjs",
+        "repl-api.mjs",
+        "repl-artifacts.mjs",
         "engine.mjs",
         "compact.mjs",
         "click-point.mjs",
@@ -82,6 +85,9 @@ fn embed_browser_helper() -> Result<(), Box<dyn std::error::Error>> {
     builder.follow_symlinks(false);
     for file in [
         "main.mjs",
+        "repl-worker.mjs",
+        "repl-api.mjs",
+        "repl-artifacts.mjs",
         "engine.mjs",
         "compact.mjs",
         "click-point.mjs",

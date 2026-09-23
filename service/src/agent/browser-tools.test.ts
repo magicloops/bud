@@ -1,6 +1,6 @@
-import test, { mock } from "node:test";
+import test, { mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { BROWSER_TOOL_NAMES, BROWSER_CANONICAL_TOOLS, parseBrowserInput } from "./browser-tools.js";
+import { BROWSER_TOOL_NAMES, BROWSER_CANONICAL_TOOLS, BROWSER_REPL_TOOLS, browserReplEnabled, parseBrowserInput } from "./browser-tools.js";
 import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentBackend, type BrowserAgentContext } from "./browser-tool-executor.js";
 import { buildToolArgs, toolNameForConversation, type ExecutedBrowserTool } from "./contracts.js";
 import { AgentModelRunner } from "./model-runner.js";
@@ -13,6 +13,15 @@ import { db } from "../db/client.js";
 import { providerRegistry, type CanonicalTool, type CanonicalMessage, type LLMProvider } from "../llm/index.js";
 import { OpenAIProvider } from "../llm/providers/openai.js";
 
+// Existing-family fixtures select their catalog explicitly; default coverage below
+// removes the override and exercises the development behavior.
+const originalToolMode = process.env.BUD_BROWSER_TOOL_MODE;
+beforeEach(() => { process.env.BUD_BROWSER_TOOL_MODE = 'tools'; });
+afterEach(() => {
+  if (originalToolMode === undefined) delete process.env.BUD_BROWSER_TOOL_MODE;
+  else process.env.BUD_BROWSER_TOOL_MODE = originalToolMode;
+});
+
 const logger = { info() {}, warn() {}, error() {} };
 const context: BrowserAgentContext = { threadId: "thread", budId: "bud", ownerUserId: "alice", turnId: "turn", signal: new AbortController().signal };
 const call = (tool: ExecutedBrowserTool["directive"]["tool"], args: Record<string, unknown> = {}): ExecutedBrowserTool["directive"] => ({ type: "tool_call", tool, args, callId: tool });
@@ -22,7 +31,7 @@ const backend = (overrides: Partial<BrowserAgentBackend> = {}): BrowserAgentBack
   park: async () => ({ handoff_id: "handoff", viewer_path: "/fixture/view" }), ...overrides,
 });
 
-test("browser catalog is explicitly composed and excluded offline; all five names replay", () => {
+test("browser catalog is explicitly composed and excluded offline; both tool families replay", () => {
   const online = buildAgentEnvironmentSnapshot({ budId: "bud", online: true });
   assert.equal(resolveAgentToolsForEnvironment(online).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 0);
   assert.equal(resolveAgentToolsForEnvironment(online, { browser: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 4);
@@ -31,7 +40,7 @@ test("browser catalog is explicitly composed and excluded offline; all five name
   const runner = new AgentModelRunner({} as never, logger as never, false, false);
   const loader = new AgentConversationLoader();
   for (const name of BROWSER_TOOL_NAMES) {
-    const input = name === "browser_request_handoff" ? { reason: "Sign in" } : name === "browser_act" ? { action: "click", reference: "1:2" } : {};
+    const input = name === "browser_exec" ? {code:"repl.write(1)"} : name === "browser_request_handoff" ? { reason: "Sign in" } : name === "browser_act" ? { action: "click", reference: "1:2" } : {};
     const [directive] = runner.extractToolCalls({ id: "r", content: [], stopReason: "tool_use", toolCalls: [{ id: name, name, input }] });
     assert.equal(toolNameForConversation(directive.tool), name);
     assert.deepEqual(buildToolArgs(directive), input);
@@ -49,7 +58,7 @@ test("OpenAI encoding keeps all five strict schemas usable without mutating cano
   let checked = false;
   Reflect.get(provider, "client").responses.create = async (request: any) => {
     checked = true;
-    assert.deepEqual(request.tools.map((tool: any) => tool.name), [...BROWSER_TOOL_NAMES]);
+    assert.deepEqual(request.tools.map((tool: any) => tool.name), BROWSER_CANONICAL_TOOLS.map(t => t.name));
     for (const tool of request.tools) {
       assert.equal(tool.strict, true);
       assert.equal(tool.parameters.additionalProperties, false);
@@ -116,7 +125,7 @@ async function loopFixture(t: any, browser: BrowserToolExecutor, responses: Arra
     getModelCapabilities: () => ({ supportsVision: false, supportsTools: true, supportsReasoning: false, maxContextTokens: 100000, maxOutputTokens: 1000 }) as never,
     async *invoke(messages, tools: CanonicalTool[], _config, signal) {
       requests.push(structuredClone(messages));
-      assert.ok([0, browser.handoffAvailable ? 5 : 4].includes(tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)).length));
+      assert.ok([0, browserReplEnabled() ? (browser.handoffAvailable ? 2 : 1) : (browser.handoffAvailable ? 5 : 4)].includes(tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)).length));
       if (remote) {
         assert.ok(requests.length <= 18, "live fixture exceeded provider-call budget");
         yield* remote.invoke(messages, tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)),
@@ -226,4 +235,44 @@ test("failed handoff does not publish waiting state or execute trailing calls", 
   assert.equal(fixture.requests.length, 1);
   assert.ok(!fixture.events.some(event => event.event === "agent.tool_call"));
   assert.equal(fixture.runtime.getSnapshot("thread").phase, "idle");
+});
+
+
+test("REPL defaults on in development, allows old-tool comparison and stays disabled in production", t => {
+  const mode=process.env.BUD_BROWSER_TOOL_MODE, env=process.env.NODE_ENV;
+  t.after(()=>{ if(mode===undefined) delete process.env.BUD_BROWSER_TOOL_MODE; else process.env.BUD_BROWSER_TOOL_MODE=mode;
+    if(env===undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV=env; });
+  delete process.env.BUD_BROWSER_TOOL_MODE; process.env.NODE_ENV='development';
+  const online=buildAgentEnvironmentSnapshot({budId:'bud',online:true});
+  const names=()=>resolveAgentToolsForEnvironment(online,{browser:true,browserHandoff:true}).filter(t=>BROWSER_TOOL_NAMES.includes(t.name as never)).map(t=>t.name);
+  assert.deepEqual(names(), BROWSER_REPL_TOOLS.map(t=>t.name));
+  process.env.BUD_BROWSER_TOOL_MODE='tools'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
+  process.env.BUD_BROWSER_TOOL_MODE='repl'; assert.deepEqual(names(),BROWSER_REPL_TOOLS.map(t=>t.name));
+  assert.deepEqual(parseBrowserInput('browser_exec',{code:'repl.write(1)'}),{code:'repl.write(1)'});
+  assert.throws(()=>parseBrowserInput('browser_exec',{code:'🐱'.repeat(16385)}));
+  assert.throws(()=>parseBrowserInput('browser_exec',{code:'1',owner_user_id:'other'}));
+  process.env.NODE_ENV='production'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
+});
+
+
+test("REPL cells reach the next provider step and transcript without local page data", async t => {
+  const previous = process.env.BUD_BROWSER_TOOL_MODE;
+  process.env.BUD_BROWSER_TOOL_MODE = 'repl';
+  t.after(() => { if (previous === undefined) delete process.env.BUD_BROWSER_TOOL_MODE; else process.env.BUD_BROWSER_TOOL_MODE = previous; });
+  let calls = 0;
+  const executor = new BrowserToolExecutor(backend({ execute: async (_context, name, args) => {
+    assert.equal(name, 'browser_exec'); assert.equal(typeof args.code, 'string'); calls++;
+    return { ok: true, outcome: 'completed', data: { execution_state: 'completed', runtime_generation: 'runtime',
+      text: calls === 1 ? 'Selected story' : 'Retained detail', truncated: false, images: [] } };
+  } }), async () => true);
+  const fixture = await loopFixture(t, executor, [
+    [{ name: 'browser_exec', input: {code: 'var page = await browser.tabs.open("https://example.com"); var snapshot = await page.snapshot(); repl.write(snapshot.nodes[0]);'} }],
+    messages => { assert.match(JSON.stringify(messages), /Selected story/); return [{name:'browser_exec',input:{code:'repl.write(snapshot.nodes[1])'}}]; },
+    messages => { assert.match(JSON.stringify(messages), /Retained detail/); return []; },
+  ]);
+  assert.equal((await fixture.run()).status, 'succeeded');
+  assert.equal(calls, 2);
+  const written = fixture.writes.filter(row => row.role === 'tool');
+  assert.equal(written.length, 2);
+  assert.ok(written.every(row => row.createdByUserId === 'alice' && /browser_exec/.test(row.content)));
 });

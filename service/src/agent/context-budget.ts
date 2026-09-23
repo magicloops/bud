@@ -216,7 +216,7 @@ export function estimateCanonicalMessagesBreakdown(messages: CanonicalMessage[])
   // provider call; account for them here so the meter and the compaction
   // trigger see what the provider will actually receive.
   const hydrated = selectHydratedImageReferences(messages);
-  breakdown.images += hydrated.size * IMAGE_TOKEN_ESTIMATE;
+  breakdown.images += [...hydrated.values()].reduce((n, ids) => n + ids.length, 0) * IMAGE_TOKEN_ESTIMATE;
   let systemPromptSeen = false;
   for (const message of messages) {
     let messageKind: ContextBreakdownKind;

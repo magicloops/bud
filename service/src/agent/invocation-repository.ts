@@ -401,7 +401,11 @@ export class InvocationRepository {
   async completeAction(lease: InvocationLease, callId: string, evidence: Record<string, unknown>) {
     return this.database.transaction(async tx => {
       await this.lockedLease(tx, lease, ["running"]);
-      const [result] = await tx.update(action).set({ status: "completed", evidence, completedAt: sql`clock_timestamp()` })
+      const [result] = await tx.update(action).set({ status: "completed",
+        // Browser cell receipts survive normal transcript/action completion.
+        evidence: sql`case when ${action.evidence} ? 'browser_cell'
+          then ${JSON.stringify(evidence)}::jsonb || jsonb_build_object('browser_cell',${action.evidence}->'browser_cell')
+          else ${JSON.stringify(evidence)}::jsonb end`, completedAt: sql`clock_timestamp()` })
         .where(and(eq(action.invocationId, lease.id), eq(action.fence, lease.fence), eq(action.callId, callId), sql`${action.status} in ('intent','waiting_for_user')`)).returning();
       if (!result) throw new InvocationError("action_not_pending");
     });

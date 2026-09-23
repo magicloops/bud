@@ -667,8 +667,21 @@ impl Browser {
             self.semantic_dirty = false;
         }
         command["target_id"] = json!(target);
+        let focus = command["operation"] == "focus";
+        if matches!(
+            command["operation"].as_str(),
+            Some("click" | "fill" | "focus")
+        ) {
+            self.focus = None;
+        }
         let result = self.semantic.call(command).await?;
         self.semantic_target = Some(target.into());
+        if focus {
+            let session = self.session(target).await?;
+            let document = self.document(&session).await?;
+            self.remember_human_focus(target, &session, &document)
+                .await?;
+        }
         Ok(result)
     }
 
@@ -689,11 +702,18 @@ impl Browser {
             .context("browser_stale_reference")?;
         self.inspect(&target, json!({"operation":"focus","reference":reference}))
             .await?;
-        let session = self.session(&target).await?;
-        let document = self.document(&session).await?;
-        self.remember_human_focus(&target, &session, &document)
-            .await?;
         Ok(())
+    }
+
+    pub(super) async fn insert_text_in_tab(&mut self, target: &str, text: &str) -> Result<()> {
+        if self
+            .focus
+            .as_ref()
+            .is_none_or(|focus| focus.target != target)
+        {
+            bail!("browser_focus_required");
+        }
+        self.insert_text(text).await
     }
 
     /// Guarded committed text for ordinary inputs. Check and write
@@ -1392,6 +1412,14 @@ impl Browser {
         {
             return Ok(target.target_id.clone());
         }
+        self.create_page().await
+    }
+
+    /// Explicit creation, never an implicit side effect of observing a missing tab.
+    pub(super) async fn create_page(&mut self) -> Result<String> {
+        if self.targets().await?.len() >= 16 {
+            bail!("browser_target_limit");
+        }
         let result = self
             .cdp
             .call(
@@ -1411,6 +1439,27 @@ impl Browser {
         self.invalidate_references();
         self.targets().await?; // Apply existing native presentation policy.
         Ok(target)
+    }
+
+    /// Explicit tab close must remove its recovery hint, including the final tab.
+    /// The workspace/REPL lifetime is independent of this individual tab.
+    pub(super) async fn close_page(&mut self, target: &str, selected: Option<&str>) -> Result<()> {
+        if !self.targets().await?.iter().any(|t| t.target_id == target) {
+            bail!("browser_target_not_found");
+        }
+        let result = self
+            .cdp
+            .call(None, "Target.closeTarget", json!({"targetId":target}))
+            .await?;
+        if result["success"] != true {
+            bail!("browser_close_unconfirmed");
+        }
+        self.ownership.lock().unwrap().remove(target);
+        self.invalidate_references();
+        self.disclose_pages();
+        let pages = self.checkpoint_pages(selected, false).await?;
+        self.recovery.lock().unwrap().save(&self.workspace, pages)?;
+        Ok(())
     }
 
     pub fn interrupted(&mut self) -> bool {

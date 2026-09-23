@@ -537,3 +537,8 @@ runtime tasks and owned children; `doctor.rs` reports the optional runtime and `
 identity. The outer run/signal boundary awaits manager shutdown before dropping
 its LocalSet; a second signal during that cleanup does not cancel it. Identity clearing also drains the owned browser. Detached terminal holders
 remain independent. See [browser runtime](./browser/browser.spec.md).
+
+Browser REPL Phase 1 adds an exec-specific 512 KiB encoded command envelope in
+`app.rs`, accommodating JSON escaping of the manager's 64 KiB decoded source
+limit. Other browser commands retain their 24 KiB boundary. The envelope
+regression covers worst-case escaping and rejection of oversized other commands.

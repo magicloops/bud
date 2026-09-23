@@ -542,3 +542,16 @@ stay daemon-local. Inventory remains read-only and owner-filtered.
 
 Visits inherit workspace owner/tenant. Native grants are not control leases.
 Private input and screenshots never enter native chat state or persisted visits.
+
+
+## Browser REPL observation experiment
+
+- [x] Real-Chrome daemon fixtures reject foreign target access and fence cell
+  output during takeover; clean Return retains bindings but invalidates references.
+- [x] Image hydration fixtures enforce owner/thread/call, vision and current
+  evidence authorization for two emissions per cell. Ordinary records contain IDs.
+- [ ] Real authenticated agent/viewer handoff with two accounts: no private text,
+  images or local artifact references reach the other user or a fenced invocation.
+
+No new route or table. Workspace owner comes from existing thread/Bud admission;
+image metadata inherits that authorized call. Local files live only on the daemon.

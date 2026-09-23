@@ -53,22 +53,29 @@ export class Engine {
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 8000 });
     return new Engine(browser);
   }
-  constructor(browser) { this.browser = browser; this.snapshot = null; this.watched = new WeakSet(); this.navigation = 0; }
+  constructor(browser) { this.browser = browser; this.snapshot = null; this.watched = new WeakSet(); this.navigation = 0; this.frames = new Map(); }
   async page(target) {
-    for (const context of this.browser.contexts()) for (const page of context.pages()) {
-      const cdp = await context.newCDPSession(page);
-      try {
-        const { targetInfo } = await cdp.send('Target.getTargetInfo');
-        if (targetInfo.targetId === target) {
-          if (!this.watched.has(page)) {
-            this.watched.add(page);
-            page.on('framenavigated', () => { this.navigation++; if (this.snapshot?.target === target) this.snapshot = null; });
-            page.on('close', () => { if (this.snapshot?.target === target) this.snapshot = null; });
+    // Rust creates tabs over its own CDP connection. Playwright can receive the
+    // target-created event after Rust's create acknowledgement; wait only for
+    // inventory propagation, never recreate a tab or repeat a page action.
+    const deadline = performance.now() + 1000;
+    do {
+      for (const context of this.browser.contexts()) for (const page of context.pages()) {
+        const cdp = await context.newCDPSession(page);
+        try {
+          const { targetInfo } = await cdp.send('Target.getTargetInfo');
+          if (targetInfo.targetId === target) {
+            if (!this.watched.has(page)) {
+              this.watched.add(page);
+              page.on('framenavigated', () => { this.navigation++; if (this.snapshot?.target === target) this.snapshot = null; });
+              page.on('close', () => { if (this.snapshot?.target === target) this.snapshot = null; });
+            }
+            return page;
           }
-          return page;
-        }
-      } finally { await cdp.detach(); }
-    }
+        } finally { await cdp.detach(); }
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (performance.now() < deadline);
     fail('browser_target_not_found');
   }
   async document(page) {
@@ -90,6 +97,10 @@ export class Engine {
     return ref.locator;
   }
   pageResult(s, offset) {
+    if (s.full) return { target_id:s.target, document_id:s.document, observation_id:s.id, viewport:s.viewport,
+      nodes:s.nodes, truncated:false, continuation:null, expires_in_ms:Math.max(0, TTL-(Date.now()-s.at)),
+      coverage:s.scoped ? 'accessible_subtree' : s.mode === 'visible_dom' ? 'visible_accessible_dom' : 'accessible_dom',
+      limitations:['Closed shadow roots, inaccessible embedded documents and non-rendered virtualized content may be omitted.'] };
     if (s.compact) return compactPage(s, offset);
     let bytes = 0, end = offset;
     for (; end < s.nodes.length; end++) {
@@ -108,8 +119,23 @@ export class Engine {
   async execute(c) {
     this.stage = 'resolve_page';
     this.clickDiagnostic = undefined;
-    if (c.operation === 'invalidate') { this.snapshot = null; return {}; }
+    if (c.operation === 'invalidate') { this.snapshot = null; this.frames.clear(); return {}; }
     const page = await this.page(c.target_id);
+    if (c.operation === 'frames') {
+      this.frames.clear();
+      return page.frames().map(frame => { const id = randomUUID(); this.frames.set(id, { frame, target: c.target_id, navigation: this.navigation });
+        return { frame_id: id, url: frame.url(), name: frame.name(), main: frame === page.mainFrame() }; });
+    }
+    if (c.operation === 'evaluate') {
+      const saved = c.frame_id ? this.frames.get(c.frame_id) : null;
+      if (c.frame_id && (!saved || saved.target !== c.target_id || saved.navigation !== this.navigation || saved.frame.isDetached())) fail('browser_stale_reference');
+      const frame = saved?.frame ?? page.mainFrame();
+      // Source is serialized explicitly; no worker lexical environment crosses.
+      const result = await frame.evaluate(({ source, argument }) => (0, eval)('(' + source + ')')(argument), { source: c.source, argument: c.argument });
+      const encoded = JSON.stringify(result ?? null);
+      if (Buffer.byteLength(encoded) > MAX_BYTES) fail('browser_observation_limit');
+      return JSON.parse(encoded);
+    }
     if (c.operation === 'page_info') return { target_id: c.target_id, document_id: await this.document(page), title: await page.title(), url: page.url() };
     if (c.operation === 'snapshot' || c.operation === 'visible_dom') {
       if (c.continuation) {
@@ -131,7 +157,7 @@ export class Engine {
       const raw = await root.ariaSnapshotJSON({ mode: 'ai', boxes: c.operation === 'visible_dom', timeout: 3000 });
       if (await this.document(page) !== document || this.navigation !== navigation) fail('browser_document_changed');
       const id = c.compact === true ? `${referenceNamespace}${(++observationSequence).toString(36)}` : randomUUID(), refs = new Map();
-      let nodes = sanitize(raw, id, refs);
+      let nodes = sanitize(raw, id, refs, c.scope ? 0 : 1);
       bindReferences(raw, id, refs, frame);
       if (!c.scope) {
         refs.set(`${id}:root`, { locator: page.locator('body'), frame: page });
@@ -142,7 +168,7 @@ export class Engine {
       if (c.operation === 'visible_dom') nodes = nodes.filter(n => n.box && n.box.width > 0 && n.box.height > 0 && n.box.x < viewport.width && n.box.y < viewport.height && n.box.x + n.box.width > 0 && n.box.y + n.box.height > 0);
       if (c.compact === true) nodes = compactNodes(nodes);
       this.snapshot = { id, refs, nodes, viewport, target: c.target_id, document, at: Date.now(),
-        compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
+        full: c.full === true, compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
       return { ...this.pageResult(this.snapshot, 0), viewport };
     }
     this.stage = 'validate_snapshot';
