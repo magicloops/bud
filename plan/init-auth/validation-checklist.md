@@ -526,3 +526,18 @@ never authorize offline access or appear in service inventory.
   request remains 404 and cannot create/restore pages or release private authority.
 - [ ] Actual owner flow: close last tab, reopen through agent, restart, recover empty
   private workspace and return; check old proofs and references remain rejected.
+
+## Mobile browser scoped visits (Phase 3b)
+
+- [x] Isolated PostgreSQL: one-use grant races, wrong-owner/secret refresh,
+  expiry non-revival, owner-only revocation, resource retirement and stable
+  service-restart identity. Migration executes against pre-change browser tables.
+- [x] Control operation allowlist rejects close, Stop/Reset and host-window actions.
+- [ ] Real bearer mint/inventory: anonymous 401 and foreign workspace/thread 404.
+- [ ] Real scoped-cookie REST/WS: wrong workspace/viewer 404, Origin rejection,
+  generic account/chat/Bud routes unavailable, expiry and revocation stop delivery.
+- [ ] Real phone sign-out/unclaim/thread deletion during capture or takeover,
+  desktop/phone private exclusion, background privacy cover and explicit return.
+
+Visits inherit workspace owner/tenant. Native grants are not control leases.
+Private input and screenshots never enter native chat state or persisted visits.

@@ -14,6 +14,7 @@ Application entry point.
 
 **Responsibilities**:
 - Creates TanStack Router instance from generated route tree
+- Routes `/browser-mobile/:session_id` to the scoped native shell before full-user routing
 - Renders app into `#root` DOM element
 - Wraps in React StrictMode
 

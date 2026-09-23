@@ -216,7 +216,7 @@ pong support needs no app message or new client capability. Canvas frame/ACK sha
 and production web code stay unchanged. `media.test.ts` verifies retained idle
 pixels and immediate clearing on revocation, in addition to density/credit behavior.
 
-Temporary Vite development-only `browser-media` console diagnostics report connection-local IDs, UTC timestamps, first-frame arrival, frame counts/age, local cleanup/revocation/error and socket close code/cleanliness. No per-frame logging, URLs, page content, credentials or remote close text.
+Temporary Vite development-only `browser-media` console diagnostics emit copyable JSON with connection-local IDs, UTC timestamps, first-frame arrival, frame counts/age, local cleanup/control-failure/revocation/error and socket close code/cleanliness. Failed frame processing includes the stage and elapsed time; rejected bitmaps include dimensions, format and encoded length. No per-frame logging, URLs, page content, credentials or raw exception/remote close text. See [ngrok scroll/recovery investigation](../../../../debug/mobile-scroll-media-recovery.md).
 
 ## Shared persistent browser (Phase 3k)
 
@@ -284,3 +284,25 @@ recovery, restoration limitations, thread close and the existing confirmed Bud-w
 Stop/Reset controls; their status polling mounts only while options are expanded.
 Missing sessions offer navigation only. Existing authorization and control flows
 are unchanged; mounted tests cover primary return and explicit alternate recovery.
+
+## Mobile host mode (Phase 3b)
+
+- `mobile.tsx`: dedicated `/browser-mobile/:session_id` shell, bypassing full-user
+  auth routing. Validates visit identity and exposes the bounded version-1 native
+  lifecycle bridge. Command results acknowledge acceptance, not completed Return.
+- `touch.ts` / `.test.ts`: imperative remote swipe versus local pinch/pan, drag-click
+  suppression and geometry/document cancellation. No per-frame React publication.
+- `mobile-viewer.test.tsx`: suspension during pending takeover releases the late
+  acquired lease; resume keeps stable identity without acquisition or Return.
+
+Viewer host props supply stable viewer UUID, mobile mode and active lifecycle.
+Mobile starts passive with Fit on and uses the existing authorized agent viewport
+fit path without acquiring private control. Competing-viewer sizing remains
+service-owned; suspended viewers do not fit. Scoped auth
+failures clear media and stop retries without redirecting to full web sign-in.
+Suspension clears input/proofs and closes media, stops polls/renewal, and releases
+private control without returning the agent. Late control replies are fenced by
+lifecycle generation. Mobile hides host-window, close-tabs, Bud lifecycle and
+new-tab UI. Software-keyboard beforeinput handles delete/line-break gestures;
+composition/text still share the existing ordered queue. Remote content remains
+canvas pixels, with native accessibility limited to the viewer controls.

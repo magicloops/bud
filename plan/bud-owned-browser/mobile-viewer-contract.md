@@ -1,8 +1,8 @@
 # iOS browser handoff: current API and integration reference
 
-Updated 2026-09-22 against `e72c129`. Companion to
-[Phase 3b](phase-3b-ios-browser-viewer.md). Sections marked **Proposed** require
-implementation; all other sections describe the current service/shared web code.
+Updated 2026-09-22 for the Phase 3b implementation. Companion to
+[Phase 3b](phase-3b-ios-browser-viewer.md). Implementation is local; hosted physical-device
+acceptance and deployment remain outstanding.
 Recheck these source files at the merged implementation revision:
 
 - [Routes and validation](../../service/src/browser/routes.ts)
@@ -22,16 +22,15 @@ Recheck these source files at the merged implementation revision:
 
 ## Authentication and identity today
 
-Browser viewer routes require a live Better Auth cookie session. Mutations and
-WebSocket upgrades also require an allowed first-party Origin. All reads and
-streams resolve owner/Bud/thread access before exposing data. Responses use
-`Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+Browser routes accept either a live Better Auth cookie session or the scoped
+mobile visit below. Native bearer authentication discovers inventory and mints,
+refreshes or revokes visits; it does not directly control the browser. Mutations
+and WebSocket upgrades require an allowed first-party Origin. All reads and
+streams resolve owner/Bud/thread access before exposing data.
 
-The controller identity combines the authenticated session ID and `viewer_id`
-(UUID). A session ID or viewer UUID alone does not grant authority. Native OAuth
-bearer resolution currently has no session ID and fails the extra live-session
-check. Agent-image artifact GETs use a separate auth path; their bearer support
-does not imply the interactive viewer supports bearer auth.
+Desktop controller identity combines auth session ID and viewer UUID; mobile
+uses `mobile_<visit_id>:<viewer_id>`. Neither public identifier grants authority.
+Cookie refresh preserves identity; a new visit cannot inherit an old recovery proof.
 
 Keep these identities separate:
 
@@ -209,7 +208,9 @@ Width is an integer 240–2560, height 160–2560, in CSS pixels. Response:
 150 ms, keeps one request in flight and only the latest pending size. Private
 input stays fenced until matching pixels are drawn. Passive fitting is allowed
 only for the authorized first sizing viewer and capable agent-controlled runtime;
-rejection must not interrupt the agent. Mobile defaults to local scaling instead.
+rejection must not interrupt the agent. Mobile defaults to Fit on, using the
+visible viewer surface without taking private control. Competing viewers retain
+local scaling when another viewer owns sizing.
 
 ## Errors and recovery presentation
 
@@ -235,40 +236,42 @@ Use a single relevant primary action with details under More. Distinguish
 “Reconnecting,” “Private control,” “Paused,” “No page open,” and “Unavailable.”
 Screenshot transport loss does not prove Chrome closed or private control ended.
 
-## Proposed: scoped native authentication contract
+## Scoped native authentication contract (implemented)
 
-This section is a design target, **not callable API today**. Agree exact names
-in the service slice and update this reference before mobile integrates them.
+- Native bearer GET `/api/threads/:thread_id/browser-sessions` uses existing owner SQL.
+- Native bearer POST `/api/browser/sessions/:session_id/viewer-grants` with
+  `{viewer_id}` returns `{visit_id,grant,expires_in:60,bootstrap_path:"/api/browser/viewer-bootstrap"}`.
+- WKWebView POSTs `{grant}` as JSON to that fixed bootstrap path. Atomic one-use
+  redemption responds 303 to `/browser-mobile/:session_id?viewer_id=...&visit_id=...`.
+  URLs contain public identities only. OAuth and grant secrets never enter JS.
+- Cookie `__Secure-bud-browser-visit` is Secure, HttpOnly, SameSite=Strict,
+  host-only, with Path `/api/browser/sessions/:session_id`, Max-Age 28800.
+  Server-side validity is 15 minutes, bounded by eight hours from minting.
+- Native bearer POST `/api/browser/viewer-visits/:visit_id` accepts
+  `{operation:"refresh",grant}` or `{operation:"revoke"}`. Refresh requires the
+  original native possession secret and owner, cannot revive expiry, and preserves
+  cookie/controller identity. Foreground native refresh runs every five minutes.
+- Persisted `browser_viewer_visit` stores hashed secrets, owner/tenant, workspace,
+  viewer UUID and expiry. Migration `0041_demonic_stephen_strange.sql` creates its
+  composite workspace/owner FK and indexes. Visits survive service restart.
+- Scoped cookies authenticate only the bound workspace's metadata/control/input/
+  viewport/media. Control allowlist: acquire, renew, release, return, recover,
+  reopen. Close, host window controls, Bud Stop/Reset and account/chat APIs are
+  excluded. Wrong workspace/viewer returns 404; disallowed control returns 403.
+- Resolve rechecks thread/Bud ownership, soft deletion, workspace closure and
+  resource retirement, including media idle authorization. Minting never acquires.
+- Dismiss/account change best-effort revokes and disposes the isolated WK store.
+  Offline sign-out is bounded by the remaining 15-minute credential validity;
+  server lease expiry preserves private intent. Native privacy cover is immediate.
 
-- Extend owner-authorized thread inventory GET to accept native bearer auth.
-- Candidate mint endpoint: `POST /api/browser/sessions/:session_id/viewer-grants`
-  using native bearer auth and `{viewer_id}`. Bind owner, workspace, permitted
-  browser routes, viewer UUID, expiry and revocation identity server-side.
-- Return a trusted first-party bootstrap URL, opaque single-use grant and expiry.
-  Redeem through a WKWebView POST body; no OAuth token or reusable credential in
-  query strings, JavaScript, analytics or access logs. Do not allow open redirects.
-- Redemption sets a Secure, HttpOnly, appropriately SameSite cookie and navigates
-  to a clean embedded viewer URL. Use a nonpersistent WKWebView data store isolated
-  from proxy previews. Enforce resource scope in the service, not only cookie Path.
-- The resulting principal authenticates only this viewer's metadata, control,
-  input, viewport and media, with live owner/revocation checks. It cannot call
-  account APIs, arbitrary thread APIs, or Bud-wide Stop/Reset. Required control
-  operations still use the same coordinator and browser-wide privacy boundary.
-- The hosted embedded route must resolve this scoped principal without calling a
-  generic full-user-session endpoint. Its REST and WS identity must remain stable
-  together; minting a credential is never acquiring private control.
-- Expiry/sign-out stops media and input. Decide bounded credential lifetime and
-  refresh in this slice; align recovery-proof identity with that lifetime. No
-  hidden reacquisition after native process death or explicit suspension.
+Run migration before the updated service/shared web, then rebuild mobile. No new
+Bud↔Service frame, SSE family or daemon release is required for this slice.
 
-Existing proxy viewer grants offer a pattern for scoped bootstrap, but their
-resource, hostname/navigation policy and authorization are different. Do not
-reuse a proxy grant to authorize browser control or broaden it to all browser APIs.
+## Native ↔ hosted viewer bridge (implemented)
 
-## Proposed: minimal native ↔ hosted viewer bridge
-
-Use one versioned typed envelope, e.g. `{version:1, visit_id, type, request_id?,
-payload}`. Exact transport implementation belongs in the shared viewer adapter.
+Viewer messages use `{version:1,visit_id,event,request_id?,...fields}` through
+`webkit.messageHandlers.budBrowser`. Native calls `window.budBrowserCommand` with
+`{version:1,visit_id,request_id,command}`. IDs are deduplicated in a bounded set.
 Validate the allowed first-party origin, main frame, visit nonce and bounded
 payload on every native bridge message. Arbitrary web navigation cannot gain
 bridge access. Browser website contents remain images, never locally executed HTML.
@@ -281,7 +284,7 @@ bridge access. Browser website contents remain images, never locally executed HT
 | Native → viewer | `return_to_agent` | Invoke the shared explicit Return action; deduplicate request ID |
 | Native → viewer | `suspend` | Clear input/proofs/pixels, stop media/renewal, best-effort release; never return |
 | Native → viewer | `resume` | Refresh auth/status and passive media; no automatic private acquisition |
-| Viewer → native | `result` | Correlated command completion/error, never optimistic authority |
+| Viewer → native | `result` | Correlated command acceptance (`accepted`); never proof that Return completed |
 
 Do not bridge frames, cookies, grants, passwords, page text, focus tokens or raw
 JavaScript evaluation requests. Native Cancel uses the existing chat cancellation
@@ -294,3 +297,7 @@ routes; dismiss chat navigation through the app; reject unexpected main-frame
 navigation/popups. Do not copy proxy preview's permissive HTTP(S) navigation or
 its `WKWebView.goBack()` behavior. Any external-link feature needs an explicit
 user gesture and must not export private remote URLs or credentials implicitly.
+
+Native currently invokes suspend/resume; inline Return opens the visible viewer
+for explicit confirmation there. Resume acceptance follows the React lifecycle
+commit; native also fences it by current request/visit and foreground state.

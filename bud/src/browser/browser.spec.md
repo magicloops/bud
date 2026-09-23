@@ -40,6 +40,12 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   attachment and semantic calls; native targets without a verified opener remain
   unassigned. Persistent launch uses owned-child stderr discovery. Close waits for
   graceful child exit, with bounded escalation to killing only its owned child.
+- `image_bounds.rs`: header-only PNG/JPEG dimension inspection and actual bitmap
+  bounds, without allocating decoded pixels. Capture retries at lower scale when
+  either actual dimensions or encoded size exceed their limits.
+- `capture_bounds_tests.rs`: disposable live Chrome regression with independent
+  2x screenshot-session density, covering PNG and motion JPEG bounds while
+  preserving CSS dimensions.
 - `idle.html`: embedded static Bud landing page for the process-owned presentation tab; no scripts or external resources.
 - `cdp.rs`: serial private loopback CDP connection; 24 MiB frame cap (bounded PNG before downscaling), 10-second call
   timeout, poison after interrupted calls. Failure diagnostics include only the
@@ -124,7 +130,9 @@ must observe again after return. This fence does not isolate privileged terminal
 or other host software from Chrome.
 
 JPEG capture is bounded to 1280 pixels on the longest side and 1.4 million base64
-characters, at most ten captures per second with downstream credit. Frame tokens
+characters, at most ten captures per second with downstream credit. The daemon verifies actual
+PNG/JPEG header dimensions before emitting a frame; CSS-based requested scale is
+only an initial estimate, since Chrome device scaling can multiply the bitmap. Frame tokens
 bind target/document/viewport; pixel-sensitive input requires a capture newer than
 three seconds, while wheel input uses the current scroll context. Navigation invalidates focus/queued edits; unknown inputs are not retried.
 Basic clicks, scroll, committed text and editing keys are supported, not arbitrary
@@ -259,7 +267,7 @@ See [busy investigation](../../../debug/browser-busy-session-preservation.md).
 
 Slow media capture events include `capture_stages`: last reached stage (also on
 failure), session/document/layout timings, up to four screenshot attempt timings,
-attempt count, per-attempt scale/encoded length, format and assembly
+attempt count, per-attempt scale/encoded length/actual bitmap dimensions, format and assembly
 time. Document/layout timings sum their pre/post checks. Screenshot request time
 includes Chrome resizing/encoding; it does not distinguish those internal stages.
 No additional per-frame log events or wire fields are emitted.

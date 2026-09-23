@@ -16,14 +16,15 @@ export class BrowserCanvas {
   private frames = 0;
   private lastFrameAt: number | null = null;
   private closeReason = "none";
+  private processingStage = "idle";
   private diagnostic(event: string, details: Record<string, string | number | boolean | null> = {}) {
     // Temporary local diagnostics. No URLs, frame bodies, tickets or input.
-    if (import.meta.env?.DEV) console.info("browser-media", {
+    if (import.meta.env?.DEV) console.info("browser-media", JSON.stringify({
       at: new Date().toISOString(), connection: this.diagnosticId, event,
       elapsed_ms: Date.now() - this.startedAt, frames: this.frames,
       frame_age_ms: this.lastFrameAt === null ? null : Date.now() - this.lastFrameAt,
       ...details,
-    });
+    }));
   }
   private disposed = false;
   private decoding = false;
@@ -54,7 +55,15 @@ export class BrowserCanvas {
       this.socket.send(JSON.stringify({ viewer_id: viewerId }));
     };
     this.socket.onmessage = (event) => {
-      void this.draw(event.data).catch(() => this.close("frame_processing_failed"));
+      const started = performance.now();
+      void this.draw(event.data).catch(() => {
+        this.diagnostic("frame_processing_failed", {
+          stage: this.processingStage,
+          duration_ms: Math.round(performance.now() - started),
+          message_chars: typeof event.data === "string" ? event.data.length : -1,
+        });
+        this.close("frame_processing_failed");
+      });
     };
     this.socket.onclose = (event) => {
       this.diagnostic("socket_closed", { code: event.code, clean: event.wasClean, reason: this.closeReason });
@@ -74,19 +83,23 @@ export class BrowserCanvas {
   }
   private async draw(raw: unknown) {
     if (this.disposed) return;
+    this.processingStage = this.decoding ? "overlapping_frame" : "message_validation";
     if (typeof raw !== "string" || raw.length > 1_420_000 || this.decoding)
       throw new Error("invalid frame");
+    this.processingStage = "json_decode";
     const data = JSON.parse(raw);
     if (data.type === "revoked") {
       this.close("server_revoked");
       return;
     }
     if (data.type === "empty") {
+      this.processingStage = "empty_delivery";
       this.clear();
       this.status("empty", []);
       this.socket.send(JSON.stringify({ type: "ack", pixel_ratio: this.captureRatio() }));
       return;
     }
+    this.processingStage = "frame_validation";
     if (
       data.type !== "frame" ||
       typeof data.image !== "string" ||
@@ -104,15 +117,21 @@ export class BrowserCanvas {
     this.decoding = true;
     let bitmap: ImageBitmap | undefined;
     try {
+      this.processingStage = "base64_decode";
       const bytes = Uint8Array.from(atob(data.image), (character) =>
         character.charCodeAt(0),
       );
+      this.processingStage = "image_decode";
       bitmap = await createImageBitmap(
         new Blob([bytes], { type: data.image_format === "png" ? "image/png" : "image/jpeg" }),
       );
       if (this.disposed) return;
-      if (bitmap.width > 2560 || bitmap.height > 2560 || bitmap.width * bitmap.height > 4_000_000)
+      this.processingStage = "bitmap_validation";
+      if (bitmap.width > 2560 || bitmap.height > 2560 || bitmap.width * bitmap.height > 4_000_000) {
+        this.diagnostic("bitmap_rejected", { width: bitmap.width, height: bitmap.height, image_chars: data.image.length, format: data.image_format === "png" ? "png" : "jpeg" });
         throw new Error("invalid frame size");
+      }
+      this.processingStage = "canvas_draw";
       const bounds = this.canvas.parentElement?.getBoundingClientRect();
       const displayScale = bounds ? Math.min(1, bounds.width / data.width, bounds.height / data.height) : 1;
       if (this.canvas.width !== bitmap.width) this.canvas.width = bitmap.width;
@@ -134,8 +153,11 @@ export class BrowserCanvas {
       this.frames++;
       this.lastFrameAt = Date.now();
       if (this.frames === 1) this.diagnostic("first_frame");
+      this.processingStage = "status_delivery";
       this.status("connected", data.targets);
+      this.processingStage = "frame_ack";
       this.socket.send(JSON.stringify({ type: "ack", pixel_ratio: this.captureRatio() }));
+      this.processingStage = "idle";
     } finally {
       bitmap?.close();
       this.decoding = false;

@@ -1,5 +1,14 @@
 # Plan: Bud-owned browser sessions
 
+## Proposed restart simplification
+
+[Automatic browser recovery and complete URL checkpoints](../../design/browser-automatic-recovery.md)
+scopes automatic recovery on demand, full query/fragment persistence for shared
+pages, and ending extinct private-control leases. Human control remains private;
+separate restoration of unfinished private pages is deferred. It replaces
+the explicit recovery rules in 3l/3p when implemented; current runtime behavior is
+unchanged.
+
 ## Updated product direction: shared persistent browser
 
 The new target is **one persistent managed browser/profile per Bud, with

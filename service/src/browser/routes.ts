@@ -1,3 +1,4 @@
+import { BrowserMobileAuth, mobileCookie, scopedBrowserOperation, type MobileVisit } from "./mobile-auth.js";
 import { BrowserLifecycle } from "./lifecycle.js";
 import { BrowserResourceRepository } from "./resource-repository.js";
 import { registerAgentCaptures } from "./agent-capture.js";
@@ -11,6 +12,7 @@ import { config } from "../config.js";
 import {
   requireViewer,
   getOptionalViewer,
+  getOptionalBearerViewer,
   getAuthorizedThread,
   getAuthorizedBud,
   type Viewer,
@@ -91,7 +93,20 @@ const publicSession = (s: BrowserSession, canResize = false, canCapture = false,
     ["agent", "paused"].includes(s.control_state),
 });
 
-async function alive(viewer: Viewer): Promise<boolean> {
+type BrowserActor = Viewer & { mobile?: MobileVisit; mobileToken?: string };
+const mobileAuth = new BrowserMobileAuth();
+
+async function browserActor(request: FastifyRequest): Promise<BrowserActor | null> {
+  const token = request.headers.cookie?.split(";").map(v => v.trim()).find(v => v.startsWith(`${mobileCookie}=`))?.slice(mobileCookie.length + 1);
+  if (token) {
+    const mobile = await mobileAuth.resolve(token);
+    return mobile ? { userId: mobile.created_by_user_id, sessionId: null, email: null, authType: "cookie", mobile, mobileToken: token } : null;
+  }
+  return getOptionalViewer(request);
+}
+
+async function alive(viewer: BrowserActor): Promise<boolean> {
+  if (viewer.mobileToken) return !!(await mobileAuth.resolve(viewer.mobileToken));
   if (!viewer.sessionId) return false;
   const rows = await db
     .select({ id: authSessionTable.id })
@@ -169,14 +184,19 @@ export async function registerBrowserRoutes(
   });
   const sessionId = (request: FastifyRequest) =>
     z.object({ session_id: id }).parse(request.params).session_id;
-  const identity = (viewer: Viewer, client: string) =>
-    `${viewer.sessionId}:${client}`;
+  const identity = (viewer: BrowserActor, client: string) => {
+    if (viewer.mobile && viewer.mobile.viewer_id !== client) throw new BrowserError("browser_not_found");
+    return `${viewer.mobile ? `mobile_${viewer.mobile.id}` : viewer.sessionId}:${client}`;
+  };
   const viewer = async (request: FastifyRequest, reply: FastifyReply) => {
     reply
       .header("Cache-Control", "no-store")
       .header("Referrer-Policy", "no-referrer");
-    const actor = await requireViewer(request, reply);
-    if (!actor) return null;
+    const actor = await browserActor(request);
+    if (!actor) { reply.code(401).send({error:"unauthorized"}); return null; }
+    if (actor.mobile && (request.params as {session_id?:string}).session_id !== actor.mobile.session_id) {
+      reply.code(404).send({error:"browser_not_found"}); return null;
+    }
     if (!(await alive(actor))) {
       reply.code(401).send({ error: "unauthorized" });
       return null;
@@ -210,6 +230,37 @@ export async function registerBrowserRoutes(
         )
         .send({ error: code });
     });
+    // Native bearer mints/revokes only. The embedded page receives no OAuth token.
+    routes.post("/api/browser/sessions/:session_id/viewer-grants", {bodyLimit:1024}, async (request, reply) => {
+      reply.header("Cache-Control","no-store");
+      const actor = await getOptionalBearerViewer(request);
+      if (!actor) return reply.code(401).send({error:"unauthorized"});
+      const body = z.object(bodyBase).strict().parse(request.body);
+      const session = await control.repository.get(actor.userId,sessionId(request));
+      return {...await mobileAuth.mint(session,body.viewer_id), bootstrap_path:"/api/browser/viewer-bootstrap"};
+    });
+    routes.post("/api/browser/viewer-bootstrap", {bodyLimit:1024}, async (request, reply) => {
+      reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer");
+      const {grant} = z.object({grant:z.string().regex(/^[\w-]{43}$/)}).strict().parse(request.body);
+      const result = await mobileAuth.redeem(grant);
+      if (!result) return reply.code(401).send({error:"browser_grant_expired"});
+      await control.repository.get(result.visit.created_by_user_id,result.visit.session_id);
+      reply.header("Set-Cookie",`${mobileCookie}=${result.token}; Path=/api/browser/sessions/${result.visit.session_id}; Secure; HttpOnly; SameSite=Strict; Max-Age=28800`);
+      return reply.code(303).header("Location",`/browser-mobile/${result.visit.session_id}?viewer_id=${result.visit.viewer_id}&visit_id=${result.visit.id}`).send();
+    });
+    routes.post("/api/browser/viewer-visits/:visit_id", {bodyLimit:1024}, async (request,reply) => {
+      reply.header("Cache-Control","no-store");
+      const actor = await getOptionalBearerViewer(request);
+      if (!actor) return reply.code(401).send({error:"unauthorized"});
+      const visit = z.object({visit_id:id}).parse(request.params).visit_id;
+      const body = z.discriminatedUnion("operation",[
+        z.object({operation:z.literal("revoke")}).strict(),
+        z.object({operation:z.literal("refresh"),grant:z.string().regex(/^[\w-]{43}$/)}).strict(),
+      ]).parse(request.body);
+      if (body.operation === "revoke") await mobileAuth.revoke(actor.userId,visit);
+      else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(401).send({error:"browser_visit_expired"});
+      return {ok:true};
+    });
     // Bud owns the shared profile; actor and owner are resolved before resource I/O.
     routes.get("/api/buds/:bud_id/browser", async (request, reply) => {
       const actor = await viewer(request, reply);
@@ -233,8 +284,9 @@ export async function registerBrowserRoutes(
     routes.get(
       "/api/threads/:thread_id/browser-sessions",
       async (request, reply) => {
-        const actor = await viewer(request, reply);
+        const actor = await requireViewer(request, reply);
         if (!actor) return;
+        reply.header("Cache-Control", "no-store");
         const threadId = z
           .object({ thread_id: z.string().uuid() })
           .parse(request.params).thread_id;
@@ -292,6 +344,7 @@ export async function registerBrowserRoutes(
           })
           .strict()
           .parse(request.body);
+        if (actor.mobile && !scopedBrowserOperation(body.operation)) return reply.code(403).send({error:"browser_scope_denied"});
         const args = [
           actor.userId,
           sessionId(request),
@@ -360,8 +413,8 @@ export async function registerBrowserRoutes(
       (socket, request) => viewerHandshake(socket, async (hello) => {
         if (Buffer.byteLength(hello) > 256) throw new Error("size");
         const body = z.object(bodyBase).strict().parse(JSON.parse(hello));
-        const actor = await getOptionalViewer(request);
-        if (!actor || !(await alive(actor))) throw new Error("auth");
+        const actor = await browserActor(request);
+        if (!actor || (actor.mobile && actor.mobile.session_id !== sessionId(request)) || !(await alive(actor))) throw new Error("auth");
         await media.attachViewer(
           socket,
           actor.userId,

@@ -1,3 +1,4 @@
+import { installBrowserTouch } from "./touch";
 import { BrowserLifecycle } from "./lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetchJson, buildAbsoluteApiUrl, isApiError } from "@/lib/transport";
@@ -29,7 +30,7 @@ type Session = {
   handoff?: { reason: string } | null;
 };
 const button =
-  "rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
+  "min-h-11 min-w-11 rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
 const controlErrors: Record<string, string> = {
   browser_window_unsupported: "Native window controls are unavailable on this Bud.",
   browser_window_unconfirmed: "The browser window change was not confirmed. Browser work remains private. Try Hide browser window before returning to the agent.",
@@ -58,7 +59,12 @@ export type BrowserReturnAction = {
   run: () => void;
 };
 
-export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { sessionId: string; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+  const activeRef = useRef(active);
+  const lifecycleEpoch = useRef(0);
+  if (activeRef.current !== active) { activeRef.current = active; lifecycleEpoch.current++; }
+  const fetchJson = useCallback(<T,>(path: string, init: Parameters<typeof apiFetchJson>[1] = {}) =>
+    apiFetchJson<T>(path, { ...init, redirectOnUnauthorized: !mobile }), [mobile]);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState("");
   const [statusError, setStatusError] = useState("");
@@ -98,7 +104,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   const [targets, setTargets] = useState<BrowserFrame["targets"]>([]);
   const [selectedTarget, setSelectedTarget] = useState("");
   const [mediaVersion, setMediaVersion] = useState(0);
-  const viewerId = useRef(crypto.randomUUID());
+  const viewerId = useRef(hostViewerId ?? crypto.randomUUID());
   const canvas = useRef<HTMLCanvasElement>(null);
   const media = useRef<BrowserCanvas | null>(null);
   const mounted = useRef(true);
@@ -128,12 +134,12 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     ownsRef.current = false;
     setOwns(false);
     resetInput();
-    media.current?.close();
+    media.current?.close("private_control_failure");
     // Release is a privacy fence, never a return or replay of page input.
     if (wasOwner && sessionRef.current && !recoveryPending.current)
-      void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
+      void fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ operation: "release", revision: sessionRef.current.revision, viewer_id: viewerId.current }) }).catch(() => {});
-  }, [base, resetInput]);
+  }, [base, resetInput, fetchJson]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -144,12 +150,13 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     };
   }, [resetInput]);
   useEffect(() => {
+    if (!active) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const read = async () => {
       try {
         const version = controlVersion.current;
-        const data = await apiFetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {
+        const data = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {
           signal: abort.signal,
         });
         if (!abort.signal.aborted) {
@@ -165,7 +172,8 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
             void latestControl.current("recover");
         }
       } catch (failure) {
-        if (!abort.signal.aborted && isApiError(failure) && failure.message === "browser_not_found") {
+        if (!abort.signal.aborted && isApiError(failure) && (failure.message === "browser_not_found" || (mobile && [401,403].includes(failure.status)))) {
+          failPrivate("Browser authorization ended. Close and reopen the viewer.", 2);
           setMissing(true);
           return;
         }
@@ -179,10 +187,11 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       abort.abort();
       clearTimeout(timer);
     };
-  }, [base, failPrivate]);
+  }, [base, failPrivate, active, fetchJson, mobile]);
   const control = useCallback(
     async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "reopen" | "show_window" | "hide_window") => {
-      if (!session) return;
+      if (!session || (!activeRef.current && operation !== "release")) return;
+      const lifecycle = lifecycleEpoch.current;
       if (changingControl.current) return;
       if (operation === "recover" && !recoveryTicket.current) return;
       if (operation !== "recover" && operation !== "renew") {
@@ -212,20 +221,20 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         // Explicit Return may recover a lease lost during takeover/restart.
         // Existing acquire authorization and competing-controller checks still apply.
         if (operation === "return" && !ownsRef.current) {
-          const acquired = await apiFetchJson<Session>(`${base}/control`, {
+          const acquired = await fetchJson<Session>(`${base}/control`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ operation: "acquire", revision, viewer_id: viewerId.current }),
           });
           if (acquired.control_state !== "human_private") throw new Error("Control acquisition not confirmed");
-          if (!mounted.current) {
-            void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
+          if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current) {
+            void fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ operation: "release", revision: acquired.revision, viewer_id: viewerId.current }) }).catch(() => {});
             return;
           }
           returnLease = acquired;
           revision = acquired.revision;
         }
-        const data = await apiFetchJson<Session>(`${base}/control`, {
+        const data = await fetchJson<Session>(`${base}/control`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -236,9 +245,9 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
             ...(operation === "recover" ? { recovery_ticket: recoveryTicket.current } : {}),
           }),
         });
-        if (!mounted.current) {
+        if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current) {
           if ((operation === "acquire" || operation === "recover" || operation === "reopen" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private")
-            void apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
+            void fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ operation: "release", revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
           return;
         }
@@ -266,10 +275,10 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         // A failed compound return must not leave an invisible renewable owner.
         // Release only pauses; it never retries the return or resumes the agent.
         if (returnLease) {
-          await apiFetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
+          await fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ operation: "release", revision: returnLease.revision, viewer_id: viewerId.current }) }).catch(() => {});
         }
-        if (!mounted.current || (operation === "renew" && !ownsRef.current)) return;
+        if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current || (operation === "renew" && !ownsRef.current)) return;
         const code = isApiError(failure) ? failure.message : "";
         if ((operation === "renew" || operation === "recover") && recoveryTicket.current &&
             (!code || ["browser_control_expired", "browser_control_uncertain", "browser_unavailable",
@@ -283,7 +292,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           // Show may have acquired private control before its window operation
           // failed. Resolve ownership rather than losing the renewable lease.
           try {
-            const current = await apiFetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`);
+            const current = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`);
             if (mounted.current) {
               setSession(previous => previous && previous.revision > current.revision ? previous : current);
               ownsRef.current = current.owns_control === true;
@@ -303,7 +312,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         ownsRef.current = false;
         setOwns(false);
         resetInput();
-        media.current?.close();
+        media.current?.close("control_request_failed");
       } finally {
         if (operation === "renew") renewing.current = false;
         if (operation !== "renew") {
@@ -316,20 +325,28 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         }
       }
     },
-    [base, session, selectedTarget, resetInput, failPrivate, blockInput],
+    [base, session, selectedTarget, resetInput, failPrivate, blockInput, fetchJson],
   );
   const latestControl = useRef(control);
   useEffect(() => {
     latestControl.current = control;
   }, [control]);
   useEffect(() => {
-    if (!owns) return;
+    if (!owns || !active) return;
     const timer = setInterval(() => void latestControl.current("renew"), 5000);
     return () => clearInterval(timer);
-  }, [owns]);
+  }, [owns, active]);
   useEffect(() => () => {
     if (ownsRef.current) void latestControl.current("release");
   }, []);
+  useEffect(() => {
+    if (!active) {
+      failPrivate("", 0);
+      recoveryTicket.current = null;
+      recoveryPending.current = false;
+      typing.current?.blur();
+    }
+  }, [active, failPrivate]);
   const ended = missing || session?.runtime_status === "daemon_restarted" || session?.runtime_status === "ended" || session?.state === "closing" || session?.state === "interrupted";
   const canReturn = !missing && ((owns && !ended) || (session?.can_take_control === true &&
     ["paused", "human_private", "resume_pending"].includes(session.control_state)));
@@ -358,7 +375,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     setTargets([]);
     setSelectedTarget("");
   }, [ended, resetInput]);
-  const canView = !ended && (session?.can_view || owns);
+  const canView = active && !ended && (session?.can_view || owns);
   // Fitting follows invocation epochs even while the passive canvas survives.
   const passiveEpoch = owns ? undefined : session?.control_epoch;
   // Agent media ignores invocation epochs. Fitting still fences
@@ -413,7 +430,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
   }, [base, canView, mediaVersion, session?.generation, mediaEpoch, owns, resetInput, failPrivate, blockInput]);
   useEffect(() => {
     const permitted = owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport;
-    if (ended || !fit || !permitted || !connected || !selectedTarget || !surface.current) return;
+    if (!active || ended || !fit || !permitted || !connected || !selectedTarget || !surface.current) return;
     const abort = new AbortController();
     const fitter = new ViewportFitter(async (size) => {
       blockInput(true);
@@ -428,7 +445,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         if (sending.current || renewing.current) throw new Error("controller busy");
         const frame = media.current?.frame;
         if (!frame || frame.target_id !== selectedTarget) throw new Error("page changed");
-        const result = await apiFetchJson<{ viewport_id: string }>(`${base}/viewport`, {
+        const result = await fetchJson<{ viewport_id: string }>(`${base}/viewport`, {
           method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
           body: JSON.stringify({ ...size, viewer_id: viewerId.current, target_id: frame.target_id, document_id: frame.document_id }),
         });
@@ -477,10 +494,10 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
       // Any already sent resize can still complete. Require a new frame before input.
       setResizing(false);
     };
-  }, [ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput]);
+  }, [active, ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput, fetchJson]);
   const send = useCallback(
     (action: Record<string, unknown>) => {
-      if (!owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
+      if (!activeRef.current || !owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
         return;
       }
       if (!enqueueInput(queue.current, { action, frame: media.current.frame })) {
@@ -507,7 +524,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
               next.focus_token = focus.current;
             }
             dispatched = true;
-            const result = await apiFetchJson<{ focus_token: string | null }>(
+            const result = await fetchJson<{ focus_token: string | null }>(
               `${base}/input`,
               {
                 method: "POST",
@@ -538,8 +555,22 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         }
       })();
     },
-    [owns, working, connected, base, resetInput, failPrivate],
+    [owns, working, connected, base, resetInput, failPrivate, fetchJson],
   );
+  useEffect(() => {
+    const element = typing.current;
+    if (!mobile || !element?.addEventListener) return;
+    // Software keyboards may emit beforeinput without a meaningful keydown.
+    const beforeInput = (event: InputEvent) => {
+      if (event.isComposing) return;
+      const key = event.inputType === "deleteContentBackward" ? "Backspace"
+        : event.inputType === "deleteContentForward" ? "Delete"
+        : ["insertLineBreak", "insertParagraph"].includes(event.inputType) ? "Enter" : null;
+      if (key) { event.preventDefault(); send({ kind: "key", key }); }
+    };
+    element.addEventListener("beforeinput", beforeInput);
+    return () => element.removeEventListener("beforeinput", beforeInput);
+  }, [mobile, send]);
   const point = (event: { clientX: number; clientY: number }) => {
     const bounds = canvas.current!.getBoundingClientRect();
     const frame = media.current?.frame;
@@ -570,6 +601,15 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [send, owns, working, connected]);
+  useEffect(() => {
+    const element = canvas.current;
+    if (!mobile || !active || !element) return;
+    return installBrowserTouch(element, dy => {
+      const frame=media.current?.frame;
+      if(frame) send({kind:"scroll",x:frame.width/2,y:frame.height/2,
+        delta_y:Math.max(-2000,Math.min(2000,dy*frame.height/element.getBoundingClientRect().height))});
+    }, () => { const frame=media.current?.frame; return frame ? `${frame.target_id}:${frame.document_id}:${frame.viewport_id}` : ""; });
+  }, [mobile, active, send, selectedTarget, session?.generation]);
   if (ended) {
     const restarted = !missing && session?.runtime_status === "daemon_restarted";
     const recoverable = !missing && session?.can_take_control;
@@ -600,9 +640,9 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
             <div className="flex flex-wrap gap-2">
               {restarted && recoverable && primaryOperation !== "reopen" && <button className={button} disabled={working} onClick={() => void control("reopen")}>Reopen saved pages</button>}
               {recoverable && primaryOperation !== "acquire" && <button className={button} disabled={working} onClick={() => void control("acquire")}>{restarted ? "Start blank workspace" : "Take control"}</button>}
-              {session.state !== "closing" && <button className={button} disabled={working} onClick={() => void control("close")}>Close this thread’s tabs</button>}
+              {!mobile && session.state !== "closing" && <button className={button} disabled={working} onClick={() => void control("close")}>Close this thread’s tabs</button>}
             </div>
-            <BrowserLifecycle budId={session.bud_id} />
+            {!mobile && <BrowserLifecycle budId={session.bud_id} />}
           </section>}
         </>}
       </main>
@@ -633,7 +673,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           aria-label="Remote browser page"
           onClick={(event) => {
             const p = point(event);
-            if (p && owns && connected && !working && !resizeBlocked.current) {
+            if (activeRef.current && p && owns && connected && !working && !resizeBlocked.current) {
               send({ kind: "click", ...p });
               setMenuOpen(false);
               typing.current?.focus({ preventScroll: true });
@@ -660,7 +700,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           tabIndex={-1}
           autoComplete="off"
           spellCheck={false}
-          disabled={!owns || !connected || working || resizing || blocked}
+          disabled={!active || !owns || !connected || working || resizing || blocked}
           className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none overflow-hidden opacity-0"
           onChange={(event) => {
             if (
@@ -778,7 +818,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
             Conversation
           </a>}
           {embedded && <>
-            <a className={button} href={`/browser/${encodeURIComponent(sessionId)}`} target="_blank" rel="noopener noreferrer" title="Open browser viewer in new tab">↗</a>
+            {!mobile && <a className={button} href={`/browser/${encodeURIComponent(sessionId)}`} target="_blank" rel="noopener noreferrer" title="Open browser viewer in new tab">↗</a>}
             <button className={button} onClick={onDismiss} aria-label="Dismiss browser pane">✕</button>
           </>}
         </div>
@@ -798,7 +838,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           {error || statusError}
         </p>
       )}
-      {session?.can_show_window && <div className="mb-3 flex flex-wrap gap-2">
+      {!mobile && session?.can_show_window && <div className="mb-3 flex flex-wrap gap-2">
         <button className={button} disabled={working || resizing} onClick={() => void control("show_window")}>Show browser window</button>
         {owns && <button className={button} disabled={working || resizing} onClick={() => void control("hide_window")}>Hide browser window</button>}
         <p className="text-xs text-muted-foreground">Opens on the Bud’s machine and takes private control. Hide keeps browser work paused.</p>
@@ -808,7 +848,7 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
           Page{" "}
           <select
             className="rounded border p-1"
-            disabled={!owns || !connected || resizing}
+            disabled={!active || !owns || !connected || resizing}
             value={selectedTarget}
             onChange={(event) => {
               resetInput();
@@ -834,21 +874,21 @@ export function BrowserViewer({ sessionId, embedded = false, onDismiss, onReturn
         )}
       </div>
       <div className="mb-2 flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-        <label><input type="checkbox" checked={fit} disabled={resizing || !session?.can_resize_viewport} onChange={event => setFit(event.target.checked)} /> Fit pane</label>
+        <label><input type="checkbox" checked={fit} disabled={resizing || !(owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport)} onChange={event => setFit(event.target.checked)} /> Fit pane</label>
         <span>{resizing ? "Fitting page…" : !session?.can_resize_viewport ? "Update Bud to enable fitting" : !owns && !session?.can_resize_agent_viewport ? "Update Bud to fit while the agent browses" : !fit ? "Keeping page size" : ""}</span>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         Basic page input is supported. File uploads, passkeys and
         operating-system password dialogs are not supported yet.
       </p>
-      <button
+      {!mobile && <button
         className={`${button} mt-4 self-start text-destructive`}
         disabled={!session || working || resizing || session.state === "closing"}
         onClick={() => void control("close")}
       >
         Close this thread’s tabs
-      </button>
-      {session && <BrowserLifecycle budId={session.bud_id} />}
+      </button>}
+      {session && !mobile && <BrowserLifecycle budId={session.bud_id} />}
         </section>
         </div>
       </div>

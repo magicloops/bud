@@ -531,3 +531,12 @@ and older-writer rows remain null. DB-clock lifecycle transitions settle running
 intervals atomically with status. Unknown execution ends invalidate the whole total.
 Migration: the two `agent_invocation` columns ride in `0039_bud_browser.sql`. No
 historical backfill or new timing table.
+
+## Scoped mobile browser visits
+
+`browserViewerVisitTable` stores one-use grant and cookie hashes, workspace/thread/
+Bud/viewer binding, owner/tenant and grant/idle/absolute expiries. Composite owner
+FK cascades from `browser_session`; no page content or input is stored.
+Migration `0041_demonic_stephen_strange.sql` is generated and tested in an isolated
+schema. Reviewed SQL was applied locally after db:push proposed unrelated invocation
+constraint recreation; see [debug note](../../../debug/mobile-browser-integration.md).

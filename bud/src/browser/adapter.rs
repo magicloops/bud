@@ -51,6 +51,7 @@ pub(super) struct CaptureTiming {
     pub format: &'static str,
     pub scales: [f64; 4],
     pub image_chars: [usize; 4],
+    pub image_dimensions: [(u32, u32); 4],
 }
 
 async fn timed<T>(elapsed: &mut u64, operation: impl std::future::Future<Output = T>) -> T {
@@ -860,7 +861,9 @@ impl Browser {
             (1280.0 / width.max(height)).min(1.0)
         };
         let mut image = String::new();
-        // Read-only recapture at lower resolution bounds high-entropy PNGs.
+        let mut image_fits = false;
+        // Chrome's actual bitmap can include device scaling beyond our CSS-based
+        // prediction. Bound decoded dimensions as well as compressed byte length.
         timing.format = if enhanced { "png" } else { "jpeg" };
         for attempt in 0..4 {
             timing.stage = "screenshot";
@@ -876,13 +879,18 @@ impl Browser {
                 .context("browser_capture_failed")?
                 .to_owned();
             timing.image_chars[attempt] = image.len();
-            if image.len() <= 1_400_000 {
+            timing.stage = "image_bounds";
+            let dimensions = super::image_bounds::dimensions(&image, enhanced)?;
+            timing.image_dimensions[attempt] = dimensions;
+            image_fits = image.len() <= 1_400_000
+                && super::image_bounds::within_bounds(dimensions, enhanced);
+            if image_fits {
                 break;
             }
             scale *= 0.5;
         }
         timing.stage = "document_after";
-        if image.len() > 1_400_000
+        if !image_fits
             || timed(&mut timing.document_ms, self.document(&session)).await? != document
         {
             bail!("browser_frame_discarded");
@@ -1536,6 +1544,10 @@ mod launch_tests {
 #[cfg(test)]
 #[path = "viewer_tests.rs"]
 mod viewer_tests;
+
+#[cfg(test)]
+#[path = "capture_bounds_tests.rs"]
+mod capture_bounds_tests;
 
 #[cfg(test)]
 #[path = "workspace_tests.rs"]

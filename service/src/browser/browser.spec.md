@@ -94,7 +94,7 @@ semantics of recover, reopen and the window operations. POST `/:id/input` accept
 frame/document/focus-bound gestures. `/api/browser/sessions/:id/media` authorizes
 before upgrade, then binds the viewer to the live Better Auth session. Writes and
 upgrades require an allowed Origin. Signed-out requests return 401, foreign IDs
-404. The current viewer requires browser cookie auth; native bootstrap is Phase 3.
+404. Desktop uses live web-cookie auth; native uses the scoped visit below.
 
 Control leases are memory-only, 15 seconds, renewed every five seconds. Private
 content remains private after pause, disconnect or restart (`private_content`);
@@ -423,3 +423,24 @@ controller, so foreign session IDs return 404 like `resizeViewport`.
 P9: `routes.ts` `viewerHandshake` holds up to 16 messages sent behind the
 viewer hello until `attachViewer` has registered its listener, then replays
 them; `media.test.ts` covers the early ACK.
+
+## Mobile viewer visits (Phase 3b)
+
+- `mobile-auth.ts`: persisted one-use grant redemption, hashed cookie lookup,
+  owner/secret-bound renewal and revocation. `mobile-auth.test.ts` executes the
+  real migration in isolated PostgreSQL and checks replay, retirement, expiry,
+  owner/secret scope and service-instance continuity.
+- `routes.ts` permits bearer inventory and bearer-only grant/refresh/revoke.
+  A route-local principal adapter resolves scoped cookies before owned reads,
+  writes and WS upgrade/hello; ongoing media authorization rechecks visit validity.
+  Mobile control excludes close, native window and Bud lifecycle operations.
+
+The owning resource is the existing browser workspace. Mint resolves the native
+bearer viewer before owner-scoped repository lookup; visit rows inherit workspace
+owner and tenant with a composite FK. Native alone retains the grant secret.
+The HttpOnly cookie expires server-side after 15 minutes (five-minute native
+refresh; eight-hour absolute maximum). One-minute grants redeem atomically.
+Origin protection remains on cookie writes/upgrades. See the exact
+[HTTP/bridge contract](../../../plan/bud-owned-browser/mobile-viewer-contract.md).
+Migration 0041 must precede service/shared web and mobile upgrade; daemon wire
+contracts remain unchanged.

@@ -430,3 +430,10 @@ including same-owner reclaims. Drizzle cannot express triggers, so this file is
 the only source of that SQL: `db:push` neither creates nor drops it, and future
 edits to the trigger need another custom migration. Exercised by
 `service/src/browser/repository.test.ts` and `resource-repository.test.ts`.
+
+### `0041_demonic_stephen_strange.sql`
+
+Adds browser_viewer_visit with owner/workspace composite FK, hashed one-use grant
+and cookie secrets, bounded expiry and lookup indexes. Generated metadata is
+unchanged. Applied reviewed SQL locally and exercised against isolated pre-change
+browser tables; deploy via db:migrate before the mobile viewer service release.
