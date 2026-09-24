@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { providerRegistry, type CanonicalMessage, type LLMProvider, type ModelConfig } from "../llm/index.js";
+import { providerRegistry, type CanonicalResponse, type CanonicalMessage, type LLMProvider, type ModelConfig } from "../llm/index.js";
 import {
   ThreadTitleService,
   normalizeGeneratedThreadTitle,
@@ -44,7 +44,7 @@ function makeProvider(name: string, supportedModels: readonly string[]): LLMProv
         maxContextTokens: 8192,
         maxOutputTokens: 1024,
         supportsStreaming: true,
-        supportsTools: false,
+        supportsTools: true,
         supportsJsonMode: false,
         supportsReasoning: false,
         supportsThinking: false,
@@ -61,10 +61,10 @@ function resetTitleTestProviders(): void {
   providerRegistry.unregister("thread-title-fallback");
 }
 
-test("normalizeGeneratedThreadTitle trims labels and punctuation", () => {
+test("normalizeGeneratedThreadTitle normalizes whitespace without guessing at formatting", () => {
   assert.equal(
-    normalizeGeneratedThreadTitle('Title: "Fix OAuth Callback Flow."'),
-    "Fix OAuth Callback Flow",
+    normalizeGeneratedThreadTitle('  Fix  OAuth\nCallback Flow.  '),
+    "Fix OAuth Callback Flow.",
   );
 });
 
@@ -140,10 +140,17 @@ test("generateTitle invokes GPT-5.6 Luna with reasoning disabled when OpenAI is 
   const receivedConfigs: ModelConfig[] = [];
   const provider = makeProvider("openai", ["gpt-5.6-luna"]);
   provider.invokeSync = async (_messages, _tools, modelConfig) => {
+    assert.equal(_tools.length, 1);
+    assert.deepEqual(_tools[0].parameters, {
+      type: "object",
+      properties: { title: { type: "string", minLength: 1, maxLength: 80 } },
+      required: ["title"],
+      additionalProperties: false,
+    });
     receivedConfigs.push(modelConfig);
     return {
       id: "title-response",
-      content: [{ type: "text", text: "Fix Deploy Script" }],
+      content: [{ type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Fix Deploy Script" } }],
       stopReason: "end_turn",
     };
   };
@@ -159,7 +166,8 @@ test("generateTitle invokes GPT-5.6 Luna with reasoning disabled when OpenAI is 
     assert.equal(await generateTitle("Fix the broken deploy script"), "Fix Deploy Script");
     assert.equal(receivedConfigs.length, 1);
     assert.equal(receivedConfigs[0].model, "gpt-5.6-luna");
-    assert.equal(receivedConfigs[0].toolChoice, "none");
+    assert.deepEqual(receivedConfigs[0].toolChoice, { type: "tool", name: "submit_thread_title" });
+    assert.equal(receivedConfigs[0].maxOutputTokens, 256);
     assert.deepEqual(receivedConfigs[0].reasoning, { enabled: false });
   } finally {
     resetTitleTestProviders();
@@ -171,10 +179,17 @@ test("generateTitle falls back to Anthropic Haiku 4.5 when OpenAI is absent", as
   const receivedConfigs: ModelConfig[] = [];
   const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
   provider.invokeSync = async (_messages, _tools, modelConfig) => {
+    assert.equal(_tools.length, 1);
+    assert.deepEqual(_tools[0].parameters, {
+      type: "object",
+      properties: { title: { type: "string", minLength: 1, maxLength: 80 } },
+      required: ["title"],
+      additionalProperties: false,
+    });
     receivedConfigs.push(modelConfig);
     return {
       id: "title-response",
-      content: [{ type: "text", text: "Fix Deploy Script" }],
+      content: [{ type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Fix Deploy Script" } }],
       stopReason: "end_turn",
     };
   };
@@ -190,14 +205,15 @@ test("generateTitle falls back to Anthropic Haiku 4.5 when OpenAI is absent", as
     assert.equal(await generateTitle("Fix the broken deploy script"), "Fix Deploy Script");
     assert.equal(receivedConfigs.length, 1);
     assert.equal(receivedConfigs[0].model, "claude-haiku-4-5-20251001");
-    assert.equal(receivedConfigs[0].toolChoice, "none");
+    assert.deepEqual(receivedConfigs[0].toolChoice, { type: "tool", name: "submit_thread_title" });
+    assert.equal(receivedConfigs[0].maxOutputTokens, 256);
     assert.deepEqual(receivedConfigs[0].reasoning, { enabled: false });
   } finally {
     resetTitleTestProviders();
   }
 });
 
-test("generateTitle keeps first-line title when model continues with extra text", async () => {
+test("generateTitle rejects truncated plain-text output", async () => {
   resetTitleTestProviders();
   const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
   provider.invokeSync = async () => ({
@@ -221,7 +237,7 @@ test("generateTitle keeps first-line title when model continues with extra text"
 
     assert.equal(
       await generateTitle("Can you ask me 5 structured questions about myself?"),
-      "Five Questions About You",
+      null,
     );
   } finally {
     resetTitleTestProviders();
@@ -236,7 +252,7 @@ test("generateTitle wraps the first user message as text to summarize", async ()
     receivedMessages = messages;
     return {
       id: "title-response",
-      content: [{ type: "text", text: "Five Questions About You" }],
+      content: [{ type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Five Questions About You" } }],
       stopReason: "end_turn",
     };
   };
@@ -271,4 +287,141 @@ test("generateTitle returns null when Anthropic is not configured", async () => 
   ) => Promise<string | null>;
 
   assert.equal(await generateTitle("Fix the broken deploy script"), null);
+});
+
+
+test("structured title validation rejects malformed and incomplete responses", async () => {
+  resetTitleTestProviders();
+  const provider = makeProvider("openai", ["gpt-5.6-luna"]);
+  const call = { type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Valid Title" } } as const;
+  let response: CanonicalResponse = { id: "test", content: [call], stopReason: "end_turn" };
+  provider.invokeSync = async () => response;
+  providerRegistry.register(provider);
+  const service = new ThreadTitleService({} as never, makeLogger());
+  const generate = Reflect.get(service, "generateTitle").bind(service);
+  try {
+    for (const input of [{}, { title: null }, { title: 1 }, { title: "  " },
+      { title: "x".repeat(81) }, { title: "Valid", extra: true }]) {
+      response = { id: "test", content: [{ ...call, input }], stopReason: "end_turn" };
+      assert.equal(await generate("Summarize this"), null, JSON.stringify(input));
+    }
+    for (const stopReason of ["max_tokens", "error", "stop_sequence"] as const) {
+      response = { id: "test", content: [call], stopReason };
+      assert.equal(await generate("Summarize this"), null, stopReason);
+    }
+    for (const content of [[], [call, call], [{ ...call, name: "wrong" }],
+      [{ type: "text" as const, text: '{"title":"Valid Title"}' }]]) {
+      response = { id: "test", content, stopReason: "end_turn" };
+      assert.equal(await generate("Summarize this"), null);
+    }
+    response = { id: "test", content: [{ ...call, input: { title: "x".repeat(80) } }], stopReason: "tool_use" };
+    assert.equal(await generate("Summarize this"), "x".repeat(80));
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+test("stream-only providers require a completed structured response", async () => {
+  resetTitleTestProviders();
+  const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
+  let complete = true;
+  provider.invoke = async function* () {
+    yield { type: "tool_use_done", index: 0, id: "t1", name: "submit_thread_title", input: { title: "Fix Deploy Script" } };
+    if (complete) yield { type: "message_done", stop_reason: "tool_use" };
+  };
+  providerRegistry.register(provider);
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generate = Reflect.get(service, "generateTitle").bind(service);
+    assert.equal(await generate("Fix deployment"), "Fix Deploy Script");
+    complete = false;
+    assert.equal(await generate("Fix deployment"), null);
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+for (const failure of ["provider_error", "invalid_output"] as const) {
+  test(`title generation retries once after ${failure}`, async () => {
+    resetTitleTestProviders();
+    const provider = makeProvider("openai", ["gpt-5.6-luna"]);
+    let calls = 0;
+    let recover = true;
+    provider.invokeSync = async () => {
+      calls += 1;
+      if (!recover || calls === 1) {
+        if (failure === "provider_error") throw new Error("Provider unavailable");
+        return { id: "bad", content: [], stopReason: "max_tokens" };
+      }
+      return {
+        id: "good", stopReason: "end_turn",
+        content: [{ type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Recovered Title" } }],
+      };
+    };
+    providerRegistry.register(provider);
+    try {
+      const service = new ThreadTitleService({} as never, makeLogger());
+      const generate = Reflect.get(service, "generateTitle").bind(service);
+      assert.equal(await generate("Title this"), "Recovered Title");
+      assert.equal(calls, 2);
+      recover = false;
+      calls = 0;
+      assert.equal(await generate("Title this"), null);
+      assert.equal(calls, 2);
+    } finally {
+      resetTitleTestProviders();
+    }
+  });
+}
+
+test("title timeout is 30 seconds per attempt with fresh signals and timer cleanup", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  resetTitleTestProviders();
+  const provider = makeProvider("openai", ["gpt-5.6-luna"]);
+  const signals: AbortSignal[] = [];
+  let recover = true;
+  provider.invokeSync = async (_messages, _tools, _config, signal) => {
+    assert.ok(signal);
+    signals.push(signal);
+    if (recover && signals.length === 2) {
+      return {
+        id: "good", stopReason: "end_turn",
+        content: [{ type: "tool_use", id: "t1", name: "submit_thread_title", input: { title: "Recovered Title" } }],
+      };
+    }
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+  };
+  providerRegistry.register(provider);
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generate = Reflect.get(service, "generateTitle").bind(service);
+    const result = generate("Title this");
+    t.mock.timers.tick(29_999);
+    assert.equal(signals[0].aborted, false);
+    assert.equal(signals.length, 1);
+    t.mock.timers.tick(1);
+    assert.equal(await result, "Recovered Title");
+    assert.equal(signals.length, 2);
+    assert.notEqual(signals[0], signals[1]);
+    t.mock.timers.tick(30_000);
+    assert.equal(signals[1].aborted, false, "successful attempt timer was cleared");
+
+    signals.length = 0;
+    recover = false;
+    const exhausted = generate("Title this");
+    t.mock.timers.tick(30_000);
+    // Flush provider rejection and the generation catch before advancing retry time.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(signals.length, 2);
+    assert.equal(signals[1].aborted, false);
+    t.mock.timers.tick(30_000);
+    assert.equal(await exhausted, null);
+    assert.equal(signals.length, 2);
+    assert.equal(signals[1].aborted, true);
+  } finally {
+    resetTitleTestProviders();
+    t.mock.timers.reset();
+  }
 });

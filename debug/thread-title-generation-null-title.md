@@ -1,5 +1,53 @@
 # Debug: Thread Title Generation Leaves `thread.title` NULL
 
+## 2026-09-24 investigation: first-attempt failure has no recovery
+
+Affected local thread: `284b4d11-e5f4-45a4-830b-81c3ac9712c6`, created at
+2026-09-24T21:34:38.536Z. Read-only database inspection found `title = NULL`
+and `message_count = 13`; this is not merely a missed client title event.
+The first user message is 35 characters. No transcript content or credentials
+are copied into this note.
+
+Current implementation differs from the historical Haiku-only policy below:
+it prefers GPT-5.6 Luna, with Haiku only when the OpenAI provider is absent.
+
+Confirmed code findings:
+
+- `maybeGenerateFromFirstUserMessage` only admits the original first user
+  message. Failure/invalid output leaves NULL; later messages are rejected as
+  `not_first_user_message`. There is no application retry or restart recovery.
+- The title side task has an eight-second timeout and a 24-token output budget.
+  Provider transport failures, empty/invalid output, persistence failures or
+  process interruption can therefore leave a permanent untitled conversation.
+- The durable message route catches errors without recording the error or
+  message ID, unlike its older execution path. Available saved logs did not
+  contain this thread's original attempt, so its initiating failure is unknown.
+- The OpenAI adapter omits `reasoning` for `{ enabled: false }`; a mocked SDK
+  capture confirms the actual title request contains no explicit `effort: none`.
+  This is request-policy drift, not proof that reasoning caused this incident.
+
+Live read-only reproduction used the first message and existing title service,
+without calling persistence or emitting events. The unchanged request succeeded
+in 1,932 ms: completed, nine output tokens, zero reasoning tokens, valid title.
+A second request explicitly setting `reasoning.effort: none` also succeeded in
+1,907 ms with the same token counts. Neither experiment repaired the database.
+The original failure was not reproduced, and the 24-token budget was not shown
+to be exhausted in these runs.
+
+Recommended fix: separate the trigger from the source. Any admitted user message
+on an untitled thread may schedule a bounded, deduplicated naming attempt, but
+the source remains the first persisted user message. Add a small bounded retry
+for transient/invalid outcomes, preserve conditional NULL-only persistence and
+owner checks, and record correlated failure reason/model/duration without raw
+message text. Decide explicit restart/open-time recovery for inactive untitled
+threads separately; a follow-up-message retry alone cannot repair those.
+Regression coverage should include initial failure then success, later-message
+recovery using the original source, concurrent triggers, already/manual-titled
+threads, owner/deletion races, and SDK-level disabled-reasoning serialization.
+
+No application code, existing title, service process or daemon was changed in
+this investigation.
+
 ## Environment
 
 - Date: 2026-04-08
@@ -354,3 +402,30 @@ If the diagnosis confirms a silent predicate/update no-op:
 - `service/src/agent/agent.spec.md`
 - `service/src/routes/routes.spec.md`
 - `docs/proto.md` only if stream semantics change
+
+## Structured title implementation (2026-09-24)
+
+Use the existing canonical forced-tool API with a single `submit_thread_title`
+JSON object (`title` required, no extra fields), supported by Luna and Haiku.
+Increase the output allowance from 24 to 256 tokens; validate completed responses
+and a nonempty title of at most 80 characters. Remove first-line/label/punctuation
+salvaging. Keep the 8-second deadline, first-message eligibility and conditional
+NULL-title write unchanged. No new endpoint, ownership boundary, schema migration,
+client or daemon upgrade is needed; deploy the service to activate this change.
+
+Validation: `pnpm exec node --import tsx --test src/agent/thread-title-service.test.ts`
+passed all 14 tests; `pnpm exec tsc --noEmit --project tsconfig.json` and
+`git diff --check` passed. Tests use scripted providers; no live structured-model
+request or existing-thread backfill was performed for this change.
+
+## Bounded retry follow-up (2026-09-24)
+
+Requested fix: give each title attempt 30 seconds and retry once on provider
+failure, timeout, or invalid structured output. Use a fresh abort controller and
+clear the timer after each attempt. Keep retries inside generation so persistence
+and SSE publication happen only once; retain conditional NULL-only writes.
+Exhaustion leaves the title unchanged. No durable retry or backfill is added.
+
+Follow-up validation: all 17 focused title tests pass, including fake-clock
+30-second timeout, fresh retry controller, timer cleanup, recovery and two-attempt
+exhaustion. Service TypeScript check and `git diff --check` pass.
