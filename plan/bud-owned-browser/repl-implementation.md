@@ -15,7 +15,8 @@ See [Phase 2 validation](../../debug/browser-repl-selective-observations.md).
 
 Implement [the REPL design](../../design/browser-repl.md) through the original
 four phases and the Phase 5–7 output, extraction and interaction refinements below,
-then Phase 7b snapshot/output compaction and budget reassessment, followed by
+then Phase 7b snapshot/output compaction and budget reassessment, Phase 7c scrolling
+and observation use, followed by
 Phase 8 workspace lifecycle and final merge acceptance. Keep page data in a thread's Node workspace and send only deliberately
 emitted evidence to the model. Preserve the shared Chrome profile, thread-owned
 tabs, user control, recovery, viewer and existing agent loop.
@@ -398,6 +399,15 @@ then reassess 8/16/32 KiB budgets against calls, latency, coverage and
 actual provider usage. Completed comparison retains 8 KiB with explicit expansion;
 all 36 candidate tasks passed, with mixed per-task token tradeoffs. This phase refines Phase 5 output semantics; it does not
 add history thinning or site-specific extraction. Phase 8 remains the final gate.
+
+## Phase 7c — Reliable scrolling and focused observation use (scoped)
+
+[Phase 7c plan](repl-phase-7c-observation-use.md) follows the
+[ed1 review](../../review/browser-repl-ed1-review.md). Investigate stale page-scroll
+invalidation first, preserving ownership/private control and element freshness.
+Then evaluate concise guidance distinguishing semantic roles from HTML tags,
+refreshing without reprinting, selecting retained evidence and honest coverage.
+Keep 8 KiB; no automatic diffing, specialized extraction or history thinning.
 
 ## Phase 8 — Workspace admission, cleanup and final merge acceptance (scoped)
 

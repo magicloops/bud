@@ -107,6 +107,9 @@ Record actual results and skipped environment checks in a debug note.
 
 ## 4. Final merge gate
 
+- [ ] Complete [Phase 7c scrolling and observation use](repl-phase-7c-observation-use.md)
+  with a reproduced stale-scroll decision and measured guidance results.
+
 - [ ] Complete [Phase 7b output compaction](repl-phase-7b-output-compaction.md),
   including fidelity/overflow validation and the explicit post-compaction
   decision on the 8 KiB default. Do not infer acceptance from smaller byte counts.
