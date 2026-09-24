@@ -10,8 +10,9 @@ control, input and media; private input is not a transcript event.
   bounded serial input. Remounts by owner/session; uncertain input is not replayed.
   Known control failures display actionable text and the canonical code/operation;
   unknown response bodies are not displayed.
-- `pane.tsx`: owner/thread-visit-local discovery and open context. One five-second
-  inventory loop plus canonical live open/handoff events; initial history/inventory
+- `pane.tsx`: owner/thread-visit-local discovery and open context. One serial
+  event-driven inventory observer on a shared visit-owned state feed
+  plus canonical live handoff events; initial history/inventory
   seed a reveal baseline. New identities reveal once, polls/replay respect dismissal,
   obsolete fetches cannot select a browser in another visit.
 - `pane-state.ts` / `.test.ts`: strict first-party identities and reveal deduplication.
@@ -23,7 +24,8 @@ control, input and media; private input is not a transcript event.
 - `viewport-fit.ts` / `.test.ts`: bounded CSS dimensions, 150ms coalescing, one resize
   in flight plus the latest desired size; no automatic retry after uncertainty.
 
-Metadata polls every three seconds.
+Metadata reconciles on state hints, reconnect, visible resume and explicit recovery;
+there is no healthy periodic metadata GET.
 Agent-only epoch changes retain the same passive media socket/canvas by default.
 Private/paused transitions, generation changes, permission loss and network failure
 still clear/reconnect. Viewport-fit cancellation remains epoch-bound. Mounted tests
@@ -35,7 +37,7 @@ stay imperative; React receives only changed target/control status. Input queues
 at most 16 gestures, bound to the displayed document/viewport; typing is cleared
 on navigation, control loss and uncertain acknowledgement. Local Unicode/paste
 input never enters chat or initializes from remote password values. Controller
-renewal runs every five seconds. Explicit Close this thread's tabs supports
+renewal runs every five seconds. Explicit Close browser workspace supports
 interrupted-session recovery. Basic page interaction only; no OS dialogs/passkeys.
 
 Phase 2 is implemented; signed-in UI acceptance remains pending. See the main
@@ -178,7 +180,7 @@ stop retries. Recovery controls appear on the empty canvas.
 
 The mounted viewer retains the service's `recovery_ticket` in memory and refreshes
 it on successful renewal. Media/lease loss clears input but retains this proof;
-the existing metadata poll requests `recover` once the same browser is available.
+state-feed reconciliation requests `recover` once the same browser is available.
 Restoration uses a fresh private lease and fresh media, never replays gestures or
 returns the agent. A lost recovery response can be retried idempotently. Explicit
 pause/return/close, input/resize uncertainty, ended sessions and unmount discard
@@ -214,7 +216,7 @@ confirms replacement of the managed process.
 `lifecycle.tsx` supplies Bud-level Stop/Reset controls in the viewer menu and ended
 state, separately from closing a thread's tabs. Confirmation identifies all-thread
 impact; reset explicitly deletes stored site data. Owner-authorized resource status
-polls every three seconds while mounted. Pending intent remains visible until
+reconciles through the shared state feed while mounted. Pending intent remains visible until
 acknowledged completion, and older revisions cannot overwrite a newer response.
 `lifecycle.test.tsx` verifies explicit reset confirmation, pending-state revision
 ordering and discarded responses after a Bud switch. No screenshot or per-frame
@@ -224,7 +226,7 @@ state is added to React.
 
 The active mounted viewer calls owner-authorized POST `/:id/ensure` with its
 stable viewer UUID before media attachment and after a recoverable runtime end.
-Hidden/background viewers and inventory polls never launch Chrome. Suspension,
+Hidden/background viewers and inventory reads never launch Chrome. Suspension,
 thread switch and disposal abort/fence late responses. Agent admission uses the
 same service coordinator, avoiding duplicate restoration.
 
@@ -275,9 +277,70 @@ Mobile starts passive with Fit on and uses the existing authorized agent viewpor
 fit path without acquiring private control. Competing-viewer sizing remains
 service-owned; suspended viewers do not fit. Scoped auth
 failures clear media and stop retries without redirecting to full web sign-in.
-Suspension clears input/proofs and closes media, stops polls/renewal, and releases
+Suspension clears input/proofs and closes media, stops reconciliation/renewal, and releases
 private control without returning the agent. Late control replies are fenced by
 lifecycle generation. Mobile hides host-window, close-tabs, Bud lifecycle and
 new-tab UI. Software-keyboard beforeinput handles delete/line-break gestures;
 composition/text still share the existing ordered queue. Remote content remains
 canvas pixels, with native accessibility limited to the viewer controls.
+
+## Inventory outage handling (Phase 7e)
+
+Inventory reconciliation retains presentation across transient failures, resets backoff
+on success, and stops for definitive HTTP/auth failures. Auth/resource loss clears
+the selected session. Live handoff events still reveal immediately;
+backoff does not reopen dismissed panes or delay event delivery. Visit disposal
+aborts pending fetches and cancels the timer. Diagnostics use the thread feature's
+small `recovery-diagnostics.ts` helper; they do not affect metadata, control renewal,
+media, viewport fitting or the native mobile bridge. Mounted cross-feature coverage
+is in `../threads/client-recovery.test.tsx`, alongside existing `pane.test.tsx`.
+
+## Event-driven browser state (Phase 7f)
+
+- `state-feed.ts`: `BrowserStateFeed` owns a visit-local authorized WebSocket and
+  coalesced per-consumer readers. Thread pane, viewer and lifecycle share one feed;
+  standalone/mobile use session feeds; independent lifecycle can use a Bud feed.
+  No global cross-user cache. Ready precedes initial reads; changes during reads
+  retain one dirty follow-up. Obsolete requests abort on disconnect/disposal.
+- `state-feed.fixture.ts`: fake state socket for mounted viewer/hook tests.
+- `state-feed.test.tsx`: shared-consumer 60s passive/private request counts,
+  hidden/resume, burst/in-flight reconciliation, revocation clearing, stalled
+  channel watchdog/reconnect and cleanup.
+
+Healthy unchanged views make no recurring inventory/metadata/resource GETs.
+15s server liveness messages do not refresh metadata; missing messages for 45s
+close/reconnect with bounded 1/2/4/8/16/30s delays. Failed reconciliation uses
+2/4/8/16/30s backoff; definitive auth/resource loss stops that reader and clears
+protected state. Resume reconciles dirty/current state once. Hidden passive
+readers defer work; desktop private control retains its five-second renewals and
+metadata/security handling. Mobile retains explicit host suspension semantics.
+
+`viewer.tsx` fences private input on state-channel loss until readiness and an
+accepted current metadata read. No event acquires control or replays an action.
+Visible ensure and proof-based recovery retain existing rules; passive idle keeps
+its frame. `lifecycle.tsx` uses the same scheduler and ignores aborted failures.
+The route passes the pane's feed into the viewer; metadata hints do not remount
+media. Historical polling descriptions above are superseded by this section.
+Migration 0042 and updated service are required before reloading shared clients;
+no native iOS bridge or daemon build change. Physical traffic acceptance is pending.
+
+Initial state-feed socket construction is deferred one microtask and shared across
+same-visit subscribers. React Strict Mode setup/cleanup/setup creates only the
+surviving socket; disposal before startup creates none. Existing sockets still
+close immediately on last unsubscribe. Mounted regression verifies effect replay
+and early disposal; actual connection errors remain visible.
+
+Phase 7g browser discovery uses current inventory and handoff identity. No old
+browser_open result triggers reveal; historical observation cards are removed.
+REPL execution output uses the normal tool renderer. Dismissal and owner/thread
+visit fences remain unchanged.
+
+## Workspace lifetime (REPL Phase 8)
+
+Workspaces expire automatically in the daemon after 24 hours without use. The fixed
+count cap and manual capacity-recovery message are removed; no new client polling
+or native bridge is needed. Active viewing counts as use. On a later visit the
+existing owner-authorized ensure restores eligible saved URLs automatically.
+The optional desktop Close browser workspace action still discards this thread's
+tabs/REPL memory and saved URL hints while preserving profile sign-ins and other
+threads. Hosted mobile need not expose it for normal resource management.

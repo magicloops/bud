@@ -1,6 +1,12 @@
 # Design: Persistent browser REPL
 
-Status: Proposed scope; no implementation yet
+Status: Phases 1–3 implemented with REPL as the development catalog default.
+Live observation/navigation acceptance passed; interaction/device acceptance and
+Phase 4 output controls and comparison harness are implemented; coordinated
+cutover remains subject to measured behavior and lifecycle acceptance.
+See [Phase 4 results](../debug/browser-repl-phase4.md).
+
+Implementation: [phased delivery plan](../plan/bud-owned-browser/repl-implementation.md).
 
 Date: 2026-09-23
 
@@ -8,7 +14,7 @@ Date: 2026-09-23
 
 Give the agent a persistent JavaScript workspace for browser discovery, extraction
 and interaction. Large intermediate observations stay in Node memory or files;
-only deliberately emitted evidence enters model context. Reuse Bud's persistent
+only displayed console/completion evidence enters model context. Reuse Bud's persistent
 Chrome profile, thread workspaces, semantic actions, viewer and handoff flow.
 
 Treat generated JavaScript as trusted agent code with the same general machine
@@ -67,15 +73,13 @@ var tab = await browser.tabs.current(); // recover this workspace when possible
 // Or: var tab = await browser.tabs.open('https://example.com');
 var snapshot = await tab.snapshot();
 var links = snapshot.nodes.filter(node => node.role === 'link');
-repl.write(links.map(node => ({
-  ref: node.reference, name: node.name, url: node.url
-})));
+console.log(snapshot.format({nodes: links})); // exact nodes remain local
 ```
 
 ```js
 await tab.getByRole('link', {name: 'Observed title', exact: true}).click();
 var pageInfo = await tab.info();
-repl.write(pageInfo); // a dispatched click alone does not prove arrival
+console.log(pageInfo); // a dispatched click alone does not prove arrival
 ```
 
 ```js
@@ -85,7 +89,7 @@ var records = await tab.evaluate(() =>
     text: article.textContent
   }))
 );
-repl.write(records.slice(0, 3));
+console.log(records.slice(0, 3));
 ```
 
 The selector example illustrates local extraction, not a universal post parser.
@@ -212,15 +216,21 @@ inventory is needed.
 
 ## Output and context
 
-Prefer explicit `repl.write(value)` and `repl.emitImage(bytes)`; do not automatically
-print the last expression, which can accidentally dump a full snapshot. Capture
-console output too, under the same limit. Emit `(no output)` for silent cells.
-Printing huge data is not the way to persist it.
+Phase 5 replaces the original explicit-only text contract: console output and the
+successful final non-undefined completion share one bounded path. Declarations
+retain large data silently; inspect or log selected evidence. `repl.write` is
+removed without an alias. Objects use finite Node inspection previews, not JSON;
+use explicit JSON serialization for exact evidence. Binary completions display a
+notice; images still require `repl.emitImage(bytes)`. Emit `(no output)` for silent
+cells. Completion is appended after tracked calls drain, before authority-fenced
+delivery. See [Phase 5](../plan/bud-owned-browser/repl-phase-5-standard-output.md).
 
 Proposed initial limits, to validate rather than multiply into user settings:
 
 - 30-second cell deadline; supported operations retain shorter bounded deadlines.
-- 32 KiB model-facing text budget per cell, plus the existing bounded envelope.
+- 8 KiB model-facing text by default, with explicit per-cell expansion up to
+  32 KiB using `repl.setOutputBudget(bytes)` before output (1024–32768 bytes),
+  plus the existing bounded envelope. The next cell resets to 8 KiB.
 - 1 MiB captured text file ceiling; explicitly mark when even the capture is cut.
 - Up to two explicitly emitted images per cell, subject to existing image byte
   and dimension validation. Never print base64 or silently add screenshots to
@@ -235,8 +245,12 @@ memory (reuse the current retained-tree ceiling initially), or consume existing
 frozen pages locally. Always retain truncation/coverage metadata. Do not advertise
 full-page extraction when the internal capture itself is partial.
 
-Oversized emitted text gets an explicit truncation marker and an output artifact
-identifier/path. Store captured output and optional named JSON checkpoints in a
+Phase 7b preserves complete preceding writes, then includes a UTF-8-safe excerpt
+of the overflowing emission when space remains, explicitly labeled incomplete
+formatted text, not complete JSON. Subsequent writes go only to bounded capture. It gets
+`truncated:true` and an output artifact identifier/path; execution does not fail
+because of output size. Recover from retained variables or the captured file,
+never by automatically replaying the browser action. Store captured output and optional named JSON checkpoints in a
 thread-specific workspace with restrictive permissions. Offer small read/write
 helpers so the agent can retrieve slices without another browser action. Keep
 exact data on disk when useful; no new database artifact service is needed unless
@@ -331,7 +345,7 @@ artifact recall separately from live browser observation.
 
 Update helper, daemon browser, agent, service browser and relevant runtime/LLM
 specs when implemented; update protocol/client docs if their contracts change.
-Create a concrete implementation plan before coding. No schema migration is
+Follow the linked implementation plan before coding. No schema migration is
 assumed by this scope.
 
 ## Decisions and remaining implementation checks
@@ -343,11 +357,30 @@ Normal private takeover preserves REPL memory. Reset only when execution cannot
 stop cleanly or the worker's lifetime ends; existing daemon restart and workspace
 destruction rules still apply.
 
-Before coding, resolve the smallest facade-to-helper bridge, receipt integration,
-the exact takeover deadline/UI state, and measured worker memory limit. Keeping
-an idle worker alive requires no heap checkpoint or suspended-cell recovery
+Phase 1 settled the internal bridge, durable receipt integration, takeover deadline
+and initial measured worker memory limit. Phase 2 implements the typed observation facade and bounded artifacts.
+Keeping an idle worker alive requires no heap checkpoint or suspended-cell recovery
 system. Rebuild bindings only after an actual reset.
 
 Stronger isolation from malicious generated code would require a separate design
 covering terminal execution and the whole machine-access boundary. It is not an
 implicit promise or prerequisite of this REPL feature.
+
+
+Phase 7b adds `snapshot.format({nodes?, maxBytes?})` for compact discovery,
+`snapshot.getByReference("eN")` for original-observation-bound actions and
+`snapshot.url("uN")` for exact factored URLs. The view preserves ordered hierarchy,
+state and coverage while avoiding repeated identity/URL strings; raw structured
+nodes remain available. View omission is explicitly counted and is separate from
+collector `truncated`. See [implementation and budget evaluation](../debug/browser-repl-phase7b.md).
+
+### Page scrolling versus element evidence (Phase 7c)
+
+`tab.scroll(delta_y)` is bounded page input on the exact live owned tab, not an
+element-reference action. It does not need a semantic snapshot and survives
+retirement by child-frame navigation, TTL, recapture or viewport fit. The daemon
+still checks active cell, ownership and private authority around serialized page
+access and delivery. No implicit target replacement or uncertain-input retry. A
+navigation race acts on the current page; observe before using its contents.
+Click/fill/focus/geometry and scoped reads keep their existing freshness rules.
+See [investigation and evaluation](../debug/browser-repl-phase7c.md).

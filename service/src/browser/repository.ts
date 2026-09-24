@@ -2,6 +2,7 @@ import { resolveBrowserColor } from "./color.js";
 import { BrowserResourceRepository, type BrowserResource } from "./resource-repository.js";
 import { settledWorkDurationSql } from "../agent/invocation-timing.js";
 import { ulid } from "ulid";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { pool } from "../db/client.js";
 import { BrowserToolWait } from "../agent/browser-tool-executor.js";
@@ -14,6 +15,12 @@ import type { BrowserCommand } from "./transport.js";
 export class BrowserError extends Error {
   constructor(readonly code: string) {
     super(code);
+  }
+}
+/** Internal receipt return, never permission to redispatch the saved request. */
+export class BrowserReplay extends Error {
+  constructor(readonly request: BrowserCommand, readonly result: BrowserBackendResult) {
+    super("browser_cell_receipt");
   }
 }
 type Session = {
@@ -47,7 +54,7 @@ export class BrowserRepository {
     context: BrowserAgentContext,
     bootId: string,
     command: Record<string, unknown>,
-    ensureOnly = false,
+    ensureOnly: boolean | "receipt_only" = false,
   ): Promise<BrowserCommand> {
     const identity = context.invocation;
     if (!identity || !context.callId)
@@ -94,6 +101,30 @@ export class BrowserRepository {
         ],
       );
       if (!authority.rows[0]) throw new BrowserError("browser_authority_lost");
+      if (command.action === "exec") {
+        if (typeof command.code !== "string" || !command.code.length ||
+            Buffer.byteLength(command.code) > 64 * 1024 || Object.keys(command).length !== 2)
+          throw new BrowserError("browser_invalid_arguments");
+        const action = (await client.query(`select status,evidence from agent_invocation_action
+          where invocation_id=$1 and call_id=$2 and fence=$3 and created_by_user_id=$4
+            and kind='browser_exec' for update`,
+          [identity.id, context.callId, identity.fence, context.ownerUserId])).rows[0];
+        if (!action) throw new BrowserError("browser_invocation_required");
+        const receipt = action.evidence?.browser_cell;
+        if (receipt) {
+          if (receipt.code_hash !== createHash("sha256").update(command.code).digest("hex"))
+            throw new BrowserError("browser_cell_conflict");
+          throw new BrowserReplay(receipt.request, receipt.result ?? {
+            ok: false, outcome: "unknown", error: "browser_outcome_unknown",
+            data: { execution_state: "unknown" },
+          });
+        }
+        if (action.status !== "intent" || action.evidence?.browser_dispatched)
+          throw new BrowserError("browser_call_already_dispatched");
+      }
+      // Receipt lookup needs no daemon connection and must never allocate or
+      // consume a new dispatch when the carrier is offline.
+      if (ensureOnly === "receipt_only") throw new BrowserError("browser_unavailable");
       const expires = Math.min(
         Date.now() + 30_000,
         new Date(authority.rows[0].lease_expires_at).getTime(),
@@ -112,7 +143,7 @@ export class BrowserRepository {
           [session.id],
         );
         session = undefined!;
-        if (command.action !== "open") {
+        if (!["open", "exec"].includes(String(command.action))) {
           // Persist the closed workspace; nothing is dispatched for this call.
           await client.query("commit");
           open = false;
@@ -120,7 +151,7 @@ export class BrowserRepository {
         }
       }
       if (!session) {
-        if (command.action !== "open")
+        if (!["open", "exec"].includes(String(command.action)))
           throw new BrowserError("browser_not_open");
         session = (
           await client.query<Session>(
@@ -188,7 +219,7 @@ export class BrowserRepository {
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });
       }
       const restarted = session.boot_id !== bootId;
-      if (restarted && !["open", "close"].includes(String(command.action)))
+      if (restarted && !["open", "exec", "close"].includes(String(command.action)))
         throw new BrowserError("browser_recovery_required");
       if (!restarted && session.pending_until && session.pending_until.getTime() > Date.now())
         throw new BrowserError("browser_busy");
@@ -216,11 +247,9 @@ export class BrowserRepository {
           ],
         )
       ).rows[0];
-      const browserColor = command.action === "open"
+      const browserColor = ["open", "exec"].includes(String(command.action))
         ? await resolveBrowserColor(client, context.ownerUserId, context.budId) : undefined;
-      await client.query("commit");
-      open = false;
-      return {
+      const request: BrowserCommand = {
         ...(browserColor ? { browser_color: browserColor } : {}),
         browser_id: resource.id,
         browser_epoch: resource.control_epoch,
@@ -238,6 +267,17 @@ export class BrowserRepository {
         expires_at_ms: expires,
         command,
       };
+      if (command.action === "exec") {
+        // Commit identity with intent, before any send. Keep generated code out
+        // of the receipt; the hash detects accidental reuse with different code.
+        const receipt = { code_hash: createHash("sha256").update(command.code as string).digest("hex"),
+          request: { ...request, command: { action: "exec" } } };
+        await client.query(`update agent_invocation_action set evidence=evidence || jsonb_build_object('browser_cell',$3::jsonb)
+          where invocation_id=$1 and call_id=$2`, [identity.id, context.callId, JSON.stringify(receipt)]);
+      }
+      await client.query("commit");
+      open = false;
+      return request;
     } catch (error) {
       if (open) await client.query("rollback");
       throw error;
@@ -250,12 +290,24 @@ export class BrowserRepository {
     request: BrowserCommand,
     result: BrowserBackendResult,
   ): Promise<void> {
+    if (request.command.action === "exec") {
+      // The first bounded, correlated outcome is immutable. Record even after
+      // takeover/cancellation has fenced delivery. Losing this write leaves the
+      // dispatch intent ambiguous, never executable again.
+      const recorded = await this.database.query(`update agent_invocation_action
+        set evidence=jsonb_set(evidence,'{browser_cell,result}',$5::jsonb)
+        where invocation_id=$1 and evidence->'browser_cell'->'request'->>'invocation_fence'=$2::text and created_by_user_id=$3
+          and evidence->'browser_cell'->'request'->>'request_id'=$4
+          and not (evidence->'browser_cell' ? 'result')`,
+        [request.invocation_id,request.invocation_fence,request.owner_user_id,request.request_id,JSON.stringify(result)]);
+      if (!recorded.rowCount) return; // A duplicate completion cannot change health either.
+    }
     const closed =
       request.command.action === "close" &&
       (result.ok ||
         ["browser_closed", "browser_interrupted"].includes(result.error ?? ""));
     const recoverable = result.outcome === "rejected" && [
-      "browser_locator_ambiguous", "browser_locator_not_found", "browser_click_blocked", "browser_stale_reference",
+      "browser_locator_ambiguous", "browser_locator_not_found", "browser_stale_reference",
       "browser_observation_limit", "browser_target_not_found", "browser_document_changed",
       "browser_invalid_arguments", "browser_busy",
     ].includes(result.error ?? "");
@@ -265,6 +317,8 @@ export class BrowserRepository {
     const uncertainPage = !result.ok && result.outcome === "unknown" &&
       result.error === "browser_outcome_unknown" &&
       ["inspect", "navigate", "click", "insert_text"].includes(String(request.command.action));
+    // Cells can be entirely local. Neither success nor a worker/transport error
+    // establishes Chrome health; preserve it and let browser recovery own it.
     await this.database.query(
       `update browser_session set state=coalesce($4,state),pending_until=null,
       closed_at=case when $5 then now() else closed_at end,updated_at=now()
@@ -273,7 +327,7 @@ export class BrowserRepository {
         request.session_id,
         request.generation,
         request.sequence,
-        closed ? "closed" : uncertainPage ? null : result.ok || recoverable ? "ready" : "interrupted",
+        closed ? "closed" : request.command.action === "exec" || uncertainPage ? null : result.ok || recoverable ? "ready" : "interrupted",
         closed,
         request.owner_user_id,
       ],

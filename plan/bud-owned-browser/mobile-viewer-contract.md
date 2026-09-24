@@ -74,10 +74,14 @@ even when it is false. Persisted `human_private` does not prove this viewer owns
 control. Use current confirmed ownership, not labels or a locally remembered flag.
 Ignore older revisions arriving after newer control state.
 
-Current web scheduling: inventory every 5 seconds, metadata every 3 seconds while
-mounted. Stop on disposal/background; do not make one poller per tool message.
-Use stream events to reveal new work and inventory for recovery. The first history
-and inventory load seed the reveal baseline rather than force-open old sessions.
+Current scheduling (Phase 7f): subscribe to the authorized state feed, then read
+metadata after `ready`, relevant `changed`, reconnect, foreground resume or explicit
+recovery. Healthy idle has no recurring inventory/metadata HTTP request. Hosted
+mobile uses only `/api/browser/sessions/:session_id/state` with its scoped cookie
+and validated Origin. Messages contain type and a connection-local counter, not
+authority or page data. Private renewals remain five seconds; native suspension
+still releases/stops the viewer. First inventory/history seed the reveal baseline.
+The embedded web shares one thread feed across pane/viewer/lifecycle controls.
 
 ## Control
 
@@ -317,3 +321,13 @@ user gesture and must not export private remote URLs or credentials implicitly.
 Native currently invokes suspend/resume; inline Return opens the visible viewer
 for explicit confirmation there. Resume acceptance follows the React lifecycle
 commit; native also fences it by current request/visit and foreground state.
+
+## Phase 7f deployment dependency
+
+Apply `0042_browser_state_notifications.sql` before updated service/shared web,
+then reload hosted viewers. No Swift bridge change or native rebuild is needed.
+The service requires a session-preserving PostgreSQL LISTEN connection per gateway.
+Client watchdog/reconnect and authorized current-state reads replace missed-event
+replay. Loss fences input; 4404 closes revoked/expired access. Heartbeats (15s) do
+not refresh browser metadata; separate live authorization checks run every 30s.
+Physical iPhone idle/takeover/Return/reconnect traffic measurement remains pending.

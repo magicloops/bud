@@ -1,6 +1,7 @@
+import { BrowserStateFeed, observeBrowserState } from './state-feed';
 import { installBrowserTouch } from "./touch";
 import { BrowserLifecycle } from "./lifecycle";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetchJson, buildAbsoluteApiUrl, isApiError } from "@/lib/transport";
 import { ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { enqueueInput, inputMatchesFrame, type QueuedInput } from "./input-queue";
@@ -60,7 +61,7 @@ export type BrowserReturnAction = {
   run: () => void;
 };
 
-export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
   const activeRef = useRef(active);
   const lifecycleEpoch = useRef(0);
   if (activeRef.current !== active) { activeRef.current = active; lifecycleEpoch.current++; }
@@ -119,6 +120,10 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
   const renewing = useRef(false);
   const typing = useRef<HTMLTextAreaElement>(null);
   const base = `/api/browser/sessions/${encodeURIComponent(sessionId)}`;
+  const ownFeed = useMemo(() => new BrowserStateFeed(`${base}/state`), [base]);
+  const stateFeed = sharedFeed ?? ownFeed;
+  const stateCurrent = useRef(false);
+  const refreshState = useRef(() => {});
   const resetInput = useCallback(() => {
     inputEpoch.current++;
     queue.current = [];
@@ -156,30 +161,29 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
   useEffect(() => {
     if (!active) return;
     ensureNeeded.current = true;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
+    const read = async (signal: AbortSignal) => {
       let attemptedEnsure = false;
       try {
         const version = controlVersion.current;
         let data = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {
-          signal: abort.signal,
+          signal: signal,
         });
-        if (!abort.signal.aborted && (data.state === "closing" || data.state === "closed")) setEnsuring(false);
-        if (!abort.signal.aborted && !changingControl.current && data.state !== "closing" &&
+        if (!signal.aborted && (data.state === "closing" || data.state === "closed")) setEnsuring(false);
+        if (!signal.aborted && stateFeed.ready && (typeof document === "undefined" || document.visibilityState !== "hidden") && !changingControl.current && data.state !== "closing" &&
             data.state !== "closed" && data.runtime_status !== "disconnected" &&
             (ensureNeeded.current || data.runtime_status === "daemon_restarted" || data.state === "interrupted")) {
           attemptedEnsure = true;
           setSession(previous => previous && previous.revision > data.revision ? previous : data);
           setEnsuring(true);
           const recovered = await fetchJson<Session>(`${base}/ensure`, {
-            method:"POST", headers:{"Content-Type":"application/json"}, signal:abort.signal,
+            method:"POST", headers:{"Content-Type":"application/json"}, signal:signal,
             body:JSON.stringify({viewer_id:viewerId.current}),
           });
-          if (abort.signal.aborted) return;
+          if (signal.aborted) return;
           ensureNeeded.current = false;
           setEnsureFailed(false);
           setEnsuring(false);
+          attemptedEnsure = false;
           if (recovered.private_progress_lost) {
             recoveryTicket.current = null;
             recoveryPending.current = false;
@@ -191,10 +195,11 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
               ? "No shared page was available. Unfinished private browsing was not recovered."
               : "Bud restored the last shared page. Unfinished private browsing was not recovered.");
           } else if (recovered.recovery_status === "unavailable") setNotice("The previously selected page cannot be restored automatically. Ask Bud to open a page.");
-          data = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {signal:abort.signal});
+          data = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`, {signal:signal});
         }
-        if (!abort.signal.aborted) {
-          setStatusError("");
+        if (!signal.aborted) {
+          stateCurrent.current = stateFeed.ready;
+          setStatusError(stateFeed.ready ? "" : "Browser status connection lost. Reconnecting…");
           setMissing(false);
           setSession((previous) =>
             previous && previous.revision > data.revision ? previous : data,
@@ -202,30 +207,32 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
           if (version === controlVersion.current && !changingControl.current && ownsRef.current &&
               data.owns_control === false && data.revision >= (sessionRef.current?.revision ?? 0))
             failPrivate("Browser control was lost. Take control again to reconnect; the agent remains paused.", 1, true);
-          if (recoveryPending.current && !changingControl.current && !ownsRef.current && data.runtime_status === "available")
-            void latestControl.current("recover");
+          if (stateFeed.ready && recoveryPending.current && !changingControl.current && !ownsRef.current && data.runtime_status === "available")
+            await latestControl.current("recover");
         }
       } catch (failure) {
-        if (!abort.signal.aborted && isApiError(failure) && (failure.message === "browser_not_found" || (mobile && [401,403].includes(failure.status)))) {
+        if (!signal.aborted && isApiError(failure) && [401,403,404,410].includes(failure.status)) {
           failPrivate("Browser authorization ended. Close and reopen the viewer.", 2);
           setMissing(true);
-          return;
+          return false;
         }
-        if (!abort.signal.aborted) {
+        if (!signal.aborted) {
           setEnsuring(false);
           if (attemptedEnsure) setEnsureFailed(true);
           const code = isApiError(failure) ? failure.message : "";
           setStatusError(controlErrors[code] ?? "Could not refresh browser status. Check the Bud connection and retry.");
         }
+        throw failure;
       }
-      if (!abort.signal.aborted) timer = setTimeout(() => void read(), 3000);
     };
-    void read();
-    return () => {
-      abort.abort();
-      clearTimeout(timer);
-    };
-  }, [base, failPrivate, active, fetchJson, mobile, resetInput, ensureRetry]);
+    const observer = observeBrowserState(stateFeed, read, {
+      hidden: () => ownsRef.current,
+      lost: () => { stateCurrent.current = false; resetInput(); setStatusError("Browser status connection lost. Reconnecting…"); },
+      revoked: () => { stateCurrent.current = false; failPrivate("Browser authorization ended. Close and reopen the viewer.", 2); setMissing(true); },
+    });
+    refreshState.current = observer.refresh;
+    return () => { stateCurrent.current = false; refreshState.current = () => {}; observer.stop(); };
+  }, [base, failPrivate, active, fetchJson, mobile, resetInput, ensureRetry, stateFeed]);
   const control = useCallback(
     async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "show_window" | "hide_window") => {
       if (!session || (!activeRef.current && operation !== "release")) return;
@@ -297,6 +304,8 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
             (!code || ["browser_control_expired", "browser_control_uncertain", "browser_unavailable",
               "browser_handoff_unavailable", "browser_stale_connection", "browser_busy", "browser_agent_still_running"].includes(code))) {
           failPrivate("Reconnecting your private browser view…", 1, true);
+          if (operation === "recover") throw failure;
+          refreshState.current();
           return;
         }
         if (code === "browser_window_unconfirmed") {
@@ -331,6 +340,7 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
         if (operation !== "renew") {
           controlVersion.current++;
           changingControl.current = false;
+          if (operation !== "recover") refreshState.current();
         }
         if (mounted.current && operation !== "renew") {
           setWorking(false);
@@ -410,6 +420,7 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
         if (state === "connected" && client.frame) frameReady.current?.(client.frame);
         if (state === "unavailable") {
           ensureNeeded.current = true;
+          refreshState.current();
           resetInput();
           blockInput(false); // Reconnection requires a fresh frame before input anyway.
           setTargets([]);
@@ -506,7 +517,7 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
   }, [active, ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput, fetchJson]);
   const send = useCallback(
     (action: Record<string, unknown>) => {
-      if (!activeRef.current || !owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
+      if (!stateCurrent.current || !stateFeed.ready || !activeRef.current || !owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
         return;
       }
       if (!enqueueInput(queue.current, { action, frame: media.current.frame })) {
@@ -564,7 +575,7 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
         }
       })();
     },
-    [owns, working, connected, base, resetInput, failPrivate, fetchJson],
+    [owns, working, connected, base, resetInput, failPrivate, fetchJson, stateFeed],
   );
   useEffect(() => {
     const element = typing.current;
@@ -682,7 +693,7 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
           tabIndex={-1}
           autoComplete="off"
           spellCheck={false}
-          disabled={!active || !owns || !connected || working || resizing || blocked}
+          disabled={!stateCurrent.current || !active || !owns || !connected || working || resizing || blocked}
           className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none overflow-hidden opacity-0"
           onChange={(event) => {
             if (
@@ -867,9 +878,10 @@ export function BrowserViewer({ sessionId, mobile = false, hostViewerId, active 
         disabled={!session || working || resizing || session.state === "closing"}
         onClick={() => void control("close")}
       >
-        Close this thread’s tabs
+        Close browser workspace
       </button>}
-      {session && !mobile && <BrowserLifecycle budId={session.bud_id} />}
+      {!mobile && <p className="mt-2 text-xs text-muted-foreground">Closing this workspace discards this thread’s tabs and REPL memory. Other threads and saved sign-ins remain.</p>}
+      {session && !mobile && <BrowserLifecycle budId={session.bud_id} stateFeed={stateFeed} />}
         </section>
         </div>
       </div>

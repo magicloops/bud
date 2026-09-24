@@ -1,3 +1,8 @@
+import {beforeEach, afterEach} from 'node:test'
+import {StateSocket} from './state-feed.fixture'
+const realSocket = globalThis.WebSocket
+beforeEach(() => { StateSocket.all = []; globalThis.WebSocket = StateSocket as unknown as typeof WebSocket })
+afterEach(() => { globalThis.WebSocket = realSocket })
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement, act } from 'react'
@@ -32,13 +37,13 @@ test('reset needs confirmation, stays pending through old polls, and ignores ano
     await act(async () => requests[0].resolve(Response.json({ browser: status(1, 'open') })))
     await click('Reset browser data')
     assert.equal(requests.length, 1, 'confirmation must precede mutation')
-    await act(async () => { const poll = [...callbacks.values()]; callbacks.clear(); poll.forEach(fn => fn()) })
+    await act(async () => { StateSocket.change(); const poll = [...callbacks.values()]; callbacks.clear(); poll.forEach(fn => fn()) })
     await click('Confirm reset')
     assert.deepEqual(JSON.parse(String(requests[2].init?.body)), { revision: 1, operation: 'reset', confirmed: true })
     await act(async () => requests[2].resolve(Response.json(status(2, 'reset_pending'))))
     await act(async () => requests[1].resolve(Response.json({ browser: status(1, 'open') })))
     assert.match(JSON.stringify(view.toJSON()), /pending/)
-    await act(async () => { const poll = [...callbacks.values()]; callbacks.clear(); poll.forEach(fn => fn()) })
+    await act(async () => { StateSocket.change(); const poll = [...callbacks.values()]; callbacks.clear(); poll.forEach(fn => fn()) })
     await act(async () => view.update(createElement(BrowserLifecycle, { budId: 'B' })))
     await act(async () => requests[3].resolve(Response.json({ browser: status(3, 'stopped') })))
     assert.equal(view.toJSON(), null)

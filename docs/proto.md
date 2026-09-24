@@ -2830,7 +2830,7 @@ Phase 2 adds a separate media WebSocket; chat reuses the existing SSE families.
 The active connection must advertise:
 
 ```json
-{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"persistent","handoff":true,"max_sessions":2}}
+{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"persistent","handoff":true,"workspace_idle_timeout_sec":86400}}
 ```
 
 Absent/false/incompatible capability omits browser tools. A new daemon does not
@@ -2893,7 +2893,7 @@ matching request/session/generation. Outcomes: `completed`, `rejected` (no asser
 mutation), `unknown` (may have happened). Static errors include
 `browser_unavailable`, `browser_busy`, `browser_authority_lost`,
 `browser_call_already_dispatched`, `browser_stale_connection`,
-`browser_scope_mismatch`, `browser_stale_request`, `browser_session_limit`,
+`browser_scope_mismatch`, `browser_stale_request`,
 `browser_stale_reference`, `browser_focus_required`, `browser_interrupted`,
 `browser_interrupted_reopen_required`, `browser_closed`, and
 `browser_outcome_unknown`. No browser error is an automatic retry instruction.
@@ -3639,7 +3639,7 @@ family or DB migration is introduced, and uncertain dispatched actions never rep
 ### Local checkpoints and upgrade
 
 Version 2 checkpoints preserve complete agent-visible HTTP(S) query/fragment URLs
-up to 8 KiB each, 16 pages/workspace, 32 workspaces and 256 KiB total. Known callback,
+up to 8 KiB each, 16 pages/workspace and 256 KiB total. Known callback,
 authorization and logout paths are stored but not autoloaded. Unsupported/oversized
 selection remains explicitly unavailable. Partial/uncertain restoration preserves
 the original durable checkpoint; created targets bind directly to the workspace.
@@ -3681,3 +3681,292 @@ schema change. Existing owner/workspace/document/epoch/private-control checks
 apply to URL disclosure and clicking. Deploy updated service with the rebuilt
 daemon and prepared helper; no mixed-version compatibility path is added. Native
 mobile needs no release. See [design](../design/browser-click-targeting-and-link-urls.md).
+
+## Browser REPL runtime foundation (Phases 1–3)
+
+The daemon accepts `request.command:{action:"exec",code:string}` within the
+existing version-1 browser envelope, for an already allocated workspace. Code is
+nonempty UTF-8, at most 64 KiB. Phase 2 advertises the REPL capability and
+exposes the typed facade through a development-only catalog selection. Authorized
+`executeCell` requires matching service, daemon and prepared helper builds. The encoded daemon
+command envelope permits 512 KiB for exec only (JSON escaping); other commands
+remain bounded to 24 KiB. Decoded source is still bounded to 64 KiB.
+
+Owner/resource/thread/generation, connection, invocation, deadline and sequence
+checks run before evaluation. One cell owns a workspace-local worker mutex;
+concurrent cells reject `browser_busy`. Admission briefly takes the existing
+page lock; execution releases it and each browser bridge operation reacquires it
+with authority/sequence checks. A duplicate sequence rejects without evaluation;
+the service remains responsible for returning retained durable receipts, not
+redispatching a missing/unknown cell. JavaScript exceptions and operation errors
+after evaluation starts have `outcome:unknown`, never safe-retry semantics.
+
+The private worker protocol is newline JSON over child stdio (no network port):
+`execute {cell_id,code}`, `operation {cell_id,operation_id,command}`,
+`operation_result {cell_id,operation_id,ok,data,error}` and
+`result {cell_id,ok,text,truncated,error?,images?,output_artifact?}`. Worker-to-host
+frames are bounded to 3 MiB, host-to-worker replies to 16 MiB; console
+output uses the explicit-output budget, not the protocol stream. Bridge calls are
+limited to existing agent open/navigate/inspect/click/focus/text operations;
+plus Phase 2 full snapshots, evaluation, frame inventory and ticket-bound image
+emission and Phase 3 owned-tab creation/selection/close and target-bound text.
+Control, lifecycle, media and nested exec are rejected. The daemon supplies
+all authority from the admitted outer request; the worker cannot substitute it.
+This is cooperative trusted host execution, not a security sandbox.
+
+Results add `data.runtime_generation`, `runtime_created`, nullable `reset_reason`,
+`execution_state` (`completed|failed|interrupted|not_executed|unknown`), and up to 32 KiB
+UTF-8 `text`, `truncated` and a separately bounded 2 KiB exception. Not every
+pre-admission rejection has runtime metadata. Silence is `(no output)`; the final
+expression is not printed implicitly. Ordinary exceptions retain variables.
+Reset reasons currently include `worker_exit`, `deadline`, `canceled`,
+`connection_lost`, `takeover_timeout`, `browser_stopped`, `workspace_closed` and
+`interrupted`. Reset is reported on the interrupted result and next fresh runtime.
+
+Pause fences admission and delivery Bud-wide before draining workspace cells.
+Clean cells retain their heap. A single two-second graceful deadline is shared by
+all workspaces; forced termination then waits up to 500 ms for each owned worker's
+exit (bounded workspace count), with a one-second mutex-drain guard. Failure to
+confirm termination returns `browser_repl_stop_unconfirmed` and cannot acknowledge
+private acquisition. A clean but now-fenced completion returns only safe runtime
+and `execution_state` metadata with `output_withheld:true`, never emitted text or
+exception content. Returning control invalidates action references independently
+of retained JavaScript data. The cell deadline is at most 30 seconds and no later
+than the admitted request expiry; active disconnect/cancel interrupts without replay.
+
+The matching worker ships in the existing prepared helper archive. This checkpoint
+changes no web/mobile API or database schema. Phase 2 defaults the non-production provider catalog to REPL
+(`BUD_BROWSER_TOOL_MODE=tools` selects old tools); existing running services are not automatically restarted.
+See [implementation plan](../plan/bud-owned-browser/repl-implementation.md).
+
+Service receipts live in existing `agent_invocation_action.evidence.browser_cell`:
+`code_hash` (SHA-256 UTF-8 source), `request` (authorized identity/sequence/deadline,
+with only `{action:"exec"}` as command), and optional immutable `result`. Identity
+is committed before send. Matching retries return the receipt only after current
+owner/Bud/thread/lease and evidence checks; mismatched source rejects
+`browser_cell_conflict`. Missing results are `unknown`, never resubmitted source.
+The first outcome is retained after takeover/cancel, even if output cannot be
+delivered; stale callers receive only safe execution state and output withholding.
+Action completion preserves the receipt. No new schema or persistence of a JS stack.
+
+Service validates cell output fields and the decoded text/error ceilings within a
+256 KiB serialized result envelope (JSON escaping). A transport failure after send
+adds `execution_state:unknown`; a rejection before send adds `not_executed`.
+A JavaScript exception can have partial effects (`failed`, `outcome:unknown`).
+Local cell success or worker failure does not change Chrome health. Private
+admission uses existing durable handoff records without dispatching code. Return
+resolves parked and trailing cells as `executed:false`, `execution_state:not_executed`
+for fresh planning; cancellation and confirmed restart reuse existing semantics.
+Historical tool pairing works independently of the selected model-facing catalog.
+
+
+### Browser REPL selective observations (Phase 2)
+
+The `browser` capability adds `repl:boolean`, true only when the prepared worker,
+facade and artifact modules exist. The service requires it before dispatching
+`exec`; unsupported peers reject clearly, with no cell execution. Coordinated
+service/daemon/add-on upgrade; no schema migration or viewer protocol change.
+
+The existing browser request envelope optionally carries service-owned
+`repl_images:[{endpoint,ticket}]`, at most two single-use agent-capture uploads.
+These are not tool arguments, code, diagnostics or immutable source receipts.
+Only supported vision models receive slots; existing upload authorization and
+post-operation evidence fences apply independently to each image.
+
+Cell `data` may include `images:[{id,mime_type,expires_at,path?}]` (at most two,
+PNG/JPEG references; no base64) and
+`output_artifact:{path,bytes,truncated}` (opaque UUID `.txt`, at most 1 MiB).
+They remain within the 256 KiB encoded result envelope alongside 32 KiB UTF-8
+text and bounded error/reset metadata. Local output files are worker-lifetime,
+private and capped at 16; there is no service file-read endpoint. Withheld results
+contain neither image nor artifact references.
+
+Full snapshots/evaluation use private daemon/helper stdio, not browser-command
+results: 2 MiB structured node/JSON ceilings, 16 MiB encoded IPC ceiling. Model
+context receives only explicitly written text and emitted images. Provider replay
+hydrates up to eight newest authorized images across observe and exec results.
+
+### Browser REPL interactions (Phase 3)
+
+No new public request, database or viewer contract. Private worker stdio adds
+`action:repl` operations `create_tab` (optional HTTP(S) `url`), `select_tab`,
+`close_tab` and `insert_text` (`text`, nonempty, at most 8192 UTF-8 bytes).
+Except creation, these require an owned `target_id`. The admitted outer cell
+supplies authority; worker-supplied tab IDs never confer ownership.
+
+The facade provides `tabs.create(url?)`, `tab.select()`, `tab.close()`,
+`tab.getByReference(reference)` and `tab.getByRole(role,{name,exact:true,scope?})`.
+Element handles expose click/fill/focus via existing inspect actions and bind an
+observation ID at construction. `tab.scroll(delta_y)` sends a single wheel request
+to the exact live owned target without `observation_id` (integer −10000…10000).
+It retains active-cell, ownership, private-control, sequence and delivery fences.
+It may race navigation: observe afterward before making content claims; closed
+targets reject without reopening, retargeting or replaying uncertain input.
+`tab.insertText(text)` requires a live focus guard on that same tab. New snapshots,
+navigation and control changes invalidate old action evidence independently of
+retained JavaScript/tab identity. Selection is logical, never native activation.
+
+Tab close updates recovery hints and retains the worker even with no tabs left;
+explicit open/create can create a replacement. Workspace close/lifecycle shutdown
+still destroys its worker. Browser errors retain uncertain partial-effect outcomes
+and trigger at most one coalesced viewer refresh, not transport replacement.
+Upgrade the service catalog, rebuilt daemon and prepared helper together; no
+mobile/web build or schema migration is required for these facade methods.
+
+
+## Native semantic actionability (REPL Phase 7)
+
+Supersedes the sampler/error portion of “Semantic click targeting and observed
+link URLs”; exact URL preservation remains. Snapshot nodes retain only upstream
+`cursor:"pointer"` as an optional hint. Compact text includes `[cursor=pointer]`
+and retains hinted nodes/references; it does not invent roles or guarantee input.
+Existing field-value exclusions, identity, retention and output limits apply.
+
+The existing private inspect bridge adds `operation:"geometry"`, resolved by
+reference or exact locator under the same observation/target authority. It returns
+`data.observation:{width,height}` in CSS padding-box units from the exact element
+in its own frame. The REPL facade exposes this as `await handle.geometry()`.
+It does not return page text or grant access to other workspaces. Zero-sized/inline
+client boxes do not support positioned input; default native clicks remain usable.
+
+Inspect/click accepts optional `position:{x,y}` (facade
+`handle.click({position:{x,y}})`). Both numbers must be finite and nonnegative;
+unknown fields reject. The helper requires x < current width and y < current height
+on the same observed element. Values are CSS element-relative coordinates, not
+screenshot or top-level frame pixels. Position is click-only; invalid arguments
+return `browser_invalid_arguments`. Geometry and action requests retain current
+owner/workspace/observation/document/private-control/result-delivery fences.
+
+Normal clicks invoke Playwright on one resolved handle with the existing
+three-second click budget. No random/grid sampler, force, sibling substitution or
+mutation replay. Native visibility, stability, scrolling and hit checks apply to
+both default and explicitly positioned input. Playwright may retry internally;
+a completed click still requires outcome verification. The sampler-specific
+`browser_click_blocked` code is removed. Native ambiguous failures remain unknown,
+without healthy-session teardown; a failed whole cell can have partial effects.
+
+Coordinated service instructions, rebuilt daemon and matching prepared helper are
+required; drain active browser cells, update/build/prepare, then restart for smoke
+validation. No new route, DB migration, SSE family, web/mobile build or compatibility
+mode. Existing capability checks remain. See
+[Phase 7](../plan/bud-owned-browser/repl-phase-7-actionability.md).
+
+## Browser state notifications — REPL Phase 7f (2026-09-24)
+
+This section supersedes prior healthy browser inventory/metadata/resource polling
+cadences. Existing media frame/ACK, control lease and private-content contracts
+are unchanged. No daemon frame or native mobile bridge addition.
+
+Server-only JSON WebSocket feeds:
+
+| Scope | Upgrade path | Authorization |
+| --- | --- | --- |
+| Thread inventory | `/api/threads/:thread_id/browser-state` | Current viewer owns thread and its Bud |
+| Session metadata | `/api/browser/sessions/:session_id/state` | Current viewer owns session/Bud; scoped mobile grant must match session |
+| Bud lifecycle | `/api/buds/:bud_id/browser/state` | Current viewer owns Bud |
+
+Resolve existing authenticated cookie/scoped-mobile viewer and validate Origin
+before upgrade. Unauthenticated requests return 401, foreign resources 404.
+Authorize again before subscription and change delivery, and every 30 seconds
+for idle expiry. Revoked/expired scopes close with 4404. A mobile scoped grant
+cannot subscribe to thread inventory or Bud scope. No new database rows/stamps.
+
+Messages: `{"type":"ready","revision":0}`, followed by
+`{"type":"changed","revision":1}` or `{"type":"heartbeat","revision":1}`.
+`revision` is a connection-local hint counter, reset on reconnect, incremented for
+change notifications. It is not a persisted resource/session revision, replay
+cursor, authority proof or screenshot freshness signal. Payloads contain no URLs,
+page titles, content, viewer IDs, private grants or tickets. Client app messages
+are unsupported (1008); server max inbound payload is 256 bytes and outgoing
+buffering is bounded. Server sends ping plus heartbeat every 15 seconds and
+terminates stalled pong transport after 45 seconds. Heartbeats never query metadata.
+
+Changes originate from filtered PostgreSQL AFTER triggers on resource/session/
+handoff/Bud/thread state (migration 0042); NOTIFY delivers only after commit.
+Old/new scopes are invalidated on reparenting/ownership change. Heartbeat,
+dispatch-sequence, renewal-only and timestamp writes do not trigger refresh.
+Successful in-memory controller installation and post-registry presence changes
+supplement database hints locally. Bud-wide changes reach every affected scope.
+Each gateway reserves one session-preserving PG LISTEN connection; its loss closes
+feeds, forcing reconnect/current-state reads. This supports separate database
+writers but does not remove existing single-gateway media/controller routing.
+
+Clients subscribe before reading, coalesce hints with one in-flight read and one
+dirty follow-up per consumer, and reconcile after every reconnect/visible resume.
+Embedded pane/viewer/lifecycle share one thread feed; standalone/mobile use a
+session feed. No new durable event log or replay is needed. Static passive views
+retain their last authorized pixels without healthy periodic HTTP requests.
+Hidden passive reads defer; desktop private renewal remains five seconds; mobile
+host suspension retains its explicit release behavior. Channel loss fences input
+until ready and current authorized metadata; it never reacquires from a hint or
+replays input/cells. Definitive HTTP resource/auth failure clears protected state.
+Client channel watchdog is 45 seconds, reconnect backoff 1/2/4/8/16/30 seconds;
+failed HTTP reconciliation retries 2/4/8/16/30 seconds, not on a healthy idle timer.
+
+Deployment: migrate 0042 before starting updated service/shared web; reload clients.
+Startup verifies triggers and fails `browser_state_migration_required_0042` if
+missing. LISTEN must not use transaction pooling; account for its reserved pool
+slot. No daemon/helper/native iOS rebuild. Existing loaded clients can continue
+polling until reload; no permanent legacy polling mode is introduced.
+
+
+## REPL-only browser cutover — Phase 7g (2026-09-24)
+
+This section supersedes earlier old-tool catalogs, development-only selection,
+compact-observation negotiation, pagination and historical browser-result hydration.
+Only `browser_exec` and `browser_request_handoff` are exposed in every environment.
+`BUD_BROWSER_TOOL_MODE` has no effect. Old open/observe/act/close tool names reject
+before allocation/dispatch, with no translation or fallback. Exec requires the
+existing `repl` capability. Historical pre-REPL results have no compatibility layer.
+Stored records are not rewritten or deleted by this change.
+
+The version-1 browser command envelope removes standalone `capture`, `click`,
+`focus`, `insert_text` actions and the `inspect.continuation` field. Daemons no
+longer advertise `compact_observations`. Internal open/navigate/inspect remain
+because the guarded REPL facade uses them; private viewer/lifecycle commands and
+native semantic checks are unchanged. Full structured helper captures remain local
+under the 2 MiB retained ceiling. No duplicate legacy text or continuation pages.
+REPL formatting and the 8 KiB default emitted budget remain, with explicit expansion.
+
+Service-owned `repl_images` and `agent_capture` transfers remain the image path.
+Endpoint/ticket validation, owned-target checks, post-operation delivery fences,
+image retention and owner-authorized hydration apply to current cell images only.
+Current durable receipts, canceled/parked cells, unknown effects and no-replay rules
+remain unchanged. This removes neither ownership nor private-control authority.
+
+Drain active old browser invocations and update the service/shared web and daemon
+as a coordinated stack. Enabled managed helpers auto-upgrade at daemon startup;
+`browser prepare` remains opt-in. Old/new command pairings are unsupported. No
+native mobile bridge change or Phase 7g migration; cumulative deployment still
+requires Phase 7f migration 0042. Physical matching-stack acceptance remains in
+Phase 8; no deployment/restart was performed as part of implementation.
+
+## REPL Phase 8: automatic idle workspace expiry
+
+Browser capability `workspace_idle_timeout_sec: 86400` replaces `max_sessions`.
+The fixed resident-workspace count cap and browser_session_limit rejection are
+removed. A daemon-local minute sweep expires resources after 24 idle hours;
+active page/cell work, attached media and live private control prevent expiry.
+Metadata reads and checkpoint events do not renew idle lifetime. Requests keep
+existing ownership, sequence, deadline and concurrency bounds.
+
+Expiry closes owned tabs, semantic helpers and REPL workers/artifacts, preserving
+eligible public recovery URLs (including query/fragment), persistent profile and
+sign-ins. It leaves the logical session reusable: existing ensure reconstructs
+pages and the next exec creates a fresh heap. A retained worker record reports
+reset_reason idle_expired; after identity pruning runtime_created and the fresh
+runtime_generation still identify new memory. No action is replayed. Private
+URLs are never checkpointed by expiry and private authority is never auto-returned.
+Cleanup failures retain ownership and retry on a later local sweep.
+
+Explicit workspace close remains optional and additionally forgets recovery hints.
+Its successful acknowledgement includes bounded worker shutdown; uncertainty
+reports browser_repl_stop_unconfirmed with unknown outcome. Phase 8 requires a
+rebuilt daemon and matching hosted web/service, but no new helper API, table,
+migration or native bridge. Full-branch rollout still requires Phase 7f migration
+0042 before the updated service.
+
+Recovery hints retain a 256 KiB total byte bound and 16 pages/workspace; the old
+32-workspace checkpoint count limit is removed. A failed checkpoint preserves
+previous hints but does not block idle resource cleanup. URL restoration remains
+best-effort; a newly created REPL never claims to retain expired bindings.

@@ -77,7 +77,7 @@ impl Semantic {
             self.input.flush().await?;
             let mut bytes = Vec::new();
             (&mut self.output)
-                .take(128 * 1024)
+                .take(16 * 1024 * 1024)
                 .read_until(b'\n', &mut bytes)
                 .await?;
             if bytes.last() != Some(&b'\n') {
@@ -107,14 +107,8 @@ impl Semantic {
                     Some(5) => "click",
                     Some(6) => "fill",
                     Some(7) => "focus",
-                    Some(8) => "prepare_click",
                     _ => "unknown",
                 },
-                candidates = d["candidates"].as_u64().unwrap_or(0).min(50),
-                point_reason = d["point_reason"].as_u64().filter(|n| *n <= 3),
-                point_x = d["point_x"].as_f64().filter(|n| (0.0..=1.0).contains(n)),
-                point_y = d["point_y"].as_f64().filter(|n| (0.0..=1.0).contains(n)),
-                preparation_ms = d["preparation_ms"].as_u64().filter(|n| *n <= 3000),
                 timeout = d["timeout"].as_bool().unwrap_or(false),
                 intercepted = d["intercepted"].as_bool().unwrap_or(false),
                 invisible = d["invisible"].as_bool().unwrap_or(false),

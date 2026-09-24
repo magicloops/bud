@@ -2,13 +2,60 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { Engine, sanitize } from './engine.mjs';
-import { OBSERVATION_BYTES, compactPage } from './compact.mjs';
+
 
 test('field values and implementation properties never enter snapshots', () => {
-  const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:[{role:'text',text:'secret'}]}], 'x', new Map());
+  const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:['secret', {role:'text',text:'secret'}]}], 'x', new Map());
   assert.deepEqual(result, [{depth:0,role:'textbox',name:'Email'}]);
 });
-test('managed Chrome structured snapshots, scope, continuation and actions', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+test('inline strings preserve order and depth without acquiring action references', () => {
+  const refs = new Map();
+  const nodes = sanitize([{role:'paragraph',children:['Stock: ',{role:'strong',text:'17'},' units remaining.']}], 'x', refs);
+  assert.deepEqual(nodes, [
+    {depth:0,role:'paragraph'}, {depth:1,role:'text',text:'Stock: '},
+    {depth:1,role:'strong',text:'17'}, {depth:1,role:'text',text:' units remaining.'},
+  ]);
+  assert.equal(refs.size, 0);
+  assert.throws(() => sanitize(Array(20001).fill('text'), 'x', new Map()), /browser_observation_limit/);
+});
+test('toggle states preserve false and mixed without allowing arbitrary string properties', () => {
+  const nodes = sanitize([
+    {role:'button',pressed:true}, {role:'button',pressed:false}, {role:'button',pressed:'mixed'},
+    {role:'checkbox',checked:'mixed'}, {role:'button',pressed:'secret',disabled:'secret'},
+  ], 'x', new Map());
+  assert.deepEqual(nodes.map(n=>n.pressed), [true,false,'mixed',undefined,undefined]);
+  assert.equal(nodes[3].checked, 'mixed');
+  assert.equal(nodes[4].disabled, undefined);
+});
+
+test('Chrome inline evidence and toggle states survive full, scoped and compact snapshots', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<main><p>BEFORE <a href="#details">Evidence</a> AFTER</p><p>Stock: <strong>17</strong> units remaining.</p><button aria-pressed="true">On</button><button aria-pressed="false">Off</button><button aria-pressed="mixed">Mixed</button><div role="checkbox" aria-checked="mixed">Partial</div></main><label>Password<input type="password" value="FIELD_SECRET"></label>');
+    const cdp = await page.context().newCDPSession(page);
+    const target_id = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+    await cdp.detach();
+    const engine = new Engine(browser);
+    const full = await engine.execute({operation:'snapshot',target_id,compact:true});
+    assert.deepEqual(full.nodes.filter(n=>n.role==='text' || n.role==='strong').map(n=>n.text), ['BEFORE','AFTER','Stock:','17','units remaining.','Password']);
+    // Playwright omits false in this snapshot; absence must not be invented as false.
+    assert.deepEqual(full.nodes.filter(n=>n.role==='button').map(n=>n.pressed), [true,undefined,'mixed']);
+    assert.equal(full.nodes.find(n=>n.role==='checkbox').checked, 'mixed');
+    assert.doesNotMatch(JSON.stringify(full), /FIELD_SECRET/);
+    const scoped = await engine.execute({operation:'snapshot',target_id,scope:full.nodes.find(n=>n.role==='main').reference,compact:true});
+    assert.deepEqual(scoped.nodes.filter(n=>n.role==='text' || n.role==='strong').map(n=>n.text), ['BEFORE','AFTER','Stock:','17','units remaining.']);
+    assert.equal(scoped.nodes.find(n=>n.name==='Mixed').pressed,'mixed');
+    assert.equal(scoped.nodes.find(n=>n.role==='checkbox').checked,'mixed');
+    const visible = await engine.execute({operation:'visible_dom',target_id,compact:true});
+    assert.equal(visible.nodes.find(n=>n.name==='Mixed').pressed, 'mixed');
+    assert.doesNotMatch(JSON.stringify(visible), /FIELD_SECRET/);
+    const unnormalized = await engine.execute({operation:'snapshot',target_id});
+    assert.ok(unnormalized.nodes.some(n=>n.text==='units remaining.'));
+    assert.equal(unnormalized.nodes.find(n=>n.name==='Mixed').pressed, 'mixed');
+  } finally { await browser.close(); }
+});
+test('managed Chrome structured snapshots, scope, retained capture and actions', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
   const browser = await chromium.launch({ executablePath: process.env.BUD_BROWSER_EXECUTABLE, headless: true, args:['--use-mock-keychain','--password-store=basic'] });
   try {
     const page = await browser.newPage();
@@ -18,11 +65,10 @@ test('managed Chrome structured snapshots, scope, continuation and actions', {sk
     await session.detach();
     const engine = new Engine(browser);
     const observe = await engine.execute({operation:'snapshot',target_id:target});
-    assert.match(observe.text, /Story 16/);
-    assert.ok(!observe.text.includes('secret'));
-    assert.ok(observe.continuation);
-    const next = await engine.execute({operation:'snapshot',target_id:target,continuation:observe.continuation});
-    assert.equal(next.observation_id,observe.observation_id);
+    assert.match(JSON.stringify(observe.nodes), /Story 16/);
+    assert.ok(!JSON.stringify(observe.nodes).includes('secret'));
+    assert.equal(observe.truncated,false);
+    assert.equal(observe.nodes.filter(n=>n.role==='link').length,300);
     await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:observe.observation_id,locator:{role:'button',name:'Duplicate'}}), /browser_locator_ambiguous/);
     await engine.execute({operation:'click',target_id:target,observation_id:observe.observation_id,locator:{role:'link',name:'Story 16'}});
     assert.match(page.url(), /#story16$/);
@@ -40,63 +86,14 @@ test('managed Chrome structured snapshots, scope, continuation and actions', {sk
     const list = ordered.nodes.find(n=>n.role === 'list');
     assert.ok(list?.reference);
     const scoped = await engine.execute({operation:'snapshot',target_id:target,scope:list.reference});
-    assert.match(scoped.text,/Story 16/);
-    assert.doesNotMatch(scoped.text,/Email/);
+    assert.match(JSON.stringify(scoped.nodes),/Story 16/);
+    assert.doesNotMatch(JSON.stringify(scoped.nodes),/Email/);
     engine.snapshot.at -= 60001;
-    await assert.rejects(engine.execute({operation:'snapshot',target_id:target,continuation:scoped.continuation}), /browser_stale_reference/);
+    await assert.rejects(engine.execute({operation:'click',target_id:target,reference:scoped.nodes.find(n=>n.role==='link').reference}), /browser_stale_reference/);
     await engine.execute({operation:'snapshot',target_id:target});
     const oldId = engine.snapshot.id;
     await page.goto('about:blank');
     await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:oldId,locator:{role:'link',name:'Story 3'}}), /browser_stale_reference/);
-  } finally { await browser.close(); }
-});
-
-test('compact real-browser observations keep actions, scope and pagination without duplicate payloads', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async t => {
-  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
-  try {
-    const page = await browser.newPage();
-    await page.setContent(`<title>News fixture</title><main><h1>News</h1><table>${Array.from({length:30},(_,i)=>`<tr><td>${i+1}.</td><td><span><a href="#story${i+1}">Example story ${i+1}</a></span></td></tr><tr><td></td><td><span>${42+i} points</span> <a href="#comments${i+1}">comments</a></td></tr>`).join('')}</table></main><label>Password<input type="password" value="secret"></label>`);
-    const cdp = await page.context().newCDPSession(page);
-    const target = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;await cdp.detach();
-    const engine = new Engine(browser);
-    const collect = async compact => {
-      const pages=[];let continuation;
-      do {
-        const result=await engine.execute({operation:'snapshot',target_id:target,compact,continuation});
-        pages.push(result);continuation=result.continuation;
-      }while(continuation);
-      return pages;
-    };
-    const before=await collect(false), after=await collect(true);
-    const oldBytes=Buffer.byteLength(JSON.stringify(before)), newBytes=Buffer.byteLength(JSON.stringify(after));
-    const withoutUrls = { ...engine.snapshot, nodes: engine.snapshot.nodes.map(({url, ...node}) => node) };
-    const baselineBytes = Buffer.byteLength(JSON.stringify([compactPage(withoutUrls, 0)]));
-    t.diagnostic(`Same compact fixture URL delta: without=${baselineBytes} with=${newBytes} added=${newBytes-baselineBytes}; pages=1/${after.length}`);
-    t.diagnostic(`HN-like fixture serialized bytes: legacy=${oldBytes} compact=${newBytes} reduction=${(100*(1-newBytes/oldBytes)).toFixed(1)}%; pages=${before.length}/${after.length}`);
-    assert.ok(newBytes<oldBytes*.3);
-    assert.ok(after.every(x=>!('nodes' in x) && Buffer.byteLength(JSON.stringify(x))<=OBSERVATION_BYTES));
-    const text=after.map(x=>x.text).join('\n');assert.doesNotMatch(text,/secret/);
-    for(const rank of [3,4,16])assert.match(text,new RegExp(`Example story ${rank}"`));
-    const ref=text.match(/link "Example story 16" \[([^\]]+)\]/)[1];
-    await engine.execute({operation:'click',target_id:target,reference:ref});assert.match(page.url(),/#story16$/);
-    const fresh=await engine.execute({operation:'snapshot',target_id:target,compact:true});
-    await assert.rejects(engine.execute({operation:'click',target_id:target,reference:ref}),/browser_stale_reference/);
-    const scope=fresh.text.match(/main \[([^\]]+)\]/)[1];
-    const scoped=await engine.execute({operation:'snapshot',target_id:target,compact:true,scope});
-    assert.equal(scoped.coverage,'subtree');assert.doesNotMatch(scoped.text,/Password/);
-    const visible=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
-    assert.equal(visible.text,undefined);assert.equal(visible.coverage,'viewport');assert.ok(visible.nodes.every(n=>n.box));
-    // Larger fixture proves mode-bound continuation and expiry on compact output.
-    await page.setContent(`<ol>${Array.from({length:600},(_,i)=>`<li><a href="#${i}">Story ${i}</a></li>`).join('')}</ol>`);
-    const long=await engine.execute({operation:'snapshot',target_id:target,compact:true});assert.ok(long.continuation);
-    await assert.rejects(engine.execute({operation:'visible_dom',target_id:target,compact:true,continuation:long.continuation}),/browser_stale_reference/);
-    await assert.rejects(engine.execute({operation:'snapshot',target_id:target,continuation:long.continuation}),/browser_stale_reference/);
-    const next=await engine.execute({operation:'snapshot',target_id:target,compact:true,continuation:long.continuation});assert.equal(next.observation_id,long.observation_id);
-    engine.snapshot.at-=60001;
-    await assert.rejects(engine.execute({operation:'snapshot',target_id:target,compact:true,continuation:long.continuation}),/browser_stale_reference/);
-    if(process.env.BUD_BROWSER_BENCHMARK_OUTPUT){
-      const {writeFileSync}=await import('node:fs');writeFileSync(process.env.BUD_BROWSER_BENCHMARK_OUTPUT,JSON.stringify({before,after}));
-    }
   } finally { await browser.close(); }
 });
 
@@ -118,9 +115,9 @@ test('bounded scrolling and observation replacement explain unchanged viewport a
     const again=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
     assert.equal(again.viewport.scroll_y,104);
     assert.ok(again.nodes.every(n=>n.box.y+n.box.height>0 && n.box.y<1110));
-    await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:first.observation_id,reference:first.text.match(/link "Story 0" \[([^\]]+)\]/)[1]}),/browser_stale_reference/);
+    await assert.rejects(engine.execute({operation:'click',target_id:target,observation_id:first.observation_id,reference:first.nodes.find(n=>n.name==='Story 0').reference}),/browser_stale_reference/);
     const fresh=await engine.execute({operation:'snapshot',target_id:target,compact:true});
-    const reference=fresh.text.match(/link "Story 3" \[([^\]]+)\]/)[1];
+    const reference=fresh.nodes.find(n=>n.name==='Story 3').reference;
     await engine.execute({operation:'click',target_id:target,observation_id:fresh.observation_id,reference});
     assert.match(page.url(),/#3$/);
   } finally {await browser.close();}
@@ -148,7 +145,7 @@ test('fresh references after BFCache restoration resolve without replaying click
     await page.goto(`${url}/other`); await observe();
     await page.goto(url);
     const old = await observe();
-    const reference = result => result.text.match(/button "Apply once" \[([^\]]+)\]/)[1];
+    const reference = result => result.nodes.find(n=>n.name==='Apply once').reference;
     await page.evaluate(() => { window.cachedMarker = true; window.clicks = 0; });
     await page.goto(`${url}/other`); await observe();
     const history = await cdp.send('Page.getNavigationHistory');
@@ -162,9 +159,9 @@ test('fresh references after BFCache restoration resolve without replaying click
     await engine.execute({operation:'click',target_id:target,
       observation_id:fresh.observation_id,reference:reference(fresh)});
     assert.equal(await page.evaluate(() => window.clicks), 1);
-    const scope = fresh.text.match(/main \[([^\]]+)\]/)[1];
+    const scope = fresh.nodes.find(n=>n.role==='main').reference;
     const scoped = await engine.execute({operation:'snapshot',target_id:target,compact:true,scope});
-    assert.match(scoped.text, /Apply once/);
+    assert.match(JSON.stringify(scoped.nodes), /Apply once/);
     await engine.execute({operation:'invalidate'});
     await assert.rejects(engine.execute({operation:'click',target_id:target,
       observation_id:scoped.observation_id,reference:reference(scoped)}), /browser_stale_reference/);
@@ -210,22 +207,17 @@ test('nested news layout preserves all thirty stories, metadata and compact refe
     const cdp=await page.context().newCDPSession(page);
     const target=(await cdp.send('Target.getTargetInfo')).targetInfo.targetId;await cdp.detach();
     const engine=new Engine(browser);
-    const collect=async()=>{
-      const pages=[];let continuation;
-      do {const result=await engine.execute({operation:'snapshot',target_id:target,compact:true,continuation});pages.push(result);continuation=result.continuation;}while(continuation);
-      assert.ok(pages.every(p=>Buffer.byteLength(JSON.stringify(p))<=OBSERVATION_BYTES));
-      return pages;
-    };
-    const pages=await collect();
-    const text=pages.map(p=>p.text).join('\n');
-    assert.deepEqual([...text.matchAll(/link "Example story (\d+)"/g)].map(m=>Number(m[1])),Array.from({length:30},(_,i)=>i+1));
+    const collect=()=>engine.execute({operation:'snapshot',target_id:target,compact:true});
+    const captured=await collect();
+    assert.deepEqual(captured.nodes.filter(n=>n.role==='link' && n.name.startsWith('Example story ')).map(n=>n.name),Array.from({length:30},(_,i)=>`Example story ${i+1}`));
     for (const n of [3,16,30]) {
-      assert.match(text,new RegExp(`author${n}"`));assert.match(text,new RegExp(`${n} comments"`));
-      const current=(await collect()).map(p=>p.text).join('\n');
-      const reference=current.match(new RegExp(`link "Example story ${n}" \\[([^\\]]+)\\]`))[1];
+      assert.ok(captured.nodes.some(node=>node.name===`author${n}`));
+      assert.ok(captured.nodes.some(node=>node.name===`${n} comments`));
+      const current=await collect();
+      const reference=current.nodes.find(node=>node.name===`Example story ${n}`).reference;
       await engine.execute({operation:'click',target_id:target,reference});
       assert.match(page.url(),new RegExp(`#story${n}$`));
     }
-    t.diagnostic(`Nested 30-story fixture: bytes=${Buffer.byteLength(JSON.stringify(pages))}; pages=${pages.length}`);
+    t.diagnostic(`Nested 30-story fixture: bytes=${Buffer.byteLength(JSON.stringify(captured))}; pages=1`);
   } finally {await browser.close();}
 });

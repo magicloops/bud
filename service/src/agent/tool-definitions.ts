@@ -1,4 +1,4 @@
-import { BROWSER_CANONICAL_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools.js";
+import { BROWSER_REPL_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools.js";
 import { WEB_CANONICAL_TOOLS } from "./web-retrieval-tools.js";
 import { retrievalAvailable } from "../web-retrieval/config.js";
 import { AUTOMATION_CANONICAL_TOOLS, EXISTING_CONTACTS_REVIEW_TOOL } from "./automation-tools.js";
@@ -242,7 +242,7 @@ export function resolveAgentToolsForEnvironment(
   options: { browser?: boolean; browserHandoff?: boolean; webRetrieval?: boolean; appPermissions?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
   const tools = [...AGENT_CANONICAL_TOOLS,
-    ...(options.browser ? BROWSER_CANONICAL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []),
+    ...(options.browser ? BROWSER_REPL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []),
     ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []),
     ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),
     ...(options.automations ? AUTOMATION_CANONICAL_TOOLS : []),

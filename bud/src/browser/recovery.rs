@@ -107,9 +107,6 @@ impl Recovery {
                 next.remove(&workspace);
             }
         }
-        if next.len() > 32 {
-            bail!("browser_recovery_limit");
-        }
         if next == self.manifest.workspaces {
             return Ok(());
         }
@@ -121,13 +118,13 @@ impl Recovery {
         Ok(())
     }
     fn persist(&self) -> Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
         let bytes = serde_json::to_vec(&self.manifest)?;
         if bytes.len() as u64 > MAX_BYTES {
             bail!("browser_recovery_limit");
         }
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
         let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
         file.write_all(&bytes)?;
         file.as_file().sync_all()?;
@@ -188,7 +185,6 @@ fn read(path: &Path) -> Result<Option<Manifest>> {
     }
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     if !matches!(manifest.version, 1 | 2)
-        || manifest.workspaces.len() > 32
         || manifest
             .workspaces
             .iter()
@@ -202,6 +198,42 @@ fn read(path: &Path) -> Result<Option<Manifest>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checkpoints_allow_many_threads_but_keep_the_total_byte_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Recovery::load(Some(dir.path()));
+        for index in 0..40 {
+            store
+                .save(
+                    &format!("thread-{index}"),
+                    Some(Pages {
+                        urls: vec![format!("https://example.test/{index}?q=kept#fragment")],
+                        selected: 0,
+                    }),
+                )
+                .unwrap();
+        }
+        assert!(Recovery::load(Some(dir.path())).get("thread-39").is_some());
+        let before = std::fs::read(dir.path().join("bud-pages.json")).unwrap();
+        let changes = (0..40)
+            .map(|index| {
+                (
+                    format!("large-{index}"),
+                    Some(Pages {
+                        urls: vec![format!("https://example.test/{}", "x".repeat(8000))],
+                        selected: 0,
+                    }),
+                )
+            })
+            .collect();
+        assert!(store.save_batch(changes).is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("bud-pages.json")).unwrap(),
+            before
+        );
+        assert!(store.get("large-0").is_none());
+    }
+
     #[test]
     fn duplicate_urls_remain_workspace_scoped_and_close_removes_hints() {
         let dir = tempfile::tempdir().unwrap();

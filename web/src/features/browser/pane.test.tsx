@@ -1,3 +1,8 @@
+import {beforeEach, afterEach} from 'node:test'
+import {StateSocket} from './state-feed.fixture'
+const realSocket = globalThis.WebSocket
+beforeEach(() => { StateSocket.all = []; globalThis.WebSocket = StateSocket as unknown as typeof WebSocket })
+afterEach(() => { globalThis.WebSocket = realSocket })
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement, act } from 'react'
@@ -40,13 +45,13 @@ test('mounted pane baselines history, reveals new handoff once, and drops old-th
   }
   let view!: ReactTestRenderer
   const inventory = (handoff: string | null, control_state = 'agent', runtime_status = 'available') => Response.json({ sessions: [{ session_id: id, state: 'ready', control_state, runtime_status, handoff: handoff ? { id: handoff } : null }] })
-  const poll = async () => { await act(async () => { const queued = [...callbacks.values()]; callbacks.clear(); queued.forEach(callback => callback()) }) }
+  const poll = async () => { await act(async () => { StateSocket.change(); const queued = [...callbacks.values()]; callbacks.clear(); queued.forEach(callback => callback()) }) }
   try {
     await act(async () => { view = create(createElement(Harness, { key: 'A', thread: 'A' })) })
     await act(async () => requests[0].resolve(inventory('old')))
     assert.equal(pane.sessionId, id)
     assert.equal(opened.length, 0)
-    await act(async () => pane.notice({ tool: 'browser_open', ok: true, session_id: id }))
+    await act(async () => pane.notice({ tool: 'browser_exec', ok: true, session_id: id }))
     assert.equal(opened.length, 0)
     await poll()
     await act(async () => requests[1].resolve(inventory('new', 'human_private')))

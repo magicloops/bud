@@ -12,7 +12,7 @@ test("browser catalog is available for durable execution and idle accounting wit
   const budId = randomUUID();
   sessions.set(budId, {
     budId, sessionId: "device",
-    browserCapability: { version: 1, available: true, boot_id: "boot", managed: true, profile_mode: "persistent", semantic_observations: true },
+    browserCapability: { version: 1, available: true, boot_id: "boot", managed: true, profile_mode: "persistent", semantic_observations: true, repl: true },
     socket: { readyState: 1, OPEN: 1, send() { assert.fail("catalog lookup must not dispatch"); } },
   } as unknown as SessionTracker);
   t.after(() => sessions.delete(budId));
@@ -30,13 +30,13 @@ test("browser catalog is available for durable execution and idle accounting wit
   const live = await service.getContextTools(environment, "thread", "owner", hooks);
   const idle = await service.getContextTools(environment, "thread", "owner");
   assert.deepEqual(live, idle);
-  assert.ok(live.some(tool => tool.name === "browser_open"));
+  assert.ok(live.some(tool => tool.name === "browser_exec"));
   for (const tools of [
     await makeService(false).getContextTools(environment, "thread", "owner"),
     await service.getContextTools(environment, "thread", "owner", { ...hooks, invocation: undefined }),
     await service.getContextTools(buildAgentEnvironmentSnapshot({ budId, online: false, lastSeenAt: null }), "thread", "owner", hooks),
-  ]) assert.equal(tools.some(tool => tool.name === "browser_open"), false);
+  ]) assert.equal(tools.some(tool => tool.name === "browser_exec"), false);
   sessions.delete(budId);
   assert.equal((await service.getContextTools(environment, "thread", "owner", hooks))
-    .some(tool => tool.name === "browser_open"), false);
+    .some(tool => tool.name === "browser_exec"), false);
 });

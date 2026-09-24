@@ -8,16 +8,6 @@ Provides components for rendering tool-specific UI within chat messages. When th
 
 ## Files
 
-### `browser-observation.tsx`
-
-Compact observation summary and partial-snapshot notice in existing tool groups.
-Text/image detail expands on demand; node-only visible DOM uses a JSON detail
-fallback, computed only when expanded. Old and compact snapshot text share the same renderer; image paths must match the first-party
-thread-artifact route and use normal cookie authorization. No continuous frames
-or automatic requests when collapsed; expired images show unavailable.
-`browser-observation.test.tsx` covers lazy expansion, path restrictions and expiry.
-
-
 ### `browser-handoff.tsx`
 
 Inline `browser_request_handoff` reason and Open browser link. Only a strict

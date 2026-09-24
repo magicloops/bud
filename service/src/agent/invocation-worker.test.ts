@@ -268,7 +268,7 @@ test("a heartbeat blocked behind a browser park commit cannot abort the parked w
   };
   let abortedAfterPark: boolean | undefined;
   const worker = new InvocationWorker({ preflight: async () => "ready", execute: async (_row, signal, hooks) => {
-    await hooks.beforeTool({ ...directive, tool: "browser_observe" } as never);
+    await hooks.beforeTool({ ...directive, tool: "browser_exec", args: {code:"await browser.tabs.list()"} } as never);
     held = true;
     t.mock.timers.tick(15_000);
     await new Promise<void>(resolve => setImmediate(resolve));

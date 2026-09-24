@@ -1202,7 +1202,7 @@ function ThreadViewContent() {
           {viewMode === 'browser' && (
             <div className="absolute inset-0 z-20 flex min-h-0 bg-background">
               {browserPane.sessionId ? (
-                <BrowserViewer key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onReturnActionChange={setBrowserReturnAction} onControlErrorChange={setBrowserControlError} onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
+                <BrowserViewer stateFeed={browserPane.stateFeed} key={browserPane.sessionId} sessionId={browserPane.sessionId} embedded onReturnActionChange={setBrowserReturnAction} onControlErrorChange={setBrowserControlError} onDismiss={() => setViewMode(isMobile ? 'chat' : 'none')} />
               ) : <p className="p-4 text-sm text-muted-foreground">No active browser. Ask your Bud to open a page.</p>}
             </div>
           )}

@@ -19,7 +19,7 @@ test('images survive store recreation, preserve pairing and enforce owner/thread
   assert.equal(await restarted.get(artifact.id,'alice','other','call'),null);
   assert.equal(await restarted.get(artifact.id,'alice','thread','other'),null);
   assert.equal(await restarted.get('../anything','alice','thread'),null);
-  const messages:CanonicalMessage[] = [{role:'user',content:[{type:'tool_result',tool_use_id:'call',content:JSON.stringify({tool:'browser_observe',ok:true,data:{image_artifact:artifact}})}]}];
+  const messages:CanonicalMessage[] = [{role:'user',content:[{type:'tool_result',tool_use_id:'call',content:JSON.stringify({tool:'browser_exec',ok:true,data:{images:[artifact]}})}]}];
   const context = { ownerUserId:'alice',threadId:'thread',budId:'bud' };
   const hydrated = await hydrateBrowserImages(messages,context,true,restarted,async()=>true);
   assert.match(JSON.stringify(hydrated),/aW1hZ2U=/);
@@ -43,4 +43,21 @@ test('images survive store recreation, preserve pairing and enforce owner/thread
   assert.match(JSON.stringify(missing),/unavailable/);
   assert.doesNotMatch(JSON.stringify(missing),/aW1hZ2U=/);
   assert.equal(await restarted.get('1-01M2KFXEFBTPXR71B57JFBW9Z1','alice','thread'),null);
+});
+
+
+test('REPL image emissions hydrate separately with vision and call authorization', async t => {
+  const path = await mkdtemp(join(tmpdir(), 'bud-repl-images-'));
+  t.after(() => rm(path, {recursive:true,force:true}));
+  const store = new ImageArtifacts(path);
+  const images = await Promise.all(['first','second'].map(image => store.put({owner:'alice',thread:'thread',bud:'bud',call:'cell',session:'session',generation:'generation',epoch:1,target:'target',document:'document',image:Buffer.from(image).toString('base64'),mime_type:'image/png'})));
+  const messages:CanonicalMessage[] = [{role:'user',content:[{type:'tool_result',tool_use_id:'cell',content:JSON.stringify({tool:'browser_exec',ok:true,data:{text:'Two views',images}})}]}];
+  const context = {ownerUserId:'alice',threadId:'thread',budId:'bud'};
+  const count = (items:CanonicalMessage[]) => items.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(b=>b.type==='image').length;
+  assert.equal(count(await hydrateBrowserImages(messages,context,true,store,async()=>true)),2);
+  assert.equal(count(await hydrateBrowserImages(messages,context,false,store,async()=>true)),0);
+  assert.equal(count(await hydrateBrowserImages(messages,{...context,ownerUserId:'bob'},true,store,async()=>true)),0);
+  assert.equal(count(await hydrateBrowserImages(messages,context,true,store,async()=>false)),0);
+  const wrongCall = structuredClone(messages); (wrongCall[0].content as any[])[0].tool_use_id = 'other';
+  assert.equal(count(await hydrateBrowserImages(wrongCall,context,true,store,async()=>true)),0);
 });

@@ -25,9 +25,9 @@ const capability = z.object({
   hidpi_capture: z.boolean().optional(),
   operation_driven_media: z.boolean().optional(),
   history_navigation: z.boolean().optional(),
-  compact_observations: z.boolean().optional(),
   semantic_observations: z.literal(true),
   agent_capture: z.boolean().optional(),
+  repl: z.boolean().optional(),
 });
 const resultSchema = z.object({
   browser_version: z.literal(1),
@@ -41,9 +41,22 @@ const resultSchema = z.object({
     data: z.record(z.unknown()),
   }),
 });
+const cellDataSchema = z.object({
+  execution_state: z.enum(["not_executed", "completed", "failed", "interrupted", "unknown"]).optional(),
+  text: z.string().refine(s => Buffer.byteLength(s) <= 32 * 1024).optional(),
+  error: z.string().refine(s => Buffer.byteLength(s) <= 2048).nullable().optional(),
+  ok: z.boolean().optional(), truncated: z.boolean().optional(),
+  runtime_generation: z.string().min(1).max(128).optional(),
+  runtime_created: z.boolean().optional(), runtime_reset: z.boolean().optional(),
+  reset_reason: z.string().max(80).nullable().optional(),
+  output_withheld: z.boolean().optional(),
+  images: z.array(z.object({ id:z.string().max(128), mime_type:z.enum(["image/png","image/jpeg"]), expires_at:z.string().max(64), path:z.string().max(256).optional() }).strict()).max(2).nullable().optional(),
+  output_artifact: z.object({ path:z.string().regex(/^[a-f0-9-]{36}\.txt$/), bytes:z.number().int().min(0).max(1024*1024), truncated:z.boolean() }).strict().nullable().optional(),
+}).strict();
 type Tracker = SessionTracker | GrpcSessionTracker;
 export type BrowserCommand = {
   browser_color?: string;
+  repl_images?: { endpoint:string; ticket:string }[];
   request_id: string;
   session_id: string;
   generation: string;
@@ -71,8 +84,8 @@ export type BrowserCarrier = {
   hidpiCapture?: boolean;
   operationDrivenMedia?: boolean;
   historyNavigation?: boolean;
-  compactObservations?: boolean;
   agentCapture?: boolean;
+  repl?: boolean;
   current(): boolean;
   send(frame: Record<string, unknown>): boolean;
 };
@@ -108,8 +121,8 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
       hidpiCapture: parsed.data.hidpi_capture === true,
       operationDrivenMedia: parsed.data.operation_driven_media === true,
       historyNavigation: parsed.data.history_navigation === true,
-      compactObservations: parsed.data.compact_observations === true,
       agentCapture: parsed.data.agent_capture === true,
+      repl: parsed.data.repl === true,
       current,
       send(frame) {
         if (!current()) return false;
@@ -153,9 +166,18 @@ export function receiveBrowserResult(tracker: Tracker, raw: unknown): void {
     entry.request.generation !== result.generation
   )
     return;
-  if (Buffer.byteLength(JSON.stringify(result)) > 128 * 1024) {
+  const cell = entry.request.command.action === "exec";
+  if (Buffer.byteLength(JSON.stringify(result)) > (cell ? 256 : 128) * 1024) {
     entry.finish(unknown());
     return;
+  }
+  if (cell) {
+    const data = cellDataSchema.safeParse(result.data);
+    if (!data.success || result.ok && data.data.execution_state !== "completed" ||
+        result.outcome === "rejected" && data.data.execution_state && data.data.execution_state !== "not_executed") {
+      entry.finish(unknown());
+      return;
+    }
   }
   entry.finish({ ...result, error: result.error ?? undefined });
 }
@@ -200,7 +222,10 @@ export function dispatchBrowser(
       clearTimeout(timer);
       clearInterval(connectionCheck);
       signal.removeEventListener("abort", cancel);
-      resolve(result);
+      resolve(request.command.action === "exec" ? {
+        ...result, data: { ...result.data,
+          execution_state: result.data?.execution_state ?? (result.outcome === "rejected" ? "not_executed" : "unknown") },
+      } : result);
     };
     const cancel = () => {
       if (sent) {

@@ -454,3 +454,18 @@ private images and input never enter those channels.
 invalidates inconsistent leftover intervals and expired running intervals; valid
 running leases survive overlapping startup. Migration 0043 is required first.
 Existing lease recovery remains responsible for invocation lifecycle recovery.
+
+## Browser state and access logging (Phase 7f)
+
+`access-log.ts` supplies `registerAccessLog` and the tested `accessLogLevel` policy;
+`access-log.test.ts` validates severity and template-only output. `server.ts`
+disables Fastify's paired request logs and registers one completion summary with
+method, route template, status, duration and request correlation. Routine successful
+status reads/streams are DEBUG; other successes INFO; 4xx and slow finite requests
+(>=1000ms) WARN; all 5xx ERROR. Stream duration is not a slow-request warning.
+Query strings/bodies are absent; development pretty output uses single lines.
+
+Browser routes now initialize one PostgreSQL LISTEN connection onReady, verify
+migration 0042 and stop it on shutdown. Their dedicated state WebSockets replace
+healthy browser HTTP polling; see `browser/browser.spec.md`. Coordinate migration,
+service/shared web deployment and client reload. No daemon/native bridge changes.

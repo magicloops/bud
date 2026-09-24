@@ -16,7 +16,7 @@ test("frozen baseline counts actual appended blocks once, including concurrent u
   const args = fixture();
   assert.equal(resolveContextAccounting(args).tokens, 12542);
   const suffix: CanonicalMessage[] = [
-    { role: "assistant", content: [{ type: "tool_use", id: "tool", name: "browser_observe", input: {} }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "tool", name: "browser_exec", input: {} }] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "tool", content: "page text" }] },
     { role: "user", content: "new question" },
   ];
@@ -61,7 +61,7 @@ test("cache reads and writes count once according to adapter usage conventions",
   assert.equal(contextInputTokens("unsupported", { input_tokens: 100 }), null);
 });
 const screenshot = (id: string): CanonicalMessage => ({ role: "user", content: [{ type: "tool_result", tool_use_id: id,
-  content: JSON.stringify({ tool: "browser_observe", ok: true, data: { image_artifact: { id } } }) }] });
+  content: JSON.stringify({ tool: "browser_exec", ok: true, data: { images: [{ id }] } }) }] });
 
 test("anchors without an image record fall back when the measured request held screenshots", () => {
   const measured = [...messages, screenshot("a")];

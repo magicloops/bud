@@ -1,4 +1,5 @@
 import { subscribeTurnTimings } from "./agent/invocation-timing.js";
+import { registerAccessLog } from "./access-log.js";
 import { retrievalAvailable } from "./web-retrieval/config.js";
 import { BrowserBroker } from "./browser/broker.js";
 import { BrowserMedia } from "./browser/media.js";
@@ -84,21 +85,24 @@ function selectProxyWebSocketSubprotocol(
 export async function buildServer(): Promise<FastifyInstance> {
   const invocationSettings = readInvocationSettings();
   const server = Fastify({
+    disableRequestLogging: true,
     bodyLimit: config.proxySessionMaxRequestBodyBytes,
     logger: {
       level: config.logLevel,
+      serializers: { req: request => ({method: request.method}) },
       transport:
         process.env.NODE_ENV !== "production"
           ? {
               target: "pino-pretty",
               options: {
                 colorize: true,
-                singleLine: false
+                singleLine: true
               }
             }
           : undefined
     }
   });
+  registerAccessLog(server);
 
   // OAuth token and revoke requests arrive as form-encoded bodies.
   server.addContentTypeParser(

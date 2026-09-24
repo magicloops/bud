@@ -9,9 +9,7 @@ export function browserReveal(payload: Record<string, unknown>): { id: string; k
   const handoff = browserPathSession(payload.viewer_path)
   if (handoff && typeof payload.handoff_id === 'string')
     return { id: handoff, key: `handoff:${payload.handoff_id}` }
-  const id = browserSessionId(payload.session_id)
-  return payload.tool === 'browser_open' && payload.ok === true && id
-    ? { id, key: `open:${id}` } : null
+  return null
 }
 /** A visit-local baseline: neither replay nor repeated polls override dismissal. */
 export class BrowserRevealTracker {

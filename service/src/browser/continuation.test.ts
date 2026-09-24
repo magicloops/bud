@@ -62,9 +62,13 @@ test(
       "user-tool",
       "return-control",
       "restart",
+      "repl", "repl-cancel", "repl-restart",
       "stop-browser",
     ]) {
-      const returnControl = provider === "return-control" || provider === "user-tool";
+      const repl = provider.startsWith("repl");
+      const restarting = provider === "restart" || provider === "repl-restart";
+      const canceling = provider === "cancel" || provider === "repl-cancel";
+      const returnControl = repl || provider === "return-control" || provider === "user-tool";
       const userTakeover = returnControl;
       const idle = false;
       const thread = randomUUID();
@@ -117,15 +121,15 @@ test(
           [
             {
               id: callId,
-              name: userTakeover
-                ? "browser_observe"
+              name: repl ? "browser_exec" : userTakeover
+                ? "browser_exec"
                 : "browser_request_handoff",
-              input: { reason: "Sign in" },
+              input: userTakeover ? {code:"saved++"} : { reason: "Sign in" },
             },
             {
               id: `later-${callId}`,
-              name: "browser_act",
-              input: { action: "click", reference: "old-reference" },
+              name: "browser_exec",
+              input: {code:"saved++"},
             },
           ].map((block, sequence) => ({
             llmCallItemId: randomUUID(),
@@ -141,10 +145,10 @@ test(
         );
       if (returnControl) {
         await pool.query("update browser_resource set control_state='human_private',private_content=true,control_session_id=$1 where bud_id='bud'",[sessionId]);
-        await repo.recordAction(lease,callId,"browser_observe");
+        await repo.recordAction(lease,callId,"browser_exec");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
-          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"inspect",operation:"snapshot"}),BrowserToolWait);
+          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"exec",code:"saved++"}),BrowserToolWait);
         assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
       }
       const handoff = returnControl ? null : await controls.requestAgent({
@@ -180,7 +184,7 @@ test(
         assert.ok(
           await repo.parkUserBrowserHandoff(
             lease,
-            idle ? undefined : { callId, tool: "browser_observe" },
+            idle ? undefined : { callId, tool: "browser_exec" },
           ),
         );
       else
@@ -212,10 +216,10 @@ test(
       if (returnControl) {
         await repo.admit({owner:"alice",threadId:thread,origin:"human",idempotencyKey:`${thread}-second`,text:"Browse too",model:"fixture",reasoningEffort:"none"});
         const second=await repo.claim("second","alice"); assert.ok(second); await repo.start(second);
-        await repo.recordAction(second,"second-call","browser_act");
+        await repo.recordAction(second,"second-call","browser_exec");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:second.turnId,invocation:{id:second.id,fence:second.fence,workerId:second.workerId!},
-          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"click"}),BrowserToolWait);
+          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"exec",code:"await handle.click()"}),BrowserToolWait);
         assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,2);
         await repo.requestCancel("alice",second.id);
         assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,1);
@@ -231,7 +235,7 @@ test(
       await repo.start(chatting);
       assert.deepEqual(await repo.prepareQuestionContinuation(chatting), []);
       assert.equal(await repo.claim("concurrent", "alice"), null);
-      if (provider === "cancel") await repo.requestCancel("alice", lease.id);
+      if (canceling) await repo.requestCancel("alice", lease.id);
       if (provider === "stop-browser") {
         const current = (await resources.get("alice", "bud"))!;
         const stopping = await resources.requestLifecycle("alice", "bud", current.revision, "stop");
@@ -242,7 +246,7 @@ test(
         await repo.finish(chatting, "succeeded", "done");
         continue;
       }
-      if (provider === "restart") {
+      if (restarting) {
         await pool.query("update browser_session set state='interrupted' where id=$1",[sessionId]);
         await repo.recoverExpired("alice");
         assert.equal((await repo.findForThread("alice",thread,lease.id))?.status,"waiting_for_user");
@@ -265,7 +269,7 @@ test(
       // Return does not run two model loops in the same conversation.
       assert.equal(await repo.claim("while-chatting", "alice"), null);
       await repo.finish(chatting, "succeeded", "done");
-      if (provider === "cancel") {
+      if (canceling) {
         assert.equal(await repo.claim("after-cancel", "alice"), null);
         continue;
       }
@@ -293,13 +297,17 @@ test(
         else {
           assert.equal(results[0].clientId, clientId);
           assert.equal(JSON.parse(results[0].content).ok, provider !== "restart");
-          if(provider === "restart") assert.equal(JSON.parse(results[0].content).error,"browser_handoff_interrupted");
+          if(restarting) assert.equal(JSON.parse(results[0].content).error,"browser_handoff_interrupted");
         }
         assert.match(results[1].content, /not_executed_due_to_browser_handoff/);
         for (const result of userTakeover ? results : results.slice(1)) {
           const payload = JSON.parse(result.content);
           assert.equal(payload.ok, false, "return must not claim the queued action ran");
           assert.equal(payload.executed, false);
+          if (repl) {
+            assert.equal(payload.execution_state, "not_executed");
+            assert.match(payload.summary, /do not replay the queued cell/);
+          }
           for (const toolUseFromProviderLedger of [true, false]) {
             const replay: CanonicalMessage[] = [];
             const loader = new AgentConversationLoader();
@@ -311,7 +319,7 @@ test(
             assert.equal(blocks[0]?.type === "tool_result" && blocks[0].content, result.content);
           }
           assert.deepEqual(payload.handoff, {
-            status: provider === "restart" ? "interrupted" : "returned", control_state: "agent", private_content: false,
+            status: restarting ? "interrupted" : "returned", control_state: "agent", private_content: false,
           });
         }
       }

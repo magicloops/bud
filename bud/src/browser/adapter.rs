@@ -78,7 +78,6 @@ pub struct Browser {
     screenshot: Option<(Cdp, HashMap<String, String>)>,
     semantic: super::semantic::Semantic,
     semantic_dirty: bool,
-    semantic_target: Option<String>,
     process: Arc<Mutex<Process>>,
     endpoint: String,
     runtime: Arc<super::addon::Runtime>,
@@ -279,7 +278,6 @@ impl Browser {
             screenshot: None,
             semantic,
             semantic_dirty: false,
-            semantic_target: None,
             process: Arc::new(Mutex::new(Process {
                 child,
                 background_windows: cfg!(target_os = "macos") && headed,
@@ -667,8 +665,20 @@ impl Browser {
             self.semantic_dirty = false;
         }
         command["target_id"] = json!(target);
+        let focus = command["operation"] == "focus";
+        if matches!(
+            command["operation"].as_str(),
+            Some("click" | "fill" | "focus")
+        ) {
+            self.focus = None;
+        }
         let result = self.semantic.call(command).await?;
-        self.semantic_target = Some(target.into());
+        if focus {
+            let session = self.session(target).await?;
+            let document = self.document(&session).await?;
+            self.remember_human_focus(target, &session, &document)
+                .await?;
+        }
         Ok(result)
     }
 
@@ -682,18 +692,15 @@ impl Browser {
         Ok(result["nodes"].as_array().cloned().unwrap_or_default())
     }
 
-    pub async fn focus(&mut self, reference: &str) -> Result<()> {
-        let target = self
-            .semantic_target
-            .clone()
-            .context("browser_stale_reference")?;
-        self.inspect(&target, json!({"operation":"focus","reference":reference}))
-            .await?;
-        let session = self.session(&target).await?;
-        let document = self.document(&session).await?;
-        self.remember_human_focus(&target, &session, &document)
-            .await?;
-        Ok(())
+    pub(super) async fn insert_text_in_tab(&mut self, target: &str, text: &str) -> Result<()> {
+        if self
+            .focus
+            .as_ref()
+            .is_none_or(|focus| focus.target != target)
+        {
+            bail!("browser_focus_required");
+        }
+        self.insert_text(text).await
     }
 
     /// Guarded committed text for ordinary inputs. Check and write
@@ -720,17 +727,6 @@ impl Browser {
         if result["result"]["value"] != true {
             bail!("browser_stale_or_unsupported_focus");
         }
-        Ok(())
-    }
-
-    pub async fn click(&mut self, reference: &str) -> Result<()> {
-        let target = self
-            .semantic_target
-            .clone()
-            .context("browser_stale_reference")?;
-        self.inspect(&target, json!({"operation":"click","reference":reference}))
-            .await?;
-        self.focus = None;
         Ok(())
     }
 
@@ -1375,7 +1371,6 @@ impl Browser {
         if self.semantic.interrupted() {
             self.semantic =
                 super::semantic::Semantic::connect(&self.endpoint, &self.runtime).await?;
-            self.semantic_target = None;
             self.invalidate_references();
         }
         Ok(())
@@ -1391,6 +1386,14 @@ impl Browser {
             .or_else(|| targets.first())
         {
             return Ok(target.target_id.clone());
+        }
+        self.create_page().await
+    }
+
+    /// Explicit creation, never an implicit side effect of observing a missing tab.
+    pub(super) async fn create_page(&mut self) -> Result<String> {
+        if self.targets().await?.len() >= 16 {
+            bail!("browser_target_limit");
         }
         let result = self
             .cdp
@@ -1413,14 +1416,60 @@ impl Browser {
         Ok(target)
     }
 
+    /// Explicit tab close must remove its recovery hint, including the final tab.
+    /// The workspace/REPL lifetime is independent of this individual tab.
+    pub(super) async fn close_page(&mut self, target: &str, selected: Option<&str>) -> Result<()> {
+        if !self.targets().await?.iter().any(|t| t.target_id == target) {
+            bail!("browser_target_not_found");
+        }
+        let result = self
+            .cdp
+            .call(None, "Target.closeTarget", json!({"targetId":target}))
+            .await?;
+        if result["success"] != true {
+            bail!("browser_close_unconfirmed");
+        }
+        self.ownership.lock().unwrap().remove(target);
+        self.invalidate_references();
+        self.disclose_pages();
+        let pages = self.checkpoint_pages(selected, false).await?;
+        self.recovery.lock().unwrap().save(&self.workspace, pages)?;
+        Ok(())
+    }
+
     pub fn interrupted(&mut self) -> bool {
         self.cdp.interrupted()
             || self.semantic.interrupted()
             || !matches!(self.process.lock().unwrap().child.try_wait(), Ok(None))
     }
 
+    /// Idle disposal preserves the public checkpoint. Never call save_pages for
+    /// private content: the previously disclosed checkpoint remains frozen.
+    pub(super) async fn expire_idle(
+        &mut self,
+        selected: Option<&str>,
+        private: bool,
+    ) -> Result<()> {
+        if !private && self.save_pages(selected).await.is_err() {
+            // Recovery is best-effort; a corrupt/full hint store must not keep
+            // unused browser processes alive indefinitely. Keep prior hints.
+            tracing::warn!(
+                component = "browser_recovery",
+                event = "idle_checkpoint_unavailable",
+                "Idle workspace checkpoint unavailable; retaining previous hints"
+            );
+        }
+        // Freeze the checkpoint across partial close failure and checkpoint events.
+        self.saved_pages = self.recovery.lock().unwrap().get(&self.workspace);
+        self.close_owned(false).await
+    }
+
     /// Only lifecycle ownership may stop Chrome; closing a workspace closes its pages.
     pub async fn close(&mut self) -> Result<()> {
+        self.close_owned(true).await
+    }
+
+    async fn close_owned(&mut self, forget: bool) -> Result<()> {
         if self.workspace.is_empty() {
             if self.process_exited()? {
                 return Ok(());
@@ -1460,11 +1509,13 @@ impl Browser {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         } else {
-            // Best-effort: corrupt hints never block closing a workspace.
-            if let Err(error) = self.recovery.lock().unwrap().forget(&self.workspace) {
-                tracing::warn!(reason = %error, "Recovery hint removal failed; closing anyway");
+            if forget {
+                // Best-effort: corrupt hints never block explicit close.
+                if let Err(error) = self.recovery.lock().unwrap().forget(&self.workspace) {
+                    tracing::warn!(reason = %error, "Recovery hint removal failed; closing anyway");
+                }
+                self.saved_pages = None;
             }
-            self.saved_pages = None;
             if self.process_exited()? {
                 return Ok(());
             }
@@ -1510,7 +1561,6 @@ impl Browser {
             screenshot: None,
             semantic,
             semantic_dirty: false,
-            semantic_target: None,
             process: self.process.clone(),
             endpoint: self.endpoint.clone(),
             runtime: self.runtime.clone(),

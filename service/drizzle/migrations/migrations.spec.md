@@ -437,3 +437,15 @@ Adds browser_viewer_visit with owner/workspace composite FK, hashed one-use gran
 and cookie secrets, bounded expiry and lookup indexes. Generated metadata is
 unchanged. Applied reviewed SQL locally and exercised against isolated pre-change
 browser tables; deploy via db:migrate before the mobile viewer service release.
+
+## `0042_browser_state_notifications.sql`
+
+Generated custom migration and `meta/0042_snapshot.json`/journal entry for
+post-commit browser-state invalidation. Adds `browser_state_changed()` and five
+filtered AFTER triggers on browser_resource, browser_session, browser_handoff,
+bud and thread. Publishes scope-only PostgreSQL NOTIFY hints; no tables, columns,
+backfills or owner stamps change. Requires migration before Phase 7f service
+startup. Isolated real-PG tests apply exact SQL and cover commit, rollback,
+renewal filtering and cross-connection delivery. Local SQL was applied as one
+transaction; db:push was canceled on an unrelated proposal. Deployment uses
+`pnpm db:migrate`, not push. Gateway LISTEN requires a session-preserving connection.

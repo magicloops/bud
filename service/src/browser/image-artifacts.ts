@@ -4,7 +4,7 @@ import { ulid } from 'ulid';
 import { pool } from '../db/client.js';
 import type { CanonicalContentBlock, CanonicalMessage } from '../llm/types.js';
 import type { ProviderInvocationContext } from '../llm/provider.js';
-import { selectHydratedImageReferences } from './image-references.js';
+import { selectHydratedImageReferences, imageArtifactIds } from './image-references.js';
 
 const directory = resolve(process.env.BUD_BROWSER_ARTIFACT_DIR ?? '.bud-data/browser-images');
 const TTL = 7 * 24 * 60 * 60 * 1000;
@@ -69,12 +69,9 @@ export async function hydrateBrowserImages(messages: CanonicalMessage[], context
     const content: CanonicalContentBlock[] = [...message.content];
     for (const block of message.content) {
       if (block.type !== 'tool_result' || typeof block.content !== 'string') continue;
-      let payload;
-      try { payload = JSON.parse(block.content); } catch { continue; }
-      const id = payload?.tool === 'browser_observe' && payload?.ok === true && payload?.data?.image_artifact?.id;
-      if (typeof id !== 'string') continue;
+      for (const id of imageArtifactIds(block)) {
       let image: ImageArtifact | null = null;
-      if (context?.ownerUserId && vision && selected.has(block)) {
+      if (context?.ownerUserId && vision && selected.get(block)?.includes(id)) {
         owned ??= await authorize(context.ownerUserId, context.threadId, context.budId);
         if (owned) image = await store.get(id, context.ownerUserId, context.threadId, block.tool_use_id);
       }
@@ -82,6 +79,7 @@ export async function hydrateBrowserImages(messages: CanonicalMessage[], context
         ? `Screenshot from browser tool call ${block.tool_use_id}:`
         : `Screenshot from browser tool call ${block.tool_use_id} is unavailable (expired, unauthorized, outside the eight-image history budget, or this model lacks image support).` });
       if (image) content.push({ type:'image', source:{ type:'base64', media_type:image.mime_type, data:image.image } });
+      }
     }
     result.push({ ...message, content });
   }

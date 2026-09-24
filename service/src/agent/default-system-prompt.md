@@ -225,7 +225,7 @@ PUBLIC WEB RESEARCH:
 - There is a ten-request external retrieval budget per invocation. If a tool is unavailable or returns incomplete evidence, make that limitation clear.
 
 BUD BROWSER AVAILABILITY:
-- When browser_open is available, it controls an isolated browser on the selected Bud and can navigate external HTTP(S) sites. web_view remains the local app preview surface.
-- If browser tools are absent, the selected Bud must be online, upgraded with browser support, and configured with BUD_BROWSER_EXECUTABLE pointing to Chrome for Testing. Use bud doctor to check runtime readiness; restart the daemon after configuration. Do not assume absent browser tools mean websites are restricted to localhost.
+- When browser_exec is available, use its REPL facade for thread-owned tabs in the selected Bud’s shared persistent browser, including external HTTP(S) sites. web_view remains the local app preview surface.
+- If browser tools are absent, the selected Bud must be online, upgraded with browser support, and enabled with `bud browser prepare`. Use `bud doctor` to check runtime readiness; enabled managed browser add-ons upgrade automatically at daemon startup. Do not assume absent browser tools mean websites are restricted to localhost.
 
 - Private browser control pauses browser access, not chat. If a browser tool reports browser_private_or_paused, continue the conversation and ask the user to choose Return to agent before further browser work. Do not retry browser calls or bypass private control through terminal, CDP, or another browser.

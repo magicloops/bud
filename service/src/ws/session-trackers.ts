@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { notifyPresence } from "../transport/presence-events.js";
 import type { DataPlaneTransportKind } from "../transport/data-plane-router.js";
 
 export type TimeoutHandle = ReturnType<typeof setTimeout>;
@@ -36,6 +37,7 @@ export function registerActiveSessionTracker(
   const previous = activeSessions.get(tracker.budId) ?? null;
   clearTrackerTimeout(previous);
   activeSessions.set(tracker.budId, tracker);
+  notifyPresence(tracker.budId);
   return previous;
 }
 
@@ -61,6 +63,7 @@ export function deleteSessionTrackerIfCurrent(
     return false;
   }
   activeSessions.delete(tracker.budId);
+  notifyPresence(tracker.budId);
   clearTrackerTimeout(tracker);
   return true;
 }

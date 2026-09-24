@@ -6,7 +6,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { and, eq, gt } from "drizzle-orm";
-import { db } from "../db/client.js";
+import { db, pool } from "../db/client.js";
+import { BrowserStateEvents, type BrowserStateHint } from "./state-events.js";
+import { attachBrowserState } from "./state-stream.js";
+import { subscribePresence } from "../transport/presence-events.js";
 import { authSessionTable } from "../db/schema.js";
 import { config } from "../config.js";
 import {
@@ -154,6 +157,15 @@ export async function registerBrowserRoutes(
   media: BrowserMedia,
 ) {
   await registerAgentCaptures(server);
+  const stateEvents = new BrowserStateEvents(pool);
+  server.addHook("onReady", () => stateEvents.ready());
+  const unsubscribePresence = subscribePresence(bud_id => stateEvents.publish({bud_id}));
+  control.onStateChange = session => stateEvents.publish({bud_id: session.bud_id});
+  server.addHook("preClose", async () => {
+    unsubscribePresence();
+    control.onStateChange = () => {};
+    await stateEvents.close();
+  });
   const diagnostic = (fields: Record<string, string | number | boolean>) =>
     server.log.info({ component: "browser_lifecycle", ...fields }, "Browser lifecycle");
   control.onDiagnostic = diagnostic;
@@ -166,11 +178,16 @@ export async function registerBrowserRoutes(
     maxPayload: 1_420_000,
     perMessageDeflate: false,
   });
+  const stateSockets = new WebSocketServer({noServer:true, maxPayload:256, perMessageDeflate:false});
   const upgrade = server.websocketServer.handleUpgrade.bind(
     server.websocketServer,
   );
   server.websocketServer.handleUpgrade = (request, socket, head, callback) => {
     const path = request.url?.split("?")[0] ?? "";
+    if (/^\/api\/(threads\/[^/]+\/browser-state|browser\/sessions\/[^/]+\/state|buds\/[^/]+\/browser\/state)$/.test(path)) {
+      stateSockets.handleUpgrade(request,socket,head,callback);
+      return;
+    }
     if (
       path === "/ws/browser-media" ||
       /^\/api\/browser\/sessions\/[^/]+\/media$/.test(path)
@@ -179,6 +196,8 @@ export async function registerBrowserRoutes(
     } else upgrade(request, socket, head, callback);
   };
   server.addHook("preClose", async () => {
+    for (const socket of stateSockets.clients) socket.terminate();
+    stateSockets.close();
     for (const socket of bounded.clients) socket.terminate();
     bounded.close();
   });
@@ -230,6 +249,44 @@ export async function registerBrowserRoutes(
         )
         .send({ error: code });
     });
+    for (const scopeKind of ["thread", "session", "bud"] as const) {
+      const path = scopeKind === "thread" ? "/api/threads/:thread_id/browser-state"
+        : scopeKind === "session" ? "/api/browser/sessions/:session_id/state"
+        : "/api/buds/:bud_id/browser/state";
+      const authorized = new WeakMap<FastifyRequest, {scope: BrowserStateHint; check: () => Promise<boolean>}>();
+      routes.get(path, {websocket: true, preValidation: async (request, reply) => {
+        const actor = await viewer(request, reply);
+        if (!actor) return;
+        const params = request.params as Record<string,string>;
+        const resolve = async (): Promise<BrowserStateHint | null> => {
+          if (!await alive(actor)) return null;
+          if (scopeKind === "session") {
+            const session = await control.repository.get(actor.userId, sessionId(request));
+            return {bud_id:session.bud_id, thread_id:session.thread_id};
+          }
+          if (scopeKind === "thread") {
+            const thread = await getAuthorizedThread(actor, z.string().uuid().parse(params.thread_id));
+            return thread && await getAuthorizedBud(actor,thread.budId) ? {bud_id:thread.budId, thread_id:params.thread_id} : null;
+          }
+          return await getAuthorizedBud(actor,params.bud_id) ? {bud_id:params.bud_id} : null;
+        };
+        const scope = await resolve();
+        if (!scope) throw new BrowserError("browser_not_found");
+        authorized.set(request, {scope, check: async () => {
+          try {
+            const current = await resolve();
+            return !!current && current.bud_id === scope.bud_id && current.thread_id === scope.thread_id;
+          } catch (error) {
+            if (error instanceof BrowserError && error.code === "browser_not_found") return false;
+            throw error;
+          }
+        }});
+      }}, (socket, request) => {
+        const access = authorized.get(request);
+        if (!access) { socket.close(4404); return; }
+        void attachBrowserState(socket,stateEvents,access.scope,access.check);
+      });
+    }
     // Native bearer mints/revokes only. The embedded page receives no OAuth token.
     routes.post("/api/browser/sessions/:session_id/viewer-grants", {bodyLimit:1024}, async (request, reply) => {
       reply.header("Cache-Control","no-store");

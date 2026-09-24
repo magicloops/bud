@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { notifyPresence } from "./presence-events.js";
 import type * as grpc from "@grpc/grpc-js";
 import { encodeGrpcLegacyJsonEnvelope } from "../grpc/envelope-codec.js";
 import { logGatewayDebug } from "../ws/debug.js";
@@ -45,6 +46,7 @@ export function registerActiveGrpcSessionTracker(
   const previous = grpcSessions.get(tracker.budId) ?? null;
   clearGrpcTrackerTimeout(previous);
   grpcSessions.set(tracker.budId, tracker);
+  notifyPresence(tracker.budId);
   return previous;
 }
 
@@ -68,6 +70,7 @@ export function deleteGrpcSessionTrackerIfCurrent(
     return false;
   }
   grpcSessions.delete(tracker.budId);
+  notifyPresence(tracker.budId);
   clearGrpcTrackerTimeout(tracker);
   return true;
 }

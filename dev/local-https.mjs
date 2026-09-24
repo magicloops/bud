@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { developmentTrustedOrigins } from "./local-dev.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, "..");
@@ -298,7 +299,7 @@ function buildServiceEnv(rootCaPath, options = {}) {
     APP_BASE_URL: HTTPS_ORIGIN,
     BETTER_AUTH_URL: HTTPS_ORIGIN,
     API_AUDIENCE,
-    BETTER_AUTH_TRUSTED_ORIGINS: `${HTTPS_ORIGIN},http://localhost:5173,http://localhost:3000`,
+    BETTER_AUTH_TRUSTED_ORIGINS: developmentTrustedOrigins(HTTPS_ORIGIN),
     OAUTH_TRUSTED_CLIENT_IDS: "bud-ios-dev-local",
     PROXY_PUBLIC_SCHEME: "https",
     PROXY_BASE_DOMAIN: PUBLIC_PROXY_BASE_DOMAIN,
@@ -336,7 +337,7 @@ function printDerivedEnv(rootCaPath, options = {}) {
   console.log(`APP_BASE_URL=${HTTPS_ORIGIN}`);
   console.log(`BETTER_AUTH_URL=${HTTPS_ORIGIN}`);
   console.log(`API_AUDIENCE=${API_AUDIENCE}`);
-  console.log(`BETTER_AUTH_TRUSTED_ORIGINS=${HTTPS_ORIGIN},http://localhost:5173,http://localhost:3000`);
+  console.log(`BETTER_AUTH_TRUSTED_ORIGINS=${developmentTrustedOrigins(HTTPS_ORIGIN)}`);
   console.log("OAUTH_TRUSTED_CLIENT_IDS=bud-ios-dev-local");
   console.log("PROXY_PUBLIC_SCHEME=https");
   console.log(`PROXY_BASE_DOMAIN=${PUBLIC_PROXY_BASE_DOMAIN}`);

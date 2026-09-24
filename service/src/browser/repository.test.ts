@@ -121,7 +121,7 @@ test(
     await repo.complete(afterRejection, { ok:true, outcome:"completed" });
     const blocked = await repo.prepare(await next(), "boot", { action: "inspect", operation: "click" });
     const beforeBlocked = (await pool.query("select * from browser_session where id=$1", [blocked.session_id])).rows[0];
-    await repo.complete(blocked, { ok:false, outcome:"rejected", error:"browser_click_blocked" });
+    await repo.complete(blocked, { ok:false, outcome:"rejected", error:"browser_invalid_arguments" });
     const afterBlocked = (await pool.query("select * from browser_session where id=$1", [blocked.session_id])).rows[0];
     assert.equal(afterBlocked.state, "ready");
     assert.equal(afterBlocked.pending_until, null);

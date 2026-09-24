@@ -3,7 +3,7 @@
 //! `bud browser prepare` writes `<base_dir>/browser/manifest.json` describing
 //! the browser executable (system Chrome/Chromium preferred, a pinned managed
 //! Chrome for Testing as plan B), the managed Node runtime and the helper. The
-//! daemon only ever reads that manifest; it never downloads. Environment
+//! daemon upgrades the bundled helper for an existing opt-in; it never downloads. Environment
 //! variables remain explicit development overrides.
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -127,6 +127,92 @@ pub fn remove_manifest(base: &Path) -> Result<bool> {
     }
 }
 
+/// Stable inode outside the removable add-on tree. Fail fast instead of blocking
+/// daemon startup behind an interactive prepare/download. Closing releases it.
+pub fn installation_lock(base: &Path) -> Result<std::fs::File> {
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+    std::fs::create_dir_all(base)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(base.join("browser-addon.lock"))?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(std::io::Error::last_os_error()).context(
+            "browser add-on installation busy; retry after prepare/remove finishes (restart Bud for startup retry)");
+    }
+    Ok(file)
+}
+
+/// Startup only. Status/doctor use read-only resolution and the same probe.
+pub async fn startup(base: &Path) -> Result<(Resolution, ProbeOutcome)> {
+    if let Some(runtime) = env_override() {
+        let runtime = runtime?;
+        let outcome = probe(&runtime).await?;
+        return Ok((Resolution::EnvOverride(runtime), outcome));
+    }
+    startup_manifest(base, |runtime| async move { probe(&runtime).await }).await
+}
+
+async fn startup_manifest<F, Fut>(base: &Path, validate: F) -> Result<(Resolution, ProbeOutcome)>
+where
+    F: FnOnce(Runtime) -> Fut,
+    Fut: std::future::Future<Output = Result<ProbeOutcome>>,
+{
+    let owned_base = base.to_owned();
+    let preparation = tokio::task::spawn_blocking(move || {
+        let lock = installation_lock(&owned_base)?;
+        // Read only after taking the same lock used by prepare/remove.
+        let mut manifest = read_manifest(&owned_base)?
+            .ok_or_else(|| anyhow!("browser disabled; enable with `bud browser prepare`"))?;
+        if !manifest.dev
+            && (manifest.helper.version != helper_version()
+                || !archive_complete(
+                    manifest.helper.path.parent().unwrap_or(Path::new("")),
+                    EMBEDDED_HELPER,
+                ))
+        {
+            manifest.helper = install_embedded_helper(&owned_base)?;
+        }
+        Ok::<_, anyhow::Error>((lock, manifest))
+    });
+    // Blocking filesystem work cannot be canceled. A timed-out task may finish
+    // staging its cache, but never commits a manifest or enables the browser.
+    let (lock, mut manifest) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), preparation)
+            .await
+            .context("browser helper extraction timed out; restart to retry")?
+            .context("browser helper preparation task failed")??;
+    let outcome = validate(manifest.runtime()).await.context(
+        "browser readiness failed; run `bud browser prepare` to repair Node/browser dependencies",
+    )?;
+    if !manifest.dev {
+        let previous = read_manifest(base)?.context("browser enablement disappeared")?;
+        let changed = previous.helper != manifest.helper || !previous.probe.ok;
+        if changed {
+            manifest.prepared_at = now();
+            manifest.prepared_by = daemon_version();
+        }
+        manifest.browser.version = outcome.version.clone();
+        manifest.probe = ProbeRecord {
+            ok: true,
+            checked_at: now(),
+            notes: outcome.notes.clone(),
+        };
+        write_manifest(base, &manifest)?;
+        tracing::info!(component="browser_addon", event=if changed { "upgraded" } else { "reused" },
+            helper=%manifest.helper.version, "Browser helper ready");
+    }
+    drop(lock);
+    Ok((
+        Resolution::Manifest(manifest.runtime(), Box::new(manifest)),
+        outcome,
+    ))
+}
+
 impl Manifest {
     pub fn runtime(&self) -> Runtime {
         Runtime {
@@ -149,11 +235,11 @@ impl Manifest {
                 pins::NODE_VERSION
             ));
         }
-        if self.helper.version != daemon_version() {
+        if self.helper.version != helper_version() {
             reasons.push(format!(
-                "helper {} recorded, daemon is {}",
+                "helper {} recorded, daemon embeds {}",
                 self.helper.version,
-                daemon_version()
+                helper_version()
             ));
         }
         // Recorded as a `Browser.getVersion` product string ("Chrome/153.0.8010.12").
@@ -227,6 +313,11 @@ pub fn resolve_manifest(base: &Path) -> Resolution {
                     "browser manifest records a failed probe; run `bud browser prepare`".into(),
                 );
             }
+            if !manifest.dev && manifest.helper.version != helper_version() {
+                return Resolution::Unavailable(
+                    "browser helper does not match this daemon; restart Bud to upgrade it automatically, or run `bud browser prepare` to repair dependencies".into(),
+                );
+            }
             Resolution::Manifest(manifest.runtime(), Box::new(manifest))
         }
         Ok(None) => Resolution::Unavailable(
@@ -240,11 +331,17 @@ pub fn resolve_manifest(base: &Path) -> Resolution {
 
 /// Best-effort: the daemon records a browser version it observed that differs
 /// from the manifest (a system browser auto-updated). Nothing else changes.
-pub fn record_observed_version(base: &Path, version: &str) {
+pub fn record_observed_version(base: &Path, runtime: &Runtime, version: &str) {
+    if env_override().is_some() {
+        return;
+    }
+    let Ok(_lock) = installation_lock(base) else {
+        return;
+    };
     let Ok(Some(mut manifest)) = read_manifest(base) else {
         return;
     };
-    if manifest.browser.version == version {
+    if manifest.dev || manifest.runtime() != *runtime || manifest.browser.version == version {
         return;
     }
     tracing::info!(
@@ -480,7 +577,7 @@ pub fn node_dir(base: &Path) -> PathBuf {
 }
 
 pub fn helper_dir(base: &Path) -> PathBuf {
-    addon_dir(base).join("helper").join(daemon_version())
+    addon_dir(base).join("helper").join(helper_version())
 }
 
 pub fn managed_browser_dir(base: &Path) -> PathBuf {
@@ -599,36 +696,104 @@ pub fn extract_zip(archive: &Path, into: &Path) -> Result<()> {
 const EMBEDDED_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/browser-helper.tar.gz"));
 pub const EMBEDDED_HELPER_COMPLETE: bool = matches!(env!("BUD_HELPER_VENDORED").as_bytes(), b"1");
 
-/// Unpack the embedded helper into `helper/<daemon version>/`. Returns `main.mjs`.
+/// Archive identity includes helper sources and vendored dependencies, even when
+/// two development builds share the same Git version label.
+fn helper_version() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| helper_archive_id(EMBEDDED_HELPER))
+}
+
+fn helper_archive_id(archive: &[u8]) -> String {
+    format!("sha256-{}", hex(Sha256::digest(archive)))
+}
+
+/// Unpack into `helper/sha256-<archive digest>/`. Returns `main.mjs`.
 pub fn install_embedded_helper(base: &Path) -> Result<RuntimeRecord> {
     if !EMBEDDED_HELPER_COMPLETE {
         bail!(
             "this daemon build has no vendored browser helper (bud/browser-helper/node_modules was absent at build time); pass --helper-dir <checkout>/bud/browser-helper"
         );
     }
-    let dir = helper_dir(base);
-    let main = dir.join("main.mjs");
-    if !main.is_file()
-        || !dir
-            .join("node_modules/playwright-core/package.json")
-            .is_file()
-    {
+    install_helper_archive(base, EMBEDDED_HELPER)
+}
+
+fn install_helper_archive(base: &Path, archive: &[u8]) -> Result<RuntimeRecord> {
+    let version = helper_archive_id(archive);
+    let mut dir = addon_dir(base).join("helper").join(&version);
+    std::fs::create_dir_all(addon_dir(base))?;
+    if !archive_complete(&dir, archive) {
         let staging = tempfile::Builder::new()
             .prefix(".helper-")
             .tempdir_in(addon_dir(base))?;
-        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(EMBEDDED_HELPER));
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
         tar.unpack(staging.path())
             .context("embedded helper extraction failed")?;
+        if !archive_complete(staging.path(), archive) {
+            bail!("embedded browser helper is incomplete; rebuild with vendored dependencies");
+        }
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)?;
+            // Never replace files that another daemon's worker may still use.
+            dir = dir.with_file_name(format!("{version}-repair-{}", ulid::Ulid::new()));
         }
         std::fs::create_dir_all(dir.parent().unwrap())?;
-        std::fs::rename(staging.keep(), &dir)?;
+        std::fs::rename(staging.path(), &dir)?;
     }
     Ok(RuntimeRecord {
-        path: main,
-        version: daemon_version(),
+        path: dir.join("main.mjs"),
+        version,
     })
+}
+
+const HELPER_FILES: &[&str] = &[
+    "main.mjs",
+    "engine.mjs",
+    "compact.mjs",
+    "diagnostics.mjs",
+    "repl-worker.mjs",
+    "repl-api.mjs",
+    "repl-snapshot.mjs",
+    "repl-artifacts.mjs",
+    "package.json",
+    "package-lock.json",
+    "node_modules/playwright-core/package.json",
+    "node_modules/playwright-core/index.mjs",
+    "node_modules/playwright-core/index.js",
+    "node_modules/playwright-core/lib/coreBundle.js",
+    "node_modules/playwright-core/lib/bootstrap.js",
+];
+
+fn helper_complete(dir: &Path) -> bool {
+    HELPER_FILES.iter().all(|file| dir.join(file).is_file())
+}
+
+/// Check every packaged dependency, not just Playwright's package.json. This
+/// detects interrupted caches without rewriting or hashing live worker files.
+fn archive_complete(dir: &Path, archive: &[u8]) -> bool {
+    if !helper_complete(dir) {
+        return false;
+    }
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+    let Ok(entries) = tar.entries() else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let Ok(path) = entry.path() else {
+            return false;
+        };
+        let Ok(metadata) = std::fs::metadata(dir.join(path)) else {
+            return false;
+        };
+        if !metadata.is_file() || metadata.len() != entry.size() {
+            return false;
+        }
+    }
+    true
 }
 
 /// A checkout's helper directory: must hold `main.mjs` and vendored Playwright.
@@ -772,6 +937,44 @@ pub struct ProbeOutcome {
 /// Launch through the real adapter (browser, helper and Node all exercised),
 /// read the version, close. Fails below the version floor.
 pub async fn probe(runtime: &Runtime) -> Result<ProbeOutcome> {
+    tokio::time::timeout(std::time::Duration::from_secs(30), probe_inner(runtime))
+        .await
+        .context("browser readiness timed out after 30s")?
+}
+
+async fn probe_inner(runtime: &Runtime) -> Result<ProbeOutcome> {
+    // Exercise the real worker entrypoint/API before launching a single disposable
+    // headless browser. No user profile, pages or network are involved.
+    let node = tokio::process::Command::new(&runtime.node)
+        .arg("--version")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("browser Node unavailable")?;
+    let version = String::from_utf8_lossy(&node.stdout);
+    if !node.status.success()
+        || version
+            .trim()
+            .trim_start_matches('v')
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_none_or(|major| major < 22)
+    {
+        bail!("browser helper requires Node >=22; run `bud browser prepare`");
+    }
+    let mut worker = super::repl::Runtime::spawn(runtime)?;
+    let ready = worker
+        .execute(
+            "readiness",
+            "console.log(typeof browser.tabs.current)",
+            |_| async { bail!("unexpected browser operation during readiness") },
+        )
+        .await?;
+    if ready["ok"] != true || ready["text"].as_str().map(str::trim) != Some("function") {
+        bail!("browser REPL readiness failed");
+    }
+    drop(worker);
     let mut browser = super::adapter::Browser::launch_probe(runtime)
         .await
         .context("browser probe launch failed")?;
@@ -843,7 +1046,7 @@ mod tests {
             },
             helper: RuntimeRecord {
                 path: "/tmp/main.mjs".into(),
-                version: daemon_version(),
+                version: helper_version().into(),
             },
             probe: ProbeRecord {
                 ok: true,
@@ -852,6 +1055,331 @@ mod tests {
             },
             dev: false,
         }
+    }
+
+    fn healthy() -> ProbeOutcome {
+        ProbeOutcome {
+            version: "Chrome/999.0.0.0".into(),
+            major: Some(999),
+            notes: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_node_fails_readiness_without_committing_or_downloading() {
+        let base = tempfile::tempdir().unwrap();
+        let mut manifest = sample();
+        manifest.node.path = base.path().join("missing-node");
+        write_manifest(base.path(), &manifest).unwrap();
+        let result =
+            startup_manifest(base.path(), |runtime| async move { probe(&runtime).await }).await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("Node unavailable"));
+        assert_eq!(read_manifest(base.path()).unwrap().unwrap(), manifest);
+        assert!(!downloads_dir(base.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn startup_upgrades_reuses_repairs_and_rolls_back_without_touching_profiles() {
+        let base = tempfile::tempdir().unwrap();
+        let profile = profiles_dir(base.path()).join("preserved");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("Cookies"), "sign-in sentinel").unwrap();
+        let mut old = sample();
+        old.helper.version = "old-build-with-the-same-git-label".into();
+        old.probe.ok = false;
+        write_manifest(base.path(), &old).unwrap();
+        startup_manifest(base.path(), |runtime| async move {
+            assert!(helper_complete(runtime.helper.parent().unwrap()));
+            assert_eq!(runtime.node, PathBuf::from("/tmp/node"));
+            Ok(healthy())
+        })
+        .await
+        .unwrap();
+        let current = read_manifest(base.path()).unwrap().unwrap();
+        assert_eq!(current.helper.version, helper_version());
+        assert_eq!(current.node, old.node);
+        assert_eq!(current.browser.path, old.browser.path);
+        assert_eq!(current.browser.version, healthy().version);
+        assert!(current.probe.ok);
+        let marker = current.helper.path.with_file_name("reuse-marker");
+        std::fs::write(&marker, "preserve").unwrap();
+        startup_manifest(base.path(), |_| async { Ok(healthy()) })
+            .await
+            .unwrap();
+        assert!(marker.exists());
+        assert_eq!(
+            read_manifest(base.path()).unwrap().unwrap().helper,
+            current.helper
+        );
+
+        std::fs::remove_file(current.helper.path.with_file_name("repl-api.mjs")).unwrap();
+        startup_manifest(base.path(), |_| async { Ok(healthy()) })
+            .await
+            .unwrap();
+        let repaired = read_manifest(base.path()).unwrap().unwrap();
+        assert_ne!(repaired.helper.path, current.helper.path);
+        assert!(marker.exists(), "in-use bundle must not be replaced");
+        assert!(helper_complete(repaired.helper.path.parent().unwrap()));
+        startup_manifest(base.path(), |_| async { Ok(healthy()) })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_manifest(base.path()).unwrap().unwrap().helper,
+            repaired.helper
+        );
+
+        let mut newer = repaired.clone();
+        newer.helper.version = "future-daemon-digest".into();
+        write_manifest(base.path(), &newer).unwrap();
+        startup_manifest(base.path(), |_| async { Ok(healthy()) })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_manifest(base.path()).unwrap().unwrap().helper.version,
+            helper_version()
+        );
+        assert_eq!(
+            std::fs::read_to_string(profile.join("Cookies")).unwrap(),
+            "sign-in sentinel"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_disabled_invalid_dev_and_failed_probe_preserve_enablement() {
+        let base = tempfile::tempdir().unwrap();
+        install_embedded_helper(base.path()).unwrap();
+        assert!(
+            startup_manifest(base.path(), |_| async { panic!("disabled probe") })
+                .await
+                .is_err()
+        );
+        assert!(!manifest_path(base.path()).exists());
+        std::fs::write(manifest_path(base.path()), "invalid").unwrap();
+        assert!(
+            startup_manifest(base.path(), |_| async { panic!("invalid probe") })
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(manifest_path(base.path())).unwrap(),
+            "invalid"
+        );
+        let mut old = sample();
+        old.helper.version = "old".into();
+        write_manifest(base.path(), &old).unwrap();
+        assert!(
+            startup_manifest(base.path(), |_| async { bail!("fixture probe failure") })
+                .await
+                .is_err()
+        );
+        assert_eq!(read_manifest(base.path()).unwrap().unwrap(), old);
+        // Staged bundle survived the failed probe; the next start can use it.
+        startup_manifest(base.path(), |_| async { Ok(healthy()) })
+            .await
+            .unwrap();
+        old.dev = true;
+        write_manifest(base.path(), &old).unwrap();
+        startup_manifest(base.path(), |runtime| async move {
+            assert_eq!(runtime.helper, PathBuf::from("/tmp/main.mjs"));
+            Ok(healthy())
+        })
+        .await
+        .unwrap();
+        assert_eq!(read_manifest(base.path()).unwrap().unwrap(), old);
+        remove_manifest(base.path()).unwrap();
+        assert!(
+            startup_manifest(base.path(), |_| async { panic!("removed probe") })
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn installation_lock_serializes_startup_prepare_remove_and_version_writes() {
+        let base = tempfile::tempdir().unwrap();
+        write_manifest(base.path(), &sample()).unwrap();
+        let lock = installation_lock(base.path()).unwrap();
+        assert!(installation_lock(base.path()).is_err());
+        assert!(
+            startup_manifest(base.path(), |_| async { panic!("locked probe") })
+                .await
+                .is_err()
+        );
+        remove_manifest(base.path()).unwrap();
+        std::fs::remove_dir_all(addon_dir(base.path())).unwrap();
+        assert!(
+            installation_lock(base.path()).is_err(),
+            "lock survives add-on removal"
+        );
+        drop(lock);
+        assert!(
+            startup_manifest(base.path(), |_| async { panic!("removed probe") })
+                .await
+                .is_err()
+        );
+        write_manifest(base.path(), &sample()).unwrap();
+        startup_manifest(base.path(), |_| async {
+            assert!(
+                installation_lock(base.path()).is_err(),
+                "probe must retain install lock"
+            );
+            Ok(healthy())
+        })
+        .await
+        .unwrap();
+        assert!(installation_lock(base.path()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn manifest_commit_failure_does_not_publish_runtime_or_replace_prior_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let old = sample();
+        write_manifest(base.path(), &old).unwrap();
+        let result = startup_manifest(base.path(), |_| async {
+            std::fs::set_permissions(
+                addon_dir(base.path()),
+                std::fs::Permissions::from_mode(0o500),
+            )
+            .unwrap();
+            Ok(healthy())
+        })
+        .await;
+        std::fs::set_permissions(
+            addon_dir(base.path()),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        assert!(result.is_err());
+        assert_eq!(read_manifest(base.path()).unwrap().unwrap(), old);
+    }
+
+    #[test]
+    fn incomplete_archive_never_publishes_and_interrupted_staging_is_ignored() {
+        let base = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(addon_dir(base.path()).join(".helper-interrupted")).unwrap();
+        let builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let empty = builder.into_inner().unwrap().finish().unwrap();
+        assert!(install_helper_archive(base.path(), &empty).is_err());
+        assert!(!addon_dir(base.path())
+            .join("helper")
+            .join(helper_archive_id(&empty))
+            .exists());
+        assert!(helper_complete(
+            install_embedded_helper(base.path())
+                .unwrap()
+                .path
+                .parent()
+                .unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn live_startup_validates_packaged_semantic_and_repl_helpers_once() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let base = tempfile::tempdir().unwrap();
+        let mut manifest = sample();
+        let runtime = test_runtime(executable);
+        manifest.browser.path = runtime.executable;
+        manifest.node.path = runtime.node;
+        manifest.helper.version = "previous-binary".into();
+        write_manifest(base.path(), &manifest).unwrap();
+        for _ in 0..2 {
+            let (resolution, _) =
+                startup_manifest(base.path(), |runtime| async move { probe(&runtime).await })
+                    .await
+                    .unwrap();
+            let Resolution::Manifest(runtime, _) = resolution else {
+                panic!("manifest")
+            };
+            let mut worker = super::super::repl::Runtime::spawn(&runtime).unwrap();
+            let cell = worker
+                .execute(
+                    "test",
+                    "console.log(typeof browser.tabs.current); 6 * 7",
+                    |_| async { bail!("unexpected page access") },
+                )
+                .await
+                .unwrap();
+            assert_eq!(cell["ok"], true);
+            assert!(cell["text"].as_str().unwrap().contains("42"));
+        }
+        assert!(!profiles_dir(base.path()).exists());
+        assert_eq!(
+            std::fs::read_dir(addon_dir(base.path()).join("helper"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn changed_helper_archives_do_not_reuse_same_daemon_version_cache() {
+        fn archive(source: &[u8]) -> Vec<u8> {
+            let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+                Vec::new(),
+                flate2::Compression::default(),
+            ));
+            for path in HELPER_FILES {
+                let contents = if *path == "main.mjs" {
+                    source
+                } else {
+                    b"{}".as_slice()
+                };
+                let mut header = tar::Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append_data(&mut header, path, contents).unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap()
+        }
+        let base = tempfile::tempdir().unwrap();
+        let old = install_helper_archive(base.path(), &archive(b"phase2")).unwrap();
+        let updated_archive = archive(b"phase3");
+        let updated = install_helper_archive(base.path(), &updated_archive).unwrap();
+        assert_ne!(old.path, updated.path);
+        assert_ne!(old.version, updated.version);
+        assert_eq!(std::fs::read(&old.path).unwrap(), b"phase2");
+        assert_eq!(std::fs::read(&updated.path).unwrap(), b"phase3");
+        let marker = updated.path.with_file_name("reuse-marker");
+        std::fs::write(&marker, "keep").unwrap();
+        assert_eq!(
+            install_helper_archive(base.path(), &updated_archive).unwrap(),
+            updated
+        );
+        assert!(marker.is_file(), "identical bundles are not re-extracted");
+    }
+
+    #[test]
+    fn old_version_cache_cannot_silently_advertise_new_helper_api() {
+        let base = tempfile::tempdir().unwrap();
+        let mut manifest = sample();
+        manifest.helper.version = daemon_version();
+        write_manifest(base.path(), &manifest).unwrap();
+        assert_eq!(manifest.stale().len(), 1);
+        assert!(
+            matches!(resolve_manifest(base.path()), Resolution::Unavailable(reason)
+            if reason.contains("browser prepare"))
+        );
+        manifest.helper.version = helper_version().into();
+        write_manifest(base.path(), &manifest).unwrap();
+        assert!(matches!(
+            resolve_manifest(base.path()),
+            Resolution::Manifest(..)
+        ));
+        manifest.helper.version = "dev:checkout".into();
+        manifest.dev = true;
+        write_manifest(base.path(), &manifest).unwrap();
+        assert!(matches!(
+            resolve_manifest(base.path()),
+            Resolution::Manifest(..)
+        ));
     }
 
     #[test]
@@ -940,9 +1468,9 @@ mod tests {
         let base = tempfile::tempdir().unwrap();
         let manifest = sample();
         write_manifest(base.path(), &manifest).unwrap();
-        record_observed_version(base.path(), "Chrome/153.0.8010.52");
+        record_observed_version(base.path(), &manifest.runtime(), "Chrome/153.0.8010.52");
         assert_eq!(read_manifest(base.path()).unwrap().unwrap(), manifest);
-        record_observed_version(base.path(), "Chrome/154.0.8037.0");
+        record_observed_version(base.path(), &manifest.runtime(), "Chrome/154.0.8037.0");
         let updated = read_manifest(base.path()).unwrap().unwrap();
         assert_eq!(updated.browser.version, "Chrome/154.0.8037.0");
         assert_eq!(updated.browser.path, manifest.browser.path);

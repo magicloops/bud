@@ -34,6 +34,10 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **Browser workspace lifecycle — final pre-merge gate.** Tracked in [REPL Phase 8](./plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md), including admission/cleanup, usable capacity recovery and outstanding earlier-phase acceptance. The ten-workspace cap is an interim mitigation.
+
+- [ ] **Persistent browser REPL.** REPL-only cutover is implemented in every environment, without historical result adapters. Finish workspace lifecycle and matching-stack acceptance in [Phase 8](./plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md). Current output defaults to 8 KiB; normal takeover preserves memory. [Plan](./plan/bud-owned-browser/repl-implementation.md). [Design](./design/browser-repl.md).
+
 - [ ] **Browser click targeting and link URLs — manual acceptance.** Implementation and local regressions are complete; validate a real layered-feed run over ngrok using [the design](./design/browser-click-targeting-and-link-urls.md): choose randomized points only within verified areas of the exact target, preserve full observed URLs in existing snapshots, and distinguish pre-click blocking from uncertain outcomes. Cover layered post links versus image/lightbox controls without forced clicks, automatic navigation fallback, or viewer interruption.
 
 - [ ] **Automatic browser recovery acceptance.** Shared persistent profiles/workspaces and [automatic public URL recovery](./design/browser-automatic-recovery.md) are implemented. Complete real web/iPhone/ngrok restart, cross-owner and private-progress-loss checks in the [implementation plan](./plan/bud-owned-browser/automatic-recovery-implementation.md). Coordinate daemon/add-on/service/shared web upgrades. Version 1 hints are backed up without import; sign-ins remain. Exact Back/Forward, form state and unfinished private-page restoration remain out of scope.

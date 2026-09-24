@@ -2,6 +2,12 @@
 
 Status: implemented locally; real-agent/ngrok acceptance pending. Updated 2026-09-23.
 
+Superseded click design: [Phase 7](../plan/bud-owned-browser/repl-phase-7-actionability.md)
+implements native Playwright clicks, preserved pointer hints and explicit optional
+positions. Mandatory random/grid preparation, descendant/media exclusions and
+`browser_click_blocked` below are historical, not current behavior. Exact URL
+preservation and honest post-action verification/unknown outcomes still apply.
+
 Implementation and checks: [plan](../plan/bud-owned-browser/click-targeting-implementation.md).
 
 ## Objective and evidence

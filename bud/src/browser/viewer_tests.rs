@@ -469,7 +469,12 @@ async fn live_table_observation_reads_story_links_in_order() {
         )
         .await
         .unwrap();
-    let nodes = browser.snapshot_nodes(&target).await.unwrap();
+    // The helper retains one bounded local capture; REPL formatting owns output budgets.
+    let observation = browser
+        .inspect(&target, json!({"operation":"snapshot"}))
+        .await
+        .unwrap();
+    let nodes = observation["nodes"].as_array().unwrap();
     let links: Vec<_> = nodes.iter().filter(|n| n["role"] == "link").collect();
     assert_eq!(
         links
@@ -488,7 +493,10 @@ async fn live_table_observation_reads_story_links_in_order() {
         .unwrap()
         .contains("synthetic-secret"));
     let reference = links[15]["reference"].as_str().unwrap().to_owned();
-    browser.click(&reference).await.unwrap();
+    browser
+        .inspect(&target, json!({"operation":"click","reference":reference}))
+        .await
+        .unwrap();
     let location = browser
         .cdp
         .call(
@@ -500,7 +508,10 @@ async fn live_table_observation_reads_story_links_in_order() {
         .unwrap();
     assert_eq!(location["result"]["value"], "#story16");
     browser.snapshot_nodes(&target).await.unwrap();
-    assert!(browser.click(&reference).await.is_err());
+    assert!(browser
+        .inspect(&target, json!({"operation":"click","reference":reference}))
+        .await
+        .is_err());
     let html = "<button>Example</button>".repeat(400);
     browser
         .cdp
@@ -511,13 +522,21 @@ async fn live_table_observation_reads_story_links_in_order() {
         )
         .await
         .unwrap();
-    // Oversized pages paginate through a continuation instead of truncating silently.
+    // Captures retain all nodes instead of applying the retired model-output pagination.
     let limited = browser
         .inspect(&target, json!({"operation":"snapshot"}))
         .await
         .unwrap();
-    assert!(limited["continuation"].is_string());
-    assert!(limited["nodes"].as_array().unwrap().len() < 400);
+    assert!(limited.get("continuation").is_none());
+    assert_eq!(
+        limited["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|n| n["role"] == "button")
+            .count(),
+        400
+    );
     browser.close().await.unwrap();
 }
 
