@@ -32,13 +32,25 @@ impl Recovery {
         let mut store = Self {
             path,
             manifest: Manifest {
-                version: 1,
+                version: 2,
                 workspaces: BTreeMap::new(),
             },
             writable: true,
         };
         if let Some(path) = &store.path {
             match read(path) {
+                Ok(Some(manifest)) if manifest.version == 1 => {
+                    // Old hints were not disclosure-classified. Keep private evidence,
+                    // never import it into the agent-visible checkpoint.
+                    let backup = path.with_file_name("bud-pages.v1.backup.json");
+                    let migrated = std::fs::hard_link(path, &backup)
+                        .and_then(|_| std::fs::remove_file(path))
+                        .and_then(|_| std::fs::File::open(path.parent().unwrap())?.sync_all());
+                    if migrated.is_err() {
+                        store.writable = false;
+                        tracing::warn!("Browser recovery checkpoint migration unavailable");
+                    }
+                }
                 Ok(Some(manifest)) => store.manifest = manifest,
                 Ok(None) => {}
                 Err(_) => {
@@ -73,29 +85,35 @@ impl Recovery {
         self.manifest.workspaces.get(workspace).cloned()
     }
     pub fn save(&mut self, workspace: &str, pages: Option<Pages>) -> Result<()> {
+        self.save_batch(vec![(workspace.to_owned(), pages)])
+    }
+
+    /// Disclosure boundaries commit every workspace together or retain all old hints.
+    pub fn save_batch(&mut self, changes: Vec<(String, Option<Pages>)>) -> Result<()> {
         if !self.writable {
             bail!("browser_recovery_unavailable");
         }
-        if workspace.is_empty() || workspace.len() > 128 {
-            bail!("browser_invalid_workspace");
+        let mut next = self.manifest.workspaces.clone();
+        for (workspace, pages) in changes {
+            if workspace.is_empty() || workspace.len() > 128 {
+                bail!("browser_invalid_workspace");
+            }
+            if let Some(pages) = pages {
+                if !valid_pages(&pages) {
+                    bail!("browser_recovery_unavailable");
+                }
+                next.insert(workspace, pages);
+            } else {
+                next.remove(&workspace);
+            }
         }
-        if self.manifest.workspaces.get(workspace) == pages.as_ref() {
+        if next.len() > 32 {
+            bail!("browser_recovery_limit");
+        }
+        if next == self.manifest.workspaces {
             return Ok(());
         }
-        let previous = self.manifest.workspaces.clone();
-        if let Some(pages) = pages {
-            if !valid_pages(&pages) {
-                bail!("browser_recovery_unavailable");
-            }
-            if !self.manifest.workspaces.contains_key(workspace)
-                && self.manifest.workspaces.len() >= 32
-            {
-                bail!("browser_recovery_limit");
-            }
-            self.manifest.workspaces.insert(workspace.to_owned(), pages);
-        } else {
-            self.manifest.workspaces.remove(workspace);
-        }
+        let previous = std::mem::replace(&mut self.manifest.workspaces, next);
         if let Err(error) = self.persist() {
             self.manifest.workspaces = previous;
             return Err(error);
@@ -119,20 +137,31 @@ impl Recovery {
     }
 }
 
+/// Saving and automatically loading an address are separate policies.
+pub(super) fn storable(url: &str) -> bool {
+    url.len() <= 8192
+        && url::Url::parse(url).is_ok_and(|u| {
+            matches!(u.scheme(), "http" | "https")
+                && u.username().is_empty()
+                && u.password().is_none()
+        })
+}
 pub(super) fn eligible(url: &str) -> bool {
-    url.len() <= 2048 && url::Url::parse(url).is_ok_and(|u| {
-        matches!(u.scheme(), "http" | "https") && u.username().is_empty() && u.password().is_none()
-        // Do not retain query/fragment credentials or common authentication callbacks.
-        && u.query().is_none() && u.fragment().is_none()
-        && !u.path().to_ascii_lowercase().split('/').any(|p|
-            matches!(p, "callback" | "oauth" | "authorize" | "logout" | "signout"))
-    })
+    storable(url)
+        && url::Url::parse(url).is_ok_and(|u| {
+            !u.path()
+                .to_ascii_lowercase()
+                .split('/')
+                .any(|p| matches!(p, "callback" | "oauth" | "authorize" | "logout" | "signout"))
+        })
 }
 fn valid_pages(p: &Pages) -> bool {
     !p.urls.is_empty()
         && p.urls.len() <= 16
         && p.selected < p.urls.len()
-        && p.urls.iter().all(|u| eligible(u))
+        // Empty is an explicit unavailable-address marker. Preserve its selected
+        // position rather than silently presenting an older or different page.
+        && p.urls.iter().all(|u| u.is_empty() || storable(u))
 }
 fn read(path: &Path) -> Result<Option<Manifest>> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -158,7 +187,7 @@ fn read(path: &Path) -> Result<Option<Manifest>> {
         bail!("browser_recovery_unavailable");
     }
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
-    if manifest.version != 1
+    if !matches!(manifest.version, 1 | 2)
         || manifest.workspaces.len() > 32
         || manifest
             .workspaces
@@ -208,13 +237,96 @@ mod tests {
         assert!(Recovery::load(Some(dir.path())).save("a", None).is_err());
     }
     #[test]
+    fn full_urls_round_trip_without_normalization() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "https://example.com/search?q=a%2Fb&q=c+#/route?x=1";
+        let mut store = Recovery::load(Some(dir.path()));
+        store
+            .save(
+                "a",
+                Some(Pages {
+                    urls: vec![
+                        url.into(),
+                        "https://example.com/oauth/callback?code=abc#done".into(),
+                    ],
+                    selected: 1,
+                }),
+            )
+            .unwrap();
+        let saved = Recovery::load(Some(dir.path())).get("a").unwrap();
+        assert_eq!(saved.urls[0], url);
+        assert!(eligible(&saved.urls[0]));
+        assert!(!eligible(&saved.urls[1]));
+        assert!(storable(&saved.urls[1]));
+    }
+
+    #[test]
+    fn disclosure_batch_failure_preserves_every_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Recovery::load(Some(dir.path()));
+        let pages = Pages {
+            urls: vec!["https://example.test/shared".into()],
+            selected: 0,
+        };
+        store.save("a", Some(pages.clone())).unwrap();
+        store.save("b", Some(pages.clone())).unwrap();
+        let before = std::fs::read(dir.path().join("bud-pages.json")).unwrap();
+        let invalid = Pages {
+            urls: vec!["https://example.test/".into(); 17],
+            selected: 0,
+        };
+        assert!(store
+            .save_batch(vec![
+                (
+                    "a".into(),
+                    Some(Pages {
+                        urls: vec!["https://example.test/disclosed".into()],
+                        selected: 0
+                    })
+                ),
+                ("b".into(), Some(invalid))
+            ])
+            .is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("bud-pages.json")).unwrap(),
+            before
+        );
+        assert_eq!(store.get("a").unwrap().urls, pages.urls);
+    }
+
+    #[test]
+    fn migration_preserves_unclassified_hints_without_importing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bud-pages.json");
+        let old = br#"{"version":1,"workspaces":{"a":{"urls":["https://example.com/private"],"selected":0}}}"#;
+        std::fs::write(&path, old).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut store = Recovery::load(Some(dir.path()));
+        assert!(store.available());
+        assert!(store.get("a").is_none());
+        assert_eq!(
+            std::fs::read(dir.path().join("bud-pages.v1.backup.json")).unwrap(),
+            old
+        );
+        store
+            .save(
+                "b",
+                Some(Pages {
+                    urls: vec!["https://example.com/public".into()],
+                    selected: 0,
+                }),
+            )
+            .unwrap();
+        assert!(Recovery::load(Some(dir.path())).get("a").is_none());
+    }
+
+    #[test]
     fn excludes_sensitive_or_unsupported_urls_and_bounds_entries() {
         for url in [
             "file:///tmp/a",
             "about:blank",
             "https://u:p@example.com/",
-            "https://example.com/?token=a",
-            "https://example.com/#secret",
             "https://example.com/oauth/callback",
         ] {
             assert!(!eligible(url));

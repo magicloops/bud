@@ -1,8 +1,8 @@
 # iOS browser handoff: current API and integration reference
 
-Updated 2026-09-22 against `e72c129`. Companion to
-[Phase 3b](phase-3b-ios-browser-viewer.md). Sections marked **Proposed** require
-implementation; all other sections describe the current service/shared web code.
+Updated 2026-09-23 for automatic browser recovery. Companion to
+[Phase 3b](phase-3b-ios-browser-viewer.md). Implementation is local; hosted physical-device
+acceptance and deployment remain outstanding.
 Recheck these source files at the merged implementation revision:
 
 - [Routes and validation](../../service/src/browser/routes.ts)
@@ -22,16 +22,15 @@ Recheck these source files at the merged implementation revision:
 
 ## Authentication and identity today
 
-Browser viewer routes require a live Better Auth cookie session. Mutations and
-WebSocket upgrades also require an allowed first-party Origin. All reads and
-streams resolve owner/Bud/thread access before exposing data. Responses use
-`Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+Browser routes accept either a live Better Auth cookie session or the scoped
+mobile visit below. Native bearer authentication discovers inventory and mints,
+refreshes or revokes visits; it does not directly control the browser. Mutations
+and WebSocket upgrades require an allowed first-party Origin. All reads and
+streams resolve owner/Bud/thread access before exposing data.
 
-The controller identity combines the authenticated session ID and `viewer_id`
-(UUID). A session ID or viewer UUID alone does not grant authority. Native OAuth
-bearer resolution currently has no session ID and fails the extra live-session
-check. Agent-image artifact GETs use a separate auth path; their bearer support
-does not imply the interactive viewer supports bearer auth.
+Desktop controller identity combines auth session ID and viewer UUID; mobile
+uses `mobile_<visit_id>:<viewer_id>`. Neither public identifier grants authority.
+Cookie refresh preserves identity; a new visit cannot inherit an old recovery proof.
 
 Keep these identities separate:
 
@@ -101,7 +100,6 @@ Allowed operations:
 | `release` | Relinquish the live controller and leave private browser work paused |
 | `return` | Explicit confirmed return to agent; requires current controller and revision |
 | `recover` | Restore the same previously authorized viewer using `recovery_ticket`; never returns to agent |
-| `reopen` | Acquire private control, then explicitly reopen eligible saved URLs; zero restored pages is valid |
 | `close` | Close this thread's tabs/workspace; not merely dismiss the viewer |
 | `show_window`, `hide_window` | Change window visibility on the Bud host; optional `target_id` for Show; Show takes private control |
 
@@ -109,8 +107,7 @@ The strict body accepts optional `target_id` (1–128 characters) and
 `recovery_ticket` (1–2048). `revision` is a nonnegative integer and is required
 by the request schema even for operations that primarily validate the live lease.
 
-Responses contain public metadata, `can_show_window`, optional `recovery_ticket`,
-and optional `page_recovery:{restored_pages,hints_available}`. They do not carry
+Responses contain public metadata, `can_show_window`, and optional `recovery_ticket`. They do not carry
 all GET fields. Do not clear a pending handoff merely because the control reply
 omits `handoff`; reconcile it from metadata/chat state.
 
@@ -120,10 +117,29 @@ in-memory in the viewer, bound to auth identity/viewer/generation/epoch, and exp
 after 10 minutes. They cannot displace another valid controller or resurrect
 authority after an explicit release/return. Never persist them in app restoration.
 
-The shared web Return action handles a recoverable paused workspace with no live
-lease by explicitly acquiring and then returning, releasing on partial failure.
-Reuse this behavior rather than disabling Return solely because `owns_control`
-is false. Repeated taps must not submit concurrent transitions.
+Return requires current confirmed ownership; do not acquire and return merely to
+repair a restart. A live private browser without this viewer's lease still uses
+normal explicit Take control/proof recovery. Repeated taps cannot race transitions.
+
+## Automatic runtime recovery
+
+An active visible viewer POSTs `/api/browser/sessions/:session_id/ensure` with
+`{viewer_id}` (strict 1 KiB body), under the same scoped cookie, bound UUID, owner
+checks and allowed Origin. Response is public session metadata plus
+`runtime_replaced:boolean`, `recovery_status` (ready/private/restored/partial/empty/
+unavailable), and `private_progress_lost:boolean`. It contains no saved URLs.
+Inventory GETs and hidden/background visits must never call ensure or launch Chrome.
+
+Ensure reuses healthy Chrome and its live private fence. Confirmed process loss
+invalidates old proof/input/media state and restores the last agent-visible URLs,
+including query/fragment, without taking private control. Lost unfinished private
+browsing receives a concise notice. Empty workspaces remain usable; the agent can
+open an explicit URL. Failures use Retry, not Reopen saved pages/Start blank.
+The existing shared hosted viewer implements this; native continues to supply
+stable visit identity and suspend/resume. No new Swift recovery logic or bridge
+command is needed. Old recovery service/daemon pairs are unsupported: deploy the
+matching service/shared web and daemon/add-on together. No new DB migration.
+Version 1 local checkpoints are backed up without import; Chrome sign-ins remain.
 
 ## Media socket
 
@@ -209,7 +225,9 @@ Width is an integer 240–2560, height 160–2560, in CSS pixels. Response:
 150 ms, keeps one request in flight and only the latest pending size. Private
 input stays fenced until matching pixels are drawn. Passive fitting is allowed
 only for the authorized first sizing viewer and capable agent-controlled runtime;
-rejection must not interrupt the agent. Mobile defaults to local scaling instead.
+rejection must not interrupt the agent. Mobile defaults to Fit on, using the
+visible viewer surface without taking private control. Competing viewers retain
+local scaling when another viewer owns sizing.
 
 ## Errors and recovery presentation
 
@@ -227,48 +245,49 @@ authentication, 403 disallowed Origin, 404 unavailable/foreign resource, general
 | `browser_viewport_other_viewer` | Preserve local scaling; do not fight another viewer's dimensions |
 | `browser_busy` | Show bounded temporary busy state; no blanket automatic mutation retries |
 | `browser_no_previous_page` | Nonfatal “No previous page” |
-| `browser_recovery_unavailable`, `browser_recovery_uncertain` | Explicit inspect/recovery choice; do not assume no page opened after uncertain outcome |
-| `runtime_status=daemon_restarted` | Old live page identity is invalid; saved-page reopening is explicit and may restore zero pages |
+| `browser_recovery_unavailable`, `browser_recovery_uncertain` | Show truthful unavailable/uncertain state; allow explicit new URL and never replay uncertain mutations |
+| `runtime_status=daemon_restarted` | Active viewer ensures the workspace; only confirmed runtime replacement releases old private authority |
 | `browser_not_found` / 404 | Clear sensitive state, stop retrying this session, return to conversation |
 
-Use a single relevant primary action with details under More. Distinguish
+Use Retry for a genuine ensure failure; otherwise use normal live controls. Distinguish
 “Reconnecting,” “Private control,” “Paused,” “No page open,” and “Unavailable.”
 Screenshot transport loss does not prove Chrome closed or private control ended.
 
-## Proposed: scoped native authentication contract
+## Scoped native authentication contract (implemented)
 
-This section is a design target, **not callable API today**. Agree exact names
-in the service slice and update this reference before mobile integrates them.
+- Native bearer GET `/api/threads/:thread_id/browser-sessions` uses existing owner SQL.
+- Native bearer POST `/api/browser/sessions/:session_id/viewer-grants` with
+  `{viewer_id}` returns `{visit_id,grant,expires_in:60,bootstrap_path:"/api/browser/viewer-bootstrap"}`.
+- WKWebView POSTs `{grant}` as JSON to that fixed bootstrap path. Atomic one-use
+  redemption responds 303 to `/browser-mobile/:session_id?viewer_id=...&visit_id=...`.
+  URLs contain public identities only. OAuth and grant secrets never enter JS.
+- Cookie `__Secure-bud-browser-visit` is Secure, HttpOnly, SameSite=Strict,
+  host-only, with Path `/api/browser/sessions/:session_id`, Max-Age 28800.
+  Server-side validity is 15 minutes, bounded by eight hours from minting.
+- Native bearer POST `/api/browser/viewer-visits/:visit_id` accepts
+  `{operation:"refresh",grant}` or `{operation:"revoke"}`. Refresh requires the
+  original native possession secret and owner, cannot revive expiry, and preserves
+  cookie/controller identity. Foreground native refresh runs every five minutes.
+- Persisted `browser_viewer_visit` stores hashed secrets, owner/tenant, workspace,
+  viewer UUID and expiry. Migration `0041_demonic_stephen_strange.sql` creates its
+  composite workspace/owner FK and indexes. Visits survive service restart.
+- Scoped cookies authenticate only the bound workspace's metadata/ensure/control/input/
+  viewport/media. Control allowlist: acquire, renew, release, return, recover. Close, host window controls, Bud Stop/Reset and account/chat APIs are
+  excluded. Wrong workspace/viewer returns 404; disallowed control returns 403.
+- Resolve rechecks thread/Bud ownership, soft deletion, workspace closure and
+  resource retirement, including media idle authorization. Minting never acquires.
+- Dismiss/account change best-effort revokes and disposes the isolated WK store.
+  Offline sign-out is bounded by the remaining 15-minute credential validity;
+  server lease expiry preserves private intent. Native privacy cover is immediate.
 
-- Extend owner-authorized thread inventory GET to accept native bearer auth.
-- Candidate mint endpoint: `POST /api/browser/sessions/:session_id/viewer-grants`
-  using native bearer auth and `{viewer_id}`. Bind owner, workspace, permitted
-  browser routes, viewer UUID, expiry and revocation identity server-side.
-- Return a trusted first-party bootstrap URL, opaque single-use grant and expiry.
-  Redeem through a WKWebView POST body; no OAuth token or reusable credential in
-  query strings, JavaScript, analytics or access logs. Do not allow open redirects.
-- Redemption sets a Secure, HttpOnly, appropriately SameSite cookie and navigates
-  to a clean embedded viewer URL. Use a nonpersistent WKWebView data store isolated
-  from proxy previews. Enforce resource scope in the service, not only cookie Path.
-- The resulting principal authenticates only this viewer's metadata, control,
-  input, viewport and media, with live owner/revocation checks. It cannot call
-  account APIs, arbitrary thread APIs, or Bud-wide Stop/Reset. Required control
-  operations still use the same coordinator and browser-wide privacy boundary.
-- The hosted embedded route must resolve this scoped principal without calling a
-  generic full-user-session endpoint. Its REST and WS identity must remain stable
-  together; minting a credential is never acquiring private control.
-- Expiry/sign-out stops media and input. Decide bounded credential lifetime and
-  refresh in this slice; align recovery-proof identity with that lifetime. No
-  hidden reacquisition after native process death or explicit suspension.
+Run migration before the updated service/shared web, then rebuild mobile. The original visit-authentication slice adds no daemon frame; the automatic
+recovery contract above now requires matching service/daemon/shared web versions.
 
-Existing proxy viewer grants offer a pattern for scoped bootstrap, but their
-resource, hostname/navigation policy and authorization are different. Do not
-reuse a proxy grant to authorize browser control or broaden it to all browser APIs.
+## Native ↔ hosted viewer bridge (implemented)
 
-## Proposed: minimal native ↔ hosted viewer bridge
-
-Use one versioned typed envelope, e.g. `{version:1, visit_id, type, request_id?,
-payload}`. Exact transport implementation belongs in the shared viewer adapter.
+Viewer messages use `{version:1,visit_id,event,request_id?,...fields}` through
+`webkit.messageHandlers.budBrowser`. Native calls `window.budBrowserCommand` with
+`{version:1,visit_id,request_id,command}`. IDs are deduplicated in a bounded set.
 Validate the allowed first-party origin, main frame, visit nonce and bounded
 payload on every native bridge message. Arbitrary web navigation cannot gain
 bridge access. Browser website contents remain images, never locally executed HTML.
@@ -281,7 +300,7 @@ bridge access. Browser website contents remain images, never locally executed HT
 | Native → viewer | `return_to_agent` | Invoke the shared explicit Return action; deduplicate request ID |
 | Native → viewer | `suspend` | Clear input/proofs/pixels, stop media/renewal, best-effort release; never return |
 | Native → viewer | `resume` | Refresh auth/status and passive media; no automatic private acquisition |
-| Viewer → native | `result` | Correlated command completion/error, never optimistic authority |
+| Viewer → native | `result` | Correlated command acceptance (`accepted`); never proof that Return completed |
 
 Do not bridge frames, cookies, grants, passwords, page text, focus tokens or raw
 JavaScript evaluation requests. Native Cancel uses the existing chat cancellation
@@ -294,3 +313,7 @@ routes; dismiss chat navigation through the app; reject unexpected main-frame
 navigation/popups. Do not copy proxy preview's permissive HTTP(S) navigation or
 its `WKWebView.goBack()` behavior. Any external-link feature needs an explicit
 user gesture and must not export private remote URLs or credentials implicitly.
+
+Native currently invokes suspend/resume; inline Return opens the visible viewer
+for explicit confirmation there. Resume acceptance follows the React lifecycle
+commit; native also fences it by current request/visit and foreground state.

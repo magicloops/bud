@@ -89,6 +89,30 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   assert.ok(waits.every(r => r.returned_by_user_id === "alice"));
   await assert.rejects(repo.acknowledgeReturn(returnReceipt), /revision_conflict/);
 
+  // Confirmed runtime replacement uses the existing continuation rows, but
+  // cannot impersonate a human return or revive canceled/completed work.
+  resource=await prepare("alice","bud","a",resource.revision,"pause");
+  resource=await prepare("alice","bud","a",resource.revision,"acquire");
+  await database.query("update browser_handoff set status='pending',returned_by_user_id=null,resolved_at=null");
+  await database.query("update browser_session set state='interrupted' where id='a'");
+  await database.query("update browser_session set invocation_id='ia',invocation_fence=7 where id='a'");
+  const recovery=await control.prepareEnsure("alice","a","new-boot",false);
+  const binding=(await database.query("select invocation_id,invocation_fence from browser_session where id='a'")).rows[0];
+  assert.equal(binding.invocation_id,null);
+  assert.equal(binding.invocation_fence,null);
+  assert.equal(recovery.session.boot_id,"new-boot");
+  assert.notEqual(recovery.session.generation,"gen");
+  await assert.rejects(control.prepareEnsure("bob","a","new-boot",false),/not_found/);
+  await assert.rejects(repo.acknowledgeRecovery({...recovery.resource,profile_generation:99},recovery.session),/stale_acknowledgement/);
+  resource=await repo.acknowledgeRecovery(recovery.resource,recovery.session);
+  assert.equal(resource.private_content,false);
+  assert.equal(resource.control_epoch,recovery.resource.control_epoch+1);
+  assert.equal((await control.get("alice","a")).state,"ready");
+  const resumed=(await database.query("select id,status,returned_by_user_id from browser_handoff order by id")).rows;
+  assert.deepEqual(resumed.map(r=>[r.id,r.status]),[["ha","returned"],["hb","returned"],["hc","canceled"],["hd","canceled"]]);
+  assert.ok(resumed.every(r=>r.returned_by_user_id===null));
+  await assert.rejects(repo.acknowledgeRecovery(recovery.resource,recovery.session),/revision_conflict/);
+
   await assert.rejects(async () => repo.requestLifecycle("alice", "bud", resource.revision, "reset"), /confirmation_required/);
   const reset = await repo.requestLifecycle("alice", "bud", resource.revision, "reset", true);
   assert.equal(reset.desired_state, "reset_pending");

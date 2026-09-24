@@ -68,11 +68,11 @@ FKs and a partial unique active-thread index enforce scope. Existing
 is not a second invocation scheduler. Phase 2 adds first-party web routes; existing
 authorized chat carries handoff prompts and tool results without a new SSE family.
 
-DB identity survives service and daemon restart; a different daemon boot preserves
-workspace inventory for explicit page recovery. Private intent survives and needs
-explicit takeover/return, even though live tabs may have been lost. Explicit open can recover interrupted workspaces without a close first. Deleted threads/unclaimed Buds persist desired
-close until an eligible daemon connection returns. Internal cleanup scans are
-not viewer reads. Browser mutation outcomes are never automatically replayed.
+DB identity survives service and daemon restart. Lazy ensure reconciles the
+runtime before browser work; private protection survives a live runtime but ends
+after confirmed process replacement. Deleted threads/unclaimed Buds retain close
+intent until daemon cleanup. Internal cleanup scans are not viewer reads.
+Browser mutations are never automatically replayed.
 
 Limits: 128 pending service requests, 24 KiB daemon command boundary, 128 KiB
 accepted results, 30-second request deadline capped by the current invocation
@@ -87,18 +87,18 @@ trackers and codecs, shared carrier policy. See [daemon browser](../../../bud/sr
 
 `GET /api/threads/:thread_id/browser-sessions` and `GET /api/browser/sessions/:id`
 scope inventory in SQL. POST `/:id/control` accepts one `operation` (acquire,
-renew, release, return, close, recover with `recovery_ticket`, reopen, show_window
+renew, release, return, close, recover with `recovery_ticket`, show_window
 or hide_window with optional `target_id`) with a viewer UUID and observed
 revision. This is the complete operation list; later sections describe the
-semantics of recover, reopen and the window operations. POST `/:id/input` accepts bounded
+semantics of recover and the window operations. POST `/:id/input` accepts bounded
 frame/document/focus-bound gestures. `/api/browser/sessions/:id/media` authorizes
 before upgrade, then binds the viewer to the live Better Auth session. Writes and
 upgrades require an allowed Origin. Signed-out requests return 401, foreign IDs
-404. The current viewer requires browser cookie auth; native bootstrap is Phase 3.
+404. Desktop uses live web-cookie auth; native uses the scoped visit below.
 
 Control leases are memory-only, 15 seconds, renewed every five seconds. Private
 content remains private after pause, disconnect or restart (`private_content`);
-only an acknowledged explicit return clears it. Acquisition persists global pause before dispatch, drains bounded page work and
+acknowledged Return or confirmed process replacement clears it. Acquisition persists global pause before dispatch, drains bounded page work and
 parks subsequent browser calls through durable waits without blocking normal chat. Close fences media,
 requests cancellation and uses existing offline cleanup. Stop alone does not close
 Chrome. Duplicate Return rejects stale authority without a second continuation.
@@ -170,15 +170,11 @@ clears queued input/focus; old daemons receive no new input variant.
 
 ## Chat during private control
 
-Private/paused control no longer excludes the thread from invocation claiming.
-Browser handoff waits release their thread reservation, preserving the original
-continuation and serialized execution on return. Inventory handoff recovery uses
-invocation status rather than reservation. Browser prepare parks eligible undispatched agent operations on private
-sessions, including interrupted/restarted workspaces, including close; unsupported/non-durable callers receive a rejection. A confirmed different authenticated daemon boot permits explicit fresh open; other
-agent operations require recovery;
-private intent survives at browser scope and requires explicit human recovery. Only browser access is blocked; ordinary chat remains available.
-See [plan](../../../plan/bud-owned-browser/private-control-chat.md).
-
+Private control does not reserve the chat thread. Browser admission first ensures
+runtime health; live private/paused access parks eligible undispatched calls via
+existing durable waits. Confirmed runtime loss resolves obsolete waits with an
+interrupted result, never a human-return claim. Unsupported/non-durable callers
+receive a rejection. Normal chat and non-browser work remain available.
 
 ## Agent-owned pane fitting
 
@@ -193,14 +189,13 @@ Private fitting remains unchanged. Mixed-version peers retain private-only fitti
 See [plan](../../../plan/bud-owned-browser/agent-viewport-fitting.md).
 
 
-## Ended browser presentation
+## Browser availability presentation
 
-Owner-authorized metadata adds runtime_status (available, disconnected,
-daemon_restarted, ended). Compare the current capable carrier boot with the
-stored session boot; absence alone never claims restart. The web pane clears
-stale private/media/page controls on confirmed end, explains lost live tabs while preserving stored website sign-ins, and retains explicit close with its stop-run semantics. Missing-session
-404 shows generic unavailable recovery; no automatic browser recreation or
-private resume. Temporary disconnects retain reconnect. No DB/wire migration.
+Owner-authorized metadata reports available/disconnected/daemon_restarted/ended.
+A visible viewer ensures an open workspace before media attachment. Metadata
+alone neither launches Chrome nor proves process loss. Genuine ensure failure
+shows Retry; missing/closed/foreign workspaces stop recovery. Temporary transport
+or screenshot failure does not release private authority.
 
 ## Service restart recovery
 
@@ -253,8 +248,13 @@ SSE, diagnostic request recording and the ledger keep references, not bytes.
 revocation/size limits, replay/owner scope, provider serialization and mixed peers.
 
 Definitively rejected semantic lookups (missing/ambiguous/stale/oversized) leave
-the session ready for another observation. Unknown execution outcomes and broken
-runtimes retain interrupted behavior; no automatic mutation retry.
+the session ready for another observation. Canonical unknown outcomes from ordinary
+page operations preserve the existing workspace state, rather than declaring a
+healthy runtime interrupted. Already interrupted workspaces stay interrupted;
+open/close failures and explicit runtime errors retain recovery behavior. Actual
+carrier/media loss and daemon boot changes remain independently detected. Tool
+results and durable no-replay receipts are unchanged. See the
+[viewer reconnect investigation](../../../debug/browser-action-viewer-reconnect.md).
 
 ## Durable return-control waits (Phase 3e)
 
@@ -290,7 +290,8 @@ cover both forms and the capability boundary.
 
 Rejected `browser_busy` agent commands are recoverable: completion clears pending
 admission and leaves the session ready, without changing control/privacy/identity
-or retrying the command. Unknown outcomes still interrupt. The isolated repository
+or retrying the command. Canonical unknown page outcomes preserve prior runtime
+state; they never become successful results or replayable calls. The isolated repository
 regression checks these boundaries and subsequent admission. This service-only
 classification works with existing daemons.
 
@@ -350,17 +351,36 @@ also clears private intent and advances profile generation. No browser data leav
 the host. Routes and metadata expose browser/control-workspace identity without
 conferring access. Migrations 0044–0046 are a coordinated unreleased-feature cutover.
 
-## Explicit page recovery (Phase 3l)
+## Automatic browser recovery
 
-A changed daemon boot preserves open workspace inventory and rejects agent admission other than explicit open/close
-with `browser_recovery_required`; resource retirement and explicit close still win.
-Owner-authorized control `operation:reopen` acknowledges pause/acquire first,
-rotates workspace generation on the boot boundary, dispatches `reopen_pages` once,
-then renews the private lease. Lost/failed recovery stays private and is not retried.
-Old results/proofs cannot use the new generation. Local URL hints never enter the
-service. Existing cookie/Origin/owner checks and row ownership remain unchanged;
-no new migration. Updated unreleased service/daemon/web must run together.
+[Design](../../../design/browser-automatic-recovery.md) replaces explicit
+`reopen_pages`/control `reopen`. `BrowserControl.ensure` is shared by agent
+admission and POST `/api/browser/sessions/:id/ensure` (strict 1 KiB body containing
+`viewer_id`). Resolve owner/thread/Bud and scoped viewer identity before joining
+an in-flight ensure; all writes retain Origin checks. Inventory GETs never launch.
+Concurrent same-workspace requests join one promise under existing resource
+serialization. No new scheduler, URL table or database migration.
 
+`prepareEnsure` rotates generation and clears obsolete invocation bindings on a
+boot change, without consuming the agent dispatch receipt. The actual tool
+prepares again after ensure. Only daemon-confirmed runtime replacement clears
+old private intent; a surviving runtime retains privacy. An action encountering
+replacement returns `browser_recovery_required` rather than executing against
+stale evidence. Explicit new Open URLs bypass saved-page reconstruction.
+
+`acknowledgeRecovery` atomically checks resource revision/epoch/profile generation
+and workspace generation/ownership/desired-open state, marks the workspace ready,
+fences old controllers/media, and resolves eligible private waits. It reuses the
+handoff terminal status with NULL `returned_by_user_id` to distinguish restart
+from human Return. Continuation emits honest interrupted/not-executed evidence;
+canceled/completed/deleted work stays stopped and uncertain actions never replay.
+A lost acknowledgement keeps privacy fenced until the replacement receipt is
+reconciled. Public replies contain `runtime_replaced`, `recovery_status` and
+`private_progress_lost`, never saved URLs.
+
+Coordinate service, daemon/add-on and shared web deployment; mixed recovery
+contracts are unsupported. Local v1 checkpoints are backed up without automatic
+import; sign-ins survive. Physical iPhone/ngrok acceptance remains outstanding.
 
 ## Native browser window controls (Phase 3m)
 
@@ -393,21 +413,13 @@ unreleased feature; old strict daemon request schemas do not accept this field.
 Repository tests cover foreign ownership, owner-only fallback, changed-color private
 recovery, and omission on observe/acquire; transport tests cover WS and gRPC.
 
-## Empty workspace recovery (Phase 3p)
+## Empty workspace behavior
 
-Explicit open across a daemon boot changes generation and clears stale pending
-admission through the existing fencing contract. Same-boot open advances the
-workspace control epoch. Private intent is checked first and eligible calls park
-for explicit human return, even for an interrupted workspace. Old results cannot
-complete the replacement generation; other agent actions retain strict boot checks.
-
-Authorized private reopen accepts zero restored pages and installs/renews the
-controller. The control response optionally carries
-`page_recovery:{restored_pages,hints_available}` without URLs. An interrupted open
-workspace with a capable carrier exposes `can_take_control`, allowing explicit
-repair. Owner/Origin/cookie checks and row stamping are unchanged. Media accepts
-strict `{empty:true}`, applies the existing delivery authorization and ACK credit,
-and sends `{type:"empty"}` without ending control. No schema migration.
+Ensure can succeed with no page; it does not manufacture a private controller.
+Agent `page_info` returns empty inventory and explicit Open may create a page.
+Authorized media sends `{type:"empty"}` using existing delivery checks and ACK
+credit. The control route has no `reopen` operation or `page_recovery` payload.
+No schema change is needed.
 
 ## Confirmed low-severity defects (Phase 3u)
 
@@ -423,3 +435,33 @@ controller, so foreign session IDs return 404 like `resizeViewport`.
 P9: `routes.ts` `viewerHandshake` holds up to 16 messages sent behind the
 viewer hello until `attachViewer` has registered its listener, then replays
 them; `media.test.ts` covers the early ACK.
+
+## Mobile viewer visits (Phase 3b)
+
+- `mobile-auth.ts`: persisted one-use grant redemption, hashed cookie lookup,
+  owner/secret-bound renewal and revocation. `mobile-auth.test.ts` executes the
+  real migration in isolated PostgreSQL and checks replay, retirement, expiry,
+  owner/secret scope and service-instance continuity.
+- `routes.ts` permits bearer inventory and bearer-only grant/refresh/revoke.
+  A route-local principal adapter resolves scoped cookies before owned reads,
+  writes and WS upgrade/hello; ongoing media authorization rechecks visit validity.
+  Mobile control excludes close, native window and Bud lifecycle operations.
+
+The owning resource is the existing browser workspace. Mint resolves the native
+bearer viewer before owner-scoped repository lookup; visit rows inherit workspace
+owner and tenant with a composite FK. Native alone retains the grant secret.
+The HttpOnly cookie expires server-side after 15 minutes (five-minute native
+refresh; eight-hour absolute maximum). One-minute grants redeem atomically.
+Origin protection remains on cookie writes/upgrades. See the exact
+[HTTP/bridge contract](../../../plan/bud-owned-browser/mobile-viewer-contract.md).
+Migration 0041 must precede service/shared web and mobile upgrade; daemon wire
+contracts remain unchanged.
+
+## Blocked semantic clicks
+
+`repository.ts` treats rejected `browser_click_blocked` as recoverable: clear the
+pending action while preserving session identity, generation, authority, privacy,
+revision and healthy media. Unknown results remain unknown and cannot replay a
+mutation. `repository.test.ts` verifies preservation in the isolated database
+fixture alongside ownership/stale-action checks. No new route, table, viewer
+identity, or permission path is introduced.

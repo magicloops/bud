@@ -3572,3 +3572,112 @@ elements:[{reference, role, name}], truncated}}` no longer exist on either
 side. All observations use `{action:"inspect", operation, ...}` as documented
 under Phase 3d/3f; the daemon rejects `observe` as an unknown action. This is a
 coordinated daemon/service change with no mixed-version support.
+
+## Automatic browser recovery (supersedes explicit page reopening)
+
+Implements [automatic recovery](../design/browser-automatic-recovery.md).
+This coordinated development cutover replaces Phase 3l/3p's `reopen_pages` command,
+control `operation:reopen`, `page_recovery` reply and acquire-then-return restart
+repair. Those historical sections no longer define current recovery behavior.
+Existing wire envelopes/capability negotiation, owner/resource/profile identity,
+sequence and authority fences remain required. No compatibility alias is retained.
+
+### Ensure command and result
+
+Service sends the existing `browser_request` envelope with
+`command:{action:"ensure",explicit_url:boolean}`. `explicit_url` means the next
+explicit Open supplies a URL and old pages must not first be restored; it carries
+no URL itself. This is internal admission, not an additional model tool.
+Ensure does not consume a model action's dispatch receipt. After successful ensure
+the tool rechecks its invocation/lease/owner and performs normal fenced admission.
+A `browser_act` encountering replacement returns `browser_recovery_required`
+without executing: the model must observe and reconsider stale arguments.
+
+Completed result data contains `ensured:true`, `runtime_replaced:boolean`,
+`recovery_status` (`ready|private|restored|partial|empty|unavailable`), and
+`restored_pages` when restoration was attempted. No saved URL or private content
+is returned. A healthy private runtime returns private without restoring pages
+or releasing authority. Empty ensure creates no placeholder. Explicit Open or
+private Acquire may create a blank page when actually required.
+
+A new runtime establishes authority at request `browser_epoch+1`; the service
+commits that transition only against the exact owned open resource revision,
+profile generation and workspace generation. The daemon retains a replacement
+receipt for a lost acknowledgement. Reconciliation never repeats uncertain
+create/navigation calls; stale or changed control/lifecycle authority rejects the
+result. Daemon boot change alone is not proof of process loss. An uncertain orphan
+or profile owner remains fenced under existing profile/process recovery errors.
+
+### Active viewer API
+
+POST `/api/browser/sessions/:session_id/ensure` accepts strict `{viewer_id:<UUID>}`
+with a 1 KiB limit. Authenticate the live web/scoped-mobile viewer, require allowed
+Origin, resolve matching viewer identity and owner/thread/Bud before dispatch.
+Anonymous requests return 401, foreign/mismatched workspace or viewer 404, invalid
+body 400, denied Origin 403, and canonical browser failures 409.
+
+Response includes ordinary public session metadata plus `runtime_replaced`,
+`recovery_status` and `private_progress_lost` booleans/status. It does not grant a
+controller lease. Active visible viewers ensure before attaching media; inventory
+GETs and hidden/background visits never launch or restore Chrome. Retry addresses
+a genuine runtime failure, not an uncertain action. Failed screenshot capture
+alone neither recreates Chrome nor releases privacy. The existing hosted iOS
+viewer shares this lifecycle; native bridge and visit credential shapes are unchanged.
+
+### Privacy and continuation
+
+Only confirmed managed-process replacement clears extinct private authority,
+controllers, media grants and observations. Service/network restart with live
+Chrome retains privacy. Recovery atomically resolves eligible pending handoffs
+through existing continuation rows with NULL `returned_by_user_id`, distinguishing
+runtime loss from an actual human Return. Explicit handoff results carry
+`browser_handoff_interrupted` and `runtime_replaced:true`; undispatched calls stay
+not executed, with guidance to observe before reconsidering. Canceled/completed
+runs, deleted/closed workspaces and retired resources cannot resume. No new SSE
+family or DB migration is introduced, and uncertain dispatched actions never replay.
+
+### Local checkpoints and upgrade
+
+Version 2 checkpoints preserve complete agent-visible HTTP(S) query/fragment URLs
+up to 8 KiB each, 16 pages/workspace, 32 workspaces and 256 KiB total. Known callback,
+authorization and logout paths are stored but not autoloaded. Unsupported/oversized
+selection remains explicitly unavailable. Partial/uncertain restoration preserves
+the original durable checkpoint; created targets bind directly to the workspace.
+Native final-tab closure retains fallback only for explicit Open; logical close
+forgets it. No URL mirror is added to service rows or recovery logs.
+
+CDP target events trigger coalesced 250 ms checkpoint writes under the page lock.
+All workspace writes freeze during private/paused-private control. Acquire and
+FinishReturn flush at the disclosure boundary before acknowledgement; failure
+reports `browser_checkpoint_unavailable`. Shutdown cannot replace the frozen
+checkpoint with private inventory. Only the last shared page state is restored;
+unfinished private progress is not recovered and the viewer explains this.
+
+Deploy matching daemon, browser add-on, service and shared web together; rebuild
+with `bud browser prepare` as needed. Old/new recovery pairings are unsupported.
+The existing iOS hosted-viewer bridge needs no new native message. Version 1 local
+hints are privately backed up without automatic import because disclosure
+provenance is unknown. Cookies/sign-ins/profile data remain. Upgrade cannot
+recover URLs that were never saved; exact history/form/scroll replay is out of scope.
+
+## Semantic click targeting and observed link URLs
+
+The existing semantic snapshot/visible_dom result retains optional link `url`
+exactly as observed, including queries, fragments and relative forms. Compact
+snapshot text renders escaped `url="..."`; visible_dom nodes expose `url` without
+duplicating text. URLs count toward the existing 32 KiB observation / 36 KiB final
+envelope limits and remain frozen during continuation/replay. Unsupported schemes
+are untrusted observed text; existing navigation validation still applies.
+
+`browser_click_blocked` is a canonical rejected result only when bounded point
+preparation fails before invoking the actual click. It asserts no click was sent,
+not an unchanged page (preparation may scroll). It preserves healthy workspace,
+control and media state. Once the click invocation starts, ambiguous failure stays
+unknown. Playwright's internal action attempts are not an exactly-once guarantee.
+A completed input does not prove navigation; the agent observes to verify outcome.
+
+No request arguments, authority fields, human click coordinates, SSE families or
+schema change. Existing owner/workspace/document/epoch/private-control checks
+apply to URL disclosure and clicking. Deploy updated service with the rebuilt
+daemon and prepared helper; no mixed-version compatibility path is added. Native
+mobile needs no release. See [design](../design/browser-click-targeting-and-link-urls.md).

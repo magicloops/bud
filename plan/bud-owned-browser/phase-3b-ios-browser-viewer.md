@@ -1,10 +1,10 @@
 # Phase 3b: iOS browser viewer — mobile team handoff
 
-Status: **Scoped; mobile implementation and device acceptance outstanding.**
+Status: **Implementation in the working trees; physical-device acceptance outstanding.**
 Updated: 2026-09-22. Source baseline: main repository `e72c129` on
 `feat/bud-owned-browser`; mobile repository `e733459`.
-Recheck the merged main SHA before implementation. This is a handoff, not a claim
-that the mobile bootstrap or bridge below already exists.
+The contract companion now describes the implemented bootstrap and bridge.
+Historical requirements below remain the acceptance scope.
 
 ## Start here
 
@@ -23,6 +23,11 @@ Read this document for scope and implementation order, then:
 - [Overall roadmap](phases.md): daemon packaging and Ubuntu are separate tracks.
 
 The mobile team owns Swift presentation, discovery, lifecycle and chat integration.
+The [mobile implementation plan](../../../bud-mobile/plan/browser-sessions.md)
+reviews the `ba863af` mobile checkout against service/web `7bee61f` and breaks this
+handoff into four delivery increments. It also identifies invocation-specific
+Cancel and touch scrolling as concrete integration gaps. Initial iPad delivery
+uses an adaptive modal; a simultaneous chat/browser split pane is deferred polish.
 The shared web/service team owns the scoped authentication bridge and adaptations
 to the shared viewer. These are dependencies within this phase, not a reason to
 duplicate control logic in the app. A working macOS development daemon is enough
@@ -74,7 +79,7 @@ before inventory reads, control dispatch and stream attachment, and rechecked
 while media is delivered. Foreign resources return 404; unauthenticated requests
 return 401.
 
-**Current blocker:** browser inventory, metadata, control, input, viewport and
+**Original blocker (resolved by scoped visits):** browser inventory, metadata, control, input, viewport and
 media routes require a live web session cookie. The generic auth layer can resolve
 mobile bearer tokens, but these routes additionally require `viewer.sessionId`;
 bearer viewers have no such session. The standalone viewer also checks the web
@@ -173,7 +178,7 @@ host mode. Add only the seams mobile needs:
 - Scoped viewer authentication independent of the normal full-web auth context.
 - A supplied stable viewer UUID and small typed bridge for ready/state,
   explicit Return, suspend and dismiss. The contract companion proposes this
-  interface; it does not exist yet.
+  interface; the companion now records its implemented form.
 - Touch-accessible controls. No essential button depends on hover. Hide the web
   “new tab” link and app-level navigation in embedded mode; dismiss through native.
 - Preserve-layout mode as the mobile default. Current web defaults `fit=true`;

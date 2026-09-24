@@ -30,7 +30,7 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   macOS secure-store preflight, first-creation appearance defaults and atomic
   launch-only color synchronization. Used by production admission; non-macOS
   persistent launch is explicitly unsupported pending credential-store acceptance.
-- `recovery.rs`: bounded, private, atomic per-workspace URL hints; corrupt/symlinked data fails closed without modifying the profile. `forget` (used by workspace close) is best-effort so a corrupt file never blocks closing (Phase 3s D1).
+- `recovery.rs`: versioned, bounded, private, atomic agent-visible URL checkpoints; corrupt/symlinked data fails closed without modifying the profile. `forget` (used by workspace close) is best-effort so a corrupt file never blocks closing (Phase 3s D1).
 - `workspace_tests.rs`: opt-in disposable Chrome fixture proving shared cookies,
   separate target/observation ownership, opener inheritance and workspace-only close.
 - `adapter.rs`: concrete private Chromium launcher, target inventory, private semantic-helper observations and document-bound
@@ -40,6 +40,12 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   attachment and semantic calls; native targets without a verified opener remain
   unassigned. Persistent launch uses owned-child stderr discovery. Close waits for
   graceful child exit, with bounded escalation to killing only its owned child.
+- `image_bounds.rs`: header-only PNG/JPEG dimension inspection and actual bitmap
+  bounds, without allocating decoded pixels. Capture retries at lower scale when
+  either actual dimensions or encoded size exceed their limits.
+- `capture_bounds_tests.rs`: disposable live Chrome regression with independent
+  2x screenshot-session density, covering PNG and motion JPEG bounds while
+  preserving CSS dimensions.
 - `idle.html`: embedded static Bud landing page for the process-owned presentation tab; no scripts or external resources.
 - `cdp.rs`: serial private loopback CDP connection; 24 MiB frame cap (bounded PNG before downscaling), 10-second call
   timeout, poison after interrupted calls. Failure diagnostics include only the
@@ -109,7 +115,7 @@ A turn ending or control disconnect preserves the browser. Reconnect invalidates
 references; interrupted CDP work requires explicit open or private reacquisition. SIGINT/SIGTERM drains browser page work and requests graceful Chrome exit before
 releasing the profile lock; detached terminal holders survive.
 Hard SIGKILL/power-loss orphan scavenging is still release work: never recover by
-blindly attaching to a stored PID or debugging port. Surviving Chrome singleton locks require explicit recovery. Phase 3l offers explicit URL reopening, not exact tab/history restoration.
+blindly attaching to a stored PID or debugging port. Surviving Chrome singleton locks require explicit recovery. Automatic recovery restores eligible public URLs, not exact Back/Forward history or private form state.
 
 See [Phase 1](../../../plan/bud-owned-browser/phase-1-agent-browser.md) and
 [protocol](../../../docs/proto.md#bud-owned-browser-control-version-1).
@@ -124,7 +130,9 @@ must observe again after return. This fence does not isolate privileged terminal
 or other host software from Chrome.
 
 JPEG capture is bounded to 1280 pixels on the longest side and 1.4 million base64
-characters, at most ten captures per second with downstream credit. Frame tokens
+characters, at most ten captures per second with downstream credit. The daemon verifies actual
+PNG/JPEG header dimensions before emitting a frame; CSS-based requested scale is
+only an initial estimate, since Chrome device scaling can multiply the bitmap. Frame tokens
 bind target/document/viewport; pixel-sensitive input requires a capture newer than
 three seconds, while wheel input uses the current scroll context. Navigation invalidates focus/queued edits; unknown inputs are not retried.
 Basic clicks, scroll, committed text and editing keys are supported, not arbitrary
@@ -259,7 +267,7 @@ See [busy investigation](../../../debug/browser-busy-session-preservation.md).
 
 Slow media capture events include `capture_stages`: last reached stage (also on
 failure), session/document/layout timings, up to four screenshot attempt timings,
-attempt count, per-attempt scale/encoded length, format and assembly
+attempt count, per-attempt scale/encoded length/actual bitmap dimensions, format and assembly
 time. Document/layout timings sum their pre/post checks. Screenshot request time
 includes Chrome resizing/encoding; it does not distinguish those internal stages.
 No additional per-frame log events or wire fields are emitted.
@@ -297,8 +305,8 @@ Authority and real Chrome tests cover epoch continuity and stale-command rejecti
 sequence retain invocation ordering. Every workspace uses the same authority and
 page lock, but separate CDP/helper observations, target membership and fitting.
 Private takeover revokes passive media and agent access across all workspaces.
-Restart restores durable private intent before any page operation. Only explicit
-acknowledged return releases it; Stop retains privacy and Reset clears it.
+Restart restores durable private intent before any page operation. Acknowledged return or confirmed process replacement releases it; Stop retains
+privacy and Reset clears it. A boot change alone does not prove process loss.
 
 Bud-level `lifecycle {reset}` uses the existing request receipt and global epoch.
 It drains page work, closes the owned process and confirms exit before releasing
@@ -311,18 +319,42 @@ Native secure-store and real-account restart acceptance remains documented in
 [Phase 3k](../../../plan/bud-owned-browser/phase-3k-shared-persistent-browser.md).
 Linux persistent launch is explicitly unavailable pending secure-store support.
 
-## Explicit page recovery (Phase 3l)
+## Automatic browser recovery
 
-Persistent launch uses `--no-startup-window`; workspace creation owns its placeholder.
-`save_pages` checkpoints eligible HTTP(S) URLs and selection after successful page
-operations and graceful shutdown, not during capture. Identical hints skip writes.
-`reopen_pages {controller_id}` requires the exact workspace/private controller both
-before and after the page lock. Hints are consumed before tab creation; newly
-created target IDs bind directly to the workspace. No history replay or native-tab
-adoption. Close removes hints, including service cleanup on a new boot; reset
-removes the profile. Limits and exclusions are in
-[Phase 3l](../../../plan/bud-owned-browser/phase-3l-tab-and-history-recovery.md).
+Implements [automatic recovery](../../../design/browser-automatic-recovery.md),
+superseding Phase 3l's explicit reopen operation. `Ensure {explicit_url}` shares
+runtime preparation with agent admission and the visible viewer. It reuses a
+healthy owned process, repairs only its verified command channel, and replaces
+it only after confirmed exit. Boot ID alone cannot release private authority.
+A replacement acknowledges `runtime_replaced` under a new browser epoch; its
+receipt survives lost acknowledgements until service authority catches up.
+Late Stop/control changes fence the result before acknowledgement.
 
+`recovery.rs` writes version 2 agent-visible checkpoints: complete HTTP(S) URLs,
+including query/fragment, up to 8 KiB each, 16 pages/workspace, 32 workspaces and
+256 KiB total. Saving and automatic-load eligibility are separate. Callback,
+authorization and logout paths are saved but not automatically navigated; an
+unsupported/oversized selected URL retains an unavailable selection marker.
+Version 1 is privately backed up without importing unproven disclosure history.
+Cookies and Chrome profile/history are retained. Corruption/write errors never
+reset a profile or overwrite the last valid file.
+
+One dedicated CDP target-event subscription marks inventory dirty; a coalesced
+250 ms writer saves committed navigation/SPA/hash/closure changes under the page
+lock. It queues no URL payload and does not poll DOM or screenshots. All workspace
+writes freeze under private/paused-private authority. Acquire flushes the last
+public state before acknowledgement; FinishReturn flushes disclosed state before
+releasing privacy. Shutdown also respects the freeze. Failed boundary writes
+report `browser_checkpoint_unavailable` and do not acknowledge a false transition.
+
+Restore binds each new target to its workspace before navigation. Explicit new
+URLs skip older checkpoints. Partial/uncertain restoration preserves durable
+hints and never blindly repeats create/navigation. Known partial inventory can
+be inspected; explicit selection or Return establishes the new checkpoint basis.
+Selection that cannot be restored is unavailable, never another tab by accident.
+An empty ensure creates no placeholder; only explicit Open/Acquire creates one.
+Native final-tab closure retains fallback for the next explicit Open, without
+immediate recreation. Logical workspace close forgets its checkpoint.
 
 ## Background headed windows (Phase 3m)
 
@@ -371,26 +403,15 @@ idle creation/recovery and a transition from explicit native Show; repeated retu
 preparation leaves an already parked window minimized. Creation/recovery can flash
 a window, as can ordinary Chrome startup; there is no per-capture visibility loop.
 
-## Empty workspace recovery (Phase 3p)
+## Empty workspace behavior
 
-Explicit open ensures an owned page before target selection: reuse an existing
-page or create one blank page, then optionally navigate. Workspace allocation alone
-creates no tab. The existing page lock serializes concurrent opens; request receipts
-prevent duplicate dispatch. Observe/action/media/status never create replacements.
-
-Open and private pause check the owned root process. An exited process is replaced
-under the existing profile lock after invalidating old workspace handles; sign-ins,
-recovery hints and private intent survive. A live process with a poisoned channel
-gets one bounded reconnect to its verified endpoint and read-only inventory check.
-Uncertain mutations are not replayed and foreign targets are not adopted.
-
-Reopen validates the placeholder before consuming hints. Missing/filtered hints
-return zero restored pages with a usable workspace. Unreadable/corrupt hints return
-`recovery_hints_available:false` without overwriting the checkpoint. Partial or
-uncertain restoration remains an error. Preparing return from a confirmed empty
-workspace skips DOM observation but retains all authority checks. Authorized media
-sends an acknowledged empty marker, clears old pixels and keeps control alive.
-See [Phase 3p](../../../plan/bud-owned-browser/phase-3p-empty-workspace-recovery.md).
+Workspace allocation and inventory create no tab. Agent admission and visible
+viewer ensure restore eligible public checkpoints on runtime loss. In a healthy
+runtime, observing a natively closed final tab returns empty; explicit Open can
+use its retained public URL or create a blank page. Media's authorized empty
+marker clears pixels/input but keeps transport usable. Preparing Return from an
+empty workspace skips DOM observation while preserving all authority checks.
+Uncertain mutations are never replayed; foreign targets are never adopted.
 
 ## Browser add-on (Phase 3r)
 
@@ -457,3 +478,15 @@ See [Phase 3s](../../../plan/bud-owned-browser/phase-3s-confirmed-defects.md).
   so a panic can no longer leave `browser_media_busy` until restart
   (unit-tested with a panicking task).
 
+
+## Semantic click preparation
+
+The helper now selects a bounded randomized hit-tested point on the exact observed
+node before calling Playwright. `manager.rs` classifies `browser_click_blocked`
+as rejected (no click invocation); it does not poison Chrome or replay the action.
+Post-invocation ambiguity remains `browser_outcome_unknown`. `semantic.rs` logs
+only fixed stages/flags and bounded numeric candidate count, normalized point,
+preparation time and reason codes. No observed URL or raw exception is logged.
+`live_blocked_click_preserves_session_and_allows_fresh_observation` exercises the
+real helper-to-daemon classification and a subsequent observation in the same
+workspace. Existing authority/private-control fences apply unchanged.

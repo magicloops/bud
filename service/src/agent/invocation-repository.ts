@@ -636,13 +636,17 @@ export class InvocationRepository {
             eq(browserHandoff.id,pending.evidence.browser_handoff_id),eq(browserHandoff.invocationId,current.id),
             eq(browserHandoff.createdByUserId,current.createdByUserId),eq(browserHandoff.status,"returned")));
           if (!handoff || !handoff.clientId || !handoff.resolvedAt) throw new InvocationError("browser_handoff_return_missing");
+          const restarted = handoff.returnedByUserId === null;
+          const browserSummary = restarted
+            ? "The browser runtime was lost and replaced. Private work was interrupted, not completed by the user. Observe the recovered shared page without old target IDs before acting; do not repeat completed actions."
+            : "The user returned browser control. Observe the current page before acting; do not repeat completed actions.";
           if(pending.kind==="browser_user_handoff") {
             // No provider tool was pending at this boundary. Do not invent a
             // tool result in provider history just to represent user control.
             const [message] = await tx.insert(messageTable).values({
               clientId: handoff.clientId, threadId: current.threadId,
               role: "system", displayRole: "Browser",
-              content: "The user returned browser control. Observe the current page before acting; do not repeat completed actions.",
+              content: browserSummary,
               createdByUserId: current.createdByUserId,
               metadata: { turn_id: current.turnId, invocation_id: current.id, continuation: true,
                 browser_handoff_id: handoff.id },
@@ -654,8 +658,9 @@ export class InvocationRepository {
           }
           answer = {clientId:handoff.clientId,createdAt:handoff.createdAt,answeredAt:handoff.resolvedAt,
             evidence:{browser_handoff_id:handoff.id,continuation_restored:true},
-            payload:{tool:"browser_request_handoff",call_id:pending.callId,kind:"browser",ok:true,
-              handoff_id:handoff.id,summary:"The user returned browser control. Observe the current page before acting; do not repeat completed actions."}};
+            payload:{tool:"browser_request_handoff",call_id:pending.callId,kind:"browser",ok:!restarted,
+              runtime_replaced:restarted, ...(restarted ? {error:"browser_handoff_interrupted"} : {}),
+              handoff_id:handoff.id,summary:browserSummary}};
         } else if (pending.kind === BOOTSTRAP_PROPOSAL_TOOL) {
           const proposalId = pending.evidence?.bootstrap_proposal_id;
           const clientId = pending.evidence?.tool_client_id;
@@ -745,7 +750,7 @@ export class InvocationRepository {
           const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block,
             pending.evidence?.browser_handoff_id ? "browser"
               : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation"
-              : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question");
+              : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question", answer.payload.runtime_replaced === true);
           const content = JSON.stringify(payload);
           const finishedAt = isQuestion ? answer.answeredAt : new Date();
           const startedAt = isQuestion ? answer.createdAt : finishedAt;
@@ -800,7 +805,7 @@ export class InvocationRepository {
           left join browser_resource r on r.id=s.browser_id
           where h.invocation_id=agent_invocation.id and h.created_by_user_id=agent_invocation.created_by_user_id
           and h.status in ('pending','returned','canceled') and (h.status='canceled' or s.closed_at is not null or s.desired_state='closed'
-            or s.state='interrupted' or t.deleted_at is not null or r.id is null or r.retired_at is not null
+            or t.deleted_at is not null or r.id is null or r.retired_at is not null
             or t.created_by_user_id is distinct from h.created_by_user_id
             or b.created_by_user_id is distinct from h.created_by_user_id))`
       )).for("update",{skipLocked:true}).limit(100);

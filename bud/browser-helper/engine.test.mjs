@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { Engine, sanitize } from './engine.mjs';
-import { OBSERVATION_BYTES } from './compact.mjs';
+import { OBSERVATION_BYTES, compactPage } from './compact.mjs';
 
 test('field values and implementation properties never enter snapshots', () => {
   const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:[{role:'text',text:'secret'}]}], 'x', new Map());
@@ -69,6 +69,9 @@ test('compact real-browser observations keep actions, scope and pagination witho
     };
     const before=await collect(false), after=await collect(true);
     const oldBytes=Buffer.byteLength(JSON.stringify(before)), newBytes=Buffer.byteLength(JSON.stringify(after));
+    const withoutUrls = { ...engine.snapshot, nodes: engine.snapshot.nodes.map(({url, ...node}) => node) };
+    const baselineBytes = Buffer.byteLength(JSON.stringify([compactPage(withoutUrls, 0)]));
+    t.diagnostic(`Same compact fixture URL delta: without=${baselineBytes} with=${newBytes} added=${newBytes-baselineBytes}; pages=1/${after.length}`);
     t.diagnostic(`HN-like fixture serialized bytes: legacy=${oldBytes} compact=${newBytes} reduction=${(100*(1-newBytes/oldBytes)).toFixed(1)}%; pages=${before.length}/${after.length}`);
     assert.ok(newBytes<oldBytes*.3);
     assert.ok(after.every(x=>!('nodes' in x) && Buffer.byteLength(JSON.stringify(x))<=OBSERVATION_BYTES));

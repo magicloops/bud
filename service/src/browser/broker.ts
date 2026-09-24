@@ -68,6 +68,13 @@ export class BrowserBroker implements BrowserAgentBackend {
     }
     let request;
     try {
+      if (tool !== "browser_close") {
+        const candidate = await this.repository.prepare(context,carrier.bootId,command,true);
+        const recovery = await this.control.ensure(context.ownerUserId,candidate.session_id,
+          tool === "browser_open" && typeof args.url === "string");
+        if (recovery.runtime_replaced && tool === "browser_act")
+          return {ok:false,outcome:"rejected",error:"browser_recovery_required"};
+      }
       request = await this.repository.prepare(carrier.handoff ? context : { ...context, waitClientId: undefined }, carrier.bootId, command);
     } catch (error) {
       if (error instanceof BrowserToolWait) throw error;

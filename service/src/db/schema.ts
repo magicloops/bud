@@ -1928,3 +1928,23 @@ export const browserHandoffTable = pgTable("browser_handoff", {
   statusCheck: check("browser_handoff_status_check",sql`${t.status} in ('pending','returned','canceled') and ${t.kind} in ('agent','user','return_control')`),
   actorCheck: check("browser_handoff_actor_check",sql`${t.returnedByUserId} is null or ${t.returnedByUserId} = ${t.createdByUserId}`),
 }));
+
+// Native WKWebView credentials are scoped to one workspace and visit, not a web login.
+export const browserViewerVisitTable = pgTable("browser_viewer_visit", {
+  id: text("id").primaryKey(), sessionId: text("session_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(),
+  viewerId: uuid("viewer_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  grantHash: text("grant_hash").notNull(), tokenHash: text("token_hash"),
+  grantExpiresAt: timestamp("grant_expires_at", {withTimezone:true}).notNull(),
+  expiresAt: timestamp("expires_at", {withTimezone:true}).notNull(),
+  absoluteExpiresAt: timestamp("absolute_expires_at", {withTimezone:true}).notNull(),
+  consumedAt: timestamp("consumed_at", {withTimezone:true}),
+  createdAt: timestamp("created_at", {withTimezone:true}).notNull().defaultNow(),
+}, t => ({
+  grantKey: uniqueIndex("browser_viewer_visit_grant_idx").on(t.grantHash),
+  tokenKey: uniqueIndex("browser_viewer_visit_token_idx").on(t.tokenHash),
+  ownerIdx: index("browser_viewer_visit_owner_idx").on(t.createdByUserId,t.expiresAt),
+  sessionFk: foreignKey({name:"browser_viewer_visit_session_fk",columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
+    foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
+}));

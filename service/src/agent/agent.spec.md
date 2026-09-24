@@ -1433,3 +1433,27 @@ acknowledged handoff return: `executed:false` plus a `handoff` receipt with
 guidance discovers current pages without stale target IDs, then explicitly opens
 the requested URL for an empty/blank workspace. The receipt is historical evidence;
 every subsequent operation still checks live authority. No daemon contract changes.
+
+## Automatic browser recovery continuation
+
+`invocation-repository.ts` reconstructs a resolved browser handoff with NULL
+`returned_by_user_id` as confirmed runtime replacement, not user completion.
+Explicit handoff calls receive `browser_handoff_interrupted` and
+`runtime_replaced:true`; parked/trailing undispatched calls receive honest
+not-executed guidance to observe before reconsidering. `continuation-results.ts`
+shares this distinction. Recovery retains waits across a merely interrupted open
+workspace; close/delete/retirement and canceled/completed invocations still win.
+Resource recovery atomically validates the workspace before releasing waits.
+No new provider tool, scheduler, DB column or automatic action replay is added.
+See [automatic recovery](../../../design/browser-automatic-recovery.md).
+
+## Click targets and observed link URLs
+
+`browser-tools.ts` describes full observed link URLs and requires fresh observation
+to distinguish a post from its image/lightbox after a click. `browser-tool-executor.ts`
+explains `browser_click_blocked` as pre-click rejection, allowing the model to
+observe and deliberately select another target or an observed HTTP(S) URL. No
+automatic fallback navigation or mutation retry occurs. URL strings pass through
+existing bounded payload serialization and replay, with the same page-content
+privacy/ownership checks. `browser-observation-budget.test.ts` covers exact URL
+replay and the blocked result with one dispatch and retryable=false.

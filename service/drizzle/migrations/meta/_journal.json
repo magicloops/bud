@@ -288,6 +288,13 @@
       "when": 1790035269596,
       "tag": "0040_browser_claim_retirement",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790119302176,
+      "tag": "0041_demonic_stephen_strange",
+      "breakpoints": true
     }
   ]
 }

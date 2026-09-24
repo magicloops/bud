@@ -80,3 +80,16 @@ test('preserves list scope, duplicate names, deep hierarchy and visible geometry
   const text=compactPage(snapshot(compactNodes(deep)),0).text;
   assert.equal(text.split('\n').at(-1).match(/^ */)[0].length,29);
 });
+
+test('complete link URLs survive compact text, visible nodes and frozen continuation budgets', () => {
+  const url='https://example.test/post?q=a%2Fb&q=雪&quoted="yes"#part';
+  const nodes=Array.from({length:600},(_,i)=>({depth:0,role:'link',name:`Post ${i}`,reference:`s:e${i}`,url:`${url}${i}`}));
+  const s=snapshot(compactNodes(nodes));let offset=0,count=0;
+  do { const page=compactPage(s,offset);assert.ok(Buffer.byteLength(JSON.stringify(page))<=OBSERVATION_BYTES);
+    for(const line of page.text.split('\n')) {const value=JSON.parse(line.slice(line.indexOf(' url=')+5));assert.equal(value,`${url}${count++}`);}
+    if(!page.continuation)break;offset=Number(page.continuation.split(':')[1]);
+  } while(true);
+  assert.equal(count,nodes.length);
+  assert.equal(compactPage({...snapshot([nodes[0]]),mode:'visible_dom'},0).nodes[0].url,nodes[0].url);
+  assert.throws(()=>compactPage(snapshot([{depth:0,role:'link',url:'https://x.test/'+ 'x'.repeat(OBSERVATION_BYTES)}]),0),/browser_observation_limit/);
+});

@@ -190,7 +190,9 @@ pub(super) fn start(args: MediaStart) {
                     }
                     let targets = targets_result?;
                     target_count = Some(targets.len());
-                    if targets.is_empty() {
+                    if targets.is_empty()
+                        || (browser.selection_unavailable() && request.target_id.is_none())
+                    {
                         refresh.borrow_and_update();
                         entry.target = None;
                         next_capture = tokio::time::Instant::now() + Duration::from_secs(1);
@@ -201,6 +203,9 @@ pub(super) fn start(args: MediaStart) {
                             .filter(|id| targets.iter().any(|t| &t.target_id == id))
                             .or_else(|| targets.first().map(|t| t.target_id.clone()))
                             .ok_or_else(|| anyhow::anyhow!("browser_no_target"))?;
+                        if request.target_id.is_some() {
+                            browser.selected_explicitly();
+                        }
                         phase = "capture";
                         // This capture includes all operations completed before taking the lock.
                         refresh.borrow_and_update();

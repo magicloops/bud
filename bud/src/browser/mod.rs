@@ -4,6 +4,7 @@ pub mod addon;
 mod capture;
 mod cdp;
 mod control;
+mod image_bounds;
 mod manager;
 mod media;
 pub mod pins;

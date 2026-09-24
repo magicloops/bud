@@ -122,3 +122,10 @@ Legacy enrollment-token hashing helper.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+## Browser-scoped native visits
+
+Browser inventory/bootstrap uses these bearer helpers. Embedded browser cookies
+are resolved only inside `browser/routes.ts`, never by generic `getOptionalViewer`.
+They confer no full-account session or chat access. See
+[scoped browser auth](../browser/browser.spec.md#mobile-viewer-visits-phase-3b).

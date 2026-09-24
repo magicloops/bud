@@ -11,7 +11,7 @@ const executor=(observation:Record<string,unknown>)=>new BrowserToolExecutor({
 } as BrowserAgentBackend,async()=>true);
 
 test('compact output is bounded at the final tool envelope and preserved exactly in replay',async()=>{
-  const observation={format:'compact_v1',text:'link "Story 16" [ref=short1:e16]',observation_id:'short1',truncated:false};
+  const observation={format:'compact_v1',text:'link "Story 16" [ref=short1:e16] url="https://example.test/post?q=a%2Fb&q=two#image"' ,observation_id:'short1',truncated:false};
   const result=await executor(observation).execute(context,directive);
   assert.equal(result.result.ok,true);
   const content=JSON.stringify(result.payload);
@@ -28,4 +28,16 @@ test('compact output is bounded at the final tool envelope and preserved exactly
   assert.equal(huge.result.ok,false);assert.equal(huge.payload.error,'browser_observation_limit');
   assert.ok(Buffer.byteLength(JSON.stringify(huge.payload))<=36 * 1024);
   assert.equal((huge.payload.data as any).observation,undefined);
+});
+
+
+test('blocked clicks are recoverable evidence without retry or invented success',async()=>{
+  let calls=0;
+  const executor=new BrowserToolExecutor({available:async()=>true,execute:async()=>{
+    calls++; return {ok:false,outcome:'rejected',error:'browser_click_blocked'};
+  }},async()=>true);
+  const result=await executor.execute(context,{type:'tool_call',tool:'browser_act',callId:'click',args:{action:'click',reference:'s:e1'}});
+  assert.equal(calls,1);assert.equal(result.result.retryable,false);
+  assert.equal(result.payload.outcome,'rejected');assert.equal(result.payload.error,'browser_click_blocked');
+  assert.match(result.summary,/Click was not sent/);
 });

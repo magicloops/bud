@@ -43,6 +43,32 @@ impl Cdp {
         })
     }
 
+    /// Dedicated inventory-event connections use this without a command in flight.
+    /// Page payloads are discarded; callers receive only a dirty signal.
+    pub async fn next_checkpoint_change(&mut self) -> Result<()> {
+        while let Some(frame) = self.socket.next().await {
+            match frame? {
+                Message::Text(text) => {
+                    let value: Value = serde_json::from_str(&text)?;
+                    if matches!(
+                        value["method"].as_str(),
+                        Some(
+                            "Target.targetInfoChanged"
+                                | "Target.targetDestroyed"
+                                | "Target.targetCreated"
+                        )
+                    ) {
+                        return Ok(());
+                    }
+                }
+                Message::Ping(bytes) => self.socket.send(Message::Pong(bytes)).await?,
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        bail!("browser_checkpoint_channel_closed")
+    }
+
     pub async fn call(
         &mut self,
         session: Option<&str>,

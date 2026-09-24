@@ -471,24 +471,25 @@ Lifecycle requests stamp `requested_by_user_id` from the authenticated viewer.
 All new routes resolve live cookie auth and owned Bud before resource SQL or I/O.
 Native secure-store and real-account restart acceptance is tracked in Phase 3k.
 
-## Explicit browser page recovery (Phase 3l)
+## Automatic browser recovery (supersedes explicit Phase 3l recovery)
 
-- [x] Controller/DB fixtures reject foreign ownership before recovery, rotate old
-  runtime generations, reject stale completion, and preserve close/deletion intent.
-- [x] Disposable Chrome fixture binds duplicate URLs to their original workspace,
-  rejects old/cross-workspace target IDs and repeated recovery.
-- [x] Recovery dispatch follows acknowledged private takeover; failed/unknown
-  execution stays private without automatic mutation retry or agent return.
-- [x] Mounted viewer test verifies metadata alone never posts recovery.
-- [ ] Real two-account cookie/Origin checks for `control operation:reopen`, copied
-  session/viewer IDs, deleted threads and account switching during recovery.
-- [ ] Two real threads after daemon restart: correct eligible pages/login, private
-  content hidden from agents/other viewers until explicit return; old proofs denied.
+- [x] Controller fixtures reject foreign owners before joining an ensure; concurrent
+  owner requests share one attempt. Unknown acknowledgements preserve privacy.
+- [x] PostgreSQL fixtures validate resource/workspace revision, generation and owner
+  before atomic readiness/authority release; stale completion and cancellation win.
+- [x] Disposable Chrome tests keep live private authority, freeze public URL writes,
+  fence stale actions after replacement, and preserve workspace target ownership.
+- [ ] Real cookie/scoped-mobile POST `/api/browser/sessions/:id/ensure`: anonymous
+  401, foreign workspace or mismatched visit/viewer 404, bad Origin 403, strict body.
+- [ ] Real visible/hidden iPhone lifecycle: only visible ensure launches/restores;
+  account switch, revoke, delete or close during ensure cannot deliver old content.
+- [ ] Two real users and threads: restart restores only last shared URLs, never
+  private navigation; interrupted handoff is not presented as successful human work.
 
-No new rows or grants. Existing session/thread/Bud owner authorization protects the
-control route; daemon-local hints inherit profile owner/environment binding and
-never authorize offline access or appear in service inventory.
-
+Ensure owns no new rows: resource ownership derives from Bud and workspace from
+thread; authenticated viewer/scoped visit precedes all reads and writes. Runtime
+replacement resolves handoffs with no fabricated human-return actor. Saved URLs
+stay daemon-local. Inventory remains read-only and owner-filtered.
 
 ## Browser native windows — Phase 3m
 
@@ -526,3 +527,18 @@ never authorize offline access or appear in service inventory.
   request remains 404 and cannot create/restore pages or release private authority.
 - [ ] Actual owner flow: close last tab, reopen through agent, restart, recover empty
   private workspace and return; check old proofs and references remain rejected.
+
+## Mobile browser scoped visits (Phase 3b)
+
+- [x] Isolated PostgreSQL: one-use grant races, wrong-owner/secret refresh,
+  expiry non-revival, owner-only revocation, resource retirement and stable
+  service-restart identity. Migration executes against pre-change browser tables.
+- [x] Control operation allowlist rejects close, Stop/Reset and host-window actions.
+- [ ] Real bearer mint/inventory: anonymous 401 and foreign workspace/thread 404.
+- [ ] Real scoped-cookie REST/WS: wrong workspace/viewer 404, Origin rejection,
+  generic account/chat/Bud routes unavailable, expiry and revocation stop delivery.
+- [ ] Real phone sign-out/unclaim/thread deletion during capture or takeover,
+  desktop/phone private exclusion, background privacy cover and explicit return.
+
+Visits inherit workspace owner/tenant. Native grants are not control leases.
+Private input and screenshots never enter native chat state or persisted visits.
