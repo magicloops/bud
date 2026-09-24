@@ -307,7 +307,7 @@ export class BrowserRepository {
       (result.ok ||
         ["browser_closed", "browser_interrupted"].includes(result.error ?? ""));
     const recoverable = result.outcome === "rejected" && [
-      "browser_locator_ambiguous", "browser_locator_not_found", "browser_click_blocked", "browser_stale_reference",
+      "browser_locator_ambiguous", "browser_locator_not_found", "browser_stale_reference",
       "browser_observation_limit", "browser_target_not_found", "browser_document_changed",
       "browser_invalid_arguments", "browser_busy",
     ].includes(result.error ?? "");

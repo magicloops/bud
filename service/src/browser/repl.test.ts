@@ -55,19 +55,19 @@ test('cell receipts preserve one dispatch across retries, lost acknowledgements 
   const control={async ensure(){return {runtime_replaced:false};}} as unknown as BrowserControl;
   const broker=()=>new BrowserBroker(new BrowserRepository(pool),control);
   const first=await context();
-  assert.equal((await broker().executeCell(first,'var n=0; repl.write(++n)')).ok,true);
+  assert.equal((await broker().executeCell(first,'var n=0; console.log(++n)')).ok,true);
   await invocations.completeAction(lease,first.callId,{summary:'stored by executor'});
   assert.equal((await receipt(first.callId)).result.data.text,'1\n');
   assert.deepEqual((await receipt(first.callId)).request.command,{action:'exec'},'receipt must not duplicate source');
-  assert.equal((await broker().executeCell(first,'var n=0; repl.write(++n)')).data?.text,'1\n');
+  assert.equal((await broker().executeCell(first,'var n=0; console.log(++n)')).data?.text,'1\n');
   assert.equal(sent.length,1,'new broker/repository must return receipt without redispatch');
   sessions.delete(budId);
-  assert.equal((await broker().executeCell(first,'var n=0; repl.write(++n)')).data?.text,'1\n','offline retry still returns completed receipt');
+  assert.equal((await broker().executeCell(first,'var n=0; console.log(++n)')).data?.text,'1\n','offline retry still returns completed receipt');
   assert.equal((await broker().executeCell(await context(),'n++')).error,'browser_unavailable');
   sessions.set(budId,tracker);
   assert.equal((await broker().executeCell(first,'n++')).error,'browser_cell_conflict');
   for(const invalid of [{ownerUserId:'bob'},{threadId:randomUUID()},{invocation:{...base.invocation,fence:99}},{invocation:{...base.invocation,workerId:'other'}}])
-    assert.equal((await broker().executeCell({...first,...invalid},'var n=0; repl.write(++n)')).ok,false);
+    assert.equal((await broker().executeCell({...first,...invalid},'var n=0; console.log(++n)')).ok,false);
   assert.equal(sent.length,1);
 
   // Two callers racing the same action cannot execute the code twice.
@@ -111,11 +111,11 @@ test('cell receipts preserve one dispatch across retries, lost acknowledgements 
   assert.equal((await broker().executeCell(await context(),'n++; throw Error()')).data?.execution_state,'failed'); await healthy();
   // UTF-8 text limits survive JSON escaping; arbitrary extra fields are refused.
   reply={...success,data:{...success.data,text:'\u0001'.repeat(32*1024)}};
-  assert.equal((await broker().executeCell(await context(),'repl.write(text)')).ok,true);
+  assert.equal((await broker().executeCell(await context(),'console.log(text)')).ok,true);
   reply={...success,data:{...success.data,text:'🙂'.repeat(8193)}};
-  assert.equal((await broker().executeCell(await context(),'repl.write(text)')).data?.execution_state,'unknown');
+  assert.equal((await broker().executeCell(await context(),'console.log(text)')).data?.execution_state,'unknown');
   reply={...success,data:{...success.data,unexpected:'page data'}};
-  assert.equal((await broker().executeCell(await context(),'repl.write(text)')).data?.execution_state,'unknown');
+  assert.equal((await broker().executeCell(await context(),'console.log(text)')).data?.execution_state,'unknown');
   reply=success;
   assert.equal((await broker().executeCell(await context(),'x'.repeat(64*1024+1))).error,'browser_invalid_arguments');
   await healthy();
@@ -130,7 +130,7 @@ test('cell receipts preserve one dispatch across retries, lost acknowledgements 
   assert.equal(await repository.evidenceAllowed(request),false);
   // Already recorded cells return only safe status while current private control
   // disallows their evidence; no new send or automatic replay follows Return.
-  const withheld=await broker().executeCell(first,'var n=0; repl.write(++n)');
+  const withheld=await broker().executeCell(first,'var n=0; console.log(++n)');
   assert.equal(withheld.data?.output_withheld,true); assert.equal(withheld.data?.execution_state,'completed');
   assert.equal(withheld.data?.text,undefined);
 });

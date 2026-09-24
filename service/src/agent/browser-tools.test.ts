@@ -1,3 +1,9 @@
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test, { mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { BROWSER_TOOL_NAMES, BROWSER_CANONICAL_TOOLS, BROWSER_REPL_TOOLS, browserReplEnabled, parseBrowserInput } from "./browser-tools.js";
@@ -40,7 +46,7 @@ test("browser catalog is explicitly composed and excluded offline; both tool fam
   const runner = new AgentModelRunner({} as never, logger as never, false, false);
   const loader = new AgentConversationLoader();
   for (const name of BROWSER_TOOL_NAMES) {
-    const input = name === "browser_exec" ? {code:"repl.write(1)"} : name === "browser_request_handoff" ? { reason: "Sign in" } : name === "browser_act" ? { action: "click", reference: "1:2" } : {};
+    const input = name === "browser_exec" ? {code:"console.log(1)"} : name === "browser_request_handoff" ? { reason: "Sign in" } : name === "browser_act" ? { action: "click", reference: "1:2" } : {};
     const [directive] = runner.extractToolCalls({ id: "r", content: [], stopReason: "tool_use", toolCalls: [{ id: name, name, input }] });
     assert.equal(toolNameForConversation(directive.tool), name);
     assert.deepEqual(buildToolArgs(directive), input);
@@ -248,7 +254,7 @@ test("REPL defaults on in development, allows old-tool comparison and stays disa
   assert.deepEqual(names(), BROWSER_REPL_TOOLS.map(t=>t.name));
   process.env.BUD_BROWSER_TOOL_MODE='tools'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
   process.env.BUD_BROWSER_TOOL_MODE='repl'; assert.deepEqual(names(),BROWSER_REPL_TOOLS.map(t=>t.name));
-  assert.deepEqual(parseBrowserInput('browser_exec',{code:'repl.write(1)'}),{code:'repl.write(1)'});
+  assert.deepEqual(parseBrowserInput('browser_exec',{code:'console.log(1)'}),{code:'console.log(1)'});
   assert.throws(()=>parseBrowserInput('browser_exec',{code:'🐱'.repeat(16385)}));
   assert.throws(()=>parseBrowserInput('browser_exec',{code:'1',owner_user_id:'other'}));
   process.env.NODE_ENV='production'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
@@ -259,19 +265,43 @@ test("REPL cells reach the next provider step and transcript without local page 
   const previous = process.env.BUD_BROWSER_TOOL_MODE;
   process.env.BUD_BROWSER_TOOL_MODE = 'repl';
   t.after(() => { if (previous === undefined) delete process.env.BUD_BROWSER_TOOL_MODE; else process.env.BUD_BROWSER_TOOL_MODE = previous; });
+  const directory = await mkdtemp(join(tmpdir(), 'bud-agent-output-'));
+  const child = spawn(process.env.BUD_BROWSER_NODE ?? process.execPath,
+    [fileURLToPath(new URL('../../../bud/browser-helper/repl-worker.mjs', import.meta.url)), directory],
+    { stdio: ['pipe', 'pipe', 'ignore'] });
+  t.after(async () => { child.kill(); await rm(directory, {recursive:true, force:true}); });
+  const lines = createInterface({input:child.stdout})[Symbol.asyncIterator]();
+  const send = (value: unknown) => child.stdin.write(JSON.stringify(value)+'\n');
   let calls = 0;
   const executor = new BrowserToolExecutor(backend({ execute: async (_context, name, args) => {
     assert.equal(name, 'browser_exec'); assert.equal(typeof args.code, 'string'); calls++;
-    return { ok: true, outcome: 'completed', data: { execution_state: 'completed', runtime_generation: 'runtime',
-      text: calls === 1 ? 'Selected story' : 'Retained detail', truncated: false, images: [] } };
+    const cell_id = String(calls);
+    send({type:'execute', cell_id, code:args.code});
+    while (true) {
+      const next = await lines.next();
+      assert.equal(next.done, false, 'worker exited');
+      const message = JSON.parse(next.value!);
+      if (message.type === 'result') {
+        assert.equal(message.ok, true, message.error);
+        return {ok:true, outcome:'completed', data:{...message, execution_state:'completed', runtime_generation:'runtime'}};
+      }
+      // Full source data enters the actual worker; only selected output may leave.
+      const data = message.command.action === 'open' ? {target_id:'owned'} :
+        {nodes:[{name:'Selected story'},{name:'Retained detail'},{name:'UNEMITTED_SOURCE_DATA'}]};
+      send({type:'operation_result', cell_id, operation_id:message.operation_id, ok:true, data});
+    }
   } }), async () => true);
   const fixture = await loopFixture(t, executor, [
-    [{ name: 'browser_exec', input: {code: 'var page = await browser.tabs.open("https://example.com"); var snapshot = await page.snapshot(); repl.write(snapshot.nodes[0]);'} }],
-    messages => { assert.match(JSON.stringify(messages), /Selected story/); return [{name:'browser_exec',input:{code:'repl.write(snapshot.nodes[1])'}}]; },
+    [{ name: 'browser_exec', input: {code: 'var page = await browser.tabs.open("https://example.com"); var snapshot = await page.snapshot(); snapshot.nodes[0].name;'} }],
+    messages => { assert.match(JSON.stringify(messages), /Selected story/); return [{name:'browser_exec',input:{code:'console.log(snapshot.nodes[1].name)'}}]; },
     messages => { assert.match(JSON.stringify(messages), /Retained detail/); return []; },
   ]);
   assert.equal((await fixture.run()).status, 'succeeded');
   assert.equal(calls, 2);
+  const nextContext = JSON.stringify(fixture.requests[2]);
+  assert.equal(nextContext.match(/Selected story/g)?.length, 1);
+  assert.equal(nextContext.match(/Retained detail/g)?.length, 1);
+  assert.doesNotMatch(nextContext, /UNEMITTED_SOURCE_DATA/);
   const written = fixture.writes.filter(row => row.role === 'tool');
   assert.equal(written.length, 2);
   assert.ok(written.every(row => row.createdByUserId === 'alice' && /browser_exec/.test(row.content)));

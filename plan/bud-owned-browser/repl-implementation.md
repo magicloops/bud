@@ -2,7 +2,8 @@
 
 Status: Phases 1–3 implemented; live observation/navigation and an actual-agent
 draft-fill task passed. Broader interaction and physical viewer acceptance remain.
-Phase 4 is scoped but not implemented. 2026-09-23.
+Phase 4 output controls and comparison harness implemented; controlled provider comparison
+passed 18/18 tasks; lifecycle acceptance and catalog cutover remain. 2026-09-23.
 
 Validation and implementation decisions:
 [runtime foundation](../../debug/browser-repl-runtime-foundation.md).
@@ -12,8 +13,10 @@ See [Phase 2 validation](../../debug/browser-repl-selective-observations.md).
 
 ## Objective and references
 
-Implement [the REPL design](../../design/browser-repl.md) in four sequential
-phases. Keep page data in a thread's Node workspace and send only deliberately
+Implement [the REPL design](../../design/browser-repl.md) through the original
+four phases and the Phase 5–7 output, extraction and interaction refinements below,
+then Phase 7b snapshot/output compaction and budget reassessment, followed by
+Phase 8 workspace lifecycle and final merge acceptance. Keep page data in a thread's Node workspace and send only deliberately
 emitted evidence to the model. Preserve the shared Chrome profile, thread-owned
 tabs, user control, recovery, viewer and existing agent loop.
 
@@ -26,7 +29,7 @@ Runtime references: [helper](../../bud/browser-helper/browser-helper.spec.md),
 [protocol](../../docs/proto.md), and
 [mobile viewer](mobile-viewer-contract.md).
 
-These are implementation checkpoints, not four independently supported products.
+These are implementation checkpoints, not independently supported products.
 Phase 2 provides the first actual-agent experiment. Phase 4 removes the temporary
 comparison selection and old executable tool catalog. No implementation phase
 requires a new compaction subsystem or general request-building refactor.
@@ -48,8 +51,8 @@ Use a small private worker-to-daemon operation bridge. The worker executes local
 JavaScript and sends typed facade requests; the daemon validates the active cell,
 workspace and authority before routing to existing browser operations/helper.
 Responses may carry bounded structured data locally without first serializing it
-into the model-facing compact format. Reuse semantic engine and click preparation
-code; do not duplicate a second automation implementation in the REPL worker.
+into the model-facing compact format. Reuse the semantic engine and native Playwright click path
+(Phase 7); do not duplicate a second automation implementation in the REPL worker.
 
 Cell admission must not hold the existing shared page lock for the entire cell.
 Each supported browser operation acquires/releases that lock with authority checks;
@@ -130,8 +133,9 @@ Deliver the first measurable vertical slice, with Phase 1 protections active.
 - [x] Return JSON from `evaluate(fn, jsonArgument)` without Node lexical capture.
   Treat evaluation as potentially mutating, with no automatic retries or purity
   analysis. Keep raw CDP/unwrapped Playwright outside the supported API.
-- [x] Implement explicit `repl.write` and `repl.emitImage`; capture console under
-  the same bounded text budget. Do not print the final expression implicitly.
+- [x] Original Phase 2 output contract (superseded by Phase 5): explicit text/image
+  emission and console capture; Phase 5 removes `repl.write` and displays successful
+  final non-undefined values.
   Use 32 KiB emitted text plus a bounded envelope, a 1 MiB captured-text file
   ceiling, and at most two validated image emissions per cell.
 - [x] Keep local artifact paths scoped to the authorized workspace with restrictive
@@ -171,7 +175,7 @@ Deliver the full intended replacement for the existing browser tool family.
 
 - [x] Expose existing reference and exact role/name actions, fill/focus/text/scroll,
   tab selection/close and supported navigation through the facade. Reuse bounded
-  randomized click preparation and final Playwright actionability checks. No
+  native Playwright actionability (Phase 7 replaces randomized preparation). No
   forced clicks, sibling substitution or automatic navigate-after-click fallback.
 - [x] Distinguish reusable workspace/tab identity from document/observation-bound
   references. After navigation or control changes, cached data remains available
@@ -216,9 +220,25 @@ revives an old handle. Whole failed cells retain uncertain-effect semantics.
 
 ## Phase 4 — Comparison, coordinated cutover and cleanup
 
-- [ ] Tune agent guidance using the live-run follow-ups below; validate behavior
+Implementation/measurement record: [Phase 4](../../debug/browser-repl-phase4.md).
+The candidate default is 8 KiB, explicitly expandable to 32 KiB per cell through
+`repl.setOutputBudget(bytes)` before output. Phase 7b supersedes complete-write
+omission with explicitly incomplete excerpts and the existing bounded artifact;
+clipped JSON is never presented as complete, and actions are never replayed. Local capture
+coverage stays unchanged. The comparison harness runs actual provider calls
+against disposable Chrome/helper/worker fixtures; it does not substitute for
+physical web/iOS private-control acceptance.
+
+Final fixed-fixture comparison: 18/18 tasks correct on `gpt-5.6-luna`, low
+reasoning, three repeats per catalog/task. REPL lowered median cumulative input
+on table, article and form tasks, but table tasks took more calls/time and one
+article run expanded broadly. See the measured ranges/outlier in the record.
+The catalog-removal step stays pending physical lifecycle acceptance; no
+production cutover was performed.
+
+- [x] Tune agent guidance using the live-run follow-ups below; validate behavior
   on fixtures and transcripts rather than tests that assert prompt wording.
-- [ ] Evaluate a smaller default emitted-text budget with explicit per-cell
+- [x] Evaluate a smaller default emitted-text budget with explicit per-cell
   expansion within a documented hard ceiling. Keep full observations available
   locally at the existing materialization limits; output budgeting must not
   reduce page coverage. Apply one shared budget to explicit writes and console
@@ -227,7 +247,7 @@ revives an old handle. Whole failed cells retain uncertain-effect semantics.
   result. Let the agent select fewer fields from retained data or deliberately
   request more output without repeating browser actions. Choose defaults from
   varied-task measurements, not a single site's transcript.
-- [ ] Run old tools and REPL on the same fixed fixtures/tasks, model/reasoning
+- [x] Run old tools and REPL on the same fixed fixtures/tasks, model/reasoning
   settings and budgets; repeat enough to expose variability. Record actual
   provider input/output/cache usage, peak context, total calls, duration,
   correctness and failures, including generated code and errors. Live sites are
@@ -248,7 +268,7 @@ revives an old handle. Whole failed cells retain uncertain-effect semantics.
   accounting and user-facing labels where necessary. Keep terminal and public
   web search/read tools unchanged. Remove duplicate output/lifecycle paths made
   obsolete by this change, without unrelated architectural cleanup.
-- [ ] Document exact versions and coordinated upgrade order: drain active browser
+- [x] Document exact versions and coordinated upgrade order: drain active browser
   cells, prepare/install matching daemon/add-on and service/shared web, restart,
   verify capability and run a real-agent smoke task. Do not execute with a stale
   helper. Native iOS needs a new build only if its hosted-viewer bridge changes.
@@ -265,26 +285,26 @@ expansion and personal-browser attachment remain their own plans.
 Keep guidance short and applicable across sites. Validate these behaviors on
 varied tasks and page structures before deciding what belongs in the prompt.
 
-- [ ] **Select evidence before emitting it.** Retain useful observations in the
+- [x] **Select evidence before emitting it.** Retain useful observations in the
   REPL, perform filtering and aggregation locally, and emit what the next decision
   or answer needs. Avoid repeatedly emitting the same records. Refresh when the
   task requires current state; cached observations are historical evidence.
-- [ ] **Match claims to evidence coverage.** Distinguish complete reads from
+- [x] **Match claims to evidence coverage.** Distinguish complete reads from
   samples, slices, unloaded content and partial captures. Preserve coverage
   information through local transformations. `truncated:false` only describes
   tool-output truncation, not whether the agent inspected the whole source.
   Gather more evidence when needed, or qualify the answer's scope.
-- [ ] **Validate extraction assumptions.** Establish which page elements
+- [x] **Validate extraction assumptions.** Establish which page elements
   represent the requested entities and how ordering, grouping and exclusions
   work. Preserve relationships between each entity and its text, links and media.
   Check ambiguous selections against observed structure before acting or making
   claims. Use task-relevant evidence rather than assuming a selector proves
   semantic identity or completeness.
-- [ ] **Verify outcomes.** Successful execution does not prove the intended
+- [x] **Verify outcomes.** Successful execution does not prove the intended
   result occurred. Inspect relevant state after an action and distinguish
   observations from inferences. Choose the supported action appropriate to the
   task; do not prescribe one interaction method for every site.
-- [ ] **Make API contracts easy to use.** Document the actual return shapes
+- [x] **Make API contracts easy to use.** Document the actual return shapes
   (including the `nodes` field on snapshot/visible-DOM results), reference
   lifetimes and reset behavior with concise examples. Distinguish reusable local
   data from current action references. Reacquire handles after observations or
@@ -313,6 +333,83 @@ used the working interaction API, but broad output and verification detours grew
 provider input from 14,008 to 76,875 tokens. Three broad outputs preceded about
 73% of that growth. This motivates general emission controls and clearer API
 contracts, not site-specific filtering or a predetermined output budget.
+
+## Phase 5 — Standard REPL output and agent guidance (implemented)
+
+[Phase 5 plan](repl-phase-5-standard-output.md): remove `repl.write` entirely,
+make console output and the final non-undefined completion value the text surface,
+and simplify general selective-evidence guidance. Console capture already exists;
+final-value emission is new. This supersedes Phase 2's silent-final-expression
+contract. Keep existing browser authority, explicit images and
+output budgets; no extraction-specific helpers or simultaneous compaction work.
+
+Motivated by [the 8b60 live review](../../debug/browser-repl-8b60-review.md).
+Implemented before Phase 4 catalog cutover; its outstanding correctness,
+efficiency and physical lifecycle acceptance gates remain open.
+See [Phase 5 validation](../../debug/browser-repl-phase5.md) for measured results
+and the outstanding live product check.
+
+Follow-up evidence: [4462398b review](../../debug/browser-repl-446-review.md)
+found lower context but more output retries and lossy DOM extraction. The
+[accessibility representation spike](../../debug/browser-accessibility-spike.md)
+compares native Chrome AX, Pi's projection and Bud's Playwright path. It does not
+support switching to AX for size alone, and identified dropped string children
+and pressed states in Bud. The [fidelity fix](../../debug/browser-snapshot-fidelity.md)
+preserves those fields with targeted Chrome regressions; the corrected spike
+still favors Bud's size on HN. Selective extraction is scoped in Phase 6 below.
+
+## Phase 6 — Selective extraction and efficient output recovery (evaluated)
+
+[Phase 6 plan](repl-phase-6-selective-extraction.md): the expanded comparison harness
+now tests retained evidence, record boundaries, coverage and local overflow recovery
+across eight neutral fixtures on the same corrected Phase 5 runtime.
+
+All 48 final runs passed correctness checks. Three prompt candidates were tested
+and reverted: the final narrow reuse cue increased ordinary-task cumulative input
+by 18.8% and added six tool calls. The Phase 5 guidance remains unchanged by Phase 6.
+See [measurements](../../debug/browser-repl-phase6.md) for per-task results and
+limitations. Evaluation tooling is implemented; efficiency acceptance and the
+supplementary live product check remain open. No new extraction API,
+accessibility-layer switch, budget policy or compaction change was added.
+Phase 4 lifecycle and catalog-cutover gates remain open.
+
+## Phase 7 — Faithful interaction targets and native clicks (implemented locally)
+
+[Phase 7: Faithful interaction targets and native clicks](repl-phase-7-actionability.md)
+now uses normal Playwright clicks, preserves pointer hints and real references,
+and exposes element geometry/optional positions for covered cards. The mandatory
+sampler and its error/diagnostic paths are removed. No discovery API was needed.
+See [validation](../../debug/browser-repl-phase7.md); supplementary live-product
+acceptance remains. Phase 4 lifecycle/catalog-cutover and Phase 6 efficiency
+acceptance remain open.
+
+## Phase 7b — Compact snapshot output and overflow previews
+
+Plan: [Phase 7b](repl-phase-7b-output-compaction.md). Implemented locally;
+see [validation and budget evaluation](../../debug/browser-repl-phase7b.md).
+Supplementary [ed1 live review](../../review/browser-repl-ed1-review.md) confirms
+compact views and useful overflow recovery; stale-scroll and evidence-selection
+follow-ups remain.
+Preserve rich local observations while compacting emitted snapshots through short
+scoped references, exact repeated-URL factoring and omission of absent fields.
+Replace whole-emission omission with clearly marked bounded previews using the
+existing output/artifact path. Validate at the current 8 KiB baseline first,
+then reassess 8/16/32 KiB budgets against calls, latency, coverage and
+actual provider usage. Completed comparison retains 8 KiB with explicit expansion;
+all 36 candidate tasks passed, with mixed per-task token tradeoffs. This phase refines Phase 5 output semantics; it does not
+add history thinning or site-specific extraction. Phase 8 remains the final gate.
+
+## Phase 8 — Workspace admission, cleanup and final merge acceptance (scoped)
+
+[Phase 8 plan](repl-phase-8-workspace-lifecycle.md) is the final pre-merge phase.
+Resolve invisible workspace exhaustion, lifecycle cleanup and accurate capacity
+recovery using existing ownership and close paths. The interim ten-workspace cap
+is implemented and tested; it is not the completed lifecycle policy.
+
+This phase also closes out the earlier outstanding lifecycle, catalog-cutover,
+efficiency and interaction acceptance gates from recorded evidence. It does not
+supersede them or make unrelated platform/media roadmap work a merge prerequisite.
+Do not mark the REPL change ready to merge until this phase's checklist is complete.
 
 ## Documentation, contracts and completion
 
@@ -365,6 +462,8 @@ daemon and prepared helper are required. Production activation remains Phase 4.
 
 Automated acceptance includes the actual AgentService loop with a scripted provider,
 real-Chrome daemon/semantic fixtures, retained-data worker tests, image hydration,
-private-control and durable receipt regressions. The real provider-driven observation task passed as recorded above. Physical
+private-control and durable receipt regressions. Phase 4 adds complete-write overflow, explicit cell output expansion, clarified
+API guidance and the fixed-fixture provider comparison recorded above. The real
+provider-driven observation task passed as recorded above. Physical
 viewer handoff/Return and actual-agent interaction acceptance remain before
-Phase 4 comparison and coordinated catalog cutover.
+coordinated catalog cutover.

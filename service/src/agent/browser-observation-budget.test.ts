@@ -31,13 +31,14 @@ test('compact output is bounded at the final tool envelope and preserved exactly
 });
 
 
-test('blocked clicks are recoverable evidence without retry or invented success',async()=>{
+test('uncertain clicks retain honest outcomes without retry or invented success',async()=>{
   let calls=0;
   const executor=new BrowserToolExecutor({available:async()=>true,execute:async()=>{
-    calls++; return {ok:false,outcome:'rejected',error:'browser_click_blocked'};
+    calls++; return {ok:false,outcome:'unknown',error:'browser_outcome_unknown'};
   }},async()=>true);
   const result=await executor.execute(context,{type:'tool_call',tool:'browser_act',callId:'click',args:{action:'click',reference:'s:e1'}});
   assert.equal(calls,1);assert.equal(result.result.retryable,false);
-  assert.equal(result.payload.outcome,'rejected');assert.equal(result.payload.error,'browser_click_blocked');
-  assert.match(result.summary,/Click was not sent/);
+  assert.equal(result.payload.outcome,'unknown');assert.equal(result.payload.error,'browser_outcome_unknown');
+  assert.match(result.summary,/Inspect state/);
+  assert.doesNotMatch(result.summary,/not sent/);
 });

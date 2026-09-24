@@ -74,12 +74,17 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   A headed minimized/background regression covers fitted clicks, typing and scrolling.
 
 ## Limits and lifetime
-Two active workspaces per Bud, one per thread, sharing one process and one FIFO page lock. Page operations (including agent
+Ten active workspaces per Bud, one per thread, sharing one process and one FIFO page lock. Page operations (including agent
 work, private input and fitting) wait at most four seconds for the FIFO serial
 CDP lock. Expired requests reject before page access after waiting.
 Requests expire within 45 seconds (service sends at most 30 seconds,
 limited by the invocation lease). Closed identities remain as 45-second tombstones.
-At most 128 identities, 16 returned targets. Structured observations (`inspect`)
+At most 128 identities, 16 returned targets. The ten-workspace interim cap is
+shared by admission and the advertised `max_sessions` capability. Native tab
+closure does not release a logical workspace; admission/cleanup and clearer limit
+messaging are scoped in the final pre-merge
+[REPL Phase 8](../../../plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md). See
+[validation](../../../debug/browser-workspace-limit.md). Structured observations (`inspect`)
 are the only observation path: they paginate a 2 MiB retained snapshot, compact
 observations have a 32 KiB complete helper budget and full-node pages are 24 KiB
 plus text. The flat legacy `observe` command and its 256-element result were
@@ -487,17 +492,24 @@ See [Phase 3s](../../../plan/bud-owned-browser/phase-3s-confirmed-defects.md).
   (unit-tested with a panicking task).
 
 
-## Semantic click preparation
+## Native semantic clicks — Phase 7
 
-The helper now selects a bounded randomized hit-tested point on the exact observed
-node before calling Playwright. `manager.rs` classifies `browser_click_blocked`
-as rejected (no click invocation); it does not poison Chrome or replay the action.
-Post-invocation ambiguity remains `browser_outcome_unknown`. `semantic.rs` logs
-only fixed stages/flags and bounded numeric candidate count, normalized point,
-preparation time and reason codes. No observed URL or raw exception is logged.
-`live_blocked_click_preserves_session_and_allows_fresh_observation` exercises the
-real helper-to-daemon classification and a subsequent observation in the same
-workspace. Existing authority/private-control fences apply unchanged.
+The helper uses native Playwright actionability on one exact resolved element,
+with the existing three-second click budget. Mandatory random sampling is removed.
+`Inspect` accepts `geometry` and optional click-only `position:{x,y}`. The daemon
+validates finite nonnegative coordinates; the helper validates bounds against the
+same observed element's current CSS padding box. Reference, document, workspace,
+private-control and result-delivery checks are unchanged.
+
+`browser_click_blocked` and sampler diagnostic fields are removed. Post-invocation
+ambiguity remains `browser_outcome_unknown`; it does not poison Chrome or cause
+replay. `semantic.rs` logs fixed stage/boolean flags without raw page content.
+`live_uncertain_click_preserves_session_and_allows_fresh_observation` verifies the
+real helper/daemon failure and a subsequent observation in the same workspace.
+`live_repl_position_and_geometry_use_the_guarded_bridge` covers positioned input,
+out-of-bounds refusal and preserved bindings through the actual worker/daemon.
+The table-order fixture follows bounded frozen continuations rather than assuming
+a fixed first-page node count.
 
 ## REPL runtime foundation
 
@@ -547,3 +559,47 @@ cells remain capture-free. Ordinary action errors do not restart viewer transpor
 The live REPL fixture verifies form input, stale role/reference handles, ambiguous
 click after an earlier mutation, foreign tab access, close/reopen and retained
 data. Physical mobile/minimized acceptance remains in the implementation plan.
+
+
+## REPL standard output — Phase 5
+
+Successful native completion values and console output now share the existing
+bounded text result. `repl.write` is removed with no alias; images remain explicit.
+The tool guidance teaches retained observations, selective extraction, bounded
+inspection previews and exact JSON when needed. Wire fields, receipts, authority,
+owner stamping, viewer captures and compaction are unchanged. Upgrade the service
+guidance and matching daemon/helper together; restart workers to load the API.
+See [contract](../../../plan/bud-owned-browser/repl-phase-5-standard-output.md)
+and [validation](../../../debug/browser-repl-phase5.md).
+
+
+## Local REPL observation diagnostics
+
+`repl.rs` implements daemon-only `BUD_BROWSER_TRACE=1`: bounded in-memory capture
+of snapshot/evaluate bridge results and private raw-snapshot/formatted-output
+metadata, stripped before worker/public delivery. It stores at most 128 stage
+records/4 MiB per cell, 1 MiB per raw/result excerpt, and 64 trace files/64 MiB per
+worker inside its existing private temporary directory. IDs correlate thread,
+session, invocation, request and runtime generation with persisted service tools.
+No trace content enters ordinary logs or the model; only paths/IDs are logged.
+
+`repl_execution.rs` forwards snapshot tracing internally and saves authorized
+completed-cell traces, then rechecks sequence/invocation/authority after diagnostic
+I/O. Lost authority retracts the new file and withholds output. Interrupted or
+already-withheld results discard pending traces. I/O failures do not replay/fail
+browser work; cleanup failures warn. Worker destruction removes its directory.
+The same host-code trust model applies; arbitrary evaluate/output data can be
+sensitive. No wire/schema/route/capability or output budget change. Rebuild/prepare
+and restart the matching daemon/helper; no service change is required.
+See [plan](../../../plan/bud-owned-browser/repl-observation-tracing.md).
+
+
+## Compact snapshot output — Phase 7b
+
+REPL readiness now also requires packaged `repl-snapshot.mjs`. Snapshot short refs
+are local facade handles bound to their original target and observation; the existing
+Rust bridge checks current workspace/private authority, while the semantic engine
+checks document/reference freshness. Formatting historical data does not revive
+handles or cause page access. Result bounds, receipts and output withholding are
+unchanged; bounded text may now contain an explicitly incomplete overflow excerpt.
+See [helper contract](../../browser-helper/browser-helper.spec.md#compact-retained-snapshot-views--phase-7b).

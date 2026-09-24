@@ -1,5 +1,7 @@
+import { snapshotView } from './repl-snapshot.mjs';
+
 // Workspace facade. Authority and ownership are always checked by the daemon.
-export function createBrowser(operation) {
+export function createBrowser(operation, remainingBytes) {
   const images = new WeakMap();
   const observations = new Map();
   const inspect = async (id, operationName, options = {}) => (await operation({ ...options, action: 'inspect', target_id: id, operation: operationName })).observation;
@@ -13,18 +15,30 @@ export function createBrowser(operation) {
     const observe = async (kind, options) => {
       const result = await operation({ ...options, action: 'repl', operation: kind, target_id: id });
       observations.set(id, result.observation_id);
-      return result;
+      return kind === 'snapshot' ? snapshotView(result,
+        (reference, observation_id) => element({ reference }, observation_id), remainingBytes) : result;
     };
     const evidence = () => {
       const observation_id = observations.get(id);
       if (!observation_id) throw Error('browser_observation_required');
       return observation_id;
     };
-    const element = options => {
+    const element = (options, observed = evidence()) => {
       // Bind evidence now, not when the retained handle is eventually invoked.
-      const observation_id = evidence();
+      const observation_id = observed;
       return Object.freeze({
-        click: () => inspect(id, 'click', { ...options, observation_id }),
+        geometry: () => inspect(id, 'geometry', { ...options, observation_id }),
+        click: (settings = {}) => {
+          if (!settings || typeof settings !== 'object' || Array.isArray(settings) ||
+              Object.keys(settings).some(key => key !== 'position')) throw Error('browser_invalid_arguments');
+          const position = settings.position;
+          if (position !== undefined && (!position || typeof position !== 'object' || Array.isArray(position) ||
+              Object.keys(position).some(key => !['x', 'y'].includes(key)) ||
+              !Number.isFinite(position.x) || !Number.isFinite(position.y) || position.x < 0 || position.y < 0))
+            throw Error('browser_invalid_arguments');
+          return inspect(id, 'click', { ...options, observation_id,
+            ...(position === undefined ? {} : { position: { x: position.x, y: position.y } }) });
+        },
         fill: text => inspect(id, 'fill', { ...options, observation_id, text }),
         focus: () => inspect(id, 'focus', { ...options, observation_id }),
       });

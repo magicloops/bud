@@ -460,14 +460,15 @@ Origin protection remains on cookie writes/upgrades. See the exact
 Migration 0041 must precede service/shared web and mobile upgrade; daemon wire
 contracts remain unchanged.
 
-## Blocked semantic clicks
+## Semantic click outcomes — Phase 7
 
-`repository.ts` treats rejected `browser_click_blocked` as recoverable: clear the
-pending action while preserving session identity, generation, authority, privacy,
-revision and healthy media. Unknown results remain unknown and cannot replay a
-mutation. `repository.test.ts` verifies preservation in the isolated database
-fixture alongside ownership/stale-action checks. No new route, table, viewer
-identity, or permission path is introduced.
+Native click failures remain unknown, not proof that input was never sent.
+`repository.ts` preserves healthy session/authority/media for uncertain page
+operations and ordinary cell failures, without mutation replay. Rejected invalid
+position arguments also preserve the session. The obsolete sampler-specific
+`browser_click_blocked` mapping is removed. Isolated repository tests cover both
+rejected arguments and uncertain actions alongside ownership/stale-action checks.
+No new route, table, viewer identity or permission path is introduced.
 
 ## Internal browser REPL — Phase 1
 
@@ -520,3 +521,15 @@ Context accounting counts selected images, not tool-result blocks.
 No new table, migration or client contract; deploy the matching prepared add-on
 and daemon before using the development-default REPL catalog.
 `BUD_BROWSER_TOOL_MODE=tools` explicitly selects the old-family comparison.
+
+
+## REPL standard output — Phase 5
+
+Successful native completion values and console output now share the existing
+bounded text result. `repl.write` is removed with no alias; images remain explicit.
+The tool guidance teaches retained observations, selective extraction, bounded
+inspection previews and exact JSON when needed. Wire fields, receipts, authority,
+owner stamping, viewer captures and compaction are unchanged. Upgrade the service
+guidance and matching daemon/helper together; restart workers to load the API.
+See [contract](../../../plan/bud-owned-browser/repl-phase-5-standard-output.md)
+and [validation](../../../debug/browser-repl-phase5.md).

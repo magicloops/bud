@@ -3808,3 +3808,41 @@ still destroys its worker. Browser errors retain uncertain partial-effect outcom
 and trigger at most one coalesced viewer refresh, not transport replacement.
 Upgrade the service catalog, rebuilt daemon and prepared helper together; no
 mobile/web build or schema migration is required for these facade methods.
+
+
+## Native semantic actionability (REPL Phase 7)
+
+Supersedes the sampler/error portion of “Semantic click targeting and observed
+link URLs”; exact URL preservation remains. Snapshot nodes retain only upstream
+`cursor:"pointer"` as an optional hint. Compact text includes `[cursor=pointer]`
+and retains hinted nodes/references; it does not invent roles or guarantee input.
+Existing field-value exclusions, identity, retention and output limits apply.
+
+The existing private inspect bridge adds `operation:"geometry"`, resolved by
+reference or exact locator under the same observation/target authority. It returns
+`data.observation:{width,height}` in CSS padding-box units from the exact element
+in its own frame. The REPL facade exposes this as `await handle.geometry()`.
+It does not return page text or grant access to other workspaces. Zero-sized/inline
+client boxes do not support positioned input; default native clicks remain usable.
+
+Inspect/click accepts optional `position:{x,y}` (facade
+`handle.click({position:{x,y}})`). Both numbers must be finite and nonnegative;
+unknown fields reject. The helper requires x < current width and y < current height
+on the same observed element. Values are CSS element-relative coordinates, not
+screenshot or top-level frame pixels. Position is click-only; invalid arguments
+return `browser_invalid_arguments`. Geometry and action requests retain current
+owner/workspace/observation/document/private-control/result-delivery fences.
+
+Normal clicks invoke Playwright on one resolved handle with the existing
+three-second click budget. No random/grid sampler, force, sibling substitution or
+mutation replay. Native visibility, stability, scrolling and hit checks apply to
+both default and explicitly positioned input. Playwright may retry internally;
+a completed click still requires outcome verification. The sampler-specific
+`browser_click_blocked` code is removed. Native ambiguous failures remain unknown,
+without healthy-session teardown; a failed whole cell can have partial effects.
+
+Coordinated service instructions, rebuilt daemon and matching prepared helper are
+required; drain active browser cells, update/build/prepare, then restart for smoke
+validation. No new route, DB migration, SSE family, web/mobile build or compatibility
+mode. Existing capability checks remain. See
+[Phase 7](../plan/bud-owned-browser/repl-phase-7-actionability.md).

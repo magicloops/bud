@@ -5,8 +5,55 @@ import { Engine, sanitize } from './engine.mjs';
 import { OBSERVATION_BYTES, compactPage } from './compact.mjs';
 
 test('field values and implementation properties never enter snapshots', () => {
-  const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:[{role:'text',text:'secret'}]}], 'x', new Map());
+  const result = sanitize([{role:'textbox', name:'Email', text:'secret', value:'secret', children:['secret', {role:'text',text:'secret'}]}], 'x', new Map());
   assert.deepEqual(result, [{depth:0,role:'textbox',name:'Email'}]);
+});
+test('inline strings preserve order and depth without acquiring action references', () => {
+  const refs = new Map();
+  const nodes = sanitize([{role:'paragraph',children:['Stock: ',{role:'strong',text:'17'},' units remaining.']}], 'x', refs);
+  assert.deepEqual(nodes, [
+    {depth:0,role:'paragraph'}, {depth:1,role:'text',text:'Stock: '},
+    {depth:1,role:'strong',text:'17'}, {depth:1,role:'text',text:' units remaining.'},
+  ]);
+  assert.equal(refs.size, 0);
+  assert.throws(() => sanitize(Array(20001).fill('text'), 'x', new Map()), /browser_observation_limit/);
+});
+test('toggle states preserve false and mixed without allowing arbitrary string properties', () => {
+  const nodes = sanitize([
+    {role:'button',pressed:true}, {role:'button',pressed:false}, {role:'button',pressed:'mixed'},
+    {role:'checkbox',checked:'mixed'}, {role:'button',pressed:'secret',disabled:'secret'},
+  ], 'x', new Map());
+  assert.deepEqual(nodes.map(n=>n.pressed), [true,false,'mixed',undefined,undefined]);
+  assert.equal(nodes[3].checked, 'mixed');
+  assert.equal(nodes[4].disabled, undefined);
+});
+
+test('Chrome inline evidence and toggle states survive full, scoped and compact snapshots', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
+  const browser = await chromium.launch({executablePath:process.env.BUD_BROWSER_EXECUTABLE,headless:true,args:['--use-mock-keychain','--password-store=basic']});
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<main><p>BEFORE <a href="#details">Evidence</a> AFTER</p><p>Stock: <strong>17</strong> units remaining.</p><button aria-pressed="true">On</button><button aria-pressed="false">Off</button><button aria-pressed="mixed">Mixed</button><div role="checkbox" aria-checked="mixed">Partial</div></main><label>Password<input type="password" value="FIELD_SECRET"></label>');
+    const cdp = await page.context().newCDPSession(page);
+    const target_id = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+    await cdp.detach();
+    const engine = new Engine(browser);
+    const full = await engine.execute({operation:'snapshot',target_id,full:true,compact:true});
+    assert.deepEqual(full.nodes.filter(n=>n.role==='text' || n.role==='strong').map(n=>n.text), ['BEFORE','AFTER','Stock:','17','units remaining.','Password']);
+    // Playwright omits false in this snapshot; absence must not be invented as false.
+    assert.deepEqual(full.nodes.filter(n=>n.role==='button').map(n=>n.pressed), [true,undefined,'mixed']);
+    assert.equal(full.nodes.find(n=>n.role==='checkbox').checked, 'mixed');
+    assert.doesNotMatch(JSON.stringify(full), /FIELD_SECRET/);
+    const scoped = await engine.execute({operation:'snapshot',target_id,scope:full.nodes.find(n=>n.role==='main').reference,compact:true});
+    assert.match(scoped.text, /text: "BEFORE"[\s\S]*link "Evidence"[\s\S]*text: "AFTER"/);
+    assert.match(scoped.text, /text: "Stock:"[\s\S]*strong: "17"[\s\S]*text: "units remaining\."/);
+    for (const state of ['pressed=true','pressed=mixed','checked=mixed']) assert.ok(scoped.text.includes(state));
+    const visible = await engine.execute({operation:'visible_dom',target_id,compact:true});
+    assert.equal(visible.nodes.find(n=>n.name==='Mixed').pressed, 'mixed');
+    assert.doesNotMatch(JSON.stringify(visible), /FIELD_SECRET/);
+    const legacy = await engine.execute({operation:'snapshot',target_id});
+    assert.ok(legacy.nodes.some(n=>n.text==='units remaining.'));
+    assert.equal(legacy.nodes.find(n=>n.name==='Mixed').pressed, 'mixed');
+  } finally { await browser.close(); }
 });
 test('managed Chrome structured snapshots, scope, continuation and actions', {skip: !process.env.BUD_BROWSER_EXECUTABLE}, async () => {
   const browser = await chromium.launch({ executablePath: process.env.BUD_BROWSER_EXECUTABLE, headless: true, args:['--use-mock-keychain','--password-store=basic'] });
