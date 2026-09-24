@@ -126,15 +126,15 @@ async fn build_doctor_report(args: &BudArgs) -> DoctorReport {
     checks.push(check_shell(default_shell()).await);
     checks.push(check_service_manager());
     checks.push(check_supervision_directives());
-    checks.push(check_browser_addon(&paths.base_dir, &args.server).await);
+    checks.push(check_browser_addon(&paths.base_dir).await);
     DoctorReport::new(checks)
 }
 
-/// Optional browser add-on: reports exactly what the daemon will do with the
-/// same resolution and probe path (`BrowserManager::configured_for`).
-async fn check_browser_addon(base_dir: &Path, server: &str) -> DoctorCheck {
+/// Optional browser add-on: reports installed state using the
+/// same read-only resolution and readiness probe (no startup installation).
+async fn check_browser_addon(base_dir: &Path) -> DoctorCheck {
     use crate::browser::addon;
-    let manifest = match addon::resolve(base_dir) {
+    let (runtime, manifest) = match addon::resolve(base_dir) {
         addon::Resolution::Unavailable(reason) if addon::env_override().is_none() => {
             let prepared = addon::read_manifest(base_dir).ok().flatten().is_some();
             return check_warning(
@@ -145,7 +145,7 @@ async fn check_browser_addon(base_dir: &Path, server: &str) -> DoctorCheck {
                     "Browser support is not prepared (optional)".into()
                 },
                 vec![
-                    "Run `bud browser prepare` to detect or install a browser, then restart Bud."
+                    "Restart Bud for bundled-helper updates; use `bud browser prepare` for initial setup or Node/browser repair."
                         .into(),
                 ],
             );
@@ -155,17 +155,15 @@ async fn check_browser_addon(base_dir: &Path, server: &str) -> DoctorCheck {
                 "Unset BUD_BROWSER_EXECUTABLE/BUD_BROWSER_HELPER or set both, then restart Bud.".into(),
             ]);
         }
-        addon::Resolution::EnvOverride(_) => None,
-        addon::Resolution::Manifest(_, manifest) => Some(manifest),
+        addon::Resolution::EnvOverride(runtime) => (runtime, None),
+        addon::Resolution::Manifest(runtime, manifest) => (runtime, Some(manifest)),
     };
-    let manager =
-        crate::browser::BrowserManager::configured_for(base_dir.to_path_buf(), server.to_string())
-            .await;
-    let capability = manager.capability();
+    let available =
+        addon::probe(&runtime).await.is_ok() && crate::browser::secure_storage_ready().is_ok();
     let mut remediation = Vec::new();
     if let Some(manifest) = &manifest {
         for reason in manifest.stale() {
-            remediation.push(format!("Stale: {reason}. Run `bud browser prepare` again."));
+            remediation.push(format!("Stale: {reason}. Restart for helper updates; `bud browser prepare` repairs dependencies."));
         }
     }
     if let Err(error) = crate::browser::secure_storage_ready() {
@@ -183,12 +181,12 @@ async fn check_browser_addon(base_dir: &Path, server: &str) -> DoctorCheck {
         ),
         None => "BUD_BROWSER_* environment override".into(),
     };
-    if capability["available"] == true && remediation.is_empty() {
+    if available && remediation.is_empty() {
         check_ok(
             "browser",
             format!("{describe}: launched, answered CDP, closed; persistent profile ready"),
         )
-    } else if capability["available"] == true {
+    } else if available {
         check_warning(
             "browser",
             format!("{describe}: usable, with notes"),

@@ -14,6 +14,24 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `browser-repl-5c1-review.md`
+
+Reviews all six cells and matching traces of the same-post 16 KiB rerun against
+588: complete comment coverage in one snapshot, lower total context and fewer
+rounds, with the changed discovery prompt separated from the budget tradeoff.
+
+### `browser-repl-1af-review.md`
+
+Reviews all 16 cells and traces of the 16 KiB live experiment versus 588's 8 KiB
+run: confirms active budget, separates changed discussion size from repeated
+output costs, and records stale-click and incomplete-record recovery limits.
+
+### `browser-repl-588-review.md`
+
+Reviews all seven browser cells and matching traces for the Anthropic-community
+run, compares actual usage with ed1, and separates lower context/time from
+unresolved duplicate-record ordering and unexercised scroll/upgrade acceptance.
+
 ### `browser-repl-ed1-review.md`
 
 Phase 7b live review of all ten browser cells and matching traces: useful overflow

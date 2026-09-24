@@ -280,3 +280,22 @@ scope and remain accurate except where noted here.
 - **Pinned checksum table is generated into Rust source at release time** from
   the same build that produces the helper tarball, so the daemon is
   self-contained and `prepare` never consults the release manifest.
+
+## Implemented refinement: startup helper upgrades (2026-09-24)
+
+[REPL Phase 7d](../plan/bud-owned-browser/repl-phase-7d-startup-helper-upgrade.md)
+implements automatic reconciliation of the bundled helper for already-enabled managed
+installations. `browser prepare` remains explicit opt-in and dependency setup;
+manifest absence remains disabled. Startup may extract/validate its embedded
+bundle and atomically update the manifest before advertising browser readiness.
+This supersedes the original read-only-startup/manual-helper-upgrade policy. Current helper storage is content-addressed (`helper/sha256-<digest>/`),
+not keyed solely by the daemon version. Development overrides remain explicit.
+Node/Chrome downloads and browser selection remain preparation responsibilities;
+no profile changes, hot worker updates or new service authority are introduced.
+Implemented with a stable nonblocking installation lock shared by startup,
+prepare/remove and version recording. Required entrypoints and all packaged file
+sizes are checked; incomplete caches receive a new sibling directory rather than
+replacing in-use files. Readiness exercises Node >=22, a real REPL cell and one
+headless disposable browser/semantic helper within 30 seconds. Extraction waits
+at most 15 seconds; timed-out staging cannot commit. Status and doctor remain
+non-installing. See [validation](../debug/browser-startup-helper-upgrade.md).

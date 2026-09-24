@@ -1554,3 +1554,13 @@ Overflow recovery selects retained data or bounded artifact excerpts without act
 replay. Existing collector/result fields carry the new excerpt; no catalog name,
 route, ownership, transcript or image change is introduced. See
 [validation and budget decision](../../../debug/browser-repl-phase7b.md).
+
+### Phase 7c observation guidance
+
+The REPL catalog distinguishes semantic roles from HTML tags, view limits from
+the remaining cell budget, and loaded/read coverage from transport truncation.
+Action-only observation refreshes may remain silent. Page scroll is exact-target
+input without an observation dependency; element handles retain freshness checks.
+Guidance is evaluated with frozen catalogs on identical 8 KiB runtimes, not
+prompt-vocabulary assertions. Results and tradeoffs are recorded in
+[the Phase 7c debug note](../../../debug/browser-repl-phase7c.md).

@@ -25,6 +25,7 @@ browser manager owns serialization and authority for both paths.
   Pressed states participate in wrapper preservation and text rendering, including
   false/mixed. Inline text survives compaction and existing byte/node limits.
 - `compact.test.mjs`: structure/state preservation (including blank cells and named containers), deep hierarchy, pagination, Unicode and limits.
+- `scroll.test.mjs`: real Chrome page-scroll regressions across missing/retired observations, child/main-frame navigation, separate workspace engines, target closure and unchanged stale-element rejection.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
   Fidelity regressions cover mixed inline text, toggle states, scoped/full/visible
   snapshots and continued exclusion of field values.
@@ -123,7 +124,7 @@ See [Phase 7](../../plan/bud-owned-browser/repl-phase-7-actionability.md) and
   unawaited calls and rejection of late callbacks/output.
 
 Each worker has a 128 MiB V8 old-space limit (not a total RSS limit), 64 KiB code
-and an 8 KiB default text output budget (32 KiB explicit ceiling); host supervision enforces a 30-second maximum
+and a 8 KiB default text output budget (32 KiB explicit ceiling); host supervision enforces a 30-second maximum
 cell deadline. Successful non-undefined completion values append after tracked calls drain. `var` supports repeated declarations;
 lexical declarations follow Node REPL rules. Console/stdout/stderr writes share
 the output budget. Errors are bounded separately to 2 KiB. Oversized text gets a local captured-output file; images require explicit emission.
@@ -166,7 +167,11 @@ real Chrome daemon tests cover owned frame evaluation and local-only follow-ups.
 ## REPL interactions — Phase 3
 
 `repl-api.mjs` adds reference/exact role-name handles with click/fill/focus,
-scroll and guarded committed text. Handles capture the latest observation ID at
+page scrolling and guarded committed text. Page scroll resolves a live exact target
+before element-evidence checks, accepts one bounded integer delta and never retries.
+The facade sends no observation ID for scroll; daemon ownership/private/active-cell
+fences remain mandatory. Navigation may race input; observe afterward for content.
+Handles capture the latest observation ID at
 construction; refreshing a snapshot cannot revive a retained handle. The existing
 engine still checks document, TTL, unique match and bounded click actionability.
 `tabs.create` creates an additional owned tab; `tab.select` is logical viewer
@@ -180,10 +185,13 @@ fixture covers immediate new-tab metadata, stale handles, forms, partial effects
 cross-workspace rejection, tab close/reopen and private Return using the facade.
 
 Managed helper identity is the embedded archive SHA-256, independent of the daemon
-Git label. Preparation installs changed bundles side by side; daemon resolution
-rejects an old managed helper until preparation with the matching binary. Rebuild,
-prepare, then restart after helper edits. Explicit checkout overrides still bypass
-managed identity checks. Existing profile data and sign-ins are unaffected.
+Git label. Preparation enables browsing; subsequent daemon starts reconcile the
+embedded helper under the installation lock and validate semantic and REPL
+entrypoints before committing the manifest. Rebuild and restart after embedded
+helper edits; no repeat prepare is needed unless Node/Chrome require repair.
+Complete bundles are reused; incomplete ones are repaired beside the old directory.
+Explicit checkout overrides remain unchanged. Existing profiles/sign-ins are
+unaffected. See [Phase 7d](../../plan/bud-owned-browser/repl-phase-7d-startup-helper-upgrade.md).
 
 
 ## Phase 4 output controls

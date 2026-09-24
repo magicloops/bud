@@ -16,7 +16,8 @@ See [Phase 2 validation](../../debug/browser-repl-selective-observations.md).
 Implement [the REPL design](../../design/browser-repl.md) through the original
 four phases and the Phase 5–7 output, extraction and interaction refinements below,
 then Phase 7b snapshot/output compaction and budget reassessment, Phase 7c scrolling
-and observation use, followed by
+and observation use, Phase 7d automatic bundled-helper upgrades, Phase 7e client
+recovery cleanup, followed by
 Phase 8 workspace lifecycle and final merge acceptance. Keep page data in a thread's Node workspace and send only deliberately
 emitted evidence to the model. Preserve the shared Chrome profile, thread-owned
 tabs, user control, recovery, viewer and existing agent loop.
@@ -400,14 +401,44 @@ actual provider usage. Completed comparison retains 8 KiB with explicit expansio
 all 36 candidate tasks passed, with mixed per-task token tradeoffs. This phase refines Phase 5 output semantics; it does not
 add history thinning or site-specific extraction. Phase 8 remains the final gate.
 
-## Phase 7c — Reliable scrolling and focused observation use (scoped)
+## Phase 7c — Reliable scrolling and focused observation use (implemented; live review pending)
 
 [Phase 7c plan](repl-phase-7c-observation-use.md) follows the
-[ed1 review](../../review/browser-repl-ed1-review.md). Investigate stale page-scroll
-invalidation first, preserving ownership/private control and element freshness.
-Then evaluate concise guidance distinguishing semantic roles from HTML tags,
-refreshing without reprinting, selecting retained evidence and honest coverage.
-Keep 8 KiB; no automatic diffing, specialized extraction or history thinning.
+[ed1 review](../../review/browser-repl-ed1-review.md). Child-frame navigation was
+reproduced retiring observations without a changed main document. Page scrolling
+now uses the live owned tab without element evidence; stale-element and authority
+checks remain. Neutral live-Chrome regressions and repeated provider comparisons
+are recorded in [the investigation](../../debug/browser-repl-phase7c.md). Guidance
+keeps semantic-role/coverage/budget clarifications; stronger selection/reuse
+ordering was dropped after mixed results. Keep 8 KiB; no automatic diffing,
+specialized extraction or history thinning. A supplementary product run is still
+required before closing this phase; local/provider tests do not replace it.
+
+## Phase 7d — Automatic bundled-helper upgrades (implemented)
+
+[Phase 7d plan](repl-phase-7d-startup-helper-upgrade.md) keeps `browser prepare`
+as browser opt-in and dependency setup. On subsequent daemon starts, an enabled
+managed installation automatically stages and validates the helper bundled in
+that daemon, then atomically updates its manifest. Disabled installations and
+explicit development overrides remain untouched. No startup downloads, browser
+switching or hot replacement; preparation failures preserve state and leave only
+browser capability unavailable. Implemented with shared installation locking,
+full packaged-file presence/size checks, disposable semantic/REPL readiness and
+atomic manifest commits. See [validation](../../debug/browser-startup-helper-upgrade.md).
+Phase 8 retains device/product acceptance and the final merge gate.
+
+## Phase 7e — Client recovery and console cleanup (implemented; physical acceptance pending)
+
+[Phase 7e plan](repl-phase-7e-client-recovery-cleanup.md) follows the
+[console investigation](../../debug/dev-console-outage-and-recovery-noise.md).
+The implementation coordinates terminal recovery triggers, skips dependent live
+snapshots after failed ensure, backs off offline/inventory requests, and logs
+bounded recovery transitions. Mounted recovery/viewer tests and related pure tests
+pass; controlled physical outage acceptance remains open.
+Preserve output, cursor recovery, ownership and browser private-control behavior.
+Unexplained network changes and injected-script errors remain separate investigations;
+quieter logs do not establish that those causes are fixed. Phase 8 retains the
+final merge gate and receives this phase's recovery acceptance record.
 
 ## Phase 8 — Workspace admission, cleanup and final merge acceptance (scoped)
 

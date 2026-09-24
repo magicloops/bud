@@ -55,7 +55,7 @@ export function createBrowser(operation, remainingBytes) {
         if (exact !== true || typeof name !== 'string') throw Error('browser_exact_name_required');
         return element({ locator: { role, name }, ...(scope === undefined ? {} : { scope }) });
       },
-      scroll(delta_y) { return inspect(id, 'scroll', { observation_id: evidence(), delta_y }); },
+      scroll(delta_y) { return inspect(id, 'scroll', { delta_y }); },
       insertText(text) { return operation({ action: 'repl', operation: 'insert_text', target_id: id, text }); },
       select() { return operation({ action: 'repl', operation: 'select_tab', target_id: id }); },
       async close() {

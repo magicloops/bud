@@ -541,8 +541,9 @@ Terminal session/xterm ownership for the existing-thread route.
   corruption
 - recover the daemon-side PTY through `terminal/ensure` (idempotent, no
   history replay of its own)
-- reconnect only on EventSource errors and the missed-heartbeat watchdog (the
-  5s status-staleness heuristic is gone)
+- reconnect transport on EventSource errors and the missed-heartbeat watchdog;
+  one visit-local scheduler also reconciles Bud availability and required snapshots
+  (the 5s status-staleness heuristic is gone)
 - reduce typed `terminal.event` payloads into session facts (`mode_changed`)
   and the command lifecycle chip (`command_started` / `command_finished` /
   `child_exited`); `output_gap` forces a re-snapshot reconnect
@@ -580,7 +581,7 @@ Terminal session/xterm ownership for the existing-thread route.
 
 - Add deeper hook/integration coverage for transcript reconciliation flows beyond the extracted pure helper tests
 - Add deeper hook/integration coverage for agent-stream heartbeat timeout, reconnect, and explicit resync-required behavior
-- Add deeper hook/integration coverage for terminal reconnect/recovery behavior beyond the shared timing policy tests
+- Extend mounted terminal recovery coverage to physical browser/network and bytes-renderer presentation acceptance
 - Add browser-level visual regression coverage for terminal/file-viewer overlay, header, and xterm geometry behavior
 
 ---
@@ -719,3 +720,42 @@ work fragment for a turn. Missing/null means plain Worked; no artifact fallback.
 Duration participates in row memoization, leaving unrelated rows unchanged.
 Projection and mounted parity tests cover before/after-final arrival, repeated
 refreshes, pagination and thread changes. See [plan](../../../../plan/service-owned-turn-timing.md).
+
+## Client recovery cleanup (Phase 7e)
+
+`use-terminal-session.ts` owns one serial recovery attempt and one pending timer
+per thread visit. A successful ensure precedes a required live snapshot. Offline
+failures preserve rendered output and the presence stream; initial empty bytes
+views can use authorized persisted history. Snapshot-required remains set until
+snapshot application. Routine grid reconnects re-arm the stream without resetting
+scrollback; byte reconnects keep the durable offset. Session records are acquired
+once per visit, rather than recreated on every transport retry.
+
+Offline probes back off 2/4/8/16/30 seconds, reset only after view preparation and
+an OPEN stream. Bud-online bypasses delay; a notification during a failed attempt
+retains one wake-up, while a successful attempt absorbs it. CONNECTING sources do
+not run connected-stream probes. The fallback resumes on open, including initial
+offline mounts and missed presence events. Transport retry retains the existing
+500 ms stepped policy. Requests and decoded responses are visit-abort fenced;
+obsolete source callbacks cannot log, publish or recover. Definitive resource/auth
+loss stops retries and clears protected terminal state. Failed input is not replayed;
+existing never-sent input queue behavior is preserved and fenced across visits.
+
+Agent recovery logs stable triggers and bounded failure classes. Bootstrap success
+is reported as recovery only after the replacement stream opens. Thread changes
+reset cursor initialization even when initial cursor values match; cleanup closes
+the latest replacement source and watchdog, rather than only the original source.
+Definitive bootstrap HTTP failures stop retries. No cursor/SSE wire changes.
+
+- `recovery-diagnostics.ts`: local episode diagnostics, sanitized status/code
+  classification, and offline/inventory backoff values. No global connectivity
+  state or request scheduler. Logs info for transitions, debug for attempts/delays,
+  and warnings for changed unexpected failure classes; raw bodies/events are absent.
+- `client-recovery.test.tsx`: mounted terminal/agent/inventory tests with deferred
+  responses and a fake clock/EventSource. Covers offline request counts, online
+  races, missed notifications, transport failures, output continuity, Strict Mode,
+  auth/resource stops, thread changes, inventory backoff and diagnostic deduplication.
+
+See [Phase 7e](../../../../plan/bud-owned-browser/repl-phase-7e-client-recovery-cleanup.md)
+and [validation](../../../../debug/dev-console-outage-and-recovery-noise.md).
+Physical service/daemon/network interruption acceptance remains outstanding.

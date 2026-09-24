@@ -3797,7 +3797,11 @@ supplies authority; worker-supplied tab IDs never confer ownership.
 The facade provides `tabs.create(url?)`, `tab.select()`, `tab.close()`,
 `tab.getByReference(reference)` and `tab.getByRole(role,{name,exact:true,scope?})`.
 Element handles expose click/fill/focus via existing inspect actions and bind an
-observation ID at construction. `tab.scroll(delta_y)` binds the latest observation;
+observation ID at construction. `tab.scroll(delta_y)` sends a single wheel request
+to the exact live owned target without `observation_id` (integer −10000…10000).
+It retains active-cell, ownership, private-control, sequence and delivery fences.
+It may race navigation: observe afterward before making content claims; closed
+targets reject without reopening, retargeting or replaying uncertain input.
 `tab.insertText(text)` requires a live focus guard on that same tab. New snapshots,
 navigation and control changes invalidate old action evidence independently of
 retained JavaScript/tab identity. Selection is logical, never native activation.

@@ -373,3 +373,14 @@ Phase 7b adds `snapshot.format({nodes?, maxBytes?})` for compact discovery,
 state and coverage while avoiding repeated identity/URL strings; raw structured
 nodes remain available. View omission is explicitly counted and is separate from
 collector `truncated`. See [implementation and budget evaluation](../debug/browser-repl-phase7b.md).
+
+### Page scrolling versus element evidence (Phase 7c)
+
+`tab.scroll(delta_y)` is bounded page input on the exact live owned tab, not an
+element-reference action. It does not need a semantic snapshot and survives
+retirement by child-frame navigation, TTL, recapture or viewport fit. The daemon
+still checks active cell, ownership and private authority around serialized page
+access and delivery. No implicit target replacement or uncertain-input retry. A
+navigation race acts on the current page; observe before using its contents.
+Click/fill/focus/geometry and scoped reads keep their existing freshness rules.
+See [investigation and evaluation](../debug/browser-repl-phase7c.md).

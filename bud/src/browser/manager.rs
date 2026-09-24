@@ -260,57 +260,32 @@ impl BrowserManager {
     /// launch, answer CDP and close, then require secure storage for the
     /// persistent profile. Any failure leaves the capability unavailable.
     pub async fn configured_for(base: PathBuf, environment: String) -> Self {
-        let (runtime, info) = match super::addon::resolve(&base) {
-            super::addon::Resolution::EnvOverride(runtime) => {
-                tracing::warn!("Browser runtime taken from BUD_BROWSER_* environment overrides");
-                (
-                    runtime,
-                    json!({"kind":"override","product":"custom","version":null}),
-                )
-            }
-            super::addon::Resolution::Manifest(runtime, manifest) => {
-                for reason in manifest.stale() {
-                    tracing::warn!(reason = %reason, "Browser add-on is stale; run `bud browser prepare`");
-                }
-                (
-                    runtime,
-                    json!({"kind":manifest.browser.kind,"product":manifest.browser.product,
-                    "version":manifest.browser.version}),
-                )
-            }
-            super::addon::Resolution::Unavailable(reason) => {
-                tracing::info!(reason = %reason, "Browser support unavailable");
-                let mut manager = Self::new(None);
-                manager.persistent = Some((base, environment));
-                return manager;
-            }
-        };
-        let probed = match Browser::launch_probe(&runtime).await {
-            Ok(mut browser) => {
-                let version = browser.version().await.ok();
-                let closed = browser.close().await.is_ok();
-                match version {
-                    Some(version) if closed && super::addon::meets_floor(&version) => Some(version),
-                    Some(version) => {
-                        tracing::warn!(%version, floor = super::pins::BROWSER_MIN_MAJOR,
-                            "Browser unavailable: below the supported version floor or failed to close");
-                        None
+        let prepared = super::addon::startup(&base).await;
+        let mut manager = match prepared {
+            Ok((resolution, outcome)) => {
+                let (runtime, kind, product) = match resolution {
+                    super::addon::Resolution::EnvOverride(runtime) => {
+                        tracing::warn!(
+                            "Browser runtime taken from BUD_BROWSER_* environment overrides"
+                        );
+                        (runtime, "override".to_owned(), "custom".to_owned())
                     }
-                    None => None,
-                }
+                    super::addon::Resolution::Manifest(runtime, manifest) => {
+                        (runtime, manifest.browser.kind, manifest.browser.product)
+                    }
+                    super::addon::Resolution::Unavailable(_) => unreachable!(),
+                };
+                let mut manager = Self::new(Some(runtime));
+                manager.runtime_info =
+                    Some(json!({"kind":kind,"product":product,"version":outcome.version}));
+                manager
             }
             Err(error) => {
-                tracing::warn!(reason = %error, "Browser unavailable: probe launch failed; run `bud browser prepare`");
-                None
+                tracing::warn!(component="browser_addon", event="unavailable", reason=%format!("{error:#}"),
+                    "Browser support unavailable; continuing daemon startup");
+                Self::new(None)
             }
         };
-        let mut manager = Self::new(probed.is_some().then_some(runtime));
-        if let Some(version) = &probed {
-            super::addon::record_observed_version(&base, version);
-            let mut info = info;
-            info["version"] = json!(version);
-            manager.runtime_info = Some(info);
-        }
         manager.persistent = Some((base, environment));
         if manager.runtime.is_some() {
             if let Err(error) = super::profile::secure_storage_ready() {
@@ -1294,7 +1269,7 @@ impl BrowserManager {
                 // manifest's recorded version honest without any other change.
                 if let (Some((base, _)), Some(browser)) = (&self.persistent, root.as_mut()) {
                     if let Ok(version) = browser.version().await {
-                        super::addon::record_observed_version(base, &version);
+                        super::addon::record_observed_version(base, runtime, &version);
                     }
                 }
             }
@@ -1708,6 +1683,31 @@ fn valid_action(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn startup_failure_returns_an_unavailable_manager_without_aborting_daemon_setup() {
+        if super::super::addon::env_override().is_some() {
+            return;
+        }
+        let base = tempfile::tempdir().unwrap();
+        let dir = super::super::addon::addon_dir(base.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("manifest.json"), "invalid manifest").unwrap();
+        let manager = BrowserManager::configured_for(base.path().into(), "test".into()).await;
+        assert_eq!(manager.capability()["available"], false);
+        manager.connect("device".into());
+        assert_eq!(
+            manager
+                .execute(request(1, Action::Open { url: None }))
+                .await
+                .error,
+            Some("browser_not_configured")
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("manifest.json")).unwrap(),
+            "invalid manifest"
+        );
+    }
 
     fn inspect_snapshot() -> Action {
         serde_json::from_value(json!({"action":"inspect","operation":"snapshot"})).unwrap()

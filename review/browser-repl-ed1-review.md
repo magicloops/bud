@@ -5,6 +5,25 @@ Run: September 24, 2026, 08:41–08:42 UTC. Model: gpt-5.6-luna/high.
 Related: [Phase 7b](../plan/bud-owned-browser/repl-phase-7b-output-compaction.md),
 [previous 01ce review](browser-repl-01ce-review.md).
 
+## Recheck after Phase 7d implementation
+
+Requeried the local service database on September 24 using this thread ID and
+the owning user recorded in the original export. There are still 23 messages,
+12 provider calls and two invocations; the latest message is
+`2026-09-24T08:42:22.571Z`. All shared exported fields of the messages, provider
+calls and invocations match the original review exactly. No additional run is
+present. Refreshed private export: `/tmp/bud-repl-ed1-current.json` (0600).
+
+The findings below remain the historical baseline, not validation of the newer
+runtime. [Phase 7c](../debug/browser-repl-phase7c.md) subsequently removed page
+scroll's snapshot dependency and added generic semantic-role, coverage and
+output-budget guidance. Its neutral fixtures reproduced child-frame navigation
+invalidating a snapshot, but do not prove that was this run's trigger. Repeated
+broad previews are not solved: controlled guidance comparisons did not establish
+overall context reduction. [Phase 7d](../debug/browser-startup-helper-upgrade.md)
+automates helper installation on restart; it does not change this transcript or
+its output budget. A fresh product run is still needed for Phase 7c acceptance.
+
 ## Outcome and evidence
 
 The agent opened r/OpenAI, selected the seventh observed post permalink,

@@ -10,8 +10,9 @@ control, input and media; private input is not a transcript event.
   bounded serial input. Remounts by owner/session; uncertain input is not replayed.
   Known control failures display actionable text and the canonical code/operation;
   unknown response bodies are not displayed.
-- `pane.tsx`: owner/thread-visit-local discovery and open context. One five-second
-  inventory loop plus canonical live open/handoff events; initial history/inventory
+- `pane.tsx`: owner/thread-visit-local discovery and open context. One serial
+  inventory loop (five seconds healthy, 10/20/30 seconds after retryable failures)
+  plus canonical live open/handoff events; initial history/inventory
   seed a reveal baseline. New identities reveal once, polls/replay respect dismissal,
   obsolete fetches cannot select a browser in another visit.
 - `pane-state.ts` / `.test.ts`: strict first-party identities and reveal deduplication.
@@ -281,3 +282,14 @@ lifecycle generation. Mobile hides host-window, close-tabs, Bud lifecycle and
 new-tab UI. Software-keyboard beforeinput handles delete/line-break gestures;
 composition/text still share the existing ordered queue. Remote content remains
 canvas pixels, with native accessibility limited to the viewer controls.
+
+## Inventory outage handling (Phase 7e)
+
+Inventory polling retains presentation across transient failures, resets backoff
+on success, and stops for definitive HTTP/auth failures. Auth/resource loss clears
+the selected session. Existing live open/handoff events still reveal immediately;
+backoff does not reopen dismissed panes or delay event delivery. Visit disposal
+aborts pending fetches and cancels the timer. Diagnostics use the thread feature's
+small `recovery-diagnostics.ts` helper; they do not affect metadata, control renewal,
+media, viewport fitting or the native mobile bridge. Mounted cross-feature coverage
+is in `../threads/client-recovery.test.tsx`, alongside existing `pane.test.tsx`.

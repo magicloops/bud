@@ -208,9 +208,7 @@ impl Runtime {
         correlation: Value,
         result: &Value,
     ) -> Option<std::path::PathBuf> {
-        let Some(trace) = self.trace.take() else {
-            return None;
-        };
+        let trace = self.trace.take()?;
         // File names never incorporate caller-supplied IDs or page data.
         let path = self
             ._directory

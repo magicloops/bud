@@ -1,6 +1,6 @@
 //! `bud browser prepare|status|remove` (design/browser-addon.md, Phase 3r).
 //!
-//! The CLI is the only writer of the add-on manifest and the only downloader.
+//! The CLI enables/removes the add-on and is the only downloader. Startup may upgrade its bundled helper.
 //! It prefers an installed Google Chrome/Chromium, installs the pinned managed
 //! Chrome for Testing only as plan B, always manages Node and the helper, and
 //! finishes by offering the same daemon restart `bud upgrade` uses.
@@ -20,6 +20,7 @@ use crate::lifecycle::{self, LifecyclePaths};
 
 pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
+    let installation = addon::installation_lock(&base)?;
     std::fs::create_dir_all(addon::addon_dir(&base))?;
     let target = crate::upgrade::runtime_target()?;
     let dev = opts.helper_dir.is_some() || opts.node.is_some();
@@ -172,6 +173,7 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
     } else {
         println!("Browser support is prepared with caveats (see notes above).");
     }
+    drop(installation);
     offer_restart(args, opts.yes, opts.no_restart)
 }
 
@@ -239,8 +241,12 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
                 manifest.helper.version,
                 manifest.helper.path.display()
             );
-            for reason in manifest.stale() {
-                println!("  stale:   {reason}; run `bud browser prepare` again");
+            let stale = manifest.stale();
+            for reason in &stale {
+                println!("  stale:   {reason}");
+            }
+            if !stale.is_empty() {
+                println!("  Restart Bud for bundled-helper updates; use `bud browser prepare` for Node/browser installation or repair.");
             }
         }
     }
@@ -269,6 +275,7 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
 
 pub fn remove(args: &BudArgs, opts: &BrowserRemoveArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
+    let installation = addon::installation_lock(&base)?;
     // Take exclusive ownership of every profile for the whole removal: refuses
     // while a daemon owns one or a Chrome (even one that outlived a crashed
     // daemon) is still running, and keeps a starting daemon out until we are done.
@@ -316,6 +323,7 @@ pub fn remove(args: &BudArgs, opts: &BrowserRemoveArgs) -> Result<()> {
     {
         let _ = std::fs::remove_dir(addon::addon_dir(&base));
     }
+    drop(installation);
     offer_restart(args, opts.yes, opts.no_restart)
 }
 

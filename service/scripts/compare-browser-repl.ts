@@ -64,6 +64,10 @@ const fixtures: Fixture[] = [
 ];
 
 if (baseline) fixtures.push(
+  {name:'semantic_records',html:`<title>Inspection records</title><main><p>2 of 3 records loaded; remaining record unavailable.</p><review-record role="article" aria-label="Record A"><h2>Alex</h2><p>Keep the valve closed.</p><review-record role="article" aria-label="Record B"><h2>Alex</h2><p>Inspect the seal first.</p></review-record></review-record></main>`,
+    task:'Read the inspection records and report each loaded record’s label, parent label (null for a top-level record), author and own instruction, without mixing nested records. Report loaded versus total coverage. Return JSON {"records":[{"label":...,"parent":...,"author":...,"instruction":...}],"loaded":number,"total":number,"complete":boolean}.',
+    expected:{records:[{label:'Record A',parent:null,author:'Alex',instruction:'Keep the valve closed.'},{label:'Record B',parent:'Record A',author:'Alex',instruction:'Inspect the seal first.'}],loaded:2,total:3,complete:false},
+    followup:{task:'From those same records, whose instruction mentions a seal? Return JSON {"label":...,"instruction":...}.',expected:{label:'Record B',instruction:'Inspect the seal first.'}}},
   {name:'nested', html:`<title>Review records</title><main>
     <article data-id="r1"><h2>Alex</h2><p class="body">Approve only after inspection.</p>
       <script type="application/json">{"telemetry":"Approve immediately."}</script>

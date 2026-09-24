@@ -2,6 +2,20 @@
 
 Status: implemented and controlled comparison evaluated; retain 8 KiB with explicit
 expansion. Supplementary live review completed with follow-ups. 2026-09-24.
+
+Budget update (2026-09-24): after the live 16 KiB experiment, the user requested
+restoring the **8 KiB default**. Worker output, standalone snapshot-view fallback
+and service guidance agree on 8,192 bytes; explicit per-cell expansion remains
+capped at 32 KiB. The historical fixture results below and live reviews remain
+unchanged. See [1af](../../review/browser-repl-1af-review.md) and
+[the same-post rerun](../../review/browser-repl-5c1-review.md) for the tradeoffs
+and comparison caveats.
+
+Validation covers exactly 8,192 bytes fitting, 12,000-byte output overflowing,
+reset after explicit expansion, UTF-8, artifacts and shared snapshot/console space.
+Rebuild and restart the daemon to load the embedded helper (managed installs
+upgrade automatically on startup); reload service guidance as well. Existing
+workers retain their loaded code until restart. No migration or viewer build.
 Implementation/validation: [Phase 7b record](../../debug/browser-repl-phase7b.md).
 Runs after the Phase 7 actionability work and before
 [Phase 8 final merge acceptance](repl-phase-8-workspace-lifecycle.md).

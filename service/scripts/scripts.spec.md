@@ -50,7 +50,9 @@ same fixtures with console/native completion output. Run from `service/`:
 An optional third argument is a previously saved `BROWSER_REPL_TOOLS` JSON
 catalog. This Phase 6 mode compares baseline/candidate guidance on the same
 corrected helper; it adds nested-record attribution, ordinal cards, tail caveats
-with follow-up, partial loading and seeded overflow recovery. The report records
+with follow-up, partial loading and seeded overflow recovery. Phase 7c adds
+`semantic_records`: nested custom elements exposing article roles, explicit
+partial coverage, repeated authors and an evidence-reuse follow-up. The report records
 prompt/fixture/helper/harness hashes, exact answer and mutation checks, actual
 provider usage, first/peak context, natural versus forced overflows, literal budget
 request cells, operation counts and tool/total time. A 16-provider-call ceiling

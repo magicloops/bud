@@ -526,7 +526,10 @@ mod tests {
             first.data["runtime_generation"]
         );
         assert_eq!(
-            manager.execute(request(2, "console.log(n)")).await.error,
+            manager
+                .execute(request(2, "await browser.tabs.get('owned').scroll(100)"))
+                .await
+                .error,
             Some("browser_private_or_paused")
         );
         manager.authority.lock().unwrap().resume_after_stop(2);
@@ -996,7 +999,7 @@ mod tests {
             url: Some(url.clone()),
         };
         assert!(manager.execute(open).await.ok);
-        let first = manager.execute(request(2, "var tab=await browser.tabs.current(); var saved=await tab.snapshot(); var oldHandle=tab.getByRole('button',{name:'Apply'}); await tab.getByRole('textbox',{name:'Note'}).fill('Hello'); await tab.getByReference(saved.nodes.find(n=>n.role==='textbox').reference).focus(); await tab.insertText('!'); console.log(await tab.evaluate(()=>document.querySelector('input').value)); await oldHandle.click(); console.log(await tab.title())")).await;
+        let first = manager.execute(request(2, "var tab=await browser.tabs.current(); await tab.scroll(100); var saved=await tab.snapshot(); var oldHandle=tab.getByRole('button',{name:'Apply'}); await tab.getByRole('textbox',{name:'Note'}).fill('Hello'); await tab.getByReference(saved.nodes.find(n=>n.role==='textbox').reference).focus(); await tab.insertText('!'); console.log(await tab.evaluate(()=>document.querySelector('input').value)); await oldHandle.click(); console.log(await tab.title())")).await;
         assert!(first.ok, "{first:?}");
         assert!(first.data["text"].as_str().unwrap().contains("Hello"));
         assert!(first.data["text"].as_str().unwrap().contains('!'));
@@ -1035,7 +1038,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("focus_required"));
-        let navigate = manager.execute(request(7,&format!("var oldField=tab.getByRole('textbox',{{name:'Note'}}); await tab.goto({}); await oldField.fill('stale')",json!(url)))).await;
+        let navigate = manager.execute(request(7,&format!("var oldField=tab.getByRole('textbox',{{name:'Note'}}); await tab.goto({}); await tab.scroll(100); await oldField.fill('stale')",json!(url)))).await;
         assert!(!navigate.ok, "{navigate:?}");
         assert!(navigate.data["error"]
             .as_str()
@@ -1089,7 +1092,7 @@ mod tests {
             .unwrap()
             .checkpoint_for_test()
             .is_none());
-        let closed_handle = manager.execute(request(13, "await tab.snapshot()")).await;
+        let closed_handle = manager.execute(request(13, "await tab.scroll(100)")).await;
         assert!(!closed_handle.ok);
         let reopened=manager.execute(request(14,"var replacement=await browser.tabs.open(); console.log(await replacement.url()); console.log((await browser.tabs.list()).length)")).await;
         assert!(reopened.ok, "{reopened:?}");
@@ -1101,6 +1104,40 @@ mod tests {
             ))
             .await;
         assert_eq!(other_alive.data["text"], "1\n");
+        let foreign_scroll = manager
+            .execute(request(
+                15,
+                &format!("await browser.tabs.get({}).scroll(100)", json!(foreign_id)),
+            ))
+            .await;
+        assert!(!foreign_scroll.ok, "{foreign_scroll:?}");
+        assert!(foreign_scroll.data["error"]
+            .as_str()
+            .unwrap()
+            .contains("target_not_found"));
+        let observed = manager
+            .execute(request(16, "var beforeFit=await replacement.snapshot(); console.log(JSON.stringify({target_id:beforeFit.target_id,document_id:beforeFit.document_id}))"))
+            .await;
+        assert!(observed.ok, "{observed:?}");
+        let ids: Value = serde_json::from_str(observed.data["text"].as_str().unwrap()).unwrap();
+        let mut fit = request(16, "");
+        fit.command = Action::FitViewport {
+            target_id: ids["target_id"].as_str().unwrap().into(),
+            document_id: ids["document_id"].as_str().unwrap().into(),
+            width: 640,
+            height: 480,
+        };
+        assert!(manager.execute(fit).await.ok);
+        let revision = *slot.refresh.borrow();
+        let scrolled = manager
+            .execute(request(17, "await replacement.scroll(100)"))
+            .await;
+        assert!(scrolled.ok, "{scrolled:?}");
+        assert_eq!(
+            *slot.refresh.borrow(),
+            revision + 1,
+            "one refresh at the scroll cell boundary"
+        );
         manager.shutdown().await.unwrap();
         server.abort();
     }

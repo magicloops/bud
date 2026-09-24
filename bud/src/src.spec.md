@@ -42,7 +42,7 @@ Local diagnostic command implementation.
 - checks the stem terminal registry (`<terminal base dir>/term`): exists or is created via `stem::registry::Registry` (mode 0700), is a directory, is writable, and warns with a `chmod 700` remediation on permission drift
 - runs a holder smoke check when terminal support is enabled: spawns a real detached holder via the daemon's own executable (`bud term-hold` through `stem::registry::Registry::ensure`, the production spawn path) against a short throwaway temp dir, verifies socket + Hello, kills it, and verifies registry GC; time-boxed (8s overall) with an error and remediation on failure
 - probes installed supervision directives best-effort: warns when a `*bud*.plist` under `~/Library/LaunchAgents` lacks `AbandonProcessGroup=true` (macOS defense-in-depth) or a `*bud*.service` under the systemd user config dir lacks `KillMode=process` (load-bearing on Linux — sessions do not survive daemon restarts without it; see `spikes/holder-survival/findings.md`); "not service-managed" is informational, never a failure
-- reports the optional browser add-on from `<base_dir>/browser/manifest.json` using the daemon's own resolution and probe path (`BrowserManager::configured_for`): not prepared (warning with `bud browser prepare`), invalid `BUD_BROWSER_*` override (error), usable, usable-with-notes (stale pins, Linux secure-storage caveat), or probe failed; it never claims readiness the daemon will refuse
+- reports the optional browser add-on from `<base_dir>/browser/manifest.json` using read-only add-on resolution and the shared readiness probe (never startup installation): not prepared (warning with `bud browser prepare`), invalid `BUD_BROWSER_*` override (error), usable, usable-with-notes (stale pins, Linux secure-storage caveat), or probe failed; it never claims readiness the daemon will refuse
 - prints human-readable output by default and JSON when `bud doctor --format json` is requested
 - `bud doctor --cleanup-tmux` is a one-shot best-effort kill of legacy tmux-era `s_*` sessions; it is a silent no-op when no tmux binary exists
 
@@ -104,7 +104,7 @@ permanent and would advise a refused command).
 ### `browser_cli.rs`
 
 `bud browser prepare|status|remove` (design/browser-addon.md, Phase 3r): the
-only writer of the add-on manifest and the only downloader. `prepare` detects
+explicit opt-in/removal path and the only downloader. `prepare` detects
 an installed Google Chrome/Chromium (preference-ordered per OS, snap Chromium
 and Edge/Brave reported but not used), or installs the pinned managed Chrome for
 Testing as plan B (`--managed`, or offered when nothing usable exists), installs
@@ -114,6 +114,9 @@ launch path, and writes the manifest only on success. `status` re-probes and
 prints staleness against the daemon's pins plus host caveats; `remove` deletes
 the manifest and managed pieces (profiles only with `--profiles`). Both end by
 offering the same daemon restart `bud upgrade` uses (`--yes`, `--no-restart`).
+Startup upgrades already-enabled managed helpers separately. Prepare/remove share
+its stable base-directory installation lock and drop it before a restart. Status
+and doctor never install or enable helpers.
 
 ### `app.rs`
 

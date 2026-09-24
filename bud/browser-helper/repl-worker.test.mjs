@@ -137,7 +137,7 @@ test('overflow preserves preceding JSON and labels excerpts without replaying ac
   let actions = 0;
   const result = await w.run(`
     await browser.tabs.open('https://example.test');
-    var large = {records: Array.from({length:400}, (_,i) => ({id:i,name:'Item '+i}))};
+    var large = {records: Array.from({length:800}, (_,i) => ({id:i,name:'Item '+i}))};
     console.log(JSON.stringify({opened:true})); console.log(JSON.stringify(large)); console.log('tail');
   `, () => { actions++; return {target_id:'owned'}; });
   assert.equal(result.ok, true);
@@ -149,22 +149,28 @@ test('overflow preserves preceding JSON and labels excerpts without replaying ac
     console.log(JSON.stringify({first:JSON.parse(lines[0]),last:JSON.parse(lines[1]).records.at(-1),tail:lines[2]}));
   `, () => assert.fail('output recovery must not repeat browser operations'));
   assert.equal(recall.ok, true, recall.error);
-  assert.deepEqual(JSON.parse(recall.text), {first:{opened:true},last:{id:399,name:'Item 399'},tail:'tail'});
+  assert.deepEqual(JSON.parse(recall.text), {first:{opened:true},last:{id:799,name:'Item 799'},tail:'tail'});
   assert.equal(actions, 1);
 });
 
 test('explicit output expansion is cell-local, bounded and shares the console budget', async t => {
   const w = worker(t);
-  const expanded = await w.run(`repl.setOutputBudget(32768); console.log(JSON.stringify({value:'é'.repeat(8000)})); console.log('end')`);
+  const expanded = await w.run(`repl.setOutputBudget(32768); console.log(JSON.stringify({value:'é'.repeat(12000)})); console.log('end')`);
   assert.equal(expanded.truncated, false);
-  assert.ok(Buffer.byteLength(expanded.text) > 8192);
+  assert.ok(Buffer.byteLength(expanded.text) > 16384);
   assert.ok(Buffer.byteLength(expanded.text) <= 32768);
-  const normal = await w.run(`console.log(JSON.stringify({value:'é'.repeat(8000)}))`);
+  const fits = await w.run(`console.log('x'.repeat(8191))`);
+  assert.equal(fits.truncated, false);
+  assert.equal(Buffer.byteLength(fits.text), 8192);
+  const exceeds = await w.run(`console.log('x'.repeat(12000))`);
+  assert.equal(exceeds.truncated, true);
+  assert.ok(Buffer.byteLength(exceeds.text) <= 8192);
+  const normal = await w.run(`console.log(JSON.stringify({value:'é'.repeat(12000)}))`);
   assert.equal(normal.ok, true);
   assert.equal(normal.truncated, true);
   assert.match(normal.text, /INCOMPLETE OUTPUT EXCERPT/);
   const recalled = await w.run(`console.log(JSON.parse(repl.files.read(${JSON.stringify(normal.output_artifact.path)})).value.length)`);
-  assert.equal(recalled.text, '8000\n');
+  assert.equal(recalled.text, '12000\n');
   const shared = await w.run(`repl.setOutputBudget(1024); console.log('x'.repeat(1020)); console.log({ok:true})`);
   assert.equal(shared.text, 'x'.repeat(1020)+'\n');
   assert.equal(shared.truncated, true);
@@ -261,14 +267,14 @@ test('final overflow drains actions once and shares capture with console', async
   const w = worker(t);
   let calls = 0;
   const result = await w.run(`var effect=browser.operation({action:'mutate'});
-    console.log('before'); 'é'.repeat(5000)`, async () => {
+    console.log('before'); 'é'.repeat(10000)`, async () => {
       calls++; await new Promise(r=>setTimeout(r,20)); return {ok:true};
     });
   assert.equal(result.ok, true, result.error);
   assert.equal(calls, 1);
   assert.equal(result.truncated, true);
   assert.ok(result.text.startsWith('before\n[INCOMPLETE OUTPUT EXCERPT'));
-  const recall = await w.run(`var capture=repl.files.read(${JSON.stringify(result.output_artifact.path)}); capture.endsWith('é'.repeat(5000)+'\\n')`);
+  const recall = await w.run(`var capture=repl.files.read(${JSON.stringify(result.output_artifact.path)}); capture.endsWith('é'.repeat(10000)+'\\n')`);
   assert.equal(recall.text, 'true\n');
   assert.equal(calls, 1);
 });
@@ -289,11 +295,11 @@ test('diagnostic output is opt-in and includes formatted bytes omitted inline', 
   const w = worker(t);
   const normal = await w.run("console.log('normal')");
   assert.equal(normal._trace_output, undefined);
-  const captured = await w.run("console.log('first'); console.log('é'.repeat(5000)); console.log('last')", undefined, true);
+  const captured = await w.run("console.log('first'); console.log('é'.repeat(10000)); console.log('last')", undefined, true);
   assert.ok(captured.text.startsWith('first\n[INCOMPLETE OUTPUT EXCERPT'));
   assert.ok(Buffer.byteLength(captured.text) <= 8192);
   assert.equal(captured.truncated, true);
-  assert.equal(captured._trace_output.content, 'first\n'+'é'.repeat(5000)+'\nlast\n');
+  assert.equal(captured._trace_output.content, 'first\n'+'é'.repeat(10000)+'\nlast\n');
   assert.equal(captured._trace_output.bytes, Buffer.byteLength(captured._trace_output.content));
   assert.equal(captured._trace_output.truncated, false);
   assert.equal((await w.run('void 0'))._trace_output, undefined);
@@ -305,7 +311,7 @@ test('diagnostic output is opt-in and includes formatted bytes omitted inline', 
 
 test('snapshot views budget complete records after earlier writes and select retained data without recapture', async t => {
   const w = worker(t);
-  const nodes = Array.from({length:400}, (_,i) => ({depth:1,role:'link',name:`Entry ${i}`,
+  const nodes = Array.from({length:800}, (_,i) => ({depth:1,role:'link',name:`Entry ${i}`,
     reference:`capture:${i}`,url:`https://example.test/?q=${'x'.repeat(900)}#keep`}));
   const result = await w.run(`var tab=browser.tabs.get('owned'); var s=await tab.snapshot();
     console.log('Earlier evidence'); console.log(s.format({maxBytes:32768}));`, () => ({nodes,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createAuthEventSource, apiFetch } from '@/lib/transport'
+import { createAuthEventSource, apiFetch, ApiError } from '@/lib/transport'
 import { isAuthRedirectPending } from '@/lib/auth-redirect'
 import {
   createTerminalStreamDecoder,
@@ -54,6 +54,7 @@ import {
   predictionGhostText,
   type TerminalPredictionState,
 } from '@/features/threads/terminal-prediction'
+import { createRecoveryDiagnostics, offlineRecoveryDelay } from './recovery-diagnostics'
 import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 
@@ -139,12 +140,9 @@ export function useTerminalSession({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const sendTerminalInputRef = useRef<QueueTerminalInput>(() => {})
   const sendTerminalResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
-  const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const terminalReconnectAttemptRef = useRef(0)
   const lastSseEventTimeRef = useRef<number>(Date.now())
   const lastConnectedThreadIdRef = useRef<string | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
-  const terminalRecoveryInFlightRef = useRef(false)
   const terminalReadyRef = useRef(false)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -543,13 +541,16 @@ export function useTerminalSession({
       setPrediction(assignFlushSeq(predictionRef.current, seq))
     }
 
+    const recoveryOwner = requestReconnectRef.current
     const postInput = async () => {
+      if (requestReconnectRef.current !== recoveryOwner) return
       try {
         const resp = await apiFetch(`/api/threads/${threadId}/terminal/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ input, ...(seq !== null ? { seq } : {}) }),
         })
+        if (requestReconnectRef.current !== recoveryOwner) return
         if (shouldAbortForUnauthorized(resp)) {
           return
         }
@@ -559,15 +560,17 @@ export function useTerminalSession({
           setPrediction(emptyPredictionState)
           if (resp.status >= 500 || resp.status === 0) {
             setConnectionState('reconnecting')
+            requestReconnectRef.current?.('input_failed')
           }
         }
       } catch (err) {
-        if (isAuthRedirectPending()) {
+        if (requestReconnectRef.current !== recoveryOwner || isAuthRedirectPending()) {
           return
         }
         console.error('Failed to send terminal input', err)
         setPrediction(emptyPredictionState)
         setConnectionState('reconnecting')
+        requestReconnectRef.current?.('input_failed')
         onError(err instanceof Error ? err.message : 'Failed to send input')
       }
     }
@@ -676,54 +679,22 @@ export function useTerminalSession({
     focusTerminal()
   }, [focusTerminal, sendTerminalInput])
 
-  const refreshTerminalStateRecord = useCallback(
-    async (targetThreadId: string) => {
-      const statusResp = await apiFetch(`/api/threads/${targetThreadId}/terminal`)
-      if (shouldAbortForUnauthorized(statusResp)) {
-        return
-      }
-      if (statusResp.ok) {
-        const body = (await statusResp.json()) as { state?: string }
-        if (body.state) {
-          setTerminalState(body.state)
-        }
-      }
-    },
-    [shouldAbortForUnauthorized],
-  )
-
   /**
    * Primary connect/render path: line-oriented emulator scrollback plus the
-   * visible screen from `GET /terminal/snapshot`. Returns false when the
-   * snapshot is unavailable (no session yet, bud offline, observe failure) so
-   * the caller can fall back to the byte-tail history replay.
+   * visible screen from `GET /terminal/snapshot`. Failures are classified by
+   * the visit recovery cycle; false means the bytes renderer is not ready yet.
    */
   const applyTerminalSnapshot = useCallback(
-    async (targetThreadId: string): Promise<boolean> => {
-      let resp: Response
-      try {
-        resp = await apiFetch(
-          `/api/threads/${targetThreadId}/terminal/snapshot?lines=${TERMINAL_SNAPSHOT_LINES}`,
-        )
-      } catch (err) {
-        if (isAuthRedirectPending()) {
-          return false
-        }
-        console.warn('[terminal] snapshot request failed', err)
-        return false
-      }
-
-      if (shouldAbortForUnauthorized(resp)) {
-        return false
-      }
+    async (targetThreadId: string, signal: AbortSignal): Promise<boolean> => {
+      const resp = await apiFetch(
+        `/api/threads/${targetThreadId}/terminal/snapshot?lines=${TERMINAL_SNAPSHOT_LINES}`,
+        { signal },
+      )
+      signal.throwIfAborted()
       if (!resp.ok) {
-        const body = (await resp.json().catch(() => ({}))) as { error?: string }
-        console.warn('[terminal] snapshot unavailable', {
-          threadId: targetThreadId,
-          status: resp.status,
-          error: body.error,
-        })
-        return false
+        const body = await resp.json().catch(() => null)
+        signal.throwIfAborted()
+        throw new ApiError('Terminal snapshot unavailable', resp.status, body)
       }
 
       const body = (await resp.json().catch(() => null)) as {
@@ -739,11 +710,9 @@ export function useTerminalSession({
         ring_next_offset?: number
       } | null
 
+      signal.throwIfAborted()
       if (!body || typeof body.ring_next_offset !== 'number') {
-        console.warn('[terminal] snapshot response missing ring_next_offset', {
-          threadId: targetThreadId,
-        })
-        return false
+        throw new ApiError('Invalid terminal snapshot', 502, { error: 'invalid_snapshot' })
       }
 
       if (terminalRenderer === 'grid') {
@@ -798,7 +767,7 @@ export function useTerminalSession({
 
       return true
     },
-    [fitTerminal, shouldAbortForUnauthorized, terminalRenderer],
+    [fitTerminal, terminalRenderer],
   )
 
   /**
@@ -807,15 +776,14 @@ export function useTerminalSession({
    * set so the next (re)connect attempts a real snapshot again.
    */
   const applyHistoryFallback = useCallback(
-    async (targetThreadId: string) => {
+    async (targetThreadId: string, signal: AbortSignal) => {
       const historyResp = await apiFetch(
         `/api/threads/${targetThreadId}/terminal/history?bytes=131072`,
+        { signal },
       )
-      if (shouldAbortForUnauthorized(historyResp)) {
-        return
-      }
+      signal.throwIfAborted()
       if (!historyResp.ok) {
-        return
+        throw new ApiError('Terminal history unavailable', historyResp.status, null)
       }
 
       const body = (await historyResp.json()) as {
@@ -824,6 +792,7 @@ export function useTerminalSession({
         total_bytes_available?: number
       }
 
+      signal.throwIfAborted()
       if (body.bytes !== undefined && body.total_bytes_available !== undefined) {
         setTerminalOutputTruncated(body.bytes < body.total_bytes_available)
       }
@@ -852,102 +821,18 @@ export function useTerminalSession({
       setTerminalHasOutput(false)
       setTerminalScrolledToTop(false)
     },
-    [fitTerminal, shouldAbortForUnauthorized],
-  )
-
-  /**
-   * Ensure the daemon-side PTY exists (idempotent). Rendering is handled by
-   * the connect cycle's snapshot/resume plan — this no longer replays history.
-   */
-  const recoverTerminalSession = useCallback(
-    async (reason: string): Promise<boolean> => {
-      if (!threadId) {
-        return false
-      }
-      if (terminalRecoveryInFlightRef.current) {
-        return false
-      }
-
-      terminalRecoveryInFlightRef.current = true
-
-      try {
-        const resp = await apiFetch(`/api/threads/${threadId}/terminal/ensure`, {
-          method: 'POST',
-        })
-        if (shouldAbortForUnauthorized(resp)) {
-          return false
-        }
-        if (!resp.ok) {
-          const body = (await resp.json().catch(() => ({}))) as { error?: string }
-          console.warn('[terminal] Terminal recovery failed', {
-            threadId,
-            sessionId: currentSessionIdRef.current,
-            reason,
-            status: resp.status,
-            error: body.error,
-          })
-
-          if (body.error === 'bud_offline') {
-            setConnectionState('reconnecting')
-            setTerminalState('bud_offline')
-            if (budId) {
-              updateBudStatus(budId, 'offline')
-            }
-          }
-
-          return false
-        }
-
-        console.log('[terminal] Terminal recovery ensured', {
-          threadId,
-          sessionId: currentSessionIdRef.current,
-          reason,
-        })
-
-        setConnectionState('connected')
-        if (budId) {
-          updateBudStatus(budId, 'online')
-        }
-
-        return true
-      } catch (err) {
-        if (isAuthRedirectPending()) {
-          return false
-        }
-        console.error('[terminal] Terminal recovery request failed', {
-          threadId,
-          sessionId: currentSessionIdRef.current,
-          reason,
-          err,
-        })
-        return false
-      } finally {
-        terminalRecoveryInFlightRef.current = false
-      }
-    },
-    [budId, setConnectionState, shouldAbortForUnauthorized, threadId, updateBudStatus],
+    [fitTerminal],
   )
 
   useEffect(() => {
-    const cleanupTimers = () => {
-      if (terminalReconnectTimerRef.current) {
-        clearTimeout(terminalReconnectTimerRef.current)
-        terminalReconnectTimerRef.current = null
-      }
-    }
-
-    const closeSource = () => {
-      terminalEventSourceRef.current?.close()
-      terminalEventSourceRef.current = null
-    }
-
-    cleanupTimers()
-    closeSource()
+    terminalEventSourceRef.current?.close()
+    terminalEventSourceRef.current = null
 
     if (threadId !== lastConnectedThreadIdRef.current) {
       resetTerminal()
       appliedOffsetRef.current = null
       snapshotRequiredRef.current = true
+      terminalInputBufferRef.current = ''
       inputQueueRef.current = emptyTerminalInputQueue
       inputQueueWarnedRef.current = false
       setTerminalInputQueued(false)
@@ -959,7 +844,6 @@ export function useTerminalSession({
       lastConnectedThreadIdRef.current = threadId
     }
 
-    terminalReconnectAttemptRef.current = 0
     setConnectionState('disconnected')
 
     if (!threadId) {
@@ -970,138 +854,177 @@ export function useTerminalSession({
       return
     }
 
-    let cancelled = false
+    const abort = new AbortController()
+    const diagnostics = createRecoveryDiagnostics('terminal', threadId)
     let activeSourceCleanup: (() => void) | null = null
-
-    const scheduleReconnect = (reason: string) => {
-      const cleanup = activeSourceCleanup
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let due = Infinity
+    let running = false
+    let pendingWake: string | null = null
+    let stopped = false
+    let failures = 0
+    let transportFailures = 0
+    let viewReady = false
+    let offlineRevision = 0
+    let snapshotAttempted = false
+    const current = () => !abort.signal.aborted && !stopped && !isAuthRedirectPending()
+    const closeSource = () => {
+      activeSourceCleanup?.()
       activeSourceCleanup = null
-      cleanup?.()
-
-      if (cancelled || isAuthRedirectPending()) {
+    }
+    const clearTimer = () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = null
+      due = Infinity
+    }
+    const stop = () => {
+      stopped = true
+      requestReconnectRef.current = null
+      abort.abort()
+      clearTimer()
+      closeSource()
+      diagnostics.finish('stopped')
+      setConnectionState('disconnected')
+      resetTerminal()
+      setTerminalFacts(null)
+      setTerminalCommand(null)
+      setTerminalState('idle')
+      terminalInputBufferRef.current = ''
+      inputQueueRef.current = emptyTerminalInputQueue
+      setTerminalInputQueued(false)
+      currentSessionIdRef.current = null
+      setCurrentSessionId(null)
+    }
+    const markReady = () => {
+      if (!current() || !viewReady || terminalEventSourceRef.current?.readyState !== EventSource.OPEN) return
+      failures = 0
+      transportFailures = 0
+      setConnectionState('connected')
+      diagnostics.finish()
+    }
+    const schedule = (reason: string, delay = 0) => {
+      if (!current()) return
+      if (running) {
+        pendingWake = reason
         return
       }
-
-      setConnectionState('reconnecting')
-
-      const nextAttempt = terminalReconnectAttemptRef.current + 1
-      terminalReconnectAttemptRef.current = nextAttempt
-      const delay = getThreadStreamReconnectDelay(nextAttempt)
-
-      console.warn('[terminal] reconnect scheduled', {
-        threadId,
-        reason,
-        attempt: nextAttempt,
-        delay,
-      })
-
-      cleanupTimers()
-      terminalReconnectTimerRef.current = setTimeout(() => {
-        if (!cancelled && !isAuthRedirectPending()) {
-          void connect()
-        }
+      if (timer !== null && due <= Date.now() + delay) return
+      clearTimer()
+      due = Date.now() + delay
+      diagnostics.scheduled(reason, delay, terminalEventSourceRef.current?.readyState)
+      timer = setTimeout(() => {
+        clearTimer()
+        void runRecovery(reason)
       }, delay)
     }
-
+    const scheduleReconnect = (reason: string) => {
+      if (!current()) return
+      diagnostics.start(reason)
+      setConnectionState('reconnecting')
+      viewReady = false
+      offlineRevision++
+      closeSource()
+      schedule(reason, getThreadStreamReconnectDelay(++transportFailures))
+    }
     requestReconnectRef.current = scheduleReconnect
 
+    const read = async (path: string, method = 'GET') => {
+      const resp = await apiFetch(path, { method, signal: abort.signal })
+      abort.signal.throwIfAborted()
+      if (shouldAbortForUnauthorized(resp)) {
+        stop()
+        throw new DOMException('Disposed', 'AbortError')
+      }
+      const body = await resp.json().catch(() => null)
+      abort.signal.throwIfAborted()
+      if (!resp.ok) throw new ApiError('Terminal recovery failed', resp.status, body)
+      return body
+    }
     const connect = async () => {
-      if (cancelled || isAuthRedirectPending()) {
-        return
+      if (!currentSessionIdRef.current) {
+        const body = await read(`/api/threads/${threadId}/terminal`, 'POST')
+        if (typeof body?.session_id !== 'string') throw new Error('Invalid terminal record')
+        currentSessionIdRef.current = body.session_id
+        setCurrentSessionId(body.session_id)
       }
-
-      try {
-        const sessionResp = await apiFetch(`/api/threads/${threadId}/terminal`, {
-          method: 'POST',
-        })
-
-        if (shouldAbortForUnauthorized(sessionResp) || cancelled) {
-          return
-        }
-
-        if (!sessionResp.ok) {
-          if (!cancelled) {
-            console.error('[terminal] Failed to create session record', {
-              status: sessionResp.status,
-            })
-            if (sessionResp.status >= 500) {
-              scheduleReconnect(`session_record_http_${sessionResp.status}`)
-            } else {
-              setConnectionState('disconnected')
-            }
-          }
-          return
-        }
-
-        const { session_id, created } = (await sessionResp.json()) as {
-          session_id: string
-          created?: boolean
-        }
-        currentSessionIdRef.current = session_id
-        setCurrentSessionId(session_id)
-
-        if (created) {
-          console.log('[terminal] Created new session record', { sessionId: session_id, threadId })
-        } else {
-          console.log('[terminal] Using existing session record', { sessionId: session_id, threadId })
-        }
-      } catch (err) {
-        if (isAuthRedirectPending()) {
-          return
-        }
-        if (!cancelled) {
-          console.error('[terminal] Failed to create session record', err)
-          scheduleReconnect('session_record_request_failed')
-        }
-        return
-      }
-
-      if (cancelled) {
-        return
-      }
-
-      // Decide how to (re)establish the view: full snapshot only on initial
-      // mount, after an output gap, or across a bud offline→online
-      // transition. Otherwise resume from the applied offset — the server
-      // replays the missed range on one ordered stream, no reset needed.
+      const revision = offlineRevision
+      await read(`/api/threads/${threadId}/terminal/ensure`, 'POST')
+      if (!current()) return false
       const plan = planTerminalConnect({
         snapshotRequired: snapshotRequiredRef.current,
-        appliedOffset: appliedOffsetRef.current,
+        // Grid rendering has no byte cursor; an applied snapshot is sufficient.
+        appliedOffset: terminalRenderer === 'grid' ? 0 : appliedOffsetRef.current,
       })
-
-      let ensuredBeforeStream = false
       if (plan.mode === 'snapshot') {
-        ensuredBeforeStream = true
-        await recoverTerminalSession('pre_snapshot')
-        if (cancelled) {
-          return
-        }
-
-        try {
-          await refreshTerminalStateRecord(threadId)
-        } catch (err) {
-          console.warn('[terminal] Failed to refresh terminal state record', err)
-        }
-        if (cancelled) {
-          return
-        }
-
-        const snapshotApplied = await applyTerminalSnapshot(threadId)
-        if (cancelled) {
-          return
-        }
-        if (!snapshotApplied) {
-          try {
-            await applyHistoryFallback(threadId)
-          } catch (err) {
-            console.error('[terminal] History fallback failed', { threadId, err })
-          }
-          if (cancelled) {
-            return
-          }
-        }
+        snapshotAttempted = true
+        if (!await applyTerminalSnapshot(threadId, abort.signal)) return false
       }
+      if (!current()) return false
+      if (revision !== offlineRevision) {
+        snapshotRequiredRef.current = true
+        return false
+      }
+      viewReady = true
+      if (budId) updateBudStatus(budId, 'online')
+      // Replace the stream only when a snapshot changed its rendering baseline.
+      if (plan.mode === 'snapshot') closeSource()
+      if (!terminalEventSourceRef.current) attachStream()
+      markReady()
+      return true
+    }
+    const runRecovery = async (reason: string) => {
+      if (!current() || running) return
+      // Let transport recovery finish before probing a daemon through this stream.
+      if (terminalEventSourceRef.current?.readyState === EventSource.CONNECTING) return
+      running = true
+      snapshotAttempted = false
+      pendingWake = null
+      let succeeded = false
+      let retryDelay: number | null = null
+      diagnostics.attempt(reason)
+      try {
+        succeeded = await connect()
+        if (!succeeded) retryDelay = offlineRecoveryDelay(++failures)
+      } catch (error) {
+        if (!current()) return
+        diagnostics.start(reason)
+        const failure = diagnostics.failure(error)
+        if (!failure.retryable) {
+          stop()
+          return
+        }
+        viewReady = false
+        setConnectionState('reconnecting')
+        retryDelay = offlineRecoveryDelay(++failures)
+        if (failure.code === 'bud_offline') {
+          snapshotRequiredRef.current = true
+          setTerminalState('bud_offline')
+          if (budId) updateBudStatus(budId, 'offline')
+        }
+        // Only seed an empty bytes view. Never replace retained output with a
+        // possibly older history response during a transient outage.
+        if (terminalRenderer === 'bytes' && appliedOffsetRef.current === null &&
+            !terminalEventSourceRef.current && (failure.code === 'bud_offline' || snapshotAttempted)) {
+          try { await applyHistoryFallback(threadId, abort.signal) } catch (historyError) {
+            if (!current()) return
+            const historyFailure = diagnostics.failure(historyError)
+            if (!historyFailure.retryable) { stop(); return }
+          }
+        }
+        if (currentSessionIdRef.current && !terminalEventSourceRef.current) attachStream()
+      } finally {
+        if (!abort.signal.aborted && isAuthRedirectPending()) stop()
+        running = false
+        if (current()) {
+          if (pendingWake && !succeeded) schedule(pendingWake)
+          else if (retryDelay !== null) schedule('offline_retry', retryDelay)
+        }
+        pendingWake = null
+      }
+    }
 
+    const attachStream = () => {
+      if (!current() || terminalEventSourceRef.current) return
       const terminalStream = createAuthEventSource(
         buildTerminalStreamPath(
           threadId,
@@ -1121,6 +1044,7 @@ export function useTerminalSession({
       let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
 
       const handleOutput = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
           if (terminalRenderer === 'grid') {
@@ -1154,6 +1078,7 @@ export function useTerminalSession({
       }
 
       const handleStatus = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
           const payload = JSON.parse(event.data ?? '{}') as { state?: string }
@@ -1162,7 +1087,7 @@ export function useTerminalSession({
               terminalConnectionRef.current === 'reconnecting' ||
               terminalConnectionRef.current === 'offline'
             ) {
-              console.log('[terminal] Ignoring status event while disconnected', {
+              console.debug('[terminal] Ignoring status event while disconnected', {
                 state: payload.state,
                 connection: terminalConnectionRef.current,
               })
@@ -1192,10 +1117,12 @@ export function useTerminalSession({
       }
 
       const handleHeartbeat = () => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         lastSseEventTimeRef.current = Date.now()
       }
 
       const handleGridFrame = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
           const payload = JSON.parse(event.data ?? '{}') as TerminalGridFrame
@@ -1223,6 +1150,7 @@ export function useTerminalSession({
       }
 
       const handleTerminalEvent = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
           const payload = JSON.parse(event.data ?? '{}') as {
@@ -1260,10 +1188,14 @@ export function useTerminalSession({
       }
 
       const handleBudOffline = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
-          const payload = JSON.parse(event.data ?? '{}') as { bud_id?: string; reason?: string }
-          console.warn('[terminal] Bud went offline', payload)
+          JSON.parse(event.data ?? '{}')
+          offlineRevision++
+          viewReady = false
+          diagnostics.start('bud_offline')
+          schedule('bud_offline', offlineRecoveryDelay(failures + 1))
           // The daemon-side ring may restart while offline; re-snapshot on the
           // way back instead of trusting the applied offset.
           snapshotRequiredRef.current = true
@@ -1278,10 +1210,10 @@ export function useTerminalSession({
       }
 
       const handleBudOnline = (event: MessageEvent) => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         try {
           lastSseEventTimeRef.current = Date.now()
-          const payload = JSON.parse(event.data ?? '{}') as { bud_id?: string }
-          console.log('[terminal] Bud came online', payload)
+          JSON.parse(event.data ?? '{}')
 
           if (budId) {
             updateBudStatus(budId, 'online')
@@ -1290,7 +1222,9 @@ export function useTerminalSession({
           // Offline→online transition: full reconnect cycle with a fresh
           // snapshot (ensure → snapshot → stream from the new ring offset).
           snapshotRequiredRef.current = true
-          scheduleReconnect('bud_online')
+          diagnostics.start('bud_online')
+          setConnectionState('reconnecting')
+          schedule('bud_online')
         } catch (err) {
           console.error('Failed to parse terminal.bud_online SSE', err)
         }
@@ -1317,27 +1251,16 @@ export function useTerminalSession({
       activeSourceCleanup = cleanupSource
 
       source.addEventListener('open', () => {
-        const wasReconnect = terminalReconnectAttemptRef.current > 0
-        terminalReconnectAttemptRef.current = 0
+        if (!current() || terminalEventSourceRef.current !== source) return
         lastSseEventTimeRef.current = Date.now()
-
-        console.log('[terminal] SSE connected', {
-          threadId,
-          sessionId: currentSessionIdRef.current,
-          wasReconnect,
-          fromOffset: appliedOffsetRef.current,
-        })
-
-        if (!ensuredBeforeStream) {
-          void recoverTerminalSession(wasReconnect ? 'sse_reconnect' : 'sse_open')
-        }
+        markReady()
+        if (!viewReady) schedule('sse_open', offlineRecoveryDelay(Math.max(1, failures)))
+        if (heartbeatCheckInterval) clearInterval(heartbeatCheckInterval)
 
         const { heartbeatTimeoutMs, checkIntervalMs } = getThreadStreamHeartbeatConfig(import.meta.env.DEV)
         heartbeatCheckInterval = setInterval(() => {
+          if (!current() || terminalEventSourceRef.current !== source || source.readyState !== EventSource.OPEN) return
           if (hasMissedThreadStreamHeartbeat(lastSseEventTimeRef.current, Date.now(), heartbeatTimeoutMs)) {
-            console.warn(
-              `[terminal] no heartbeat received for ${heartbeatTimeoutMs / 1000}s, connection is stale`,
-            )
             scheduleReconnect('heartbeat_timeout')
           }
         }, checkIntervalMs)
@@ -1350,28 +1273,24 @@ export function useTerminalSession({
       source.addEventListener('terminal.event', handleTerminalEvent)
       source.addEventListener('terminal.bud_offline', handleBudOffline)
       source.addEventListener('terminal.bud_online', handleBudOnline)
-      source.onerror = (err: Event) => {
+      source.onerror = () => {
+        if (!current() || terminalEventSourceRef.current !== source) return
         void terminalStream.checkUnauthorized().then((unauthorized: boolean) => {
-          if (unauthorized) {
-            return
-          }
-
-          console.warn('[terminal] SSE error', { err, readyState: source.readyState })
-          scheduleReconnect(`error ${JSON.stringify(err)}`)
+          if (abort.signal.aborted || stopped || terminalEventSourceRef.current !== source) return
+          if (unauthorized || isAuthRedirectPending()) { stop(); return }
+          scheduleReconnect('connection_error')
         })
       }
     }
 
-    void connect()
+    void runRecovery('initial_attach')
 
     return () => {
-      cancelled = true
+      abort.abort()
       requestReconnectRef.current = null
-      cleanupTimers()
-      const cleanup = activeSourceCleanup
-      activeSourceCleanup = null
-      cleanup?.()
+      clearTimer()
       closeSource()
+      diagnostics.finish('stopped')
     }
   }, [
     applyGridFrameToState,
@@ -1379,8 +1298,6 @@ export function useTerminalSession({
     applyTerminalSnapshot,
     budId,
     fitTerminal,
-    recoverTerminalSession,
-    refreshTerminalStateRecord,
     resetTerminal,
     setConnectionState,
     shouldAbortForUnauthorized,
@@ -1388,48 +1305,6 @@ export function useTerminalSession({
     threadId,
     updateBudStatus,
   ])
-
-  useEffect(() => {
-    if (
-      (terminalConnection !== 'reconnecting' && terminalConnection !== 'offline') ||
-      !threadId
-    ) {
-      return
-    }
-
-    const existingSource = terminalEventSourceRef.current
-    if (!existingSource || existingSource.readyState === EventSource.CLOSED) {
-      return
-    }
-
-    console.log('[terminal] SSE still connected, polling for terminal recovery')
-
-    let cancelled = false
-    const pollRecovery = async () => {
-      while (
-        !cancelled &&
-        !isAuthRedirectPending() &&
-        terminalConnectionRef.current !== 'connected'
-      ) {
-        const recovered = await recoverTerminalSession('connected_sse_poll')
-        if (recovered) {
-          if (snapshotRequiredRef.current) {
-            // Recovery happened without a bud_online event on this stream —
-            // still run the full reconnect cycle so the buffer re-snapshots.
-            requestReconnectRef.current?.('recovered_snapshot_required')
-          }
-          break
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-      }
-    }
-
-    void pollRecovery()
-
-    return () => {
-      cancelled = true
-    }
-  }, [recoverTerminalSession, terminalConnection, threadId])
 
   useEffect(() => {
     if (terminalConnection === 'connected') {
@@ -1449,7 +1324,7 @@ export function useTerminalSession({
     }
 
     const offlineTimer = setTimeout(() => {
-      console.warn('[terminal] Bud has been offline for 30s, transitioning to offline state')
+      console.debug('[terminal] recovery pending for 30s')
       setConnectionState('offline')
     }, 30000)
 

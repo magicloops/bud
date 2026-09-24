@@ -144,6 +144,14 @@ export class Engine {
     this.stage = 'resolve_page';
     if (c.operation === 'invalidate') { this.snapshot = null; this.frames.clear(); return {}; }
     const page = await this.page(c.target_id);
+    // Page input has no element reference. Authority/ownership and serialization
+    // remain daemon-owned; a retired snapshot must not block this exact tab.
+    if (c.operation === 'scroll') {
+      if (!Number.isInteger(c.delta_y) || Math.abs(c.delta_y) > 10000) fail('browser_invalid_arguments');
+      this.stage = 'validate_action';
+      await page.mouse.wheel(0, c.delta_y);
+      return { scroll_requested: true };
+    }
     if (c.operation === 'frames') {
       this.frames.clear();
       return page.frames().map(frame => { const id = randomUUID(); this.frames.set(id, { frame, target: c.target_id, navigation: this.navigation });
@@ -202,10 +210,6 @@ export class Engine {
     else if (c.locator) {
       const root = c.scope ? this.ref(s, c.scope) : page;
       locator = root.getByRole(c.locator.role, { name: c.locator.name, exact: true });
-    }
-    if (c.operation === 'scroll') {
-      await page.mouse.wheel(0, c.delta_y);
-      return { scroll_requested: true };
     }
     if (!locator) fail('browser_invalid_arguments');
     this.stage = 'resolve_element';

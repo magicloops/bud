@@ -1,6 +1,8 @@
 # Phase 7c: Reliable scrolling and focused use of observations
 
-Status: scoped, not implemented. 2026-09-24.
+Status: implemented; local regressions and controlled provider evaluation complete.
+Supplementary product run still pending. 2026-09-24.
+Investigation/results: [Phase 7c debug note](../../debug/browser-repl-phase7c.md).
 Runs after [Phase 7b](repl-phase-7b-output-compaction.md), before
 [Phase 8 final acceptance](repl-phase-8-workspace-lifecycle.md).
 Parent: [REPL implementation](repl-implementation.md).
@@ -21,26 +23,26 @@ must not be bundled into one presumed root cause.
 
 ## 1. Investigate and fix stale page scrolling
 
-- [ ] Write a debug note and trace the observation lifecycle across the facade,
+- [x] Write a debug note and trace the observation lifecycle across the facade,
   semantic engine, daemon bridge, viewer capture/resize and concurrent workspaces.
   Identify which paths replace or invalidate semantic observations. The failed
   scroll in ed1 was about 25 seconds after capture (below the 60-second TTL), and
   later capture had the same target/document; neither ordinary expiry nor a
   proven top-level navigation explains it.
-- [ ] Reproduce the invalidation with neutral fixtures before choosing a fix.
+- [x] Reproduce the invalidation with neutral fixtures before choosing a fix.
   Include child-frame navigation, another workspace's snapshot, ordinary evaluate,
   viewer capture/fit and elapsed observation time. Do not assume all are causes.
-- [ ] Separate the contract for page-level scrolling from element targeting.
+- [x] Separate the contract for page-level scrolling from element targeting.
   Preferred direction, if confirmed by investigation: resolve the currently owned
   live tab and allow one page scroll without an element snapshot dependency.
   Scrolling acts on the current page, like other page-level operations; it does
   not claim an old element or document is unchanged. Document navigation races
   and require subsequent observation before referring to page contents.
-- [ ] Retain active-cell/invocation checks, target/workspace ownership, Bud-wide
+- [x] Retain active-cell/invocation checks, target/workspace ownership, Bud-wide
   private-control fences, serialization, finite/bounded delta validation and
   uncertain-outcome handling. If a target closes or ownership changes, fail
   clearly; do not reopen it or choose another tab implicitly.
-- [ ] Preserve stale-reference rejection for click/fill/focus/geometry and scoped
+- [x] Preserve stale-reference rejection for click/fill/focus/geometry and scoped
   observations. Do not weaken element evidence to make page scrolling work.
   Never auto-replay a failed cell or repeat a scroll whose effect is uncertain.
 
@@ -51,19 +53,19 @@ only through existing diagnostics; no normal-log page content or full URLs.
 
 ## 2. Tighten general guidance in place
 
-- [ ] Clarify that snapshot roles are semantic roles, not HTML tag names.
+- [x] Clarify that snapshot roles are semantic roles, not HTML tag names.
   A role named article may be a custom element or live in a shadow tree; a literal
   CSS query returning nothing does not contradict accessible snapshot content.
-- [ ] Prefer selecting relevant retained nodes with entity boundaries before
+- [x] Prefer selecting relevant retained nodes with entity boundaries before
   guessing DOM selectors or recapturing the same content. Evaluate remains useful
   when the task needs information the retained representation does not provide.
-- [ ] Clarify that refreshing an observation for an action does not require
+- [x] Clarify that refreshing an observation for an action does not require
   printing it. Emit only the evidence needed for the next decision, verification
   or answer. Do not mandate a count/sample call before every task.
-- [ ] Explain once that format maxBytes bounds a view within remaining cell space;
+- [x] Explain once that format maxBytes bounds a view within remaining cell space;
   explicit setOutputBudget is needed before genuinely larger output. Avoid
   overlapping rules, site-specific examples or an enlarged prompt checklist.
-- [ ] Match answer scope to loaded/captured/emitted/read evidence. Preserve
+- [x] Match answer scope to loaded/captured/emitted/read evidence. Preserve
   omissions through selection; tool truncated:false does not mean complete page
   or discussion coverage. Gather missing evidence when needed or qualify claims.
 
@@ -75,26 +77,26 @@ wrapper suppression, history thinning, raw CDP or default-budget increase.
 
 ### Runtime regressions
 
-- [ ] Reproduce the confirmed stale-scroll cause; the chosen fix allows exactly
+- [x] Reproduce the confirmed stale-scroll cause; the chosen fix allows exactly
   one intended page scroll and does not require emitting another broad snapshot.
-- [ ] Cover no snapshot, expired snapshot, recapture, top-level and child-frame
+- [x] Cover no snapshot, expired snapshot, recapture, top-level and child-frame
   navigation, target closure and two workspaces according to the chosen contract.
-- [ ] Reject unauthorized target access, private takeover and late operations;
+- [x] Reject unauthorized target access, private takeover and late operations;
   cancellation/transport loss cannot replay movement. Old element references
   still fail after their documented invalidation boundaries.
-- [ ] Verify operation-driven viewer updates still reflect successful scrolls
+- [x] Verify operation-driven viewer updates still reflect successful scrolls
   without resetting the viewer or permitting private output delivery.
 
 ### Guidance evaluation
 
-- [ ] Freeze baseline/candidate guidance and use the existing actual-provider
+- [x] Freeze baseline/candidate guidance and use the existing actual-provider
   comparison harness at the same 8 KiB budget/model/effort, with repeated runs.
   Add only missing neutral fixture coverage: semantic roles on nonmatching tags,
   nested entities, partial loading/coverage, and a follow-up that can reuse data.
-- [ ] Measure correctness, coverage, tool calls, empty-query detours, emitted text,
+- [x] Measure correctness, coverage, tool calls, empty-query detours, emitted text,
   provider input/output/cache usage and elapsed time. Include failures and mixed
   results. Do not add tests asserting particular prompt vocabulary.
-- [ ] Keep only guidance changes with demonstrated value or a clearly documented
+- [x] Keep only guidance changes with demonstrated value or a clearly documented
   correctness benefit. Revert wording that adds calls/context without improving
   correctness; Phase 6 showed that plausible reuse prompts can regress behavior.
 - [ ] Review one supplementary live run. Verify evidence attribution and explicit

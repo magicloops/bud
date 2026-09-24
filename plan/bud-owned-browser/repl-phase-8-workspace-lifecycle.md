@@ -107,6 +107,14 @@ Record actual results and skipped environment checks in a debug note.
 
 ## 4. Final merge gate
 
+- [ ] Complete [Phase 7e client recovery cleanup](repl-phase-7e-client-recovery-cleanup.md):
+  bounded outage traffic, coordinated terminal recovery, retained output and
+  actionable diagnostics. Record unresolved network/script causes separately.
+
+- [ ] Complete [Phase 7d startup helper upgrades](repl-phase-7d-startup-helper-upgrade.md):
+  existing opt-in upgrades automatically; disabled installations stay disabled;
+  failed upgrades cannot advertise stale APIs or prevent terminal service.
+
 - [ ] Complete [Phase 7c scrolling and observation use](repl-phase-7c-observation-use.md)
   with a reproduced stale-scroll decision and measured guidance results.
 

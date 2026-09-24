@@ -28,7 +28,8 @@ bud browser prepare --managed
 ```
 
 Installed users do not need npm or a separate Node installation. Preparation
-offers a daemon restart; the daemon reads the manifest at startup. Use
+offers a daemon restart. After that opt-in, daemon startup automatically upgrades
+the embedded helper before advertising readiness. Use
 `--no-restart` to restart later, or `--yes` to accept download/restart prompts.
 Use the same base directory as your daemon:
 
@@ -67,11 +68,14 @@ To use this checkout's helper and local Node instead of extracted/managed copies
 Add `--browser /absolute/path/to/chrome` to choose the executable. Preparation
 records absolute paths, so the daemon can start from another working directory.
 Restart your development daemon after helper changes; running helpers do not
-reload their modules. For embedded helpers, rebuild first, then run
-`./bud/target/debug/bud browser prepare --no-restart`, then restart. Managed
-helpers are cached by archive SHA-256, so different dirty builds cannot reuse
-stale code merely because their Git version labels match. A mismatched managed
-helper is unavailable until prepared with the matching daemon binary.
+reload their modules. For embedded helpers, rebuild and restart; startup installs
+and validates that binary's bundled helper automatically for existing managed
+installations. `browser prepare` is only needed for initial opt-in or Node/Chrome
+installation or repair. Helpers are cached by archive SHA-256, so different dirty
+builds cannot reuse stale code merely because their Git version labels match.
+Startup never downloads dependencies, switches browsers, or modifies profiles.
+A failed upgrade preserves the manifest and disables browsing for that startup;
+terminal startup continues. Development overrides are never replaced.
 
 ## Tests
 
@@ -120,7 +124,8 @@ bud doctor --format json
 ```
 
 Status performs a fresh launch probe and reports manifest staleness, paths and
-host caveats. If stale, prepare again and restart. The readiness probe is headless;
+host caveats without installing anything. Restart for a helper-only mismatch; use
+`browser prepare` to repair missing/incompatible Node or Chrome. The readiness probe is headless;
 the actual browser's window behavior is configured separately.
 
 Persistent secure-storage support is currently validated on macOS. Monitorless
@@ -163,9 +168,8 @@ decisions and remaining release acceptance.
 ## Development REPL experiment
 
 Phase 2 defaults to REPL on a non-production service; no environment setting is
-required. Build the matching daemon, prepare its
-helper with the checkout command above (or re-extract with `bud browser prepare`),
-then restart the daemon. It advertises REPL support only if all new helper modules
+required. Build and restart the matching daemon; already-enabled managed helpers
+upgrade automatically. For checkout overrides, use the preparation command above. It advertises REPL support only if all new helper modules
 are present. Set `BUD_BROWSER_TOOL_MODE=tools` to compare the existing tool family.
 Production retains the existing family until the planned cutover.
 
@@ -191,7 +195,10 @@ and `await handle.click({position:{x,y}})` accepts finite, nonnegative coordinat
 inside those bounds. Zero-sized/inline client boxes do not support explicit
 positions. Coordinates are not screenshot pixels; hit checks still apply.
 Failures can have effects: inspect before reconsidering, never replay blindly. `tab.insertText(text)` requires focus on that
-tab; `tab.scroll(delta_y)` requires a current observation. Recreate element handles
+tab. `tab.scroll(delta_y)` sends one wheel request to this live owned tab without
+a snapshot (integer −10000…10000). It may race navigation; observe afterward
+before using page content. Closed/foreign targets reject without reopening or
+retargeting; uncertain input is never automatically repeated. Recreate element handles
 after a new snapshot, navigation or Return; old handles cannot be revived.
 New modules `repl-worker.mjs`, `repl-api.mjs`, `repl-artifacts.mjs`, `repl-snapshot.mjs` are embedded in
 the daemon add-on. The worker executes trusted host JavaScript, not sandboxed code.
@@ -304,7 +311,6 @@ Overflow now retains preceding writes plus an explicitly incomplete text excerpt
 when space remains. Check `truncated` and bounded `output_artifact` metadata; never
 parse an excerpt as complete JSON or repeat browser actions to recover output.
 Prefer selection from retained data or a bounded artifact excerpt over reprinting
-an entire oversized artifact. The measured Phase 7b decision retains the 8 KiB default; explicit expansion
-still reaches 32 KiB. See [results](../../debug/browser-repl-phase7b.md).
+an entire oversized artifact. The default is restored to 8 KiB after the live 16 KiB comparison. Explicit expansion still reaches 32 KiB. See [results](../../debug/browser-repl-phase7b.md).
 Rebuild, prepare the matching add-on and restart workers alongside updated service
 guidance to activate this API. No viewer build or database migration is required.
