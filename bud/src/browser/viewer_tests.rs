@@ -469,7 +469,28 @@ async fn live_table_observation_reads_story_links_in_order() {
         )
         .await
         .unwrap();
-    let nodes = browser.snapshot_nodes(&target).await.unwrap();
+    // Fidelity hints can move the page boundary; inspect all frozen pages rather
+    // than assuming this fixture always fits in the first legacy output budget.
+    let mut observation = browser
+        .inspect(&target, json!({"operation":"snapshot"}))
+        .await
+        .unwrap();
+    let mut nodes = observation["nodes"].as_array().unwrap().clone();
+    let mut continuations = std::collections::HashSet::new();
+    while let Some(continuation) = observation["continuation"].as_str() {
+        assert!(
+            continuations.insert(continuation.to_owned()),
+            "continuation must advance"
+        );
+        observation = browser
+            .inspect(
+                &target,
+                json!({"operation":"snapshot","continuation":continuation}),
+            )
+            .await
+            .unwrap();
+        nodes.extend(observation["nodes"].as_array().unwrap().iter().cloned());
+    }
     let links: Vec<_> = nodes.iter().filter(|n| n["role"] == "link").collect();
     assert_eq!(
         links

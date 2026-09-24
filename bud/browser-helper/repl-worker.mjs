@@ -3,12 +3,12 @@ import { start } from 'node:repl';
 import { PassThrough, Writable } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createInterface } from 'node:readline';
-import { format } from 'node:util';
+import { formatWithOptions } from 'node:util';
 import { createBrowser } from './repl-api.mjs';
 import { artifacts, bounded, CAPTURE_LIMIT } from './repl-artifacts.mjs';
 
 // Use Node's evaluator for module loading and top-level await, but never its
-// interactive output (including automatic printing of the final expression).
+// interactive output. Completion values join our cell-owned output after draining.
 const evaluator = start({ input: new PassThrough(),
   output: new Writable({ write(_chunk, _encoding, done) { done(); } }),
   terminal: false, prompt: '', useGlobal: true });
@@ -18,22 +18,42 @@ const send = value => writeFrame(JSON.stringify(value) + '\n');
 const pending = new Map();
 let serial = 0;
 let active;
-const TEXT_LIMIT = 32 * 1024;
+const DEFAULT_TEXT_LIMIT = 8 * 1024;
+const MAX_TEXT_LIMIT = 32 * 1024;
 function cellContext() {
   const cell = context.getStore();
   if (!cell || cell !== active || cell.closed) throw Error('browser_repl_inactive_cell');
   return cell;
 }
-function output(value) {
+const inspectOptions = Object.freeze({ depth: 5, maxArrayLength: 100,
+  maxStringLength: 10000, customInspect: false, getters: false, colors: false });
+function output(...values) {
   const cell = cellContext();
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  const line = (text ?? String(value)) + '\n';
+  let text;
+  try {
+    text = formatWithOptions(inspectOptions, ...values.map(value =>
+      ArrayBuffer.isView(value) || value instanceof ArrayBuffer
+        ? `[Binary value: ${value.byteLength} bytes; use repl.emitImage for screenshots]`
+        : value));
+  } catch {
+    // Display failure must not turn completed browser effects into a retry signal.
+    text = '[Value could not be displayed; select concrete fields from retained data]';
+  }
+  const line = text + '\n';
   cell.capture += bounded(line, CAPTURE_LIMIT - Buffer.byteLength(cell.capture));
   cell.capture_truncated ||= Buffer.byteLength(line) + cell.capture_bytes > CAPTURE_LIMIT;
   cell.capture_bytes += Buffer.byteLength(line);
-  const remaining = TEXT_LIMIT - Buffer.byteLength(cell.text);
-  cell.text += bounded(line, remaining);
-  cell.truncated ||= Buffer.byteLength(line) > remaining;
+  // Successful execution is independent of display size. Preserve preceding
+  // writes and label a UTF-8-safe excerpt; never pretend clipped JSON is complete.
+  const remaining = cell.text_limit - Buffer.byteLength(cell.text);
+  if (!cell.truncated && Buffer.byteLength(line) <= remaining) cell.text += line;
+  else if (!cell.truncated) {
+    cell.truncated = true;
+    const start = '[INCOMPLETE OUTPUT EXCERPT — not complete JSON]\n';
+    const end = '\n[Output omitted; select retained data or a bounded artifact excerpt. Do not reprint the whole artifact or repeat actions.]\n';
+    if (remaining >= Buffer.byteLength(start + end))
+      cell.text += start + bounded(line, remaining - Buffer.byteLength(start + end)) + end;
+  }
 }
 function operation(command) {
   const cell = cellContext();
@@ -52,8 +72,18 @@ function operation(command) {
   return promise;
 }
 const files = artifacts(process.argv[2], cellContext);
-const api = createBrowser(operation);
-globalThis.repl = Object.freeze({ write: output, files,
+const api = createBrowser(operation, () => {
+  const cell = cellContext();
+  return cell.text_limit - Buffer.byteLength(cell.text);
+});
+globalThis.repl = Object.freeze({ files,
+  setOutputBudget(bytes) {
+    const cell = cellContext();
+    if (!Number.isInteger(bytes) || bytes < 1024 || bytes > MAX_TEXT_LIMIT)
+      throw Error('browser_output_budget_invalid');
+    if (cell.capture_bytes) throw Error('browser_output_budget_already_used');
+    cell.text_limit = bytes;
+  },
   async emitImage(bytes) {
     const cell = cellContext();
     const index = cell.image_count++;
@@ -64,7 +94,7 @@ globalThis.repl = Object.freeze({ write: output, files,
 });
 globalThis.browser = api.browser;
 for (const name of ['log', 'info', 'warn', 'error', 'debug', 'dir']) {
-  console[name] = (...args) => output(format(...args));
+  console[name] = (...args) => output(...args);
 }
 process.stdout.write = (chunk, encoding, callback) => {
   output(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
@@ -74,18 +104,23 @@ process.stdout.write = (chunk, encoding, callback) => {
 process.stderr.write = process.stdout.write;
 
 async function execute(message) {
-  const cell = { id: message.cell_id, text: '', capture: '', capture_bytes: 0, capture_truncated: false, images: [], image_count: 0, truncated: false, operations: new Set(), closed: false };
+  const cell = { id: message.cell_id, text_limit: DEFAULT_TEXT_LIMIT, text: '', capture: '', capture_bytes: 0, capture_truncated: false, images: [], image_count: 0, truncated: false, operations: new Set(), closed: false };
   active = cell;
   let error;
+  let completion;
   try {
     await context.run(cell, async () => {
       // Node's default REPL routes thrown exceptions to its domain rather than
       // the eval callback. Isolate that version-pinned behavior here; tests cover
       // sync throws, rejected await, imports, lexical bindings and late callbacks.
       await new Promise((resolve) => {
-        const finish = failure => {
+        let settled = false;
+        const finish = (failure, value) => {
+          if (settled) return;
+          settled = true;
           evaluator._domain.removeListener('error', onError);
           if (failure) error = bounded(String(failure.stack ?? failure), 2048);
+          else completion = value;
           resolve();
         };
         const onError = failure => {
@@ -95,6 +130,8 @@ async function execute(message) {
         evaluator.eval(message.code + '\n', evaluator.context, 'bud-repl', finish);
       });
       while (cell.operations.size) await Promise.allSettled([...cell.operations]);
+      error ??= cell.operationError;
+      if (!error && completion !== undefined) output(completion);
     });
     error ??= cell.operationError;
     if (cell.truncated) cell.output_artifact = context.run(cell, () => ({ ...files.write(cell.capture), truncated: cell.capture_truncated }));
@@ -105,7 +142,8 @@ async function execute(message) {
     active = undefined;
   }
   send({ type: 'result', cell_id: cell.id, ok: !error, error,
-    text: cell.text || '(no output)', truncated: cell.truncated, images: cell.images, output_artifact: cell.output_artifact });
+    ...(message.trace === true ? { _trace_output: { content: cell.capture, bytes: cell.capture_bytes, truncated: cell.capture_truncated, text_limit: cell.text_limit, formatter: inspectOptions } } : {}),
+    text: cell.text || (cell.truncated ? '(output omitted; inspect output_artifact or select from retained variables; do not repeat browser actions)' : '(no output)'), truncated: cell.truncated, images: cell.images, output_artifact: cell.output_artifact });
 }
 
 for await (const line of createInterface({ input: process.stdin })) {

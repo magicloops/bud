@@ -14,16 +14,3 @@ test('failure diagnostics expose only fixed stages and boolean signals', () => {
   assert.equal(failureDiagnostic(new Error('private'), 'private').stage, -1);
   assert.equal(failureDiagnostic(null, null).timeout, false);
 });
-
-test('click diagnostics are numeric, bounded and exclude page-bearing fields',()=>{
-  const diagnostic=failureDiagnostic(Error('private'),'prepare_click',{
-    candidates:900,reason:99,x:Infinity,y:-1,preparation_ms:5000,url:'private',text:'private',
-  });
-  assert.equal(diagnostic.stage,8);
-  assert.equal(diagnostic.candidates,50);
-  assert.equal(diagnostic.point_reason,-1);
-  assert.equal(diagnostic.point_x,null);
-  assert.equal(diagnostic.point_y,0);
-  assert.equal(diagnostic.preparation_ms,3000);
-  assert.equal(JSON.stringify(diagnostic).includes('private'),false);
-});

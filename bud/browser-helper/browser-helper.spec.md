@@ -13,13 +13,21 @@ browser manager owns serialization and authority for both paths.
 - `engine.mjs`: snapshot hierarchy, value exclusion, visible geometry, metadata,
   exact role/name and reference targeting, fill and wheel. Uses Playwright's
   `ariaSnapshotJSON({mode:'ai'})` and `aria-ref` selectors from that snapshot.
+  Plain string children become ordered text nodes at their source depth, without
+  action references or invented geometry. Field text and descendants remain
+  excluded. Checked/pressed states preserve reported booleans and `mixed`;
+  absent upstream states are not inferred.
   Reference locators retain the observed iframe ancestry; a document-root selector
   prevents Playwright from routing cached references through obsolete frame IDs.
   Scoped observations inherit their source frame. Bud never replays mutations;
   Playwright may internally retry actionability/input within a click invocation.
 - `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context. Removes empty row leaves and redundant single-cell table nesting while preserving real/ambiguous table structure. Text uses one-space depth and `[opaque-reference]` annotations; identities and map lookup are unchanged.
+  Pressed states participate in wrapper preservation and text rendering, including
+  false/mixed. Inline text survives compaction and existing byte/node limits.
 - `compact.test.mjs`: structure/state preservation (including blank cells and named containers), deep hierarchy, pagination, Unicode and limits.
 - `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
+  Fidelity regressions cover mixed inline text, toggle states, scoped/full/visible
+  snapshots and continued exclusion of field values.
 - `package.json` / `package-lock.json`: reproducible runtime dependency.
 
 One snapshot per thread workspace/helper, 60-second lifetime, 2 MiB retained nodes.
@@ -70,47 +78,53 @@ all-30-in-8-KiB is not claimed. Restart the helper/daemon to load this change.
 
 Temporary failure diagnostics (`diagnostics.mjs`, privacy regression in `diagnostics.test.mjs`) send only a fixed stage index and boolean Playwright error signals over private helper stdio. Rust logs these without returning diagnostics to the model; raw exception text is never emitted.
 
-## Click targeting and link destinations
+## Native click targeting and link destinations — Phase 7
 
-- `click-point.mjs`: bounded pre-click geometry selection on the exact resolved
-  element; 25 jittered points plus 25 grid centers per pass, at most two passes
-  sharing the three-second action budget. Clips visible rects, excludes nested
-  controls/media for links, traverses slots/open shadow roots and checks ancestor
-  iframe hits (including cross-origin frames). Transforms/zoom or unsupported
-  geometry reject conservatively. Uses CSS padding-box coordinates.
-- `click-point.test.mjs`: disposable Chrome tests for layered cards versus images,
-  same-URL siblings, deterministic fallback/randomness, small/clipped/multiline
-  targets, shadow slots, frames and dynamic overlays.
-- `diagnostics.mjs` / `diagnostics.test.mjs`: fixed failure stage/flags and bounded
-  numeric candidate/point/preparation fields; no page text or raw exception output.
+`engine.mjs` preserves upstream `cursor:"pointer"` as a hint, without inventing
+roles or a clickability guarantee. Full, scoped, visible and compact observations
+retain hinted nodes and their real references, including unnamed wrappers.
+Field values remain excluded; exact link URLs, hierarchy and budgets are unchanged.
 
-The engine rechecks document/reference freshness after selecting a point, then
-invokes Playwright once with normal actionability checks and no forced click.
-`browser_click_blocked` means preparation found no verified point before this
-click invocation; scrolling may already have changed the page. Later failures
-remain uncertain. Bud does not replay a click, but Playwright may internally
-retry actionability/input; successful dispatch does not prove navigation.
+Clicks resolve one exact element, recheck observation/document identity and invoke
+native Playwright click with a three-second budget. The randomized point sampler
+and its custom descendant/media/transform exclusions are removed. Normal scrolling,
+visibility, stability and hit checks remain. Bud never forces, substitutes another
+element or retries an uncertain mutation; Playwright may retry internally.
 
-Link URLs are retained exactly as supplied by Playwright, including queries,
-fragments and relative forms. Compact text renders one escaped `url=...`; visible
-DOM nodes retain `url` without duplicate text. URL bytes count toward the existing
-32 KiB serialized observation budget and frozen continuation pages. Form values
-remain excluded. URLs are untrusted evidence, not permission to navigate.
-See [design](../../design/browser-click-targeting-and-link-urls.md).
+`repl-api.mjs` element handles add `geometry()` returning current CSS padding-box
+`{width,height}` from the same element/frame, and optional
+`click({position:{x,y}})`. Positions must be finite, nonnegative and inside current
+bounds. No caller-supplied force/timeout or unrelated options. These methods retain
+the same observation and authority fences; geometry is not a hit-test guarantee.
+Zero-sized/inline client boxes cannot be used for explicit positions; native
+unpositioned clicks remain available. Native failures remain uncertain, not claims
+that no input occurred. The obsolete `browser_click_blocked` code is removed.
+
+- `click.test.mjs`: disposable Chrome disclosures, pointer preservation, layered
+  cards versus media, exact positions/bounds, stale identity, native controls,
+  clipping/transforms/zoom, slots/frames/overlays and hover/down effects.
+- `diagnostics.mjs` / `diagnostics.test.mjs`: fixed failure stage/boolean flags;
+  sampler-only counts/points are removed. No raw page text or exceptions in logs.
+
+Link URLs retain query strings, fragments and relative forms. Compact text renders
+one escaped `url=...`; visible nodes retain `url` without duplicate text. URL/hint
+bytes count toward existing output bounds and frozen continuation pages.
+See [Phase 7](../../plan/bud-owned-browser/repl-phase-7-actionability.md) and
+[validation](../../debug/browser-repl-phase7.md).
 
 ## Persistent REPL runtime foundation
 
 - `repl-worker.mjs`: separate killable worker using the managed Node's built-in
-  REPL evaluator, persistent bindings/top-level await/imports, explicit
-  `repl.write`, bounded console output and private JSON stdio. No inspector port.
+  REPL evaluator, persistent bindings/top-level await/imports, native completion
+  values and bounded console output and private JSON stdio. No inspector port.
   `browser.operation` is an internal bridge bootstrap, not the final model API.
 - `repl-worker.test.mjs`: persistent bindings, partial exceptions, module imports,
   syntax/rejected-await recovery, UTF-8 bounds, isolated workers, tracked
   unawaited calls and rejection of late callbacks/output.
 
 Each worker has a 128 MiB V8 old-space limit (not a total RSS limit), 64 KiB code
-and 32 KiB text output budgets; host supervision enforces a 30-second maximum
-cell deadline. Final expressions are silent. `var` supports repeated declarations;
+and an 8 KiB default text output budget (32 KiB explicit ceiling); host supervision enforces a 30-second maximum
+cell deadline. Successful non-undefined completion values append after tracked calls drain. `var` supports repeated declarations;
 lexical declarations follow Node REPL rules. Console/stdout/stderr writes share
 the output budget. Errors are bounded separately to 2 KiB. Oversized text gets a local captured-output file; images require explicit emission.
 
@@ -137,7 +151,7 @@ See [plan](../../plan/bud-owned-browser/repl-implementation.md).
   16 files maximum, 1 MiB each, oldest-first eviction, opaque relative names,
   no symlink traversal. Runtime destruction deletes the directory.
 
-`repl.write` and console share 32 KiB text; overflow retains at most 1 MiB in a
+Final values and console share the per-cell text budget; overflow retains at most 1 MiB in a
 referenced file. `repl.files.write/read` explicitly store/recall bounded data.
 `repl.emitImage(await tab.screenshot())` accepts captured screenshot buffers and
 uploads at most two images per cell. Image bytes never enter ordinary tool text.
@@ -170,3 +184,67 @@ Git label. Preparation installs changed bundles side by side; daemon resolution
 rejects an old managed helper until preparation with the matching binary. Rebuild,
 prepare, then restart after helper edits. Explicit checkout overrides still bypass
 managed identity checks. Existing profile data and sign-ins are unaffected.
+
+
+## Phase 4 output controls
+
+The default is 8 KiB UTF-8 per cell. `repl.setOutputBudget(bytes)` explicitly sets
+1024..32768 bytes before the cell's first output; the next cell resets to the default.
+Phase 7b supersedes whole-write omission: overflow preserves preceding writes and
+adds a bounded, explicitly incomplete UTF-8 excerpt when space remains, with
+`truncated:true` and the existing local `output_artifact`. Clipped output is never
+presented as complete JSON; output size is not an execution failure. The artifact can itself
+be incomplete at 1 MiB; callers check its truncation flag before parsing JSON.
+Local observation materialization stays at 2 MiB. No browser action is replayed
+for output recovery. Worker tests cover budget reset, shared console output,
+Unicode, marked overflow excerpts, local recall and varied structured extractions.
+See [validation](../../debug/browser-repl-phase4.md).
+
+
+## Standard output — Phase 5
+
+`repl.write` is removed without an alias. Console and native evaluator completion
+use one formatter/capture path, with inspection depth 5, 100 array entries and
+10,000 characters per inspected string, getters/custom inspection disabled.
+These previews are not JSON; inspection elision is separate from byte truncation.
+Direct binary values emit a size notice; images still require `repl.emitImage`.
+Formatter failures emit a bounded notice, not an action-retry error. Failed cells
+keep earlier console output but suppress the final value. Completion remains
+inside the active AsyncLocalStorage cell and existing daemon authority fence.
+Tests cover ordering, silence, false/zero/null/empty string, cycles, BigInt,
+getter safety, revoked proxies, marked overflow, operation draining and
+single execution. See [validation](../../debug/browser-repl-phase5.md).
+
+
+## Opt-in observation tracing
+
+`engine.mjs` optionally adds a private `_bud_trace` from the exact upstream
+snapshot before filtering, redacting field text/value/descendants. It performs no
+second observation; diagnostic copy failure becomes `unavailable`, not an action
+failure. Rust strips this field before the worker receives its normal snapshot.
+`repl-worker.mjs` sends `_trace_output` only when the daemon's internal execute
+flag requests it, using existing bounded formatted capture (including omitted
+inline output) and formatter settings. Rust strips it from the public result.
+`observation-trace.test.mjs` covers same-capture correspondence, redaction, bounds,
+and a live Chrome collapsed-disclosure versus evaluate extraction fixture.
+Worker tests verify opt-in isolation and overflow. No new agent API/dependency.
+See [enablement/retention](README.md#compare-observations-with-agent-output) and
+[plan](../../plan/bud-owned-browser/repl-observation-tracing.md).
+
+## Compact retained snapshot views — Phase 7b
+
+`repl-snapshot.mjs` adds non-enumerable `format({nodes?, maxBytes?})`,
+`getByReference(shortRef)` and `url(alias)` methods to full snapshot results.
+JSON/`nodes` remain exact. The pure view emits identity/coverage once, ordered
+hierarchical records, short snapshot-bound refs and factored exact URLs. Selected
+nodes must belong to that capture; omitted records/oversized URL definitions are
+explicit. The view always respects remaining cell output space; explicit view budgets
+are 512–32768 bytes and cannot expand the cell budget. Whole records fit or are omitted with counts. Source coverage,
+view omission, JS inspection and collector overflow remain distinct.
+
+Short handles close over original target/observation evidence and use the existing
+action path; there is no global alias map or new authority. URL lookup preserves
+queries/fragments and relative spelling. Historical data does not authorize actions.
+`repl-snapshot.test.mjs` covers fidelity, Unicode, URL factoring/selection, immutable
+reference binding and real Chrome stale-handle rejection. Build/archive watch and
+REPL readiness include the new module. See [Phase 7b validation](../../debug/browser-repl-phase7b.md).

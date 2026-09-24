@@ -54,7 +54,7 @@ Cargo build script for generated protobuf bindings and release metadata.
 
 - compiles `../proto/bud/v1/bud.proto` through `tonic-prost-build`
 - embeds the prepared browser helper and vendored dependencies; the explicit
-  source/watch list includes `click-point.mjs` and the isolated `repl-worker.mjs`
+  source/watch list includes the isolated `repl-worker.mjs`
   entrypoint alongside the engine and serializers
 - emits build commit, target triple, and Cargo profile into the compiled binary
   from CI-provided `BUD_BUILD_*` environment variables or local build

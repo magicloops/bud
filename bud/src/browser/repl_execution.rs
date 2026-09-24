@@ -128,6 +128,9 @@ impl BrowserManager {
             } else {
                 "browser_private_or_paused"
             };
+            if let Some(runtime) = worker.runtime.as_mut() {
+                runtime.discard_trace();
+            }
             let mut reply = Reply::error(request, code, true);
             reply.data = json!({"runtime_generation":generation, "runtime_reset":worker.runtime.is_none(),
                 "reset_reason":worker.reset_reason, "execution_state":match &result {
@@ -148,6 +151,46 @@ impl BrowserManager {
                 } else {
                     "failed"
                 });
+                // Trace data stays local and only survives the same authority fence
+                // as cell output; the service still applies its own delivery fence.
+                let trace_path = if let Some(runtime) = worker.runtime.as_mut() {
+                    runtime
+                        .publish_trace(
+                            json!({"request_id":request.request_id,
+                        "thread_id":request.thread_id,"session_id":request.session_id,
+                        "invocation_id":request.invocation_id}),
+                            &data,
+                        )
+                        .await
+                } else {
+                    None
+                };
+                // Trace I/O must not introduce a new output-delivery race.
+                let entry = slot.state.lock().await;
+                let stale = entry.closed_at.is_some()
+                    || entry.epoch != request.control_epoch
+                    || entry.sequence != request.sequence
+                    || entry.invocation.as_ref()
+                        != Some(&(request.invocation_id.clone(), request.invocation_fence));
+                drop(entry);
+                if stale || !self.cell_authorized(request, &slot, authority_fence) {
+                    if let Some(runtime) = worker.runtime.as_mut() {
+                        runtime.retract_trace(trace_path).await;
+                    }
+                    let code = if self.connection.borrow().as_deref()
+                        != Some(&request.device_session_id)
+                    {
+                        "browser_stale_connection"
+                    } else if stale {
+                        "browser_stale_request"
+                    } else {
+                        "browser_private_or_paused"
+                    };
+                    let mut reply = Reply::error(request, code, true);
+                    reply.data = json!({"runtime_generation":generation,
+                        "execution_state":data["execution_state"],"output_withheld":true});
+                    return reply;
+                }
                 let ok = data["ok"] == true;
                 Reply {
                     request_id: request.request_id.clone(),
@@ -340,7 +383,7 @@ impl BrowserManager {
                         anyhow::bail!("browser_invalid_arguments");
                     }
                 }
-                browser.inspect(target, json!({"operation":operation,"full":true,"scope":command["scope"],"observation_id":command["observation_id"]})).await
+                browser.inspect(target, json!({"operation":operation,"full":true,"trace":super::super::repl::trace_enabled(),"scope":command["scope"],"observation_id":command["observation_id"]})).await
             }
             "frames" => browser.inspect(target, json!({"operation":"frames"})).await,
             "evaluate" => {
@@ -449,13 +492,11 @@ mod tests {
     #[tokio::test]
     async fn local_cells_preserve_state_and_release_the_page_lock() {
         let (manager, slot) = setup();
-        let first = manager
-            .execute(request(1, "var n = 7; repl.write(n)"))
-            .await;
+        let first = manager.execute(request(1, "var n = 7; n")).await;
         assert!(first.ok, "{first:?}");
         let call = manager.execute(request(
             2,
-            "await new Promise(r => setTimeout(r, 100)); repl.write(++n)",
+            "await new Promise(r => setTimeout(r, 100)); ++n",
         ));
         let (second, ()) = tokio::join!(call, async {
             tokio::time::sleep(Duration::from_millis(30)).await;
@@ -485,11 +526,11 @@ mod tests {
             first.data["runtime_generation"]
         );
         assert_eq!(
-            manager.execute(request(2, "repl.write(n)")).await.error,
+            manager.execute(request(2, "console.log(n)")).await.error,
             Some("browser_private_or_paused")
         );
         manager.authority.lock().unwrap().resume_after_stop(2);
-        let mut next = request(2, "repl.write(n)");
+        let mut next = request(2, "console.log(n)");
         next.browser_epoch = 2;
         let resumed = manager.execute(next).await;
         assert_eq!(resumed.data["text"], "3\n");
@@ -511,7 +552,7 @@ mod tests {
         let result = manager.execute(infinite).await;
         assert!(!result.ok);
         assert!(slot.repl.lock().await.runtime.is_none());
-        let next = manager.execute(request(2, "repl.write(typeof n)")).await;
+        let next = manager.execute(request(2, "console.log(typeof n)")).await;
         assert!(next.ok, "{next:?}");
         let mut canceled = request(3, "var n = 1");
         canceled.command = Action::Cancel;
@@ -520,7 +561,7 @@ mod tests {
         assert_eq!(result.error, Some("browser_canceled"));
         assert_eq!(
             manager
-                .execute(request(4, "repl.write(typeof n)"))
+                .execute(request(4, "console.log(typeof n)"))
                 .await
                 .data["text"],
             "undefined\n"
@@ -538,7 +579,7 @@ mod tests {
         assert_eq!(failed.data["execution_state"], "failed");
         let duplicate = manager.execute(request(1, "n++")).await;
         assert_eq!(duplicate.error, Some("browser_stale_request"));
-        let next = manager.execute(request(2, "repl.write(n)")).await;
+        let next = manager.execute(request(2, "console.log(n)")).await;
         assert_eq!(next.data["text"], "2\n");
         assert_eq!(
             failed.data["runtime_generation"],
@@ -553,7 +594,7 @@ mod tests {
         let first = manager.execute(request(1, "var saved = 7")).await;
         manager.disconnect();
         manager.connect("device-two".into());
-        let mut next = request(2, "repl.write(saved)");
+        let mut next = request(2, "console.log(saved)");
         next.device_session_id = "device-two".into();
         let next = manager.execute(next).await;
         assert_eq!(next.data["text"], "7\n");
@@ -563,7 +604,7 @@ mod tests {
         );
         let mut active = request(
             3,
-            "repl.write('withhold'); await new Promise(r => setTimeout(r, 500))",
+            "console.log('withhold'); await new Promise(r => setTimeout(r, 500))",
         );
         active.device_session_id = "device-two".into();
         let (lost, ()) = tokio::join!(manager.execute(active), async {
@@ -575,7 +616,7 @@ mod tests {
         assert_eq!(lost.data["reset_reason"], "connection_lost");
         assert!(lost.data.get("text").is_none());
         manager.connect("device-three".into());
-        let mut next = request(4, "repl.write(typeof saved)");
+        let mut next = request(4, "console.log(typeof saved)");
         next.device_session_id = "device-three".into();
         let next = manager.execute(next).await;
         assert_eq!(next.data["text"], "undefined\n");
@@ -591,10 +632,18 @@ mod tests {
     async fn takeover_withholds_completed_output_but_preserves_its_state() {
         let (manager, slot) = setup();
         let first = manager.execute(request(1, "var saved = 7")).await;
+        let trace_directory = slot
+            .repl
+            .lock()
+            .await
+            .runtime
+            .as_mut()
+            .unwrap()
+            .enable_trace_for_test();
         let (finished, ()) = tokio::join!(
             manager.execute(request(
                 2,
-                "saved++; await new Promise(r => setTimeout(r, 150)); repl.write('withhold')"
+                "saved++; await new Promise(r => setTimeout(r, 150)); 'withhold'"
             )),
             async {
                 tokio::time::sleep(Duration::from_millis(30)).await;
@@ -609,8 +658,13 @@ mod tests {
             slot.repl.lock().await.runtime.as_ref().unwrap().generation,
             first.data["runtime_generation"]
         );
+        assert!(!std::fs::read_dir(&trace_directory).unwrap().any(|f| f
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("trace-")));
         manager.authority.lock().unwrap().resume_after_stop(2);
-        let mut next = request(3, "repl.write(saved)");
+        let mut next = request(3, "console.log(saved)");
         next.browser_epoch = 2;
         assert_eq!(manager.execute(next).await.data["text"], "8\n");
         manager.stop_repl_cells().await.unwrap();
@@ -625,7 +679,7 @@ mod tests {
         assert_eq!(crash.data["execution_state"], "interrupted");
         assert!(slot.repl.lock().await.runtime.is_none());
         let next = manager
-            .execute(request(3, "repl.write(typeof saved)"))
+            .execute(request(3, "console.log(typeof saved)"))
             .await;
         assert_eq!(next.data["text"], "undefined\n");
         assert_eq!(next.data["reset_reason"], "worker_exit");
@@ -661,7 +715,7 @@ mod tests {
         assert!(!failed.ok);
         assert!(manager.authority.lock().unwrap().agent_allowed(1));
         assert_eq!(
-            manager.execute(request(3, "repl.write(saved)")).await.data["text"],
+            manager.execute(request(3, "console.log(saved)")).await.data["text"],
             "7\n"
         );
         manager.stop_repl_cells().await.unwrap();
@@ -687,7 +741,7 @@ mod tests {
         assert_eq!(canceled.data["reset_reason"], "canceled");
         assert!(slot.repl.lock().await.runtime.is_none());
         let next = manager
-            .execute(request(3, "repl.write(typeof saved)"))
+            .execute(request(3, "console.log(typeof saved)"))
             .await;
         assert_eq!(next.data["text"], "undefined\n");
         assert_eq!(next.data["reset_reason"], "canceled");
@@ -718,7 +772,7 @@ mod tests {
         open.command = Action::Open { url: Some(url) };
         let opened = manager.execute(open).await;
         assert!(opened.ok, "{opened:?}");
-        let snapshot_code = "var tab = await browser.tabs.current(); var observed = await tab.snapshot(); var button = observed.nodes.find(n => n.role === 'button'); var handle = tab.getByReference(button.reference); repl.write(button.name)";
+        let snapshot_code = "var tab = await browser.tabs.current(); var observed = await tab.snapshot(); var button = observed.nodes.find(n => n.role === 'button'); var handle = tab.getByReference(button.reference); console.log(button.name)";
         let first = manager.execute(request(2, snapshot_code)).await;
         assert!(first.ok, "{first:?}");
         assert_eq!(first.data["text"], "Continue\n");
@@ -755,7 +809,7 @@ mod tests {
         );
         let mut fresh = request(
             8,
-            &format!("{snapshot_code}; {click}; repl.write(await tab.title())"),
+            &format!("{snapshot_code}; {click}; console.log(await tab.title())"),
         );
         fresh.control_epoch = 6;
         fresh.browser_epoch = 6;
@@ -775,7 +829,7 @@ mod tests {
         );
         let mut info = request(
             10,
-            "repl.write(typeof observed); repl.write(await (await browser.tabs.current()).title())",
+            "console.log(typeof observed); console.log(await (await browser.tabs.current()).title())",
         );
         info.control_epoch = 6;
         info.browser_epoch = 6;
@@ -816,7 +870,7 @@ mod tests {
         let mut open = request(1, "");
         open.command = Action::Open { url: Some(url) };
         assert!(manager.execute(open).await.ok);
-        let first=manager.execute(request(2,"var tab=await browser.tabs.current(); var saved=await tab.snapshot(); repl.write({large:JSON.stringify(saved).length>32768,last:saved.nodes.filter(n=>n.role==='link').at(-1).name,truncated:saved.truncated})")).await;
+        let first=manager.execute(request(2,"var tab=await browser.tabs.current(); var saved=await tab.snapshot(); console.log(JSON.stringify({large:JSON.stringify(saved).length>32768,last:saved.nodes.filter(n=>n.role==='link').at(-1).name,truncated:saved.truncated}))")).await;
         assert!(first.ok, "{first:?}");
         assert_eq!(
             first.data["text"],
@@ -830,11 +884,47 @@ mod tests {
             .get("workspace")
             .unwrap()
             .clone();
+        if super::super::super::repl::trace_enabled() {
+            let directory = slot
+                .repl
+                .lock()
+                .await
+                .runtime
+                .as_mut()
+                .unwrap()
+                .enable_trace_for_test();
+            let traces: Vec<Value> = std::fs::read_dir(directory)
+                .unwrap()
+                .filter_map(|file| {
+                    let file = file.unwrap();
+                    file.file_name()
+                        .to_string_lossy()
+                        .starts_with("trace-")
+                        .then(|| {
+                            serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap()
+                        })
+                })
+                .collect();
+            assert!(traces
+                .iter()
+                .any(
+                    |trace| trace["stages"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|stage| stage["stage"] == "upstream_snapshot"
+                            && stage["value"]["content"]
+                                .as_str()
+                                .unwrap()
+                                .contains("Story 499"))
+                ));
+            assert!(!first.data.to_string().contains("_bud_trace"));
+        }
         let revision = *slot.refresh.borrow();
         let cached = manager
             .execute(request(
                 3,
-                "repl.write(saved.nodes.filter(n=>n.role==='link').at(-2).url)",
+                "console.log(saved.nodes.filter(n=>n.role==='link').at(-2).url)",
             ))
             .await;
         assert!(cached.ok, "{cached:?}");
@@ -847,7 +937,7 @@ mod tests {
             *slot.refresh.borrow(),
             "local work must not capture"
         );
-        let eval=manager.execute(request(4,"repl.write(await tab.evaluate(x=>({title:document.title,value:x}),7)); var frames=await tab.frames(); repl.write(await tab.frame(frames.find(f=>!f.main).frame_id).evaluate(()=>document.body.textContent))")).await;
+        let eval=manager.execute(request(4,"console.log(await tab.evaluate(x=>({title:document.title,value:x}),7)); var frames=await tab.frames(); console.log(await tab.frame(frames.find(f=>!f.main).frame_id).evaluate(()=>document.body.textContent))")).await;
         assert!(eval.ok, "{eval:?}");
         assert!(eval.data["text"]
             .as_str()
@@ -864,7 +954,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("target_not_found"));
-        let capture=manager.execute(request(6,"var shot=await tab.screenshot(); repl.write({image:Buffer.isBuffer(shot),bytes:shot.length>0})")).await;
+        let capture=manager.execute(request(6,"var shot=await tab.screenshot(); console.log(JSON.stringify({image:Buffer.isBuffer(shot),bytes:shot.length>0}))")).await;
         assert!(capture.ok, "{capture:?}");
         assert_eq!(capture.data["text"], "{\"image\":true,\"bytes\":true}\n");
         let unsupported = manager
@@ -906,7 +996,7 @@ mod tests {
             url: Some(url.clone()),
         };
         assert!(manager.execute(open).await.ok);
-        let first = manager.execute(request(2, "var tab=await browser.tabs.current(); var saved=await tab.snapshot(); var oldHandle=tab.getByRole('button',{name:'Apply'}); await tab.getByRole('textbox',{name:'Note'}).fill('Hello'); await tab.getByReference(saved.nodes.find(n=>n.role==='textbox').reference).focus(); await tab.insertText('!'); repl.write(await tab.evaluate(()=>document.querySelector('input').value)); await oldHandle.click(); repl.write(await tab.title())")).await;
+        let first = manager.execute(request(2, "var tab=await browser.tabs.current(); var saved=await tab.snapshot(); var oldHandle=tab.getByRole('button',{name:'Apply'}); await tab.getByRole('textbox',{name:'Note'}).fill('Hello'); await tab.getByReference(saved.nodes.find(n=>n.role==='textbox').reference).focus(); await tab.insertText('!'); console.log(await tab.evaluate(()=>document.querySelector('input').value)); await oldHandle.click(); console.log(await tab.title())")).await;
         assert!(first.ok, "{first:?}");
         assert!(first.data["text"].as_str().unwrap().contains("Hello"));
         assert!(first.data["text"].as_str().unwrap().contains('!'));
@@ -936,7 +1026,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("ambiguous"));
-        let checked = manager.execute(request(5,"repl.write(await tab.evaluate(()=>window.clicks)); await tab.scroll(400); var second=await browser.tabs.create(); repl.write((await browser.tabs.list()).length); await tab.select(); repl.write((await browser.tabs.current()).id===tab.id)")).await;
+        let checked = manager.execute(request(5,"console.log(await tab.evaluate(()=>window.clicks)); await tab.scroll(400); var second=await browser.tabs.create(); console.log((await browser.tabs.list()).length); await tab.select(); console.log((await browser.tabs.current()).id===tab.id)")).await;
         assert!(checked.ok, "{checked:?}");
         assert_eq!(checked.data["text"], "2\n2\ntrue\n");
         let wrong_focus = manager.execute(request(6,"await tab.snapshot(); await tab.getByRole('textbox',{name:'Note'}).focus(); await second.insertText('wrong tab')")).await;
@@ -983,7 +1073,7 @@ mod tests {
                 .unwrap()
                 .contains("target_not_found"));
         }
-        let closed=manager.execute(request(12,"await second.close(); await tab.close(); repl.write(await browser.tabs.current()); repl.write((await browser.tabs.list()).length); repl.write(saved.nodes.some(n=>n.name==='Apply'))")).await;
+        let closed=manager.execute(request(12,"await second.close(); await tab.close(); console.log(await browser.tabs.current()); console.log((await browser.tabs.list()).length); console.log(saved.nodes.some(n=>n.name==='Apply'))")).await;
         assert!(closed.ok, "{closed:?}");
         assert_eq!(closed.data["text"], "null\n0\ntrue\n");
         assert_eq!(
@@ -1001,13 +1091,13 @@ mod tests {
             .is_none());
         let closed_handle = manager.execute(request(13, "await tab.snapshot()")).await;
         assert!(!closed_handle.ok);
-        let reopened=manager.execute(request(14,"var replacement=await browser.tabs.open(); repl.write(await replacement.url()); repl.write((await browser.tabs.list()).length)")).await;
+        let reopened=manager.execute(request(14,"var replacement=await browser.tabs.open(); console.log(await replacement.url()); console.log((await browser.tabs.list()).length)")).await;
         assert!(reopened.ok, "{reopened:?}");
         assert_eq!(reopened.data["text"], "about:blank\n1\n");
         let other_alive = manager
             .execute(other_request(
                 2,
-                "repl.write((await browser.tabs.list()).length)",
+                "console.log((await browser.tabs.list()).length)",
             ))
             .await;
         assert_eq!(other_alive.data["text"], "1\n");
@@ -1022,7 +1112,7 @@ mod tests {
         assert!(first.ok);
         old.shutdown().await.unwrap();
         let (new, _) = setup();
-        let mut r = request(2, "repl.write(typeof saved)");
+        let mut r = request(2, "console.log(typeof saved)");
         r.device_session_id = "new-device".into();
         new.connect("new-device".into());
         assert_eq!(
@@ -1071,7 +1161,7 @@ mod tests {
             .unwrap()
             .insert("other-workspace".into(), second);
         assert!(manager.execute(request(1, "var saved = 7")).await.ok);
-        let mut other = request(1, "repl.write(typeof saved)");
+        let mut other = request(1, "console.log(typeof saved)");
         other.session_id = "other-workspace".into();
         other.generation = "other-generation".into();
         other.thread_id = "other-thread".into();
@@ -1079,7 +1169,7 @@ mod tests {
         let (long, short) = tokio::join!(
             manager.execute(request(
                 2,
-                "await new Promise(r => setTimeout(r, 300)); repl.write(saved)"
+                "await new Promise(r => setTimeout(r, 300)); console.log(saved)"
             )),
             async {
                 tokio::time::sleep(Duration::from_millis(30)).await;
@@ -1110,7 +1200,7 @@ mod tests {
             drop(page);
         });
         assert_eq!(canceled.outcome, "rejected");
-        let next = manager.execute(request(3, "repl.write(saved)")).await;
+        let next = manager.execute(request(3, "console.log(saved)")).await;
         assert_eq!(next.data["text"], "7\n");
         assert_eq!(
             first.data["runtime_generation"],
@@ -1126,7 +1216,7 @@ mod tests {
         let (finished, ()) = tokio::join!(
             manager.execute(request(
                 2,
-                "saved++; await new Promise(r => setTimeout(r, 150)); repl.write('withhold')"
+                "saved++; await new Promise(r => setTimeout(r, 150)); 'withhold'"
             )),
             async {
                 tokio::time::sleep(Duration::from_millis(30)).await;

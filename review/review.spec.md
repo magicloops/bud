@@ -14,6 +14,45 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `browser-repl-ed1-review.md`
+
+Phase 7b live review of all ten browser cells and matching traces: useful overflow
+recovery, compact-view budgets, provider usage versus 01ce, stale scrolling,
+semantic-role/DOM-tag confusion and discussion coverage limits.
+
+### `browser-repl-01ce-review.md`
+
+Reviews all 19 cells and matching traces, compares usage with 07a, and evaluates
+repeated artifact overflow, dynamic feed loading, unverified ad exclusion, nested
+record discovery and complete emission of 19 loaded comment bodies.
+
+### `browser-repl-07a-review.md`
+
+Reviews all 14 cells and matching traces for the OpenAI-community task, compares
+provider usage with 1575, and assesses nested-record duplication, five overflows,
+42-comment coverage and agent-side text slicing. Separates successful reads from
+unexercised click and workspace-capacity acceptance.
+
+### `browser-repl-1575-review.md`
+
+Reviews all 15 browser cells, matching observation traces, provider usage and the
+retained screenshot. Separates pointer-hint retention from untested click behavior,
+repeated output overflow, stale scrolling, ordinal selection and visual attribution.
+
+### `browser-repl-f44-trace-review.md`
+
+Correlates all 31 browser cells with local observation traces and persisted
+results, checks retained screenshots, and separates collapsed-disclosure
+omissions, lost cursor hints, output overflow and stale scrolling. Compares
+provider usage and timing with the previous run and proposes generic follow-ups.
+
+### `browser-repl-48e-pre-json.md`
+
+Exact-call review of thread 48e11445 before its JSON fallback, correlating retained
+historical overflow artifacts with collapsed disclosure state, projection losses,
+output recovery and latency. Distinguishes confirmed available DOM text from
+unproven snapshot/actionability gaps and proposes neutral follow-up fixtures.
+
 ### `bud-owned-browser-branch-review.md`
 
 Merge-readiness review of `feat/bud-owned-browser` against `main` (2026-09-21):

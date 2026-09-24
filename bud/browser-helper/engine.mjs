@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { compactNodes, compactPage } from './compact.mjs';
-import { selectClickPoint } from './click-point.mjs';
+import { bounded } from './repl-artifacts.mjs';
 
 const referenceNamespace = randomBytes(8).toString('base64url');
 let observationSequence = 0;
@@ -15,6 +15,10 @@ export function sanitize(nodes, prefix, refs, depth = 0, result = []) {
   if (depth > 128 || result.length > 20000) fail('browser_observation_limit');
   for (const node of nodes) {
     if (result.length >= 20000) fail('browser_observation_limit');
+    if (typeof node === 'string') {
+      result.push({ depth, role: 'text', text: node });
+      continue;
+    }
     if (!node || typeof node !== 'object') continue;
     const item = { depth, role: node.role ?? 'text' };
     if (typeof node.name === 'string') item.name = node.name;
@@ -25,13 +29,33 @@ export function sanitize(nodes, prefix, refs, depth = 0, result = []) {
       refs.set(item.reference, node.ref);
     }
     if (node.box) item.box = node.box;
-    for (const key of ['disabled', 'checked', 'expanded', 'selected', 'level']) {
-      if (typeof node[key] === 'boolean' || typeof node[key] === 'number') item[key] = node[key];
+    if (node.cursor === 'pointer') item.cursor = 'pointer';
+    for (const key of ['disabled', 'checked', 'pressed', 'expanded', 'selected', 'level']) {
+      if (typeof node[key] === 'boolean' || typeof node[key] === 'number' ||
+        (['checked', 'pressed'].includes(key) && node[key] === 'mixed')) item[key] = node[key];
     }
     result.push(item);
     if (!fields.has(item.role) && Array.isArray(node.children)) sanitize(node.children, prefix, refs, depth + 1, result);
   }
   return result;
+}
+
+// Diagnostic copy of the SAME upstream tree, before flattening/filtering.
+// Preserve unknown structure, but never retain field values or descendants.
+export function traceSnapshot(raw) {
+  const redact = node => {
+    if (Array.isArray(node)) return node.map(redact);
+    if (!node || typeof node !== 'object') return node;
+    const field = fields.has(node.role);
+    return Object.fromEntries(Object.entries(node)
+      .filter(([key]) => key !== 'value' && !(field && ['text', 'children'].includes(key)))
+      .map(([key, value]) => [key, redact(value)]));
+  };
+  try {
+    const text = JSON.stringify(redact(raw));
+    const content = bounded(text, 1024 * 1024);
+    return { content, bytes: Buffer.byteLength(text), truncated: content !== text };
+  } catch { return { unavailable: true }; }
 }
 
 // Resolve within the observed frame rather than letting aria-ref's retained fN
@@ -112,13 +136,12 @@ export class Engine {
     const nodes = s.nodes.slice(offset, end);
     const cursor = end < s.nodes.length ? `${s.id}:${end}` : null;
     return { target_id: s.target, document_id: s.document, observation_id: s.id,
-      viewport: s.viewport, nodes, text: nodes.map(n => `${'  '.repeat(Math.min(n.depth, 24))}${n.role}${n.name ? ` ${JSON.stringify(n.name)}` : ''}${n.text ? `: ${JSON.stringify(n.text)}` : ''}${n.reference ? ` [ref=${n.reference}]` : ''}${n.url !== undefined ? ` url=${JSON.stringify(n.url)}` : ''}`).join('\n'),
+      viewport: s.viewport, nodes, text: nodes.map(n => `${'  '.repeat(Math.min(n.depth, 24))}${n.role}${n.name ? ` ${JSON.stringify(n.name)}` : ''}${n.text ? `: ${JSON.stringify(n.text)}` : ''}${n.cursor === 'pointer' ? ' [cursor=pointer]' : ''}${n.reference ? ` [ref=${n.reference}]` : ''}${n.url !== undefined ? ` url=${JSON.stringify(n.url)}` : ''}`).join('\n'),
       truncated: cursor !== null, continuation: cursor, expires_in_ms: Math.max(0, TTL - (Date.now() - s.at)),
       coverage: 'accessible_dom', limitations: ['Closed shadow roots and inaccessible embedded documents may be omitted.'] };
   }
   async execute(c) {
     this.stage = 'resolve_page';
-    this.clickDiagnostic = undefined;
     if (c.operation === 'invalidate') { this.snapshot = null; this.frames.clear(); return {}; }
     const page = await this.page(c.target_id);
     if (c.operation === 'frames') {
@@ -169,7 +192,8 @@ export class Engine {
       if (c.compact === true) nodes = compactNodes(nodes);
       this.snapshot = { id, refs, nodes, viewport, target: c.target_id, document, at: Date.now(),
         full: c.full === true, compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
-      return { ...this.pageResult(this.snapshot, 0), viewport };
+      return { ...this.pageResult(this.snapshot, 0), viewport,
+        ...(c.trace === true ? { _bud_trace: traceSnapshot(raw) } : {}) };
     }
     this.stage = 'validate_snapshot';
     const s = await this.current(page, c);
@@ -193,29 +217,36 @@ export class Engine {
     try {
       this.stage = 'validate_action';
       await this.current(page, c);
-      this.stage = c.operation;
+      // Geometry is read from this exact element in its own frame, in CSS
+      // padding-box coordinates (not screenshot pixels or viewport coordinates).
+      const geometry = () => handle.evaluate(element => {
+        if (!element.isConnected) throw Error('browser_stale_reference');
+        return { width: element.clientWidth, height: element.clientHeight };
+      });
+      if (c.operation === 'geometry') return await geometry();
       if (c.operation === 'click') {
         const started = performance.now();
-        const remaining = () => {
-          const ms = Math.ceil(3000 - (performance.now() - started));
-          if (ms <= 0) throw Error('browser_click_blocked');
-          return ms;
-        };
-        this.stage = 'prepare_click';
-        const diagnostic = this.clickDiagnostic = {};
         let position;
-        try {
-          position = await selectClickPoint(handle, { remaining, diagnostic });
+        if (c.position != null) {
+          const p = c.position;
+          if (typeof p !== 'object' || Array.isArray(p) ||
+              Object.keys(p).some(key => !['x', 'y'].includes(key)) ||
+              !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.y < 0)
+            fail('browser_invalid_arguments');
+          const { width, height } = await geometry();
+          if (p.x >= width || p.y >= height) fail('browser_invalid_arguments');
+          position = { x: p.x, y: p.y };
           await this.current(page, c);
-        } finally {
-          diagnostic.preparation_ms = Math.round(performance.now() - started);
         }
-        const timeout = remaining();
+        const timeout = Math.ceil(3000 - (performance.now() - started));
+        if (timeout <= 0) fail('browser_outcome_unknown');
         this.stage = 'click';
-        await handle.click({ position, timeout, scroll: 'none' });
+        // One invocation, the same handle, normal scrolling and actionability.
+        // Playwright may retry internally; Bud never force-clicks or retargets.
+        await handle.click({ ...(position ? { position } : {}), timeout });
       }
-      else if (c.operation === 'fill') await handle.fill(c.text, { timeout: 3000 });
-      else if (c.operation === 'focus') await handle.focus();
+      else if (c.operation === 'fill') { this.stage = 'fill'; await handle.fill(c.text, { timeout: 3000 }); }
+      else if (c.operation === 'focus') { this.stage = 'focus'; await handle.focus(); }
       else fail('browser_invalid_arguments');
       return { action_applied: true };
     } finally { await handle.dispose(); }

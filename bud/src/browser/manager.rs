@@ -12,6 +12,8 @@ use std::{
 };
 use tokio::sync::{watch, Mutex as AsyncMutex};
 
+const MAX_ACTIVE_WORKSPACES: usize = 10;
+
 #[derive(Clone, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
@@ -45,6 +47,7 @@ pub enum Action {
         locator: Option<Locator>,
         text: Option<String>,
         delta_y: Option<i32>,
+        position: Option<ClickPosition>,
     },
     Navigate {
         url: String,
@@ -126,6 +129,13 @@ impl Action {
 pub struct Locator {
     pub role: String,
     pub name: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClickPosition {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -359,7 +369,7 @@ impl BrowserManager {
         json!({"version":1, "available":self.runtime.is_some(), "boot_id":self.boot_id, "runtime":self.runtime_info,
             "native_window":cfg!(target_os = "macos") && std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1"),
             "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
-            "repl":self.runtime.as_ref().is_some_and(super::repl::prepared), "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":2})
+            "repl":self.runtime.as_ref().is_some_and(super::repl::prepared), "semantic_observations":true, "compact_observations":true, "agent_capture":true, "operation_driven_media":true, "max_sessions":MAX_ACTIVE_WORKSPACES})
     }
 
     pub fn connect(&self, device_session_id: String) {
@@ -499,7 +509,7 @@ impl BrowserManager {
                             .unwrap_or(true)
                     })
                     .count();
-                if (active >= 2 && !matches!(request.command, Action::Close))
+                if (active >= MAX_ACTIVE_WORKSPACES && !matches!(request.command, Action::Close))
                     || entries.len() >= 128
                 {
                     return Reply::error(&request, "browser_session_limit", false);
@@ -1012,7 +1022,6 @@ impl BrowserManager {
                     "browser_secure_storage_unsupported",
                     "browser_locator_ambiguous",
                     "browser_locator_not_found",
-                    "browser_click_blocked",
                     "browser_observation_limit",
                     "browser_invalid_arguments",
                     "browser_no_previous_page",
@@ -1481,11 +1490,12 @@ impl BrowserManager {
                 locator,
                 text,
                 delta_y,
+                position,
                 ..
             } => {
                 let data = browser.inspect(&target, json!({"compact":compact,"operation":operation,"continuation":continuation,
                 "scope":scope,"observation_id":observation_id,"reference":reference,"locator":locator,
-                "text":text,"delta_y":delta_y})).await?;
+                "text":text,"delta_y":delta_y,"position":position})).await?;
                 Ok(json!({"observation":data}))
             }
             Action::Navigate { url, .. } => {
@@ -1592,6 +1602,7 @@ fn valid_action(action: &Action) -> bool {
             locator,
             text,
             delta_y,
+            position,
             ..
         } => {
             target(target_id)
@@ -1605,6 +1616,7 @@ fn valid_action(action: &Action) -> bool {
                         | "visible_dom"
                         | "page_info"
                         | "click"
+                        | "geometry"
                         | "focus"
                         | "fill"
                         | "scroll"
@@ -1613,6 +1625,13 @@ fn valid_action(action: &Action) -> bool {
                     !l.role.is_empty() && l.role.len() <= 64 && l.name.len() <= 2048
                 })
                 && text.as_ref().is_none_or(|t| t.len() <= 8192)
+                && position.as_ref().is_none_or(|p| {
+                    operation == "click"
+                        && p.x.is_finite()
+                        && p.y.is_finite()
+                        && p.x >= 0.0
+                        && p.y >= 0.0
+                })
                 && delta_y.is_none_or(|d| (-10000..=10000).contains(&d))
         }
         Action::NativeWindow {
@@ -1694,6 +1713,34 @@ mod tests {
         serde_json::from_value(json!({"action":"inspect","operation":"snapshot"})).unwrap()
     }
     use super::*;
+
+    #[test]
+    fn semantic_click_position_validation() {
+        let command = |operation: &str, position: Value| {
+            json!({
+                "action":"inspect", "operation":operation, "reference":"s:e1", "position":position
+            })
+        };
+        for value in [
+            command("click", json!({"x":0.0,"y":1.5})),
+            json!({"action":"inspect","operation":"geometry","reference":"s:e1"}),
+        ] {
+            assert!(valid_action(&serde_json::from_value(value).unwrap()));
+        }
+        for value in [
+            command("click", json!({"x":-1,"y":1})),
+            command("geometry", json!({"x":1,"y":1})),
+        ] {
+            assert!(!valid_action(&serde_json::from_value(value).unwrap()));
+        }
+        for position in [
+            json!({"x":1}),
+            json!({"x":1,"y":1,"force":true}),
+            json!({"x":"1","y":1}),
+        ] {
+            assert!(serde_json::from_value::<Action>(command("click", position)).is_err());
+        }
+    }
 
     #[test]
     fn control_wire_has_a_strict_typed_operation() {
@@ -2972,7 +3019,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_blocked_click_preserves_session_and_allows_fresh_observation() {
+    async fn live_repl_position_and_geometry_use_the_guarded_bridge() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let (url, server) = fixture().await;
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
+        manager.connect("device".into());
+        assert!(
+            manager
+                .execute(request(1, Action::Open { url: Some(url) }))
+                .await
+                .ok
+        );
+        let run = |sequence, code: &str| request(sequence, Action::Exec { code: code.into() });
+        let clicked = manager.execute(run(2, r#"
+            var tab = await browser.tabs.current();
+            await tab.evaluate(() => { window.clicks=0; document.querySelector('button').onclick=()=>window.clicks++; });
+            var snap = await tab.snapshot();
+            var handle = tab.getByRole('button', {name:'Continue', exact:true});
+            var box = await handle.geometry();
+            await handle.click({position:{x:1,y:1}});
+            console.log(JSON.stringify({box,clicks:await tab.evaluate(()=>window.clicks)}));
+        "#)).await;
+        assert!(clicked.ok, "{clicked:?}");
+        let output: Value =
+            serde_json::from_str(clicked.data["text"].as_str().unwrap().trim()).unwrap();
+        assert!(output["box"]["width"].as_f64().unwrap() > 1.0);
+        assert_eq!(output["clicks"], 1);
+        let invalid = manager
+            .execute(run(3, "await handle.click({position:{x:box.width,y:1}})"))
+            .await;
+        assert!(!invalid.ok);
+        assert_eq!(invalid.outcome, "unknown"); // A started cell is never safe to replay.
+        let observed = manager
+            .execute(run(4, "console.log(await tab.evaluate(()=>window.clicks))"))
+            .await;
+        assert!(observed.ok, "{observed:?}");
+        assert_eq!(observed.data["text"].as_str().unwrap().trim(), "1");
+        assert_eq!(
+            observed.data["runtime_generation"],
+            clicked.data["runtime_generation"]
+        );
+        manager.shutdown().await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_uncertain_click_preserves_session_and_allows_fresh_observation() {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
             return;
         };
@@ -3005,8 +3099,8 @@ mod tests {
         .unwrap();
         let blocked = manager.execute(request(3, action)).await;
         assert!(!blocked.ok);
-        assert_eq!(blocked.error, Some("browser_click_blocked"));
-        assert_eq!(blocked.outcome, "rejected");
+        assert_eq!(blocked.error, Some("browser_outcome_unknown"));
+        assert_eq!(blocked.outcome, "unknown");
         let observed = manager.execute(request(4, inspect_snapshot())).await;
         assert!(observed.ok, "{observed:?}");
         assert_eq!(observed.data["observation"]["target_id"], target);
@@ -3043,11 +3137,19 @@ mod tests {
         let other = manager.execute(second.clone()).await;
         assert!(other.ok, "{other:?}");
         assert_ne!(first.data["target_id"], other.data["target_id"]);
-        let mut third = second.clone();
-        third.session_id = "third".into();
-        third.thread_id = "third".into();
+        assert_eq!(manager.capability()["max_sessions"], 10);
+        for index in 2..10 {
+            let mut extra = request(1, Action::Open { url: None });
+            extra.session_id = format!("extra-{index}");
+            extra.thread_id = format!("extra-thread-{index}");
+            let result = manager.execute(extra).await;
+            assert!(result.ok, "workspace {index}: {result:?}");
+        }
+        let mut overflow = second.clone();
+        overflow.session_id = "overflow".into();
+        overflow.thread_id = "overflow".into();
         assert_eq!(
-            manager.execute(third).await.error,
+            manager.execute(overflow.clone()).await.error,
             Some("browser_session_limit")
         );
         manager.disconnect();
@@ -3074,5 +3176,8 @@ mod tests {
         second.sequence = 2;
         second.command = Action::Close;
         assert!(manager.execute(second).await.ok);
+        overflow.device_session_id = "reconnected".into();
+        assert!(manager.execute(overflow).await.ok);
+        manager.shutdown().await.unwrap();
     }
 }

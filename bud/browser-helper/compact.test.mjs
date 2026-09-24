@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { compactNodes, compactPage, OBSERVATION_BYTES } from './compact.mjs';
 
 const snapshot = nodes => ({id:'short1',target:'target',document:'document',viewport:{width:800,height:600,scroll_x:0,scroll_y:0},at:Date.now(),mode:'snapshot',nodes});
+test('pressed states protect otherwise empty wrappers and survive text serialization', () => {
+  const nodes = compactNodes([
+    {depth:0,role:'generic',pressed:false}, {depth:1,role:'button',pressed:true,reference:'s:b'},
+    {depth:0,role:'button',pressed:'mixed'}, {depth:0,role:'checkbox',checked:'mixed'},
+  ]);
+  assert.equal(nodes[0].role, 'generic');
+  assert.equal(nodes[1].depth, 1);
+  const text = compactPage(snapshot(nodes),0).text;
+  for (const state of ['pressed=false','pressed=true','pressed=mixed','checked=mixed']) assert.ok(text.includes(state));
+});
 test('promotes empty wrappers, preserves ranks, table structure, unnamed controls and state', () => {
   const nodes = compactNodes([
     {depth:0,role:'generic',reference:'x:1'}, {depth:1,role:'table',reference:'x:2'},

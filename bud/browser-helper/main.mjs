@@ -18,7 +18,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     }
   } catch (error) {
     const code = /^browser_[a-z_]+$/.test(error.message) ? error.message : 'browser_outcome_unknown';
-    process.stdout.write(JSON.stringify({ ok: false, error: code, diagnostic: failureDiagnostic(error, engine?.stage, engine?.clickDiagnostic) }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: code, diagnostic: failureDiagnostic(error, engine?.stage) }) + '\n');
   }
 }
 process.exit(0);
