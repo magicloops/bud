@@ -814,38 +814,40 @@ Local summary compaction collaborator used by `AgentService`.
 
 ### `thread-title-service.ts`
 
-Best-effort thread-title generation for the first durable user message.
+Best-effort title generation from the first durable user message. Uses GPT-5.6
+Luna, falling back to Haiku 4.5 only when the OpenAI provider is absent.
+The first message is framed as text to summarize, not instructions to follow.
 
-**Responsibilities**:
-- confirm the just-written user row is still the canonical first user message on the thread
-- use Anthropic `claude-haiku-4-5` as the only title-generation model
-- wrap the first user message as quoted text to summarize so the title model does not answer or follow instructions inside it
-- sanitize the model output into a plain-text title
-- persist the title with a conditional `thread.title IS NULL` update
-- emit `thread.title` on the existing agent SSE channel and advance the shared runtime cursor
+The model must call `submit_thread_title` with `{title: string}` (no extra fields).
+This is a structured return value, not an agent action: no tool execution or
+second model call is needed. Both adapters support forced tool selection; OpenAI
+also applies strict tool schemas. The budget is 256 output tokens with the existing
+30-second deadline per attempt and reasoning-disabled configuration. One retry
+is allowed for provider errors, timeout, or invalid structured output, using a
+fresh abort controller. Attempt timers are always cleared; exhausted attempts
+return no title. Persistence and event publication are outside the retry loop.
 
-**Notes**:
-- runs fire-and-forget after `AgentService.startUserMessage(...)` succeeds, so the assistant turn is never blocked on title generation
-- if the Anthropic provider is not configured, Haiku is unavailable, the model times out, model output is invalid, or another request wins the conditional update first, the thread simply keeps its existing title state
-- logs eligibility skips, unavailable Haiku, model title candidates, invalid generated output with a bounded Haiku response summary, conditional update misses, and successful persistence under the `thread_title` component
-- preserves line breaks from the Haiku response before normalization so a valid first-line title can survive even if the model continues with extra text
-- normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
-- the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
-- streamed title reconstruction now updates the active text block through a locally narrowed `text` reference so canonical non-text blocks remain type-safe during `tsc`
+The service accepts exactly one matching call in a completed response, validates
+a nonempty title of at most 80 characters after whitespace normalization, and
+rejects truncated/error responses. It does not salvage plain-text lines, labels,
+quotes or punctuation. Stream-only providers must emit a final message event.
+Diagnostics record completion status, usage and block types without raw output.
+
+The existing first-message eligibility and conditional `thread.title IS NULL`
+write remain. Routes authorize the owning thread before scheduling this work;
+the title call has no resource IDs or authority to select another thread. It emits
+`thread.title` with `{thread_id,title,source,updated_at}` after persistence and
+advances the shared cursor. `source` is `generated_first_user_message`.
+Generation remains fire-and-forget without durable retry/backfill; exhaustion leaves
+the current title unchanged. Service-only deployment; no migration/client change.
 
 ### `thread-title-service.test.ts`
 
-Standalone Node tests for title normalization, Anthropic-Haiku-only model selection, provider-less handling, and streamed title text accumulation.
-
-**Current Coverage**:
-- generated titles strip labels and trailing punctuation
-- longer descriptive titles remain intact
-- short 1-2 word titles remain valid
-- title output uses the first response line before any extra model continuation
-- the original first user message is wrapped as text to summarize instead of forwarded as a direct instruction
-- title model selection requires configured Anthropic Haiku 4.5 and does not fall back to OpenAI-only availability
-- provider-less and Anthropic-less title generation returns `null` instead of throwing
-- streamed title-response collection keeps accumulating `text_delta` chunks through a narrowed text block instead of widening back to the full canonical content union
+Covers Luna preference/Haiku fallback, forced schema and 256-token budget,
+message-as-data prompting, whitespace normalization, invalid arguments, extra
+fields, duplicate/wrong calls, plain-text rejection, incomplete responses,
+80-character boundary, and completed versus interrupted stream-only responses, retry recovery/exhaustion,
+30-second timeout cancellation, fresh retry signals and timer cleanup.
 
 ## Events Emitted
 
