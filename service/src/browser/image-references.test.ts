@@ -4,7 +4,7 @@ import { HYDRATED_IMAGE_LIMIT, hydratedImageIds, selectHydratedImageReferences }
 import type { CanonicalMessage } from "../llm/types.js";
 
 const observe = (id: string, ok = true): CanonicalMessage => ({ role: "user", content: [{ type: "tool_result", tool_use_id: id,
-  content: JSON.stringify({ tool: "browser_observe", ok, data: { image_artifact: { id } } }) }] });
+  content: JSON.stringify({ tool: "browser_exec", ok, data: { images: ok ? [{ id }] : [] } }) }] });
 
 test("selection keeps the newest successful screenshots up to the hydration limit, in conversation order", () => {
   const messages: CanonicalMessage[] = [

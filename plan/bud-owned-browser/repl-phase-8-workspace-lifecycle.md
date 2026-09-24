@@ -1,72 +1,43 @@
 # Phase 8: Workspace admission, cleanup and final merge acceptance
 
-Status: scoped, not implemented. Final pre-merge phase of the
+Status: lifecycle implementation and automated validation complete; physical and
+matching-stack merge acceptance remains pending. Final pre-merge phase of the
 [REPL implementation plan](repl-implementation.md). 2026-09-24.
 
-## Context
+## Policy and objective
 
-A new thread could not open a page because two logical browser workspaces were
-already allocated, even though Chrome showed only three tabs. Admission counts
-non-closed daemon workspace slots, not visible tabs. Closing a native tab does
-not necessarily free a slot. The agent's advice to close a session or tab was
-therefore unreliable. See [investigation and interim fix](../../debug/browser-workspace-limit.md).
+The user rejected manual capacity management. The fixed ten-workspace limit is
+removed. Browser tabs/helpers and REPL heaps/artifacts expire automatically after
+24 hours without use, checked every minute locally by the daemon. This replaces
+the earlier retention-until-explicit-close policy. No LRU eviction, new database
+model or web polling is introduced.
 
-The temporary cap is now ten workspaces, with one constant for enforcement and
-advertised `max_sessions`. A live regression covers ten admissions, rejection of
-the eleventh, and admission after logical close. Raising the number mitigates the
-immediate problem; it does not complete this phase.
+Admitted page/cell operations, active cell/media holders and live private control
+are use. Checkpoint events, metadata reads and background service traffic are not.
+Active work is protected; after its last use another full idle period applies.
+Expiry saves eligible public URL checkpoints before closing owned tabs, preserving
+queries/fragments, profile/sign-ins and unrelated threads. Paused private content
+retains its earlier disclosed URLs; expiry never saves private addresses or returns
+control automatically. Normal ensure restores public pages and the next cell gets
+a fresh runtime. REPL bindings and temporary artifacts are intentionally ephemeral.
 
-## Objective
+Explicit Close browser workspace remains an optional discard action that also
+forgets saved URLs. It is no longer required for normal resource management or
+access to an eleventh conversation. Current per-operation deadlines, serialized
+page access and per-worker memory/output bounds remain.
 
-Normal movement between threads must not exhaust invisible browser slots with no
-usable recovery. Keep the shared profile, thread-owned tabs and retained REPL
-state understandable. At a real resource limit, report what is exhausted and
-provide a supported way to recover without destroying another thread's work.
+## Implementation
 
-This phase is the final merge gate for this REPL change. It includes workspace
-lifecycle work and verification of outstanding earlier-phase gates; it does not
-implicitly mark those gates complete or pull unrelated browser roadmap items in.
-
-## 1. Establish the smallest lifecycle policy
-
-- [ ] Trace allocation and release through service admission, daemon slots,
-  workers, tabs, viewers and URL checkpoints. Include failed initial admission,
-  native final-tab closure, explicit tab/workspace close, thread deletion,
-  daemon restart and reconnect. Identify the owner of each cleanup transition.
-- [ ] Distinguish durable workspace identity and recovery hints from resident
-  resources: Chrome targets, helper/REPL processes, artifacts and media. Document
-  exactly what the ten-workspace limit protects and when a slot is released.
-- [ ] Reproduce accumulated empty/failed workspaces with neutral fixtures. Fix
-  confirmed orphaned allocations first using existing lifecycle paths.
-- [ ] Choose and document the smallest remaining admission policy from evidence:
-  release unused allocations when safe, or expose explicit workspace release when
-  useful state must be discarded. Do not infer that an empty tab inventory means
-  an empty REPL heap, or that closing a viewer means abandoning a workspace.
-
-Prefer deterministic cleanup at existing lifecycle boundaries. Keep a bounded
-resident-resource cap unless measurements justify changing it. Avoid a new
-scheduler, idle timer framework, automatic LRU eviction, new database lifecycle
-model or compatibility mode merely to address this case. If explicit release is
-needed, reuse the existing workspace-close implementation rather than inventing
-another browser reset operation.
-
-## 2. Implement admission and recovery
-
-- [ ] Ensure failed/unstarted allocations cannot permanently consume capacity.
-  Reconcile service and daemon state without reopening a deliberately closed tab
-  or replaying an uncertain browser action.
-- [ ] Preserve reusable empty workspaces when they contain meaningful retained
-  state, or make any explicit disposal and resulting runtime reset visible.
-  Do not silently discard REPL bindings, private work or saved recovery URLs.
-- [ ] Permit existing workspace operations and supported close/release at capacity.
-  Concurrent admissions must enforce the cap atomically; cleanup must not allow
-  a second active workspace for the same thread.
-- [ ] Make capacity failures identify **thread browser workspaces**, not Chrome
-  tabs or viewer connections. Agent guidance must describe an actually supported
-  recovery action; do not recommend tab closure if it cannot free capacity.
-- [ ] If a human action is necessary, reuse existing authorized controls where
-  possible. Do not direct the user to an invisible session or nonfunctional button.
-  Do not add a workspace-management dashboard for this phase.
+- [x] Remove the resident-count cap and manual capacity-recovery guidance.
+- [x] Add one daemon-local minute sweep with a monotonic 24-hour idle clock;
+  no strong manager lifetime cycle or task surviving explicit daemon shutdown.
+- [x] Protect in-flight operations, media, cells and live private control.
+- [x] Expire owned targets/helpers/workers/artifacts; retain public URL checkpoints
+  across partial cleanup failures and retry cleanup without replaying cells.
+- [x] Keep logical sessions reusable through existing agent/viewer ensure.
+- [x] Preserve immutable scope and admitted-request fences; expose fresh runtime
+  creation/generation (idle_expired reason while the worker record is retained).
+- [x] Keep explicit close/deletion cleanup distinct from automatic expiry.
 
 ## Ownership and contracts
 
@@ -87,25 +58,29 @@ or errors; do not silently change the meaning of `max_sessions`.
 
 ## 3. Validate behavior
 
-- [ ] Many successive threads: demonstrate the chosen retention/release policy,
-  including a useful recovery path at the cap and successful subsequent admission.
-- [ ] Concurrent final-slot admission: only the allowed workspace is admitted;
-  rejected attempts leave no persistent capacity leak.
-- [ ] Empty workspace with retained variables: native/tab closure and viewer
-  dismissal follow the documented policy without silent heap loss.
-- [ ] Failed launch/ensure, explicit close, thread deletion, reconnect and restart:
-  no orphaned slots, duplicate actions or unintended page restoration.
-- [ ] Live tabs, active cells and private takeover: no eviction of ongoing work,
-  no cross-thread target adoption, and no private data delivered after cleanup.
-- [ ] Scope checks: another owner cannot inspect, reclaim or close a workspace.
-- [ ] Real-agent and web/iPhone checks: capacity explanation and offered recovery
-  are accurate and usable; sign-ins and unrelated thread work remain intact.
+- [x] More than ten threads, including concurrent new admissions, remain usable.
+- [x] Before/at the 24-hour boundary: heap preserved then released; next cell has
+  a new runtime and old bindings are absent; duplicate sequence remains rejected.
+- [x] Active holders keep resources and refresh their idle period.
+- [x] Live Chrome expiry/ensure restores complete public URLs and preserves frozen
+  public checkpoints during private expiry, without returning private authority.
+- [ ] Real-agent and physical web/iPhone long-idle return: no manual workspace
+  release, fresh usable view, other-thread/sign-in continuity.
 
-Use existing admission, isolation and lifecycle regressions. Add focused cases
-for the selected policy; avoid tests that merely assert prompt vocabulary.
-Record actual results and skipped environment checks in a debug note.
+Record actual results in [the debug note](../../debug/browser-workspace-lifecycle.md).
+Deterministic clock-based fixtures replace waiting a full day during automated tests;
+physical/matching-stack acceptance remains separate.
 
 ## 4. Final merge gate
+
+- [ ] Complete [Phase 7g REPL-only cutover](repl-phase-7g-repl-only-cutover.md):
+  verify implemented removal of legacy execution, mode selection and historical adapters,
+  and verify fresh/existing-thread operation with the supported catalog.
+
+
+- [ ] Complete [Phase 7f event-driven browser state](repl-phase-7f-event-driven-browser-state.md):
+  zero healthy idle status polling, reliable state-change/reconnect reconciliation,
+  preserved private control, scoped event delivery and measured access-log cleanup.
 
 - [ ] Complete [Phase 7e client recovery cleanup](repl-phase-7e-client-recovery-cleanup.md):
   bounded outage traffic, coordinated terminal recovery, retained output and
@@ -129,7 +104,7 @@ Record actual results and skipped environment checks in a debug note.
   [1575 review](../../review/browser-repl-1575-review.md) confirms pointer hints
   but contains no clicks, so it is not native-click acceptance.
 - [ ] Run affected builds/tests and the final supported-catalog smoke test after
-  cleanup. Existing history must still render without executable legacy aliases.
+  cleanup. Historical pre-REPL results have no compatibility requirement.
 - [ ] Update daemon/helper/service/agent/viewer specs as affected, protocol and
   setup docs, this phase, and the parent plan. Record remaining work separately
   without hiding unresolved merge blockers.
@@ -141,3 +116,58 @@ The phase is complete when workspace lifecycle acceptance and the earlier merge
 gates above are satisfied. Linux support, WebRTC, expanded keyboard/clipboard/file
 APIs, context thinning and unrelated performance work remain separate plans.
 Implementation does not authorize commit, push, merge, deployment or restart.
+
+### Phase 7f acceptance handoff
+
+Automated idle/recovery/security coverage passes; see the Phase 7f debug record.
+Before closing its physical gate, apply migration 0042 before the updated service,
+reload web/hosted viewers, and record 60-second web and physical iPhone traffic.
+Count metadata/inventory/resource GETs (zero after healthy settlement), transport
+heartbeats separately, media captures, and private renewals (five seconds).
+Exercise two threads, another viewer's takeover/Return, hidden/resume, daemon
+replacement and service/network interruption. Confirm retained passive images,
+revocation clearing, no orphan subscriptions and no duplicate input/cell replay.
+These physical checks remain pending; synthetic passes do not close them.
+
+### Scrolling checkpoint (2026-09-24)
+
+User accepts current desktop takeover scrolling and agent scrolling for exercised
+Nth-item browsing. No further scroll optimization is required for this cutover.
+Mobile scrolling is explicitly deferred until the mobile track resumes; retain
+its device checklist without treating that deferral as a passed device test.
+Other privacy/recovery/device checks retain their separately documented status.
+
+## Evidence and remaining acceptance
+
+The earlier manual-capacity implementation's results remain historical in the
+[debug note](../../debug/browser-workspace-lifecycle.md). The revised expiry checks
+and exact validation commands are recorded there separately. Physical final-stack
+checks remain open; desktop/agent scrolling acceptance and the mobile-scrolling
+deferral above are unchanged.
+
+### Earlier-gate reconciliation
+
+- Phase 7g removal and automated catalog coverage pass; fresh/existing-thread
+  smoke on the final matching stack remains pending.
+- Phase 7f automated idle/recovery/scoped-notification tests pass; the physical
+  60-second traffic and interruption checklist above remains pending.
+- Phase 7e automated recovery coverage passes; physical outage acceptance remains.
+- Phase 7d local macOS upgrade/opt-in/failure checks are recorded in its phase doc.
+- Phase 7c desktop/agent scrolling has the user acceptance recorded above; mobile
+  scrolling is explicitly deferred. Broader observation-use evidence remains in 7c.
+- Phase 7b retains the 8 KiB default following the controlled comparison and the
+  user-directed reversal of the recent 16 KiB experiment; expansion stays explicit.
+- Earlier Phase 3 lifecycle/device, Phase 6 efficiency and Phase 7 supplementary
+  native-interaction checks retain their documented status. No synthetic test is
+  represented as a physical or real-agent acceptance run.
+
+### Coordinated upgrade
+
+Phase 8 replaces max_sessions with workspace_idle_timeout_sec in the daemon
+capability; it adds no migration, helper API or native bridge. Use the daemon,
+service and hosted web from this implementation together; the daemon performs the
+existing opt-in bundled-helper upgrade at startup. For the full branch, apply
+Phase 7f migration 0042 before starting the matching service, then restart the
+matching daemon and reload web/hosted viewers. Older service/daemon combinations
+are not the acceptance target. Record exact deployed build revisions and physical
+results before merge; no restart, deployment or merge was performed for this phase.

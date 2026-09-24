@@ -1,3 +1,4 @@
+import {StateSocket} from '../browser/state-feed.fixture'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement, act, StrictMode } from 'react'
@@ -40,7 +41,7 @@ async function fixture(body: (f: ReturnType<typeof setup>) => Promise<void>) {
 }
 function setup() {
   const originals = { fetch, setTimeout, clearTimeout, setInterval, clearInterval,
-    EventSource: globalThis.EventSource, requestAnimationFrame: globalThis.requestAnimationFrame,
+    WebSocket: globalThis.WebSocket, EventSource: globalThis.EventSource, requestAnimationFrame: globalThis.requestAnimationFrame,
     info: console.info, warn: console.warn, debug: console.debug, now: Date.now }
   let now = 0, id = 0
   const timers = new Map<number, { at: number; callback: () => void; interval: number }>()
@@ -56,8 +57,9 @@ function setup() {
     timers.set(++id, { at: now + delay, callback, interval }); return id
   }
   Source.all = []
+  StateSocket.all = []
   Object.assign(globalThis, {
-    EventSource: Source, requestAnimationFrame: () => 0,
+    WebSocket: StateSocket, EventSource: Source, requestAnimationFrame: () => 0,
     fetch: (url: string, init?: RequestInit) => { requests.push(String(url)); return Promise.resolve(response(String(url), init)) },
     setTimeout: (cb: () => void, ms = 0) => set(cb, ms),
     clearTimeout: (n: number) => timers.delete(n),
@@ -125,7 +127,7 @@ function setup() {
     async dispose() {
       await act(async () => view?.unmount())
       Object.assign(globalThis, { fetch: originals.fetch, setTimeout: originals.setTimeout, clearTimeout: originals.clearTimeout,
-        setInterval: originals.setInterval, clearInterval: originals.clearInterval, EventSource: originals.EventSource,
+        setInterval: originals.setInterval, clearInterval: originals.clearInterval, EventSource: originals.EventSource, WebSocket: originals.WebSocket,
         requestAnimationFrame: originals.requestAnimationFrame })
       Date.now = originals.now
       console.info = originals.info; console.warn = originals.warn; console.debug = originals.debug
@@ -250,27 +252,27 @@ test('Strict Mode discards canceled first attachment and leaves one stream', asy
   assert.equal(count(f.requests, '/snapshot'), 1)
 }))
 
-test('inventory backs off 10/20/30, reveals live handoff immediately, resets on success and stops at 404', async () => fixture(async f => {
+test('inventory retries failures, reveals live handoff immediately, stays quiet after success and stops at 404', async () => fixture(async f => {
   const session = 'browser_01AAAAAAAAAAAAAAAAAAAAAAAA'
   let status = 200
   f.setResponse(() => status === 200 ? Response.json({ sessions: [{ session_id: session, state: 'ready', handoff: null }] }) : Response.json({}, { status }))
   await f.mount('pane')
   status = 502
-  await f.advance(5000)
+  await act(async () => StateSocket.change())
   await act(async () => f.pane.notice({ viewer_path: `/browser/${session}`, handoff_id: 'new' }))
   assert.equal(f.reveals, 1)
   assert.equal(f.pane.sessionId, session)
-  await f.advance(9999); assert.equal(f.requests.length, 2)
+  await f.advance(1999); assert.equal(f.requests.length, 2)
   await f.advance(1); assert.equal(f.requests.length, 3)
-  await f.advance(20_000); assert.equal(f.requests.length, 4)
+  await f.advance(4000); assert.equal(f.requests.length, 4)
   status = 200
-  await f.advance(30_000); assert.equal(f.requests.length, 5)
-  await f.advance(5000); assert.equal(f.requests.length, 6)
+  await f.advance(8000); assert.equal(f.requests.length, 5)
+  await f.advance(5000); assert.equal(f.requests.length, 5)
   assert.equal(f.reveals, 1)
   status = 404
-  await f.advance(5000)
+  await act(async () => StateSocket.change())
   assert.equal(f.pane.sessionId, null)
-  await f.advance(60_000); assert.equal(f.requests.length, 7)
+  await f.advance(60_000); assert.equal(f.requests.length, 6)
   assert.equal(f.logs.filter(l => l.level === 'warn').length, 2) // one 502 class, one 404
 }))
 

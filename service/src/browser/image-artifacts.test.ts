@@ -19,7 +19,7 @@ test('images survive store recreation, preserve pairing and enforce owner/thread
   assert.equal(await restarted.get(artifact.id,'alice','other','call'),null);
   assert.equal(await restarted.get(artifact.id,'alice','thread','other'),null);
   assert.equal(await restarted.get('../anything','alice','thread'),null);
-  const messages:CanonicalMessage[] = [{role:'user',content:[{type:'tool_result',tool_use_id:'call',content:JSON.stringify({tool:'browser_observe',ok:true,data:{image_artifact:artifact}})}]}];
+  const messages:CanonicalMessage[] = [{role:'user',content:[{type:'tool_result',tool_use_id:'call',content:JSON.stringify({tool:'browser_exec',ok:true,data:{images:[artifact]}})}]}];
   const context = { ownerUserId:'alice',threadId:'thread',budId:'bud' };
   const hydrated = await hydrateBrowserImages(messages,context,true,restarted,async()=>true);
   assert.match(JSON.stringify(hydrated),/aW1hZ2U=/);

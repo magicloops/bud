@@ -122,14 +122,14 @@ test(
             {
               id: callId,
               name: repl ? "browser_exec" : userTakeover
-                ? "browser_observe"
+                ? "browser_exec"
                 : "browser_request_handoff",
-              input: repl ? {code:"saved++"} : { reason: "Sign in" },
+              input: userTakeover ? {code:"saved++"} : { reason: "Sign in" },
             },
             {
               id: `later-${callId}`,
-              name: repl ? "browser_exec" : "browser_act",
-              input: repl ? {code:"saved++"} : { action: "click", reference: "old-reference" },
+              name: "browser_exec",
+              input: {code:"saved++"},
             },
           ].map((block, sequence) => ({
             llmCallItemId: randomUUID(),
@@ -145,10 +145,10 @@ test(
         );
       if (returnControl) {
         await pool.query("update browser_resource set control_state='human_private',private_content=true,control_session_id=$1 where bud_id='bud'",[sessionId]);
-        await repo.recordAction(lease,callId,repl ? "browser_exec" : "browser_observe");
+        await repo.recordAction(lease,callId,"browser_exec");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:lease.turnId, invocation:{id:lease.id,fence:lease.fence,workerId:lease.workerId!},
-          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",repl ? {action:"exec",code:"saved++"} : {action:"inspect",operation:"snapshot"}),BrowserToolWait);
+          callId,waitClientId:clientId,signal:new AbortController().signal},"boot",{action:"exec",code:"saved++"}),BrowserToolWait);
         assert.equal((await pool.query("select evidence->>'browser_dispatched' as dispatched from agent_invocation_action where invocation_id=$1",[lease.id])).rows[0].dispatched,"false");
       }
       const handoff = returnControl ? null : await controls.requestAgent({
@@ -184,7 +184,7 @@ test(
         assert.ok(
           await repo.parkUserBrowserHandoff(
             lease,
-            idle ? undefined : { callId, tool: "browser_observe" },
+            idle ? undefined : { callId, tool: "browser_exec" },
           ),
         );
       else
@@ -216,10 +216,10 @@ test(
       if (returnControl) {
         await repo.admit({owner:"alice",threadId:thread,origin:"human",idempotencyKey:`${thread}-second`,text:"Browse too",model:"fixture",reasoningEffort:"none"});
         const second=await repo.claim("second","alice"); assert.ok(second); await repo.start(second);
-        await repo.recordAction(second,"second-call","browser_act");
+        await repo.recordAction(second,"second-call","browser_exec");
         await assert.rejects(new BrowserRepository(pool).prepare({ownerUserId:"alice",threadId:thread,budId:"bud",
           turnId:second.turnId,invocation:{id:second.id,fence:second.fence,workerId:second.workerId!},
-          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"click"}),BrowserToolWait);
+          callId:"second-call",waitClientId:randomUUID(),signal:new AbortController().signal},"boot",{action:"exec",code:"await handle.click()"}),BrowserToolWait);
         assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,2);
         await repo.requestCancel("alice",second.id);
         assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,1);

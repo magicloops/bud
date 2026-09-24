@@ -3,12 +3,13 @@
 Status: Phases 1–3 implemented; live observation/navigation and an actual-agent
 draft-fill task passed. Broader interaction and physical viewer acceptance remain.
 Phase 4 output controls and comparison harness implemented; controlled provider comparison
-passed 18/18 tasks; lifecycle acceptance and catalog cutover remain. 2026-09-23.
+passed 18/18 tasks; Phase 7g catalog cutover is implemented. Final lifecycle and
+matching-stack acceptance remain in Phase 8. 2026-09-24.
 
 Validation and implementation decisions:
 [runtime foundation](../../debug/browser-repl-runtime-foundation.md).
-Non-production services default to the capability-gated REPL observation
-experiment. Set `BUD_BROWSER_TOOL_MODE=tools` to compare the old catalog.
+Every environment uses the capability-gated REPL catalog; no tool-mode switch
+or historical browser-result compatibility layer remains.
 See [Phase 2 validation](../../debug/browser-repl-selective-observations.md).
 
 ## Objective and references
@@ -17,7 +18,7 @@ Implement [the REPL design](../../design/browser-repl.md) through the original
 four phases and the Phase 5–7 output, extraction and interaction refinements below,
 then Phase 7b snapshot/output compaction and budget reassessment, Phase 7c scrolling
 and observation use, Phase 7d automatic bundled-helper upgrades, Phase 7e client
-recovery cleanup, followed by
+recovery cleanup, Phase 7f event-driven browser state, followed by
 Phase 8 workspace lifecycle and final merge acceptance. Keep page data in a thread's Node workspace and send only deliberately
 emitted evidence to the model. Preserve the shared Chrome profile, thread-owned
 tabs, user control, recovery, viewer and existing agent loop.
@@ -40,8 +41,9 @@ requires a new compaction subsystem or general request-building refactor.
 
 The service resolves owner, Bud, thread and invocation through existing authorized
 repositories before dispatch. Tool arguments contain code, not authority or Chrome
-connection details. Existing messages/actions inherit the thread owner. No new
-browser-facing route or database table is planned.
+connection details. Existing messages/actions inherit the thread owner. The core
+REPL adds no new browser-facing route or database table. Phase 7f separately
+scopes state notifications and any necessary authorized subscription surface.
 
 The daemon owns one lazy, killable Node worker per existing browser workspace,
 using the prepared add-on's Node and pinned helper packages. Chrome ownership and
@@ -261,12 +263,12 @@ production cutover was performed.
   History thinning remains a separate follow-up: first measure the residual
   cost after selective emission and output controls, then scope preservation of
   useful facts/action outcomes and retirement of superseded observations.
-- [ ] Make `browser_exec` plus `browser_request_handoff` the sole executable
+- [x] Make `browser_exec` plus `browser_request_handoff` the sole executable
   browser catalog. Remove the temporary comparison switch and old model-facing
   open/observe/act/close schemas, dispatch branches and obsolete prompt guidance.
-  Retain internal implementations used by the facade/viewer and rendering/replay
-  of historical tool records. Do not add executable legacy aliases.
-- [ ] Update capability/catalog tests, provider tool-result/image paths, context
+  Retain internal implementations used by the facade/viewer. Historical browser
+  compatibility was explicitly waived for this pre-launch cutover.
+- [x] Update capability/catalog tests, provider tool-result/image paths, context
   accounting and user-facing labels where necessary. Keep terminal and public
   web search/read tools unchanged. Remove duplicate output/lifecycle paths made
   obsolete by this change, without unrelated architectural cleanup.
@@ -440,12 +442,38 @@ Unexplained network changes and injected-script errors remain separate investiga
 quieter logs do not establish that those causes are fixed. Phase 8 retains the
 final merge gate and receives this phase's recovery acceptance record.
 
-## Phase 8 — Workspace admission, cleanup and final merge acceptance (scoped)
+## Phase 7f — Event-driven browser state and quiet idle views (implemented; physical acceptance pending)
+
+[Phase 7f plan](repl-phase-7f-event-driven-browser-state.md) replaces healthy
+inventory/viewer/resource polling with initial reads, authorized state-change
+notifications and reconnect/resume reconciliation. Static passive images need no
+periodic metadata reads. Preserve private-control lease renewal, transport
+liveness, operation-driven media and bounded outage recovery. Include standalone
+and hosted-mobile viewers, cross-instance delivery, subscription/read races and
+concise service access logging. Implemented with authorized shared WebSocket feeds
+and filtered PostgreSQL commit notifications (migration 0042). Targeted validation
+passes 29 service and 34 web tests plus both builds; physical traffic/lifecycle
+acceptance remains in Phase 8. See the Phase 7f debug record and upgrade order.
+
+## Phase 7g — REPL-only catalog and legacy code removal (implemented)
+
+[Phase 7g](repl-phase-7g-repl-only-cutover.md) completes Phase 4 catalog removal.
+The old executable family, comparison flag, production fallback and historical-only
+adapters are removed. Shared REPL/viewer internals and truthful current continuation
+remain. Automated validation passes; Phase 8 retains capacity and physical gates.
+
+User checkpoint (2026-09-24): desktop takeover scrolling is good enough; agent
+scrolling is accepted for exercised Nth-item browsing. Revisit mobile scrolling
+when the mobile track resumes. This is not a claim of exhaustive mobile/privacy
+or evidence-coverage acceptance.
+
+## Phase 8 — Workspace admission, cleanup and final merge acceptance
 
 [Phase 8 plan](repl-phase-8-workspace-lifecycle.md) is the final pre-merge phase.
-Resolve invisible workspace exhaustion, lifecycle cleanup and accurate capacity
-recovery using existing ownership and close paths. The interim ten-workspace cap
-is implemented and tested; it is not the completed lifecycle policy.
+Replace invisible workspace exhaustion with automatic 24-hour idle expiry in the
+daemon, preserving eligible public URLs and sign-ins. The fixed ten-workspace cap
+and manual recovery guidance are removed. Optional explicit close still discards
+workspace state. See the phase doc for evidence and remaining physical gates.
 
 This phase also closes out the earlier outstanding lifecycle, catalog-cutover,
 efficiency and interaction acceptance gates from recorded evidence. It does not
@@ -462,9 +490,8 @@ Do not mark the REPL change ready to merge until this phase's checklist is compl
 - [ ] Update the [auth validation checklist](../init-auth/validation-checklist.md)
   for ownership/stream changes; no global convenience lookups or client-chosen
   workspace authority. Any unexpected new row must inherit owner/tenant stamps.
-- [ ] Update viewer/mobile docs only for changed contracts. No schema migration is
-  planned; if receipts require a schema change, scope it explicitly and follow
-  push/generate/migration validation before shipping.
+- [ ] Update viewer/mobile docs only for changed contracts. Core REPL receipts add no schema migration; Phase 7f requires the generated
+  trigger-only migration 0042 before the updated service starts.
 - [ ] Record commands/results per phase, including skipped opt-in tests and device
   checks. Run focused helper/daemon/service/viewer tests and relevant builds;
   package-local commands must run from their owning directories.

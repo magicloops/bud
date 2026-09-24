@@ -295,6 +295,13 @@
       "when": 1790119302176,
       "tag": "0041_demonic_stephen_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790282195927,
+      "tag": "0042_browser_state_notifications",
+      "breakpoints": true
     }
   ]
 }

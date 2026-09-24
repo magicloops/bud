@@ -8,7 +8,7 @@ import { decodeBudFrame } from '../proto/wire.js';
 import { sessions, type SessionTracker } from '../ws/session-trackers.js';
 import { receiveBrowserResult } from './transport.js';
 
-test('new observations are capability gated; legacy default and new default use supported forms', async t => {
+test('REPL requires capability and retired calls never allocate or dispatch', async t => {
   const budId = randomUUID();
   const commands: Record<string, unknown>[] = [];
   let runtimeReplaced = false;
@@ -18,7 +18,7 @@ test('new observations are capability gated; legacy default and new default use 
     socket:{readyState:1, OPEN:1, send(bytes:Buffer) {
       const frame = decodeBudFrame(bytes) as any;
       commands.push(frame.request.command);
-      queueMicrotask(() => receiveBrowserResult(tracker,{browser_version:1,result:{...frame.request,ok:true,outcome:'completed',data:{}}}));
+      queueMicrotask(() => receiveBrowserResult(tracker,{browser_version:1,result:{...frame.request,ok:true,outcome:'completed',data:{execution_state:'completed'}}}));
     }},
   } as unknown as SessionTracker;
   sessions.set(budId,tracker);
@@ -33,32 +33,18 @@ test('new observations are capability gated; legacy default and new default use 
   const context = {budId,threadId:'thread',ownerUserId:'alice',turnId:'turn',callId:'call',signal:new AbortController().signal};
   // A daemon without structured observations is not a browser carrier at all.
   tracker.browserCapability = {...capability, semantic_observations: undefined};
-  assert.equal((await broker.execute(context,'browser_observe',{})).error,'browser_unavailable');
+  assert.equal((await broker.execute(context,'browser_exec',{code:'1'})).error,'browser_unavailable');
   assert.equal(commands.length,0);
   tracker.browserCapability = capability;
-  assert.equal((await broker.execute(context,'browser_observe',{})).ok,true);
-  assert.deepEqual(commands[0],{action:'inspect',operation:'snapshot'});
-  assert.equal((await broker.execute(context,'browser_observe',{mode:'screenshot'})).error,'browser_image_unsupported');
-  assert.equal((await broker.execute(context,'browser_observe',{mode:'page_info'})).ok,true);
-  assert.deepEqual(commands[1],{action:'inspect',operation:'page_info'});
-  assert.equal((await broker.execute(context,'browser_act',{action:'fill',locator:{role:'textbox',name:'Search'},text:'test'})).ok,true);
-  assert.deepEqual(commands[2],{action:'inspect',operation:'fill',locator:{role:'textbox',name:'Search'},text:'test'});
-  tracker.browserCapability = {...capability,compact_observations:true};
-  await broker.execute(context,'browser_observe',{});
-  assert.deepEqual(commands[3],{action:'inspect',operation:'snapshot',compact:true});
-  await broker.execute(context,'browser_observe',{mode:'visible_dom',continuation:'short:10'});
-  assert.deepEqual(commands[4],{action:'inspect',operation:'visible_dom',continuation:'short:10',compact:true});
-  await broker.execute(context,'browser_observe',{mode:'page_info'});
-  assert.deepEqual(commands[5],{action:'inspect',operation:'page_info'});
-  await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'});
-  assert.deepEqual(commands[6],{action:'inspect',operation:'click',reference:'obs:e1',target_id:'target',observation_id:'obs'});
-  await broker.execute(context,'browser_act',{action:'click',reference:'obs:e1'});
-  assert.deepEqual(commands[7],{action:'click',reference:'obs:e1'});
-  runtimeReplaced = true;
-  const beforeRecovery = commands.length;
-  const rejected = await broker.execute(context,'browser_act',{action:'click',reference:'old:e1'});
-  assert.equal(rejected.error,'browser_recovery_required');
-  assert.equal(commands.length,beforeRecovery,'replacement must not replay stale page actions');
-  assert.equal((await broker.execute(context,'browser_observe',{mode:'page_info'})).ok,true);
-
+  assert.equal(await broker.available(context), false);
+  assert.equal((await broker.execute(context, 'browser_exec', {code:'1'})).error, 'browser_repl_unsupported');
+  tracker.browserCapability = {...capability, repl:true};
+  assert.equal(await broker.available(context), true);
+  assert.equal((await broker.execute(context, 'browser_exec', {code:'1'})).ok, true);
+  assert.deepEqual(commands[0], {action:'exec', code:'1'});
+  const before = commands.length;
+  for (const name of ['browser_open','browser_observe','browser_act','browser_close']) {
+    assert.equal((await broker.execute(context, name as never, {})).error, 'unsupported_tool');
+  }
+  assert.equal(commands.length, before);
 });

@@ -1,3 +1,8 @@
+import {beforeEach, afterEach} from 'node:test'
+import {StateSocket} from './state-feed.fixture'
+const realSocket = globalThis.WebSocket
+beforeEach(() => { StateSocket.all = []; globalThis.WebSocket = StateSocket as unknown as typeof WebSocket })
+afterEach(() => { globalThis.WebSocket = realSocket })
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createElement, act } from 'react'
@@ -163,7 +168,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
   }
   const { BrowserViewer } = await import('./viewer')
   let view!: ReactTestRenderer
-  const poll = async () => { await act(async () => { const callbacks = [...polls.values()]; polls.clear(); callbacks.forEach(callback => callback()) }) }
+  const poll = async () => { await act(async () => { StateSocket.change(); const callbacks = [...polls.values()]; polls.clear(); callbacks.forEach(callback => callback()) }) }
   try {
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '' }) }) })
     assert.equal(clients.length, 1)
@@ -211,7 +216,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     absent = true
     await poll()
     assert.equal(view.root.findAllByType('p').some(p => p.children.join('').includes('Bud restarted')), false)
-    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Close this thread’s tabs')), false)
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Close browser workspace')), false)
     assert.ok(requests.includes('POST'))
   } finally {
     if (view) await act(async () => view.unmount())
@@ -376,7 +381,7 @@ test('service restart reconnects passive media and invalidates private ownership
   let view!: ReactTestRenderer
   let action: import('./viewer').BrowserReturnAction | null = null
   const publish = (next: typeof action) => { action = next }
-  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  const tick = async () => act(async () => { StateSocket.change(); const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
   try {
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
     assert.equal(clients.length, 1)
@@ -455,7 +460,7 @@ test('previously authorized viewer restores its private lease after service rest
   let view!: ReactTestRenderer
   let action: import('./viewer').BrowserReturnAction | null = null
   const publish = (next: typeof action) => { action = next }
-  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  const tick = async () => act(async () => { StateSocket.change(); const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
   try {
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', onReturnActionChange: publish }), { createNodeMock: () => ({ value: '' }) }) })
     await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick())
@@ -464,9 +469,8 @@ test('previously authorized viewer restores its private lease after service rest
     await act(async () => clients.at(-1)!.status('unavailable'))
     assert.equal(action, null)
     assert.equal(view.root.findByType('textarea').props.disabled, true)
-    await tick() // Server restored the lease, but the response was lost.
-    assert.equal(action, null)
-    await tick() // Idempotent recovery with the original proof.
+    // Media loss now triggers the first read immediately; its recovery reply was lost.
+    await tick() // A subsequent notification retries idempotently with the original proof.
     assert.ok(action)
     assert.deepEqual(writes.map(w => w.operation), ['acquire', 'recover', 'recover'])
     assert.equal(writes.every(w => w.viewer_id === writes[0].viewer_id), true)
@@ -684,7 +688,7 @@ test('recovery is attempted on the first poll that reports the browser available
   }
   const { BrowserViewer } = await import('./viewer')
   let view!: ReactTestRenderer
-  const tick = async () => act(async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
+  const tick = async () => act(async () => { StateSocket.change(); const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()) })
   try {
     // Mount without a session: the first poll delivers it and must not write control.
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '' }) }) })

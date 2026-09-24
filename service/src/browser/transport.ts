@@ -25,7 +25,6 @@ const capability = z.object({
   hidpi_capture: z.boolean().optional(),
   operation_driven_media: z.boolean().optional(),
   history_navigation: z.boolean().optional(),
-  compact_observations: z.boolean().optional(),
   semantic_observations: z.literal(true),
   agent_capture: z.boolean().optional(),
   repl: z.boolean().optional(),
@@ -85,7 +84,6 @@ export type BrowserCarrier = {
   hidpiCapture?: boolean;
   operationDrivenMedia?: boolean;
   historyNavigation?: boolean;
-  compactObservations?: boolean;
   agentCapture?: boolean;
   repl?: boolean;
   current(): boolean;
@@ -123,7 +121,6 @@ export function browserCarrier(budId: string): BrowserCarrier | null {
       hidpiCapture: parsed.data.hidpi_capture === true,
       operationDrivenMedia: parsed.data.operation_driven_media === true,
       historyNavigation: parsed.data.history_navigation === true,
-      compactObservations: parsed.data.compact_observations === true,
       agentCapture: parsed.data.agent_capture === true,
       repl: parsed.data.repl === true,
       current,

@@ -1,3 +1,8 @@
+import {beforeEach, afterEach} from 'node:test'
+import {StateSocket} from './state-feed.fixture'
+const realSocket = globalThis.WebSocket
+beforeEach(() => { StateSocket.all = []; globalThis.WebSocket = StateSocket as unknown as typeof WebSocket })
+afterEach(() => { globalThis.WebSocket = realSocket })
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createElement,act} from 'react';

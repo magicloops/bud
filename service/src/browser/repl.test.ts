@@ -36,7 +36,7 @@ test('cell receipts preserve one dispatch across retries, lost acknowledgements 
     const callId=randomUUID(); await invocations.recordAction(lease,callId,kind); return {...base,callId};
   };
   const repository = new BrowserRepository(pool);
-  const open = await repository.prepare(await context('browser_open'),'boot',{action:'open'});
+  const open = await repository.prepare(await context(),'boot',{action:'open'});
   await repository.complete(open,{ok:true,outcome:'completed'});
   const receipt = async (callId:string) => (await pool.query('select evidence from agent_invocation_action where invocation_id=$1 and call_id=$2',[lease.id,callId])).rows[0].evidence.browser_cell;
   const healthy = async () => assert.equal((await pool.query('select state from browser_session where id=$1',[open.session_id])).rows[0].state,'ready');
@@ -133,4 +133,17 @@ test('cell receipts preserve one dispatch across retries, lost acknowledgements 
   const withheld=await broker().executeCell(first,'var n=0; console.log(++n)');
   assert.equal(withheld.data?.output_withheld,true); assert.equal(withheld.data?.execution_state,'completed');
   assert.equal(withheld.data?.text,undefined);
+
+  // Thread deletion uses the existing durable close transition even after private
+  // work; it does not redispatch the prior cell or require a viewer to be open.
+  await pool.query('update thread set deleted_at=now() where thread_id=$1',[thread]);
+  const cleanup = (await repository.cleanupCandidates()).find(s=>s.id===open.session_id);
+  assert.ok(cleanup);
+  const close = await repository.prepareCleanup(cleanup,'restarted');
+  assert.ok(close); assert.deepEqual(close.command,{action:'close'});
+  assert.equal(close.owner_user_id,'alice'); assert.equal(close.thread_id,thread);
+  await repository.complete(close,{ok:true,outcome:'completed'});
+  assert.equal((await repository.cleanupCandidates()).some(s=>s.id===open.session_id),false);
+  assert.equal(await repository.evidenceAllowed(request),false);
+
 });

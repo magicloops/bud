@@ -32,6 +32,7 @@ export class BrowserControl {
   onDiagnostic: (fields: Record<string, string | number | boolean>) => void = () => {};
   isSizingViewer: (owner: string, session: BrowserSession, viewer: string) => boolean = () => false;
   onFence: (sessionId: string) => void = () => {};
+  onStateChange: (session: BrowserSession) => void = () => {};
   constructor(
     readonly repository = new BrowserControlRepository(),
     private readonly carrierFor = browserCarrier,
@@ -221,6 +222,7 @@ export class BrowserControl {
       owner: session.created_by_user_id, browser: session.browser_id, viewer, id, recoveredTicket,
       expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
     });
+    this.onStateChange(session);
     return session;
   }
 

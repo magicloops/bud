@@ -151,7 +151,7 @@ uninstall system Chrome or delete a checkout helper.
 | --- | --- |
 | `main.mjs` | Bounded private stdio protocol and helper startup |
 | `engine.mjs` | Snapshots, observed references, exact targeting and actions |
-| `compact.mjs` | Budgeted structured text/visible-node output and pagination |
+| `compact.mjs` | Structure-preserving node normalization; REPL formatting lives in repl-snapshot.mjs |
 | `diagnostics.mjs` | Sanitized failure classification without page-bearing exception text |
 | `*.test.mjs` | Serialization/privacy regressions and disposable Chrome fixtures |
 | [`../src/browser/addon.rs`](../src/browser/addon.rs) | Runtime resolution, manifest, verified downloads and installation |
@@ -167,11 +167,10 @@ decisions and remaining release acceptance.
 
 ## Development REPL experiment
 
-Phase 2 defaults to REPL on a non-production service; no environment setting is
-required. Build and restart the matching daemon; already-enabled managed helpers
-upgrade automatically. For checkout overrides, use the preparation command above. It advertises REPL support only if all new helper modules
-are present. Set `BUD_BROWSER_TOOL_MODE=tools` to compare the existing tool family.
-Production retains the existing family until the planned cutover.
+All environments expose only REPL plus handoff. No tool-mode flag or old-tool
+fallback is supported. Build and restart the matching daemon and service; enabled
+managed helpers upgrade at daemon startup. `browser prepare` remains the user
+opt-in. Checkout overrides require updating the selected helper directory.
 
 The agent gets `browser_exec` plus the existing handoff tool. A typical cell:
 

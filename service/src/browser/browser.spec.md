@@ -239,8 +239,8 @@ files, seven-day TTL, 128-image capacity, 1.4M base64 chars each. Configure
 the development default is `.bud-data/browser-images`. No schema migration.
 Expired files are cleaned during writes; expired/missing references never recapture.
 Single service instance owns write serialization, matching the browser relay.
-`image-references.ts` is the pure (no I/O) selection of which `browser_observe`
-screenshot references hydrate (newest eight successful, `HYDRATED_IMAGE_LIMIT`)
+`image-references.ts` is the pure (no I/O) selection of which REPL `data.images`
+references hydrate (newest eight eligible, `HYDRATED_IMAGE_LIMIT`)
 and defines `IMAGE_TOKEN_ESTIMATE`; hydration and context accounting share it so
 the estimator counts exactly the images the provider receives (Phase 3s D4).
 
@@ -506,7 +506,7 @@ No DB migration, new route, viewer identity, or web/mobile change.
 
 `broker.ts` admits `browser_exec` through the same invocation, wait and receipt
 path, including creation/recovery of an owned workspace. Availability requires the
-REPL capability when the non-production catalog switch selects it. For vision
+REPL capability in every environment. For vision
 models it issues two single-use agent-capture tickets in service-owned
 `repl_images` envelope metadata; source/receipts never contain tickets. Text-only
 models receive no slots. Existing upload evidence checks still apply.
@@ -514,13 +514,12 @@ models receive no slots. Existing upload evidence checks still apply.
 Cell results add up to two `images` references and an optional `output_artifact`
 (relative opaque file name, bounded byte count, truncation flag). Transport parsing
 validates these fields and the existing 256 KiB result envelope. Local files have
-no browser route. `image-references.ts` selects the newest eight images across old
-observe results and new cells, including authorized images emitted before a later
+no browser route. `image-references.ts` selects the newest eight cell images,
+including authorized images emitted before a later
 cell exception. Hydration rechecks owner/thread/call and vision/evidence authority.
 Context accounting counts selected images, not tool-result blocks.
 No new table, migration or client contract; deploy the matching prepared add-on
-and daemon before using the development-default REPL catalog.
-`BUD_BROWSER_TOOL_MODE=tools` explicitly selects the old-family comparison.
+and daemon together with the REPL-only service catalog. No comparison-mode flag.
 
 
 ## REPL standard output — Phase 5
@@ -533,3 +532,56 @@ owner stamping, viewer captures and compaction are unchanged. Upgrade the servic
 guidance and matching daemon/helper together; restart workers to load the API.
 See [contract](../../../plan/bud-owned-browser/repl-phase-5-standard-output.md)
 and [validation](../../../debug/browser-repl-phase5.md).
+
+## Event-driven state (REPL Phase 7f)
+
+- `state-events.ts`: one pinned session-preserving PG LISTEN client per gateway;
+  verifies migration 0042 at startup, filters schema-scoped hints, fans out changes,
+  and closes attached feeds on listener loss. No metadata polling or durable log.
+- `state-stream.ts`: authorized thread/session/Bud WebSocket hint lifecycle;
+  readiness, scoped changes, 15s transport heartbeat, 30s live auth check, bounded
+  sends, reauthorization before hints, cleanup and revocation closure.
+- `state-events.test.ts`: opt-in isolated real-PG coverage for commit/rollback,
+  separate writers/listeners, ignored renewal writes and backend-loss recovery.
+- `state-stream.test.ts`: scope/auth-before-subscription, revocation, liveness and
+  loss cleanup. `state-routes.test.ts`: real HTTP upgrade denial for unauthenticated,
+  foreign-owner and mismatched mobile-session scopes before listener attachment.
+
+`routes.ts` mounts `/api/threads/:thread_id/browser-state`,
+`/api/browser/sessions/:session_id/state`, `/api/buds/:bud_id/browser/state`.
+Authenticated viewer and Origin checks precede upgrade; mobile is restricted to
+its granted session. Ownership is resolved with existing repositories/helpers and
+rechecked before change delivery and periodically for idle expiry. Resource lists
+remain owner-filtered. Messages contain only type and a connection-local counter;
+they never carry page data, controller grants or recovery tickets.
+
+Filtered PostgreSQL AFTER triggers notify committed resource/session/handoff/Bud/
+thread changes across writers. `control.ts` also publishes after installing the
+in-memory controller. Post-registry transport presence hints cover attach/detach.
+Renewals do not emit unchanged state. These notifications do not remove the
+existing single-gateway restriction of in-memory media/controller routing.
+
+Deploy migration 0042 before service startup; reserve one extra PG pool slot and
+use direct/session pooling for LISTEN. Startup fails clearly without the triggers.
+No daemon messages, browser data tables, owner-stamped rows or mobile bridge change.
+See [Phase 7f](../../../plan/bud-owned-browser/repl-phase-7f-event-driven-browser-state.md)
+and the appended state-channel contract in `docs/proto.md`.
+
+## REPL-only broker (Phase 7g)
+
+Only exec reaches browser allocation/dispatch; all retired tool names reject first.
+Handoff remains service-owned. Removed old command mapping, compact capability
+negotiation and standalone screenshot dispatch. The agent_capture transport remains
+for current REPL image slots. Durable receipt lookup (including offline), ownership,
+private control, image evidence and lifecycle close remain shared. No old observation
+image hydration or historical execution aliases. No new routes or schema changes.
+
+## Workspace cleanup acceptance (REPL Phase 8)
+
+Existing owner-authorized close and repository cleanup remain the lifecycle
+boundaries; no new management route or table. `repl.test.ts` now also verifies
+soft-deleted threads become cleanup candidates, close dispatch retains owner/thread
+bindings, and completed close clears active evidence and the cleanup candidate.
+Daemon-local 24-hour idle expiry releases resources while preserving public
+URL hints and session identity. The fixed workspace count cap is removed. Normal
+broker/viewer ensure restores expired workspaces before use. Desktop close explicitly discards thread tabs and REPL memory.

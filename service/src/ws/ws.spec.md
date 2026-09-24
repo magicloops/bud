@@ -318,3 +318,10 @@ routing, but it must not contain the daemon-local URL.
 ## Browser control
 
 `protocol.ts` preserves optional browser capability; `session-trackers.ts` retains it on the authenticated connection. `bud-connection.ts` routes version-1 browser results to exact-tracker correlation before ordinary dispatch. Missing capability omits tools.
+
+## Browser state presence publication
+
+`session-trackers.ts` calls the transport `notifyPresence` seam after changing the
+Bud connection registry. Browser state subscribers receive a reauthorized hint
+and read current metadata; registry availability is never inferred from an early
+DB notification alone. This changes no daemon frame or browser authority rule.

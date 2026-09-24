@@ -139,3 +139,12 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 ## Browser carrier capture
 
 `grpc-daemon-router.ts` retains the browser capability on active trackers. The browser broker uses the existing control preference order but captures one tracker and never invokes generic cross-carrier retry after send; uncertain mutations cannot be replayed. See [browser transport](../browser/browser.spec.md).
+
+## Browser state presence publication
+
+`presence-events.ts` owns the local `subscribePresence`/`notifyPresence` listener
+set. `grpc-daemon-router.ts` publishes after registry attach/detach so authorized
+browser state feeds reconcile actual gateway availability. The WS tracker uses
+the same seam. This supplements committed database presence notifications; it
+contains Bud IDs only and does not replace ownership checks or cross-process SQL
+notifications. No transport wire fields change.

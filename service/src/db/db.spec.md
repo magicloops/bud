@@ -540,3 +540,18 @@ FK cascades from `browser_session`; no page content or input is stored.
 Migration `0041_demonic_stephen_strange.sql` is generated and tested in an isolated
 schema. Reviewed SQL was applied locally after db:push proposed unrelated invocation
 constraint recreation; see [debug note](../../../debug/mobile-browser-integration.md).
+
+## Browser invalidation triggers (migration 0042)
+
+`0042_browser_state_notifications.sql` is a generated custom trigger-only
+migration; schema.ts tables/columns are unchanged. Filtered AFTER triggers on
+browser_resource, browser_session, browser_handoff, bud and thread publish
+`bud_browser_state` hints after commit. Payloads identify database schema and Bud/
+thread scope, including old/new scopes on reparenting. No URLs, private content or
+new stored rows. Heartbeat/dispatch/timestamp-only writes do not publish.
+
+Install before the updated browser gateway starts; it verifies the five triggers
+and reserves one session-preserving LISTEN connection. Drizzle push cannot create
+these triggers: deployed environments use the checked-in migration. Local push
+was canceled because it proposed an unrelated constraint/data change; the custom
+SQL was applied transactionally. See `debug/browser-event-driven-state.md`.

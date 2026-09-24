@@ -94,30 +94,12 @@ export class BrowserToolExecutor {
       result = { ok: false, outcome: "unknown", error: "browser_outcome_unknown" };
     }
     await this.check(context);
-    const observation = result.data?.observation as Record<string, unknown> | undefined;
-    if (result.error === "browser_observation_limit") {
-      result.data = { guidance: "Observation exceeds the size limit. Use a smaller observed scope or visible_dom; page_info returns title/URL only." };
-    }
-    const summary = result.ok ? (directive.tool === "browser_observe"
-      ? args.mode === "screenshot" ? "Captured browser screenshot."
-        : args.mode === "visible_dom" ? "Read visible browser elements."
-        : args.mode === "page_info" ? "Read browser page information."
-        : "Read browser snapshot."
-      : "Browser operation completed.") : result.outcome === "unknown"
+    const summary = result.ok ? "Browser operation completed." : result.outcome === "unknown"
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"
         ? "Browser actions are paused while the user has private control. Ask the user to choose Return to agent in the browser controls. You can continue chatting and using non-browser tools; do not bypass the pause through terminal or another browser."
         : "Browser operation was rejected.";
     const payload = { tool: directive.tool, call_id: directive.callId, args, kind: "browser", ...result, summary };
-    // Enforce the final persisted/model-facing envelope, not only helper nodes.
-    if (observation?.format === "compact_v1" && Buffer.byteLength(JSON.stringify(payload)) > 36 * 1024) {
-      payload.ok = false;
-      payload.outcome = "rejected";
-      payload.error = "browser_observation_limit";
-      payload.data = { guidance: "Use a smaller observed scope or visible_dom." };
-      payload.summary = "Browser observation exceeds the size limit.";
-      result = payload;
-    }
     return { directive, args, summary: payload.summary, outputTruncationReason: null,
       result: { kind: "browser", ok: result.ok, error: result.error, retryable: false },
       payload };

@@ -434,11 +434,7 @@ export class AgentConversationLoader {
 
       switch (payload.tool) {
         case "browser_exec":
-        case "browser_open":
-        case "browser_observe":
-        case "browser_act":
         case "browser_request_handoff":
-        case "browser_close":
         case "web_search":
         case "web_read":
         case "contacts_get":

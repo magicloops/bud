@@ -21,12 +21,12 @@ browser manager owns serialization and authority for both paths.
   prevents Playwright from routing cached references through obsolete frame IDs.
   Scoped observations inherit their source frame. Bud never replays mutations;
   Playwright may internally retry actionability/input within a click invocation.
-- `compact.mjs`: deterministic tree normalization and UTF-8-budgeted text/node serialization with ancestor context. Removes empty row leaves and redundant single-cell table nesting while preserving real/ambiguous table structure. Text uses one-space depth and `[opaque-reference]` annotations; identities and map lookup are unchanged.
-  Pressed states participate in wrapper preservation and text rendering, including
-  false/mixed. Inline text survives compaction and existing byte/node limits.
-- `compact.test.mjs`: structure/state preservation (including blank cells and named containers), deep hierarchy, pagination, Unicode and limits.
+- `compact.mjs`: structure-preserving node normalization. Removes empty row leaves
+  and redundant single-cell table nesting while preserving ambiguous table structure,
+  inline text, references and pressed states. REPL text formatting lives in repl-snapshot.mjs.
+- `compact.test.mjs`: structure/state preservation, blank cells, named containers and hierarchy.
 - `scroll.test.mjs`: real Chrome page-scroll regressions across missing/retired observations, child/main-frame navigation, separate workspace engines, target closure and unchanged stale-element rejection.
-- `engine.test.mjs`: disposable Chrome fixtures, legacy/compact size comparison, sanitizer, scope and reference regressions.
+- `engine.test.mjs`: disposable Chrome fixtures, full retained capture, sanitizer, scope and reference regressions.
   Fidelity regressions cover mixed inline text, toggle states, scoped/full/visible
   snapshots and continued exclusion of field values.
 - `package.json` / `package-lock.json`: reproducible runtime dependency.
@@ -34,16 +34,13 @@ browser manager owns serialization and authority for both paths.
 One snapshot per thread workspace/helper, 60-second lifetime, 2 MiB retained nodes.
 Phase 3k workspaces share one regular Chrome context for cookies/site storage but
 have independent helpers/reference maps. Rust checks target ownership before every
-helper call; observing in one thread cannot invalidate another thread’s snapshot. Negotiated
-compact snapshots return text only; visible DOM returns nodes/boxes only. The compact
-helper observation is limited to 32 KiB, reserving space for the service envelope.
-Legacy requests retain 24 KiB node pages plus text through the same engine.
-Compact reference namespaces combine a random helper-lifetime prefix and monotonic
-observation counter; exact maps and document/epoch fences remain authoritative.
-Continuation format/mode must match its retained snapshot. Oversized single nodes
-report browser_observation_limit; they are never skipped. New snapshot, navigation, disconnect or authority
-invalidation retires references. Continuations read retained nodes, not a new
-page; each call checks the current document. Scope uses an observed reference.
+helper call; observing in one thread cannot invalidate another thread’s snapshot. Full structured captures return nodes to the local REPL without legacy
+text duplication or continuation pages. The retained snapshot limit is 2 MiB;
+model-facing formatting and the 8 KiB default output budget are separate.
+Reference namespaces combine a helper-lifetime prefix and monotonic observation
+counter; exact maps and document/epoch fences remain authoritative. Oversized
+captures report browser_observation_limit. New snapshot, navigation, disconnect
+or authority invalidation retires references. Scope uses an observed reference.
 Closed shadow roots/inaccessible frames are explicitly outside coverage.
 The helper's operation deadline is eight seconds, with a 128 MiB V8 heap limit; interruption kills the helper
 and poisons the adapter, never replays a mutation.
@@ -74,8 +71,8 @@ are unchanged. Restart an already-running helper (or daemon) to load the fix.
 
 [Phase 3i](../../plan/bud-owned-browser/phase-3i-snapshot-structure-compaction.md) and
 [measurements](../../debug/browser-snapshot-structure-compaction.md) document the
-serializer follow-up. Nested 30-story fixture drops from three pages to two;
-all-30-in-8-KiB is not claimed. Restart the helper/daemon to load this change.
+historical serializer measurements. Phase 7g removes that pagination path;
+current REPL formatting preserves the normalization rules.
 
 Temporary failure diagnostics (`diagnostics.mjs`, privacy regression in `diagnostics.test.mjs`) send only a fixed stage index and boolean Playwright error signals over private helper stdio. Rust logs these without returning diagnostics to the model; raw exception text is never emitted.
 
@@ -109,7 +106,7 @@ that no input occurred. The obsolete `browser_click_blocked` code is removed.
 
 Link URLs retain query strings, fragments and relative forms. Compact text renders
 one escaped `url=...`; visible nodes retain `url` without duplicate text. URL/hint
-bytes count toward existing output bounds and frozen continuation pages.
+bytes count toward retained capture and selected REPL output bounds.
 See [Phase 7](../../plan/bud-owned-browser/repl-phase-7-actionability.md) and
 [validation](../../debug/browser-repl-phase7.md).
 

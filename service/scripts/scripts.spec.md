@@ -39,7 +39,9 @@ npx tsx scripts/query-terminal-output.ts <session-id> [options]
 
 Opt-in Phase 4 comparison using actual provider usage and disposable Chrome,
 semantic engine and REPL worker. Fixed table, article and form tasks run with
-both catalogs, alternating order and repeating three times by default. Writes
+the current REPL catalog, repeating three times by default. An optional saved REPL
+catalog enables alternating baseline/candidate prompt comparison. No old-tool
+execution backend remains. Writes
 0600 JSON reports to an explicit path; no service DB or user Chrome profile.
 Requires `OPENAI_API_KEY`, `BUD_BROWSER_NODE`, `BUD_BROWSER_EXECUTABLE` and
 `BUD_BROWSER_LIVE_MODEL` (or `DEFAULT_MODEL`). Optional

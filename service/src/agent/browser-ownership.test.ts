@@ -35,7 +35,7 @@ test("browser SQL authority rejects foreign scope, deletion and unclaim, includi
           return { ok: true, outcome: "completed", data: { evidence: "fixture" } };
         },
       });
-      const observe = { type: "tool_call", tool: "browser_observe", callId: "call", args: {} } as const;
+      const observe = { type: "tool_call", tool: "browser_exec", callId: "call", args: {code:"await browser.tabs.list()"} } as const;
       assert.equal((await executor.execute(context, observe)).result.ok, true);
       for (const invalid of [{ ownerUserId: "bob" }, { budId: "other-bud" }, { threadId: randomUUID() }]) {
         await assert.rejects(executor.execute({ ...context, ...invalid }, observe), /browser_not_found/);

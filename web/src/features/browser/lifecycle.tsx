@@ -1,32 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { BrowserStateFeed, observeBrowserState } from './state-feed';
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetchJson } from "@/lib/transport";
 
 type Resource = { browser_id: string; revision: number; desired_state: string };
 
 /** Bud-scoped controls, separate from closing this thread's tabs. */
-export function BrowserLifecycle({ budId }: { budId: string }) {
+export function BrowserLifecycle({ budId, stateFeed: sharedFeed }: { budId: string; stateFeed?: BrowserStateFeed }) {
   const [resource, setResource] = useState<Resource | null>(null);
   const [confirm, setConfirm] = useState<"stop" | "reset" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const base = `/api/buds/${encodeURIComponent(budId)}/browser`;
+  const ownFeed = useMemo(() => new BrowserStateFeed(`${base}/state`), [base]);
+  const stateFeed = sharedFeed ?? ownFeed;
   const currentBase = useRef(base);
   currentBase.current = base;
   useEffect(() => {
     setResource(null); setConfirm(null); setBusy(false); setError("");
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
+    const read = async (signal: AbortSignal) => {
       try {
-        const data = await apiFetchJson<{ browser: Resource | null }>(base, { signal: abort.signal });
-        if (!abort.signal.aborted) setResource(previous =>
+        const data = await apiFetchJson<{ browser: Resource | null }>(base, { signal: signal });
+        if (!signal.aborted) setResource(previous =>
           previous && data.browser && previous.browser_id === data.browser.browser_id && previous.revision > data.browser.revision ? previous : data.browser);
-      } catch { /* Leave pending visible until acknowledged status is available. */ }
-      if (!abort.signal.aborted) timer = setTimeout(() => void read(), 3000);
+      } catch (error) {
+        if (signal.aborted) return;
+        if ([401, 403, 404, 410].includes((error as {status?:number}).status ?? 0)) { setResource(null); return false; }
+        throw error;
+      }
     };
-    void read();
-    return () => { abort.abort(); clearTimeout(timer); };
-  }, [base]);
+    const observer = observeBrowserState(stateFeed, read, {revoked: () => setResource(null)});
+    return observer.stop;
+  }, [base, stateFeed]);
   const send = async () => {
     if (!resource || !confirm || busy) return;
     setBusy(true); setError("");

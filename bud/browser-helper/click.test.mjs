@@ -108,7 +108,7 @@ test('observation URLs retain queries/fragments and script-only buttons have non
  const url='https://example.test/post?q=a%2Fb&q=two#image';
  await page.setContent(`<a href='${url}'>Post</a><button>Script only</button>`);
  const snapshot=await engine.execute({operation:'snapshot',target_id:target,compact:true});
- assert.ok(snapshot.text.includes(`url=${JSON.stringify(url)}`));
+ assert.equal(snapshot.nodes.find(n=>n.role==='link').url,url);
  const visible=await engine.execute({operation:'visible_dom',target_id:target,compact:true});
  assert.equal(visible.nodes.find(n=>n.role==='link').url,url);
  assert.equal(visible.nodes.find(n=>n.role==='button').url,undefined);

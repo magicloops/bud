@@ -21,8 +21,7 @@ export function imageArtifactIds(block: CanonicalContentBlock): string[] {
     if (payload?.data?.output_withheld) return [];
     if (payload?.tool === 'browser_exec') return (Array.isArray(payload?.data?.images) ? payload.data.images.slice(0,2) : [])
       .map((image: {id?: unknown}) => image?.id).filter((id: unknown): id is string => typeof id === 'string');
-    const id = payload?.tool === 'browser_observe' && payload?.ok === true && payload?.data?.image_artifact?.id;
-    return typeof id === 'string' ? [id] : [];
+    return [];
   } catch { return []; }
 }
 

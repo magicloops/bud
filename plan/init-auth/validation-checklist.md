@@ -555,3 +555,19 @@ Private input and screenshots never enter native chat state or persisted visits.
 
 No new route or table. Workspace owner comes from existing thread/Bud admission;
 image metadata inherits that authorized call. Local files live only on the daemon.
+
+## Browser state feeds (Phase 7f)
+
+- [x] Unauthenticated upgrades to thread browser-state, session state and Bud browser
+  state reject with 401 before listener attachment (HTTP integration tests).
+- [x] Signed-in cross-owner scopes reject 404; thread checks include its owning Bud.
+- [x] Mobile session mismatch rejects before lookup/subscription; no thread/Bud
+  subscription is granted by a session-scoped mobile credential.
+- [x] Live feeds reauthorize before changed hints and on a separate idle security
+  timer; denied authorization closes without delivering metadata. Mounted tests
+  verify definitive revocation clears viewer content/input.
+- [x] Notifications carry bounded scope/counter hints, never private content,
+  controller grants or recovery tickets. Existing owner-filtered reads remain
+  authoritative; no new persisted rows require stamping.
+- [ ] Physical signed-in web/mobile logout, grant expiry, owner revocation and
+  cross-viewer takeover/Return acceptance; carry results into Phase 8.

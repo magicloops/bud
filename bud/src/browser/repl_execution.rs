@@ -238,12 +238,7 @@ impl BrowserManager {
                 .map_err(|_| anyhow::anyhow!("browser_invalid_arguments"))?;
             if !matches!(
                 action,
-                Action::Open { .. }
-                    | Action::Navigate { .. }
-                    | Action::Inspect { .. }
-                    | Action::Click { .. }
-                    | Action::Focus { .. }
-                    | Action::InsertText { .. }
+                Action::Open { .. } | Action::Navigate { .. } | Action::Inspect { .. }
             ) || !valid_action(&action)
             {
                 anyhow::bail!("browser_invalid_arguments");
@@ -383,7 +378,7 @@ impl BrowserManager {
                         anyhow::bail!("browser_invalid_arguments");
                     }
                 }
-                browser.inspect(target, json!({"operation":operation,"full":true,"trace":super::super::repl::trace_enabled(),"scope":command["scope"],"observation_id":command["observation_id"]})).await
+                browser.inspect(target, json!({"operation":operation,"trace":super::super::repl::trace_enabled(),"scope":command["scope"],"observation_id":command["observation_id"]})).await
             }
             "frames" => browser.inspect(target, json!({"operation":"frames"})).await,
             "evaluate" => {
@@ -418,11 +413,7 @@ impl BrowserManager {
                 let frame = &command["frame"];
                 if frame["target_id"] != target
                     || frame["image"].as_str().is_none_or(|s| s.len() > 1_400_000)
-                    || !valid_action(&Action::Capture {
-                        target_id: Some(target.into()),
-                        endpoint: upload.endpoint.clone(),
-                        ticket: upload.ticket.clone(),
-                    })
+                    || !valid_image_upload(&upload.endpoint, &upload.ticket)
                 {
                     anyhow::bail!("browser_invalid_arguments");
                 }
@@ -433,13 +424,65 @@ impl BrowserManager {
     }
 }
 
+// Service-issued image slots are the only upload path. Never accept credentials,
+// query strings or arbitrary non-HTTPS endpoints from a cell.
+fn valid_image_upload(endpoint: &str, ticket: &str) -> bool {
+    (32..=128).contains(&ticket.len())
+        && endpoint.len() <= 2048
+        && url::Url::parse(endpoint).is_ok_and(|u| {
+            u.username().is_empty()
+                && u.password().is_none()
+                && u.query().is_none()
+                && u.fragment().is_none()
+                && (u.scheme() == "https"
+                    || (u.scheme() == "http"
+                        && matches!(u.host_str(), Some("127.0.0.1" | "localhost"))))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repl_image_slots_retain_upload_validation() {
+        let ticket = "a".repeat(32);
+        for endpoint in [
+            "https://example.test/upload",
+            "http://localhost:3443/upload",
+            "http://127.0.0.1/upload",
+        ] {
+            assert!(valid_image_upload(endpoint, &ticket));
+        }
+        for endpoint in [
+            "http://example.test/upload",
+            "https://user:pass@example.test/upload",
+            "https://example.test/upload?q=1",
+            "https://example.test/upload#fragment",
+            "file:///tmp/upload",
+            "invalid",
+        ] {
+            assert!(!valid_image_upload(endpoint, &ticket));
+        }
+        assert!(!valid_image_upload("https://example.test/upload", "short"));
+        assert!(!valid_image_upload(
+            "https://example.test/upload",
+            &"a".repeat(129)
+        ));
+    }
+
+    #[test]
+    fn retired_standalone_actions_are_not_wire_aliases() {
+        for action in ["capture", "click", "focus", "insert_text"] {
+            assert!(serde_json::from_value::<Action>(json!({"action":action})).is_err());
+        }
+    }
+
     fn setup() -> (BrowserManager, Arc<Slot>) {
         let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime("unused")));
         manager.connect("device".into());
         let slot = Arc::new(Slot {
+            last_used: Mutex::new(Instant::now()),
+            retain_until: std::sync::atomic::AtomicU64::new(u64::MAX),
             owner: "owner".into(),
             thread: "thread".into(),
             generation: "generation".into(),
@@ -489,6 +532,115 @@ mod tests {
             command: Action::Exec { code: code.into() },
         }
     }
+    #[tokio::test]
+    async fn idle_expiry_resets_heap_after_a_full_day_and_keeps_scope_fences() {
+        let (manager, slot) = setup();
+        let first = manager.execute(request(1, "var retained = 7")).await;
+        assert!(first.ok);
+        let last = *slot.last_used.lock().unwrap();
+        drop(slot);
+        idle::expire(
+            &manager.entries,
+            &manager.page_lock,
+            &manager.authority,
+            last + Duration::from_secs(86400 - 1),
+        )
+        .await;
+        assert!(manager.entries.lock().unwrap()["workspace"]
+            .repl
+            .try_lock()
+            .unwrap()
+            .runtime
+            .is_some());
+        idle::expire(
+            &manager.entries,
+            &manager.page_lock,
+            &manager.authority,
+            last + Duration::from_secs(86400),
+        )
+        .await;
+        assert!(manager.entries.lock().unwrap()["workspace"]
+            .repl
+            .try_lock()
+            .unwrap()
+            .runtime
+            .is_none());
+        assert_eq!(
+            manager.execute(request(1, "retained++")).await.error,
+            Some("browser_stale_request")
+        );
+        let fresh = manager.execute(request(2, "typeof retained")).await;
+        assert!(fresh.ok, "{fresh:?}");
+        assert_eq!(fresh.data["text"], "undefined\n");
+        assert_ne!(
+            first.data["runtime_generation"],
+            fresh.data["runtime_generation"]
+        );
+        assert_eq!(fresh.data["reset_reason"], "idle_expired");
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn idle_expiry_gives_active_holders_a_fresh_idle_period() {
+        let (manager, slot) = setup();
+        assert!(manager.execute(request(1, "var retained = 7")).await.ok);
+        let now = Instant::now() + Duration::from_secs(86400);
+        // A live media/operation holder is use, even without new commands.
+        idle::expire(
+            &manager.entries,
+            &manager.page_lock,
+            &manager.authority,
+            now,
+        )
+        .await;
+        assert!(slot.repl.lock().await.runtime.is_some());
+        assert_eq!(*slot.last_used.lock().unwrap(), now);
+        drop(slot);
+        idle::expire(
+            &manager.entries,
+            &manager.page_lock,
+            &manager.authority,
+            now + Duration::from_secs(86399),
+        )
+        .await;
+        assert!(manager.entries.lock().unwrap()["workspace"]
+            .repl
+            .try_lock()
+            .unwrap()
+            .runtime
+            .is_some());
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_workspace_close_releases_idle_heap_immediately() {
+        let (manager, slot) = setup();
+        assert!(manager.execute(request(1, "var retained = 7")).await.ok);
+        assert!(slot.repl.lock().await.runtime.is_some());
+        let mut close = request(2, "");
+        close.command = Action::Close;
+        assert!(manager.execute(close).await.ok);
+        assert!(slot.repl.lock().await.runtime.is_none());
+        assert!(slot.state.lock().await.closed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn workspace_close_drains_an_active_cell_without_page_lock_deadlock() {
+        let (manager, slot) = setup();
+        assert!(manager.execute(request(1, "var retained = 7")).await.ok);
+        let running = manager.execute(request(2, "await new Promise(() => {}); 'late output'"));
+        let (cell, close) = tokio::join!(running, async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut close = request(3, "");
+            close.command = Action::Close;
+            manager.execute(close).await
+        });
+        assert!(close.ok, "{close:?}");
+        assert!(!cell.ok, "{cell:?}");
+        assert!(!cell.data.to_string().contains("late output"));
+        assert!(slot.repl.lock().await.runtime.is_none());
+    }
+
     #[tokio::test]
     async fn local_cells_preserve_state_and_release_the_page_lock() {
         let (manager, slot) = setup();
@@ -1172,6 +1324,8 @@ mod tests {
         // A second workspace on the same manager shares Chrome authority/page
         // serialization, but has its own JavaScript lifecycle.
         let second = Arc::new(Slot {
+            last_used: Mutex::new(Instant::now()),
+            retain_until: std::sync::atomic::AtomicU64::new(u64::MAX),
             owner: "owner".into(),
             thread: "other-thread".into(),
             generation: "other-generation".into(),

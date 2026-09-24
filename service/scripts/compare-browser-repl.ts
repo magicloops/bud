@@ -11,7 +11,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { OpenAIProvider } from '../src/llm/providers/openai.js';
-import { BROWSER_CANONICAL_TOOLS, BROWSER_REPL_TOOLS, parseBrowserInput } from '../src/agent/browser-tools.js';
+import { BROWSER_REPL_TOOLS, parseBrowserInput } from '../src/agent/browser-tools.js';
 import type { CanonicalMessage, CanonicalTool, ModelConfig } from '../src/llm/types.js';
 
 const helper = resolve('../bud/browser-helper');
@@ -35,7 +35,7 @@ if (baseline && (!Array.isArray(baseline) || !baseline.some(t => t.name === 'bro
     baseline.some(t => !['browser_exec', 'browser_request_handoff'].includes(t.name))))
   throw Error('Baseline must be a saved REPL catalog');
 const catalogs: Record<string, CanonicalTool[]> = baseline ? {baseline, candidate:BROWSER_REPL_TOOLS}
-  : {tools:BROWSER_CANONICAL_TOOLS, repl:BROWSER_REPL_TOOLS};
+  : {tools:repl:BROWSER_REPL_TOOLS};
 // Phase 7b can freeze the baseline worker as well as its catalog. Budget
 // variants use identical candidate code; a cell prefix selects the existing API.
 const baselineHelper = process.env.BUD_BROWSER_COMPARISON_BASELINE_HELPER;
@@ -217,9 +217,6 @@ for (const fixture of selectedFixtures) for (let repeat=0;repeat<repeats;repeat+
               try {result=await Promise.race([cell(args.code as string),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('cell_timeout')),30000);})]);}
               finally {clearTimeout(timer);}
             }
-            else if(call.name==='browser_open')result=await bridge({action:'open',...args});
-            else if(call.name==='browser_observe')result={observation:await engine.execute({...args,operation:args.mode??'snapshot',target_id:args.target_id??target,compact:true})};
-            else if(call.name==='browser_act')result=args.action==='navigate'?await bridge(args):await engine.execute({...args,operation:args.action,target_id:args.target_id??target});
             else throw Error('fixture_operation_unsupported');
           }catch(e){if(e instanceof Error && e.message==='cell_timeout')throw e;result={error:e instanceof Error?e.message:'fixture_error'};}
           run.tool_ms+=Date.now()-toolStarted;

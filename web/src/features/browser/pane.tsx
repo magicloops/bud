@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { createRecoveryDiagnostics, inventoryRecoveryDelay } from '../threads/recovery-diagnostics'
+import { BrowserStateFeed, observeBrowserState } from './state-feed'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createRecoveryDiagnostics } from '../threads/recovery-diagnostics'
 import { isAuthRedirectPending } from '@/lib/auth-redirect'
 import { apiFetchJson } from '@/lib/transport'
 import type { ApiMessage, ApiAgentState } from '@/lib/api-types'
@@ -18,6 +19,7 @@ type Inventory = { session_id: string; state: string; handoff: { id: string } | 
 
 export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], initialState: ApiAgentState, reveal: () => void) {
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const stateFeed = useMemo(() => new BrowserStateFeed(`/api/threads/${encodeURIComponent(threadId)}/browser-state`), [threadId])
   const activity = useRef(0)
   const tracker = useRef<BrowserRevealTracker | null>(null)
   if (!tracker.current) {
@@ -48,19 +50,15 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
     }
   }, [open])
   useEffect(() => {
-    const abort = new AbortController()
-    let timer: ReturnType<typeof setTimeout>
     let baseline = true
-    let failures = 0
     let stopped = false
     const diagnostics = createRecoveryDiagnostics('browser-inventory', threadId)
-    const poll = async () => {
-      if (abort.signal.aborted || stopped || isAuthRedirectPending()) return
-      let delay = 5000
+    const poll = async (signal: AbortSignal) => {
+      if (signal.aborted || stopped || isAuthRedirectPending()) return
       try {
         const revision = activity.current
-        const result = await apiFetchJson<{ sessions: Inventory[] }>(`/api/threads/${encodeURIComponent(threadId)}/browser-sessions`, { signal: abort.signal })
-        if (abort.signal.aborted) return
+        const result = await apiFetchJson<{ sessions: Inventory[] }>(`/api/threads/${encodeURIComponent(threadId)}/browser-sessions`, { signal: signal })
+        if (signal.aborted) return
         const sessions = result.sessions.filter(s => s.state !== 'closing' && browserSessionId(s.session_id))
         for (const session of sessions) {
           const keys = [`open:${session.session_id}`, ...(session.handoff ? [`handoff:${session.handoff.id}`] : [])]
@@ -73,10 +71,9 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
         }
         if (revision === activity.current) setSessionId(current => sessions.some(s => s.session_id === current) ? current : sessions[0]?.session_id ?? null)
         baseline = false
-        failures = 0
         diagnostics.finish()
       } catch (error) {
-        if (abort.signal.aborted) return
+        if (signal.aborted) return
         diagnostics.start('inventory_request')
         diagnostics.attempt('inventory_request')
         const failure = diagnostics.failure(error)
@@ -84,15 +81,14 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
           stopped = true
           if ([401, 403, 404, 410].includes(failure.status ?? 0)) setSessionId(null)
           diagnostics.finish('stopped')
-          return
+          return false
         }
         // Keep current presentation through transient disconnects.
-        delay = inventoryRecoveryDelay(++failures)
+        throw error
       }
-      if (!abort.signal.aborted) timer = setTimeout(() => void poll(), delay)
     }
-    void poll()
-    return () => { abort.abort(); clearTimeout(timer); diagnostics.finish('stopped') }
-  }, [threadId, open])
-  return { sessionId, open, notice }
+    const observer = observeBrowserState(stateFeed, poll, { revoked: () => setSessionId(null) })
+    return () => { observer.stop(); diagnostics.finish('stopped') }
+  }, [threadId, open, stateFeed])
+  return { sessionId, open, notice, stateFeed }
 }

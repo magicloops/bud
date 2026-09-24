@@ -759,3 +759,11 @@ Definitive bootstrap HTTP failures stop retries. No cursor/SSE wire changes.
 See [Phase 7e](../../../../plan/bud-owned-browser/repl-phase-7e-client-recovery-cleanup.md)
 and [validation](../../../../debug/dev-console-outage-and-recovery-noise.md).
 Physical service/daemon/network interruption acceptance remains outstanding.
+
+## Browser inventory validation (Phase 7f)
+
+`client-recovery.test.tsx` now drives browser inventory through the shared browser
+state-feed fixture. Initial readiness and relevant changes trigger reads;
+transient failures retain bounded retry coverage. Thread-owned terminal/agent
+stream recovery remains unchanged by the browser polling removal. See the browser
+feature spec for feed ownership, hidden/resume behavior and idle-count tests.

@@ -1,12 +1,12 @@
 import { chromium } from 'playwright-core';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { compactNodes, compactPage } from './compact.mjs';
+import { compactNodes } from './compact.mjs';
 import { bounded } from './repl-artifacts.mjs';
 
 const referenceNamespace = randomBytes(8).toString('base64url');
 let observationSequence = 0;
 
-const TTL = 60_000, MAX_BYTES = 2 * 1024 * 1024, PAGE_BYTES = 24 * 1024;
+const TTL = 60_000, MAX_BYTES = 2 * 1024 * 1024;
 const fields = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton', 'slider']);
 const fail = code => { throw new Error(code); };
 
@@ -120,25 +120,11 @@ export class Engine {
     if (!ref) fail('browser_stale_reference');
     return ref.locator;
   }
-  pageResult(s, offset) {
-    if (s.full) return { target_id:s.target, document_id:s.document, observation_id:s.id, viewport:s.viewport,
-      nodes:s.nodes, truncated:false, continuation:null, expires_in_ms:Math.max(0, TTL-(Date.now()-s.at)),
+  pageResult(s) {
+    return { target_id:s.target, document_id:s.document, observation_id:s.id, viewport:s.viewport,
+      nodes:s.nodes, truncated:false, expires_in_ms:Math.max(0, TTL-(Date.now()-s.at)),
       coverage:s.scoped ? 'accessible_subtree' : s.mode === 'visible_dom' ? 'visible_accessible_dom' : 'accessible_dom',
       limitations:['Closed shadow roots, inaccessible embedded documents and non-rendered virtualized content may be omitted.'] };
-    if (s.compact) return compactPage(s, offset);
-    let bytes = 0, end = offset;
-    for (; end < s.nodes.length; end++) {
-      const size = Buffer.byteLength(JSON.stringify(s.nodes[end]));
-      if (bytes + size > PAGE_BYTES) break;
-      bytes += size;
-    }
-    if (end === offset && offset < s.nodes.length) fail('browser_observation_limit');
-    const nodes = s.nodes.slice(offset, end);
-    const cursor = end < s.nodes.length ? `${s.id}:${end}` : null;
-    return { target_id: s.target, document_id: s.document, observation_id: s.id,
-      viewport: s.viewport, nodes, text: nodes.map(n => `${'  '.repeat(Math.min(n.depth, 24))}${n.role}${n.name ? ` ${JSON.stringify(n.name)}` : ''}${n.text ? `: ${JSON.stringify(n.text)}` : ''}${n.cursor === 'pointer' ? ' [cursor=pointer]' : ''}${n.reference ? ` [ref=${n.reference}]` : ''}${n.url !== undefined ? ` url=${JSON.stringify(n.url)}` : ''}`).join('\n'),
-      truncated: cursor !== null, continuation: cursor, expires_in_ms: Math.max(0, TTL - (Date.now() - s.at)),
-      coverage: 'accessible_dom', limitations: ['Closed shadow roots and inaccessible embedded documents may be omitted.'] };
   }
   async execute(c) {
     this.stage = 'resolve_page';
@@ -169,14 +155,7 @@ export class Engine {
     }
     if (c.operation === 'page_info') return { target_id: c.target_id, document_id: await this.document(page), title: await page.title(), url: page.url() };
     if (c.operation === 'snapshot' || c.operation === 'visible_dom') {
-      if (c.continuation) {
-        this.stage = 'validate_snapshot';
-        const s = await this.current(page, c);
-        const [id, raw] = c.continuation.split(':');
-        const offset = Number(raw);
-        if (s.mode !== c.operation || s.compact !== (c.compact === true) || id !== s.id || !Number.isSafeInteger(offset) || offset < 0 || offset >= s.nodes.length) fail('browser_stale_reference');
-        return this.pageResult(s, offset);
-      }
+      if (c.continuation != null) fail('browser_invalid_arguments');
       let root = page.locator('body'), frame = page;
       if (c.scope) {
         const current = await this.current(page, c);
@@ -199,8 +178,8 @@ export class Engine {
       if (c.operation === 'visible_dom') nodes = nodes.filter(n => n.box && n.box.width > 0 && n.box.height > 0 && n.box.x < viewport.width && n.box.y < viewport.height && n.box.x + n.box.width > 0 && n.box.y + n.box.height > 0);
       if (c.compact === true) nodes = compactNodes(nodes);
       this.snapshot = { id, refs, nodes, viewport, target: c.target_id, document, at: Date.now(),
-        full: c.full === true, compact: c.compact === true, mode: c.operation, scoped: Boolean(c.scope) };
-      return { ...this.pageResult(this.snapshot, 0), viewport,
+        mode: c.operation, scoped: Boolean(c.scope) };
+      return { ...this.pageResult(this.snapshot), viewport,
         ...(c.trace === true ? { _bud_trace: traceSnapshot(raw) } : {}) };
     }
     this.stage = 'validate_snapshot';

@@ -2830,7 +2830,7 @@ Phase 2 adds a separate media WebSocket; chat reuses the existing SSE families.
 The active connection must advertise:
 
 ```json
-{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"persistent","handoff":true,"max_sessions":2}}
+{"browser":{"version":1,"available":true,"boot_id":"01BOOT...","managed":true,"profile_mode":"persistent","handoff":true,"workspace_idle_timeout_sec":86400}}
 ```
 
 Absent/false/incompatible capability omits browser tools. A new daemon does not
@@ -2893,7 +2893,7 @@ matching request/session/generation. Outcomes: `completed`, `rejected` (no asser
 mutation), `unknown` (may have happened). Static errors include
 `browser_unavailable`, `browser_busy`, `browser_authority_lost`,
 `browser_call_already_dispatched`, `browser_stale_connection`,
-`browser_scope_mismatch`, `browser_stale_request`, `browser_session_limit`,
+`browser_scope_mismatch`, `browser_stale_request`,
 `browser_stale_reference`, `browser_focus_required`, `browser_interrupted`,
 `browser_interrupted_reopen_required`, `browser_closed`, and
 `browser_outcome_unknown`. No browser error is an automatic retry instruction.
@@ -3639,7 +3639,7 @@ family or DB migration is introduced, and uncertain dispatched actions never rep
 ### Local checkpoints and upgrade
 
 Version 2 checkpoints preserve complete agent-visible HTTP(S) query/fragment URLs
-up to 8 KiB each, 16 pages/workspace, 32 workspaces and 256 KiB total. Known callback,
+up to 8 KiB each, 16 pages/workspace and 256 KiB total. Known callback,
 authorization and logout paths are stored but not autoloaded. Unsupported/oversized
 selection remains explicitly unavailable. Partial/uncertain restoration preserves
 the original durable checkpoint; created targets bind directly to the workspace.
@@ -3850,3 +3850,123 @@ required; drain active browser cells, update/build/prepare, then restart for smo
 validation. No new route, DB migration, SSE family, web/mobile build or compatibility
 mode. Existing capability checks remain. See
 [Phase 7](../plan/bud-owned-browser/repl-phase-7-actionability.md).
+
+## Browser state notifications — REPL Phase 7f (2026-09-24)
+
+This section supersedes prior healthy browser inventory/metadata/resource polling
+cadences. Existing media frame/ACK, control lease and private-content contracts
+are unchanged. No daemon frame or native mobile bridge addition.
+
+Server-only JSON WebSocket feeds:
+
+| Scope | Upgrade path | Authorization |
+| --- | --- | --- |
+| Thread inventory | `/api/threads/:thread_id/browser-state` | Current viewer owns thread and its Bud |
+| Session metadata | `/api/browser/sessions/:session_id/state` | Current viewer owns session/Bud; scoped mobile grant must match session |
+| Bud lifecycle | `/api/buds/:bud_id/browser/state` | Current viewer owns Bud |
+
+Resolve existing authenticated cookie/scoped-mobile viewer and validate Origin
+before upgrade. Unauthenticated requests return 401, foreign resources 404.
+Authorize again before subscription and change delivery, and every 30 seconds
+for idle expiry. Revoked/expired scopes close with 4404. A mobile scoped grant
+cannot subscribe to thread inventory or Bud scope. No new database rows/stamps.
+
+Messages: `{"type":"ready","revision":0}`, followed by
+`{"type":"changed","revision":1}` or `{"type":"heartbeat","revision":1}`.
+`revision` is a connection-local hint counter, reset on reconnect, incremented for
+change notifications. It is not a persisted resource/session revision, replay
+cursor, authority proof or screenshot freshness signal. Payloads contain no URLs,
+page titles, content, viewer IDs, private grants or tickets. Client app messages
+are unsupported (1008); server max inbound payload is 256 bytes and outgoing
+buffering is bounded. Server sends ping plus heartbeat every 15 seconds and
+terminates stalled pong transport after 45 seconds. Heartbeats never query metadata.
+
+Changes originate from filtered PostgreSQL AFTER triggers on resource/session/
+handoff/Bud/thread state (migration 0042); NOTIFY delivers only after commit.
+Old/new scopes are invalidated on reparenting/ownership change. Heartbeat,
+dispatch-sequence, renewal-only and timestamp writes do not trigger refresh.
+Successful in-memory controller installation and post-registry presence changes
+supplement database hints locally. Bud-wide changes reach every affected scope.
+Each gateway reserves one session-preserving PG LISTEN connection; its loss closes
+feeds, forcing reconnect/current-state reads. This supports separate database
+writers but does not remove existing single-gateway media/controller routing.
+
+Clients subscribe before reading, coalesce hints with one in-flight read and one
+dirty follow-up per consumer, and reconcile after every reconnect/visible resume.
+Embedded pane/viewer/lifecycle share one thread feed; standalone/mobile use a
+session feed. No new durable event log or replay is needed. Static passive views
+retain their last authorized pixels without healthy periodic HTTP requests.
+Hidden passive reads defer; desktop private renewal remains five seconds; mobile
+host suspension retains its explicit release behavior. Channel loss fences input
+until ready and current authorized metadata; it never reacquires from a hint or
+replays input/cells. Definitive HTTP resource/auth failure clears protected state.
+Client channel watchdog is 45 seconds, reconnect backoff 1/2/4/8/16/30 seconds;
+failed HTTP reconciliation retries 2/4/8/16/30 seconds, not on a healthy idle timer.
+
+Deployment: migrate 0042 before starting updated service/shared web; reload clients.
+Startup verifies triggers and fails `browser_state_migration_required_0042` if
+missing. LISTEN must not use transaction pooling; account for its reserved pool
+slot. No daemon/helper/native iOS rebuild. Existing loaded clients can continue
+polling until reload; no permanent legacy polling mode is introduced.
+
+
+## REPL-only browser cutover — Phase 7g (2026-09-24)
+
+This section supersedes earlier old-tool catalogs, development-only selection,
+compact-observation negotiation, pagination and historical browser-result hydration.
+Only `browser_exec` and `browser_request_handoff` are exposed in every environment.
+`BUD_BROWSER_TOOL_MODE` has no effect. Old open/observe/act/close tool names reject
+before allocation/dispatch, with no translation or fallback. Exec requires the
+existing `repl` capability. Historical pre-REPL results have no compatibility layer.
+Stored records are not rewritten or deleted by this change.
+
+The version-1 browser command envelope removes standalone `capture`, `click`,
+`focus`, `insert_text` actions and the `inspect.continuation` field. Daemons no
+longer advertise `compact_observations`. Internal open/navigate/inspect remain
+because the guarded REPL facade uses them; private viewer/lifecycle commands and
+native semantic checks are unchanged. Full structured helper captures remain local
+under the 2 MiB retained ceiling. No duplicate legacy text or continuation pages.
+REPL formatting and the 8 KiB default emitted budget remain, with explicit expansion.
+
+Service-owned `repl_images` and `agent_capture` transfers remain the image path.
+Endpoint/ticket validation, owned-target checks, post-operation delivery fences,
+image retention and owner-authorized hydration apply to current cell images only.
+Current durable receipts, canceled/parked cells, unknown effects and no-replay rules
+remain unchanged. This removes neither ownership nor private-control authority.
+
+Drain active old browser invocations and update the service/shared web and daemon
+as a coordinated stack. Enabled managed helpers auto-upgrade at daemon startup;
+`browser prepare` remains opt-in. Old/new command pairings are unsupported. No
+native mobile bridge change or Phase 7g migration; cumulative deployment still
+requires Phase 7f migration 0042. Physical matching-stack acceptance remains in
+Phase 8; no deployment/restart was performed as part of implementation.
+
+## REPL Phase 8: automatic idle workspace expiry
+
+Browser capability `workspace_idle_timeout_sec: 86400` replaces `max_sessions`.
+The fixed resident-workspace count cap and browser_session_limit rejection are
+removed. A daemon-local minute sweep expires resources after 24 idle hours;
+active page/cell work, attached media and live private control prevent expiry.
+Metadata reads and checkpoint events do not renew idle lifetime. Requests keep
+existing ownership, sequence, deadline and concurrency bounds.
+
+Expiry closes owned tabs, semantic helpers and REPL workers/artifacts, preserving
+eligible public recovery URLs (including query/fragment), persistent profile and
+sign-ins. It leaves the logical session reusable: existing ensure reconstructs
+pages and the next exec creates a fresh heap. A retained worker record reports
+reset_reason idle_expired; after identity pruning runtime_created and the fresh
+runtime_generation still identify new memory. No action is replayed. Private
+URLs are never checkpointed by expiry and private authority is never auto-returned.
+Cleanup failures retain ownership and retry on a later local sweep.
+
+Explicit workspace close remains optional and additionally forgets recovery hints.
+Its successful acknowledgement includes bounded worker shutdown; uncertainty
+reports browser_repl_stop_unconfirmed with unknown outcome. Phase 8 requires a
+rebuilt daemon and matching hosted web/service, but no new helper API, table,
+migration or native bridge. Full-branch rollout still requires Phase 7f migration
+0042 before the updated service.
+
+Recovery hints retain a 256 KiB total byte bound and 16 pages/workspace; the old
+32-workspace checkpoint count limit is removed. A failed checkpoint preserves
+previous hints but does not block idle resource cleanup. URL restoration remains
+best-effort; a newly created REPL never claims to retain expired bindings.

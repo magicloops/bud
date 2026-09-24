@@ -1338,10 +1338,9 @@ without a retry loop. Handoff catalog availability excludes private/paused sessi
 
 ## Phase 3d browser evidence
 
-`browser-tools.ts` retains five tools and adds requested snapshot/visible_dom/
-page_info/screenshot modes plus exact semantic click/fill and scroll. Flat provider
-schemas normalize nullable optional fields before action-specific validation.
-`browser-tool-executor.ts` publishes compact representation-specific summaries.
+The REPL facade exposes snapshots, visible DOM, page metadata, screenshots and
+semantic actions. The executor returns bounded cell output; no old observation
+mode schemas or representation-specific summaries remain.
 `model-runner.ts` hydrates authenticated immutable browser image references after
 context diagnostics and before provider invocation. It reuses canonical image
 blocks, limits hydration to eight newest screenshots, and reports missing/expired/
@@ -1359,31 +1358,20 @@ undispatched provider calls receive paired not-executed results; fresh observati
 is required before acting. Browser continuations deferred for availability release
 thread reservations. Ended/closed/revoked browser waits cancel without fake return.
 
-## Compact browser observation results (Phase 3f)
+## REPL-only browser execution (Phase 7g)
 
-`browser-tools.ts` explains document/subtree snapshots, frozen continuation,
-viewport-only visible DOM and metadata-only page_info. The browser broker opts
-into compact output only when the connected daemon advertises support.
-`browser-tool-executor.ts` preserves that single representation and guards the
-complete serialized compact tool envelope at 36 KiB (32 KiB observation plus envelope allowance), returning explicit limit
-guidance instead of silently truncating evidence. Existing stored history and
-provider replay remain unchanged; screenshot hydration and private-control
-authorization are unaffected.
+Only browser_exec and browser_request_handoff are executable in every environment.
+The old catalog, mode flag, argument validators, directive cases, observation
+summaries and 36 KiB legacy envelope are removed. Old names reject before allocation
+or dispatch. Historical-only reconstruction and observation image hydration are
+removed as explicitly accepted for the pre-launch cutover; stored data is untouched.
 
-`browser-observation-budget.test.ts` verifies the final envelope limit with
-Unicode content and exact replay through `AgentConversationLoader`. See
-[Phase 3f](../../../plan/bud-owned-browser/phase-3f-compact-browser-observations.md)
-and [measurements](../../../debug/browser-compact-observations.md).
-
-## Focused browser reliability (Phase 3g)
-
-Reference clicks may provide both target_id and observation_id with reference.
-The parser retains this identity pair; the broker uses existing semantic inspect
-so the helper validates it instead of dropping freshness checks. Bare reference
-clicks retain their original path. `browser-reference-input.test.ts` reproduces
-the nullable provider input and rejects partial IDs, ambiguous targets and extra
-fields. Tool guidance clarifies snapshot replacement and partial reading. See
-[findings](../../../debug/browser-agent-reliability.md).
+Current REPL receipt replay, exact call pairing, owner checks before/after execution,
+private output withholding, cancellation and unknown-effect semantics remain.
+The helper retains full observations locally; snapshot.format and the 8 KiB
+cell-output default control model context. browser-reference-input.test.ts was
+removed with the retired schemas. browser-observation-budget.test.ts retains the
+uncertain-cell regression; browser-tools.test.ts covers catalog and negative dispatch.
 
 ## Service-owned turn timing
 
@@ -1422,10 +1410,10 @@ Bud reclaim). No new scheduler is introduced. See [browser broker](../browser/br
 ### Browser empty workspace recovery (Phase 3p)
 
 Browser tool guidance describes the shared persistent browser and thread-owned
-pages. `browser_open` ensures a page, optionally navigates, and is the explicit
-recovery entry point after closure/restart. It does not replay uncertain actions;
-private authority still parks calls for human return. `browser_close` closes only
-this thread's pages and preserves other threads and saved sign-ins.
+pages. The REPL tabs facade lists current pages and explicitly opens the requested
+URL when empty. It never replays uncertain actions; private authority still parks
+cells for human return. Authorized workspace lifecycle cleanup remains separate
+from closing an individual tab.
 
 Browser deferred continuation results distinguish action non-execution from an
 acknowledged handoff return: `executed:false` plus a `handoff` receipt with
@@ -1456,7 +1444,7 @@ requires precision. No force, sibling substitution or automatic retry/navigation
 The sampler-specific error and prompt instructions are removed.
 
 `browser-tool-executor.ts` keeps uncertain outcomes honest and retryable=false.
-`browser-observation-budget.test.ts` covers exact URL replay and uncertain click
+`browser-observation-budget.test.ts` covers uncertain cell
 results with one dispatch and no invented no-input claim. Existing page-content
 privacy, ownership and output budgets remain unchanged.
 
@@ -1478,15 +1466,13 @@ cancellation and message owner stamping apply; no new scheduler/table/route.
 ## Browser REPL selective observations — Phase 2
 
 `browser-tools.ts` provides strict `browser_exec({code})` (64 KiB UTF-8), detailed
-facade/output guidance and `selectedBrowserTools()`. Non-production
-services default to exec plus the existing handoff tool; set
-`BUD_BROWSER_TOOL_MODE=tools` for old-family comparison. Production retains old
-tools until comparison acceptance.
+facade/output guidance and BROWSER_REPL_TOOLS. Every environment exposes exec
+plus the independently defined handoff tool, with no mode switch.
 Snapshot guidance starts with an unscoped read; optional `scope` is a returned
 container reference, not an observation mode. See the
 [viewer/status investigation](../../../debug/browser-repl-viewer-status.md).
-The executor, contracts and conversation loader recognize both historical names
-and the new executable name. Broker availability requires a capable daemon.
+The executor, contracts and conversation loader use current REPL tool names.
+Broker availability requires a REPL-capable daemon.
 `context-budget.ts` shares per-image selection with hydration: at most eight
 newest images, allowing two per cell. No new compaction or provider accounting.
 AgentService scripted-provider tests verify cell pairing, bounded result delivery
@@ -1564,3 +1550,11 @@ input without an observation dependency; element handles retain freshness checks
 Guidance is evaluated with frozen catalogs on identical 8 KiB runtimes, not
 prompt-vocabulary assertions. Results and tradeoffs are recorded in
 [the Phase 7c debug note](../../../debug/browser-repl-phase7c.md).
+
+## Automatic workspace expiry (REPL Phase 8)
+
+The daemon expires unused workspace resources after 24 hours. The fixed count cap
+and agent instructions to manually close another conversation are removed. Existing
+broker ensure runs before each new cell, restoring eligible public URLs as needed;
+fresh runtime generation/creation metadata distinguishes a new heap from retained
+bindings. Receipts and private-control checks are unchanged; old cells never replay.

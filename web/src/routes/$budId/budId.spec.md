@@ -388,7 +388,9 @@ or terminal states still clear it; no cosmetic timer masks the transition.
 
 ## Browser pane integration
 
-`useBrowserPane` owns one bounded inventory poll and visit-local reveal identities.
+`useBrowserPane` owns one event-driven inventory reader and visit-local reveal identities.
+Its thread-scoped `stateFeed` is passed to BrowserViewer and shared with lifecycle
+controls, avoiding separate subscriptions or healthy metadata polls.
 Canonical successful browser_open results and committed handoff tool events reveal
 Browser once. Existing history and first inventory are baselines; repeated events
 never override dismissal. Explicit inline links use the same open context. The

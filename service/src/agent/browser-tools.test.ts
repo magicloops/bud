@@ -4,9 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test, { mock, beforeEach, afterEach } from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { BROWSER_TOOL_NAMES, BROWSER_CANONICAL_TOOLS, BROWSER_REPL_TOOLS, browserReplEnabled, parseBrowserInput } from "./browser-tools.js";
+import { BROWSER_TOOL_NAMES, BROWSER_REPL_TOOLS, isBrowserToolName, parseBrowserInput } from "./browser-tools.js";
 import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentBackend, type BrowserAgentContext } from "./browser-tool-executor.js";
 import { buildToolArgs, toolNameForConversation, type ExecutedBrowserTool } from "./contracts.js";
 import { AgentModelRunner } from "./model-runner.js";
@@ -19,15 +19,6 @@ import { db } from "../db/client.js";
 import { providerRegistry, type CanonicalTool, type CanonicalMessage, type LLMProvider } from "../llm/index.js";
 import { OpenAIProvider } from "../llm/providers/openai.js";
 
-// Existing-family fixtures select their catalog explicitly; default coverage below
-// removes the override and exercises the development behavior.
-const originalToolMode = process.env.BUD_BROWSER_TOOL_MODE;
-beforeEach(() => { process.env.BUD_BROWSER_TOOL_MODE = 'tools'; });
-afterEach(() => {
-  if (originalToolMode === undefined) delete process.env.BUD_BROWSER_TOOL_MODE;
-  else process.env.BUD_BROWSER_TOOL_MODE = originalToolMode;
-});
-
 const logger = { info() {}, warn() {}, error() {} };
 const context: BrowserAgentContext = { threadId: "thread", budId: "bud", ownerUserId: "alice", turnId: "turn", signal: new AbortController().signal };
 const call = (tool: ExecutedBrowserTool["directive"]["tool"], args: Record<string, unknown> = {}): ExecutedBrowserTool["directive"] => ({ type: "tool_call", tool, args, callId: tool });
@@ -37,68 +28,63 @@ const backend = (overrides: Partial<BrowserAgentBackend> = {}): BrowserAgentBack
   park: async () => ({ handoff_id: "handoff", viewer_path: "/fixture/view" }), ...overrides,
 });
 
-test("browser catalog is explicitly composed and excluded offline; both tool families replay", () => {
+test("browser catalog is explicitly composed and excluded offline; REPL tools replay", () => {
   const online = buildAgentEnvironmentSnapshot({ budId: "bud", online: true });
   assert.equal(resolveAgentToolsForEnvironment(online).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 0);
-  assert.equal(resolveAgentToolsForEnvironment(online, { browser: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 4);
-  assert.equal(resolveAgentToolsForEnvironment(online, { browser: true, browserHandoff: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 5);
+  assert.equal(resolveAgentToolsForEnvironment(online, { browser: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 1);
+  assert.equal(resolveAgentToolsForEnvironment(online, { browser: true, browserHandoff: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 2);
   assert.equal(resolveAgentToolsForEnvironment({ ...online, mode: "bud_offline" }, { browser: true }).filter(t => BROWSER_TOOL_NAMES.includes(t.name as never)).length, 0);
   const runner = new AgentModelRunner({} as never, logger as never, false, false);
   const loader = new AgentConversationLoader();
   for (const name of BROWSER_TOOL_NAMES) {
-    const input = name === "browser_exec" ? {code:"console.log(1)"} : name === "browser_request_handoff" ? { reason: "Sign in" } : name === "browser_act" ? { action: "click", reference: "1:2" } : {};
+    const input = name === "browser_exec" ? {code:"console.log(1)"} : name === "browser_request_handoff" ? { reason: "Sign in" } : {};
     const [directive] = runner.extractToolCalls({ id: "r", content: [], stopReason: "tool_use", toolCalls: [{ id: name, name, input }] });
     assert.equal(toolNameForConversation(directive.tool), name);
     assert.deepEqual(buildToolArgs(directive), input);
     const stored = Reflect.get(loader, "parseStoredToolDirective").call(loader, JSON.stringify({ tool: name, call_id: name, args: input }));
     assert.deepEqual(stored, directive);
   }
-  assert.deepEqual(parseBrowserInput("browser_act", { action: "click", reference: "1:2", text: null, target_id: null, url: null }), { action: "click", reference: "1:2" });
-  for (const args of [{ action: "evaluate", text: "anything" }, { action: "click", reference: "1", epoch: 2 }, { action: "click", reference: "1", text: "extra" }, { action: "navigate", url: "file:///tmp/private" }]) {
-    assert.throws(() => parseBrowserInput("browser_act", args), /browser_invalid_arguments/);
-  }
+
 });
 
-test("OpenAI encoding keeps all five strict schemas usable without mutating canonical definitions", async () => {
+test("OpenAI encoding keeps both strict schemas usable without mutating canonical definitions", async () => {
   const provider = new OpenAIProvider("fixture-key");
   let checked = false;
   Reflect.get(provider, "client").responses.create = async (request: any) => {
     checked = true;
-    assert.deepEqual(request.tools.map((tool: any) => tool.name), BROWSER_CANONICAL_TOOLS.map(t => t.name));
+    assert.deepEqual(request.tools.map((tool: any) => tool.name), BROWSER_REPL_TOOLS.map(t => t.name));
     for (const tool of request.tools) {
       assert.equal(tool.strict, true);
       assert.equal(tool.parameters.additionalProperties, false);
       assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties));
     }
-    const action = request.tools.find((tool: any) => tool.name === "browser_act");
-    assert.deepEqual(action.parameters.properties.reference.type, ["string", "null"]);
     return { id: "r", status: "completed", output: [] };
   };
-  const original = structuredClone(BROWSER_CANONICAL_TOOLS);
-  await provider.invokeSync([{ role: "user", content: "fixture" }], BROWSER_CANONICAL_TOOLS, { model: "gpt-6-astra" });
+  const original = structuredClone(BROWSER_REPL_TOOLS);
+  await provider.invokeSync([{ role: "user", content: "fixture" }], BROWSER_REPL_TOOLS, { model: "gpt-6-astra" });
   assert.ok(checked);
-  assert.deepEqual(BROWSER_CANONICAL_TOOLS, original);
+  assert.deepEqual(BROWSER_REPL_TOOLS, original);
 });
 
 test("execution withholds unauthorized/late evidence, rejects bad arguments and never recommends retrying unknown actions", async () => {
   let dispatched = 0;
   let owned = true;
   const executor = new BrowserToolExecutor(backend({ execute: async () => { dispatched++; owned = false; return { ok: true, outcome: "completed", data: { private: "not delivered" } }; } }), async c => owned && c.ownerUserId === "alice");
-  await assert.rejects(executor.execute({ ...context, ownerUserId: "bob" }, call("browser_observe")), /not_found/);
+  await assert.rejects(executor.execute({ ...context, ownerUserId: "bob" }, call("browser_exec", {code:"await browser.tabs.list()"})), /not_found/);
   assert.equal(dispatched, 0);
-  const invalid = await executor.execute(context, call("browser_act", { action: "evaluate" }));
+  const invalid = await executor.execute(context, call("browser_exec", { action: "evaluate" }));
   assert.equal(invalid.payload.error, "browser_invalid_arguments");
-  assert.match(JSON.stringify(invalid.payload.data), /focus.*reference/);
+  assert.match(JSON.stringify(invalid.payload.data), /code: JavaScript/);
   assert.equal(dispatched, 0);
-  await assert.rejects(executor.execute(context, call("browser_observe")), /not_found/);
+  await assert.rejects(executor.execute(context, call("browser_exec", {code:"await browser.tabs.list()"})), /not_found/);
   const unknown = new BrowserToolExecutor(backend({ execute: async () => { throw new Error("sensitive transport contents"); } }), async () => true);
-  const result = await unknown.execute(context, call("browser_act", { action: "click", reference: "1:2" }));
+  const result = await unknown.execute(context, call("browser_exec", { code: "await handle.click()" }));
   assert.equal(result.payload.outcome, "unknown");
   assert.equal(result.result.retryable, false);
   assert.doesNotMatch(JSON.stringify(result), /sensitive transport/);
   const abort = new AbortController();
   const canceled = new BrowserToolExecutor(backend({ execute: async () => { abort.abort(); return { ok: true, outcome: "completed" }; } }), async () => true);
-  await assert.rejects(canceled.execute({ ...context, signal: abort.signal }, call("browser_observe")), { name: "AbortError" });
+  await assert.rejects(canceled.execute({ ...context, signal: abort.signal }, call("browser_exec", {code:"await browser.tabs.list()"})), { name: "AbortError" });
 });
 
 // The real model runner and transcript writer run; only provider networking and
@@ -131,7 +117,7 @@ async function loopFixture(t: any, browser: BrowserToolExecutor, responses: Arra
     getModelCapabilities: () => ({ supportsVision: false, supportsTools: true, supportsReasoning: false, maxContextTokens: 100000, maxOutputTokens: 1000 }) as never,
     async *invoke(messages, tools: CanonicalTool[], _config, signal) {
       requests.push(structuredClone(messages));
-      assert.ok([0, browserReplEnabled() ? (browser.handoffAvailable ? 2 : 1) : (browser.handoffAvailable ? 5 : 4)].includes(tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)).length));
+      assert.ok([0, (browser.handoffAvailable ? 2 : 1)].includes(tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)).length));
       if (remote) {
         assert.ok(requests.length <= 18, "live fixture exceeded provider-call budget");
         yield* remote.invoke(messages, tools.filter(tool => BROWSER_TOOL_NAMES.includes(tool.name as never)),
@@ -177,10 +163,10 @@ test("canonical agent loop records results and parks before trailing calls or an
     execute: async (_context, name) => { applied.push(name); return { ok: true, outcome: "completed", data: { observed: "fixture page" } }; },
     park: async args => { parked = args; return { handoff_id: "handoff", viewer_path: "/fixture/view" }; },
   }), async c => c.threadId === "thread" && c.budId === "bud" && c.ownerUserId === "alice");
-  const fixture = await loopFixture(t, executor, [[{ name: "browser_open", input: {} }, { name: "browser_observe", input: {} }],
-    [{ name: "browser_request_handoff", input: { reason: "Enter the test OTP" } }, { name: "browser_close", input: {} }]]);
+  const fixture = await loopFixture(t, executor, [[{ name: "browser_exec", input: {code:"await browser.tabs.open()"} }, { name: "browser_exec", input: {code:"await browser.tabs.list()"} }],
+    [{ name: "browser_request_handoff", input: { reason: "Enter the test OTP" } }, { name: "browser_exec", input: {code:"await tab.close()"} }]]);
   assert.equal((await fixture.run()).status, "waiting_for_user");
-  assert.deepEqual(applied, ["browser_open", "browser_observe"]);
+  assert.deepEqual(applied, ["browser_exec", "browser_exec"]);
   assert.equal(fixture.requests.length, 2);
   assert.match(JSON.stringify(fixture.requests[1]), /fixture page/);
   assert.equal(parked.directive.callId, "call-2-0");
@@ -200,12 +186,12 @@ test("admission wait preserves original call and pauses without trailing tools o
     throw new BrowserToolWait({handoff_id:"handoff",viewer_path:"/browser/browser_01M2KFXEFBTPXR71B57JFBW9Z1",
       wait_kind:"return_control",invocation_id:"invocation",session_id:"browser_01M2KFXEFBTPXR71B57JFBW9Z1"});
   }}),async()=>true);
-  const fixture=await loopFixture(t,executor,[[{name:"browser_observe",input:{}},{name:"browser_close",input:{}}]]);
+  const fixture=await loopFixture(t,executor,[[{name:"browser_exec",input:{code:"await browser.tabs.list()"}},{name:"browser_exec",input:{code:"await tab.close()"}}]]);
   assert.equal((await fixture.run(()=>{parked++})).status,"waiting_for_user");
   assert.equal(parked,1); assert.equal(executions,1); assert.equal(fixture.requests.length,1);
   assert.equal(fixture.events.filter(e=>e.event==="agent.tool_result").length,0);
   const pending=fixture.runtime.getSnapshot("thread").pending_tool;
-  assert.equal(pending?.name,"browser_observe"); assert.equal(pending?.call_id,"call-1-0");
+  assert.equal(pending?.name,"browser_exec"); assert.equal(pending?.call_id,"call-1-0");
   assert.equal(pending?.args.wait_kind,"return_control");
   assert.equal(fixture.runtime.getSnapshot("thread").phase,"waiting_for_user");
 });
@@ -222,7 +208,7 @@ test("private browser rejection returns to the model so chat can finish", async 
   const executor = new BrowserToolExecutor(backend({ execute: async () => ({
     ok: false, outcome: "rejected", error: "browser_private_or_paused",
   }) }), async () => true);
-  const fixture = await loopFixture(t, executor, [[{ name: "browser_observe", input: {} }], []]);
+  const fixture = await loopFixture(t, executor, [[{ name: "browser_exec", input: {code:"await browser.tabs.list()"} }], []]);
   assert.equal((await fixture.run()).status, "succeeded");
   assert.match(JSON.stringify(fixture.requests[1]), /Return to agent/);
   assert.match(JSON.stringify(fixture.requests[1]), /continue chatting/);
@@ -235,7 +221,7 @@ test("failed handoff does not publish waiting state or execute trailing calls", 
     execute: async () => { executions++; throw new Error("should not execute"); },
     park: async () => { throw new Error("fixture_parking_failed"); },
   }), async () => true);
-  const fixture = await loopFixture(t, executor, [[{ name: "browser_request_handoff", input: { reason: "Sign in" } }, { name: "browser_close", input: {} }]]);
+  const fixture = await loopFixture(t, executor, [[{ name: "browser_request_handoff", input: { reason: "Sign in" } }, { name: "browser_exec", input: {code:"await tab.close()"} }]]);
   await assert.rejects(fixture.run(), /fixture_parking_failed/);
   assert.equal(executions, 0);
   assert.equal(fixture.requests.length, 1);
@@ -244,7 +230,7 @@ test("failed handoff does not publish waiting state or execute trailing calls", 
 });
 
 
-test("REPL defaults on in development, allows old-tool comparison and stays disabled in production", t => {
+test("REPL is the only catalog in development and production, ignoring retired env values", t => {
   const mode=process.env.BUD_BROWSER_TOOL_MODE, env=process.env.NODE_ENV;
   t.after(()=>{ if(mode===undefined) delete process.env.BUD_BROWSER_TOOL_MODE; else process.env.BUD_BROWSER_TOOL_MODE=mode;
     if(env===undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV=env; });
@@ -252,19 +238,16 @@ test("REPL defaults on in development, allows old-tool comparison and stays disa
   const online=buildAgentEnvironmentSnapshot({budId:'bud',online:true});
   const names=()=>resolveAgentToolsForEnvironment(online,{browser:true,browserHandoff:true}).filter(t=>BROWSER_TOOL_NAMES.includes(t.name as never)).map(t=>t.name);
   assert.deepEqual(names(), BROWSER_REPL_TOOLS.map(t=>t.name));
-  process.env.BUD_BROWSER_TOOL_MODE='tools'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
+  process.env.BUD_BROWSER_TOOL_MODE='tools'; assert.deepEqual(names(),BROWSER_REPL_TOOLS.map(t=>t.name));
   process.env.BUD_BROWSER_TOOL_MODE='repl'; assert.deepEqual(names(),BROWSER_REPL_TOOLS.map(t=>t.name));
   assert.deepEqual(parseBrowserInput('browser_exec',{code:'console.log(1)'}),{code:'console.log(1)'});
   assert.throws(()=>parseBrowserInput('browser_exec',{code:'🐱'.repeat(16385)}));
   assert.throws(()=>parseBrowserInput('browser_exec',{code:'1',owner_user_id:'other'}));
-  process.env.NODE_ENV='production'; assert.deepEqual(names(),BROWSER_CANONICAL_TOOLS.map(t=>t.name));
+  process.env.NODE_ENV='production'; assert.deepEqual(names(),BROWSER_REPL_TOOLS.map(t=>t.name));
 });
 
 
 test("REPL cells reach the next provider step and transcript without local page data", async t => {
-  const previous = process.env.BUD_BROWSER_TOOL_MODE;
-  process.env.BUD_BROWSER_TOOL_MODE = 'repl';
-  t.after(() => { if (previous === undefined) delete process.env.BUD_BROWSER_TOOL_MODE; else process.env.BUD_BROWSER_TOOL_MODE = previous; });
   const directory = await mkdtemp(join(tmpdir(), 'bud-agent-output-'));
   const child = spawn(process.env.BUD_BROWSER_NODE ?? process.execPath,
     [fileURLToPath(new URL('../../../bud/browser-helper/repl-worker.mjs', import.meta.url)), directory],
@@ -305,4 +288,20 @@ test("REPL cells reach the next provider step and transcript without local page 
   const written = fixture.writes.filter(row => row.role === 'tool');
   assert.equal(written.length, 2);
   assert.ok(written.every(row => row.createdByUserId === 'alice' && /browser_exec/.test(row.content)));
+});
+
+// Historical recognition does not make a retired name executable.
+test("retired names are rejected before executor backend dispatch", async () => {
+  const runner = new AgentModelRunner({} as never, logger as never, false, false);
+  let dispatched = 0;
+  const executor = new BrowserToolExecutor(backend({execute: async () => {
+    dispatched++; throw Error("must not dispatch");
+  }}), async () => true);
+  for (const name of ["browser_open", "browser_observe", "browser_act", "browser_close"]) {
+    assert.equal(isBrowserToolName(name), false);
+    assert.throws(() => parseBrowserInput(name as never, {}), /browser_invalid_arguments/);
+    assert.deepEqual(runner.extractToolCalls({id:"r",content:[],stopReason:"tool_use",toolCalls:[{id:name,name,input:{}}]}), []);
+    await executor.execute(context, call(name as never));
+  }
+  assert.equal(dispatched, 0);
 });
