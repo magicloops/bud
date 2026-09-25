@@ -70,6 +70,7 @@ export type ApiThread = {
   bud_id: string
   title: string | null
   created_at: string
+  last_conversation_at?: string | null
   last_activity_at?: string | null
   last_message_preview?: string | null
   message_count?: number

@@ -1,3 +1,4 @@
+import { registerThreadListStream } from "./threads/list-stream.js";
 import type { FastifyInstance } from "fastify";
 import { AgentService, ThreadTitleService } from "../agent/index.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
@@ -16,6 +17,7 @@ export async function registerThreadRoutes(
   threadTitleService: ThreadTitleService,
   terminalSessionManager: TerminalSessionManager,
 ): Promise<void> {
+  await registerThreadListStream(server);
   await registerThreadCoreRoutes(server, terminalSessionManager);
   await registerThreadMessageRoutes(server, agentService, threadTitleService);
   await registerThreadAgentRoutes(server, agentService, agentRuntime);

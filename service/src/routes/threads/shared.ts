@@ -31,6 +31,7 @@ type SerializedThread = {
   title: string | null;
   created_at: Date;
   last_activity_at: Date;
+  last_conversation_at: Date;
   last_message_preview: string | null;
   message_count: number;
   pinned: boolean;
@@ -130,6 +131,7 @@ export function serializeThread(row: typeof threadTable.$inferSelect): Serialize
     title: row.title,
     created_at: row.createdAt,
     last_activity_at: row.lastActivityAt,
+    last_conversation_at: row.lastConversationAt,
     last_message_preview: row.lastMessagePreview,
     message_count: row.messageCount,
     pinned: row.pinned,

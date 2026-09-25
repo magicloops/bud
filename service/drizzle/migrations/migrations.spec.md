@@ -449,3 +449,13 @@ startup. Isolated real-PG tests apply exact SQL and cover commit, rollback,
 renewal filtering and cross-connection delivery. Local SQL was applied as one
 transaction; db:push was canceled on an unrelated proposal. Deployment uses
 `pnpm db:migrate`, not push. Gateway LISTEN requires a session-preserving connection.
+
+### `0043_tired_mauler.sql`
+
+Adds/backfills `thread.last_conversation_at`, atomically advances it on user/final
+assistant message insertion, and emits filtered post-commit `bud_thread_list`
+hints through two migration-owned triggers. Generated snapshot/journal are
+unchanged from Drizzle generation. Local reviewed SQL was applied transactionally
+after db:push encountered unrelated invocation-constraint recreation. Deployment:
+`pnpm db:migrate` before updated service/web/mobile; no daemon change. Exact SQL
+backfill, commit/rollback, duplicate, stale write and hint filtering tests pass.

@@ -1,3 +1,4 @@
+import { compareThreads } from '@/lib/thread-order'
 import { useMemo, useState, type MouseEvent } from 'react'
 import { Menu, Plus, Settings2, Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,7 @@ export type ThreadSummary = {
   bud_id: string
   title: string | null
   created_at: string
+  last_conversation_at?: string | null
   last_activity_at?: string | null
   last_message_preview?: string | null
   message_count?: number
@@ -112,11 +114,7 @@ export function ThreadPanel({
 
   const orderedThreads = useMemo(
     () =>
-      [...threads].sort((a, b) => {
-        const aTs = new Date(a.last_activity_at ?? a.created_at).getTime()
-        const bTs = new Date(b.last_activity_at ?? b.created_at).getTime()
-        return bTs - aTs
-      }),
+      [...threads].sort(compareThreads),
     [threads]
   )
 

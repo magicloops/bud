@@ -1,3 +1,4 @@
+import { compareThreads } from '@/lib/thread-order'
 /**
  * Bud Index Route - redirect-only
  *
@@ -19,7 +20,7 @@ export const Route = createFileRoute('/$budId/')({
       const threads = await apiFetchJson<Array<{
         thread_id: string
         created_at: string
-        last_activity_at?: string | null
+        last_conversation_at?: string | null
       }>>(`/api/threads?bud_id=${params.budId}`, { redirectOnUnauthorized: false })
 
       // No threads - redirect to new thread view
@@ -27,12 +28,7 @@ export const Route = createFileRoute('/$budId/')({
         throw redirect({ to: '/$budId/new', params: { budId: params.budId } })
       }
 
-      // Find most recent thread (by last_activity_at, fallback to created_at)
-      const mostRecent = threads.reduce((prev, curr) => {
-        const prevTs = new Date(prev.last_activity_at ?? prev.created_at).getTime()
-        const currTs = new Date(curr.last_activity_at ?? curr.created_at).getTime()
-        return currTs > prevTs ? curr : prev
-      })
+      const mostRecent = threads.sort(compareThreads)[0]
 
       // Redirect to most recent thread
       throw redirect({

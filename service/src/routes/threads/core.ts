@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
@@ -45,6 +45,7 @@ export async function registerThreadCoreRoutes(
         title: threadTable.title,
         createdAt: threadTable.createdAt,
         lastActivityAt: threadTable.lastActivityAt,
+        lastConversationAt: threadTable.lastConversationAt,
         lastMessagePreview: threadTable.lastMessagePreview,
         messageCount: threadTable.messageCount,
         pinned: threadTable.pinned,
@@ -82,7 +83,12 @@ export async function registerThreadCoreRoutes(
           query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined,
         ),
       )
-      .orderBy(desc(threadTable.lastActivityAt));
+      // JSON Date serialization has millisecond precision; use the same ties as clients.
+      .orderBy(
+        desc(sql`date_trunc('milliseconds', ${threadTable.lastConversationAt})`),
+        desc(sql`date_trunc('milliseconds', ${threadTable.createdAt})`),
+        desc(threadTable.threadId),
+      );
 
     return threads.map((row) => ({
       thread_id: row.threadId,
@@ -90,6 +96,7 @@ export async function registerThreadCoreRoutes(
       title: row.title,
       created_at: row.createdAt,
       last_activity_at: row.lastActivityAt,
+      last_conversation_at: row.lastConversationAt,
       last_message_preview: row.lastMessagePreview,
       message_count: row.messageCount,
       pinned: row.pinned,
