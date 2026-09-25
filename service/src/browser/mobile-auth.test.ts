@@ -58,7 +58,17 @@ test("mobile visit: one-use grant, persistent identity, owner/secret checks, exp
   const secondToken = (await auth.redeem(second.grant))!.token;
   await auth.revoke("alice", second.visit_id);
   assert.equal(await auth.resolve(secondToken), null);
+  const capped = await auth.mint(session, viewer);
+  const cappedToken = (await auth.redeem(capped.grant))!.token;
+  await database.query("update browser_viewer_visit set absolute_expires_at=now()-interval '1 second' where id=$1", [capped.visit_id]);
+  assert.equal(await auth.refresh("alice", capped.visit_id, capped.grant), false, "eight-hour cap cannot renew");
+  assert.equal(await auth.resolve(cappedToken), null);
   const expired = await auth.mint(session, viewer);
   await database.query("update browser_viewer_visit set grant_expires_at=now()-interval '1 second' where id=$1", [expired.visit_id]);
   assert.equal(await auth.redeem(expired.grant), null);
+  await auth.mint(session, viewer);
+  assert.equal((await database.query("select id from browser_viewer_visit where id=$1", [expired.visit_id])).rowCount, 0,
+    "mint cleans expired abandoned grants before their eight-hour cap");
+  assert.equal((await database.query("select id from browser_viewer_visit where id=$1", [grant.visit_id])).rowCount, 0,
+    "mint also cleans expired consumed visits");
 });

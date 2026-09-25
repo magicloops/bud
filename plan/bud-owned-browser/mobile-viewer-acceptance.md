@@ -1,8 +1,12 @@
 # iOS browser handoff: acceptance and delivery checklist
 
-Status: **Not run.** Updated 2026-09-22. Use with the
+Status: **Full matching-stack matrix pending.** Updated 2026-09-25. High-level
+phone/ngrok testing occurred; desktop/agent scrolling was accepted. Mobile
+scrolling and the device/privacy matrix below are not signed off. Use with the
 [implementation plan](phase-3b-ios-browser-viewer.md) and
 [contract reference](mobile-viewer-contract.md).
+The [mobile follow-through plan](../../../bud-mobile/plan/browser-sessions-current-scope.md)
+tracks implementation prerequisites M1–M2 and physical acceptance M3.
 
 ## Environment and evidence
 
@@ -56,8 +60,9 @@ Use disposable test credentials and keep private payloads out of traces.
       when agent runtime is inactive but invocation is waiting_for_user.
 - [ ] Inline Return uses the same mounted viewer identity. No duplicate acquire
       loop or second native controller; double taps produce one effective return.
-- [ ] Recoverable paused workspace with no current owner still allows explicit
-      Return through acquire-then-return; no permanently dimmed button.
+- [ ] Live private workspace without this visit's lease offers explicit Take
+      control, then Return after acknowledged ownership. Confirmed runtime
+      replacement clears extinct authority without requiring Return as repair.
 - [ ] Another live web/mobile controller cannot be stolen implicitly. Test same
       workspace and different thread on the same shared browser.
 - [ ] Confirmed Return resumes eligible browser waits; agent observes current
@@ -103,9 +108,11 @@ Use disposable test credentials and keep private payloads out of traces.
 | Response lost after click/text/Return dispatch | Unknown outcome is visible; no automatic resend; fresh metadata/observation drives next choice |
 | Service restart, passive viewer | Reattach when available without asking user to take private control unnecessarily |
 | Service restart, private viewer | Private intent remains; same authorized mounted viewer can use valid proof, otherwise explicit takeover |
-| Daemon restart | Old generation/target/focus discarded; stored sign-in persists; explicit reopen/blank workspace works |
-| Zero eligible saved URLs | Recovery reports zero pages without dead-end; Return then explicit agent open works |
-| Recovery request uncertain | Do not claim nothing opened or automatically issue reopen again |
+| Daemon restart | Visible ensure reconciles runtime; confirmed replacement discards old evidence and restores eligible full public URLs; surviving private runtime stays protected |
+| Zero eligible saved URLs | Usable empty workspace; agent opens an explicit URL without saved-page or takeover/Return repair |
+| Recovery request uncertain | Reconcile through shared ensure; never replay uncertain cell or page mutations |
+| Expired native visit / WK process killed | Fresh owner-checked bootstrap with bounded recovery; no inherited private proof or automatic takeover/Return (M2) |
+| 24-hour idle workspace expiry | Public checkpoints/profile persist; next use restores pages and fresh REPL state; private expiry never returns automatically |
 | Session close/thread deletion/unclaim | Frame/authority cleared; unavailable terminal state, no endless retry |
 | Resize or acquire completes after dismiss | Late result cannot resurrect input/UI; best-effort release and lease fallback |
 | Web control while mobile suspended | No silent mobile reacquire on foreground; report competing controller |
@@ -129,6 +136,10 @@ These are provisional targets, not established mobile measurements:
   decoded images, timers, script handlers or pending requests.
 - Verify no capture with no eligible viewers, no ongoing phone decode/polling in
   background, and operation-driven passive viewing with no idle screenshot loop.
+- Measure 60 seconds after healthy settlement: zero periodic native inventory or
+  hosted metadata/resource GETs. Count state heartbeats, five-second private lease
+  renewals and five-minute native visit renewal separately; none imply new pixels.
+  Native zero-poll acceptance depends on Phase M1, not just hosted Phase 7f.
 - Slow network must not play an old-frame backlog after reconnect. Keep frame
   credit bounded and never move frames through chat state or the native bridge.
 - Compare chat scroll and terminal responsiveness with/without browser viewing;
@@ -173,3 +184,12 @@ Performance samples and p50/p95:
 Known limitations and follow-ups:
 Required migration / coordinated upgrade steps:
 ```
+
+## M2 automated record — September 25, 2026
+
+Visit recovery, actual WK origin/identity checks, bounded ACK waits and bootstrap
+Origin/credential hardening are implemented. See
+[debug/validation](../../debug/mobile-browser-m2.md). Automated fixtures do not
+close the physical gates above. Deploy matching service/hosted shell before
+rebuilt native; native Return bridge command is removed and visit renewal now
+distinguishes 410 expiry from 401 account failure. No new migration/daemon build.

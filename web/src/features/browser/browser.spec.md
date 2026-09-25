@@ -266,7 +266,7 @@ required to repair a runtime restart.
 
 - `mobile.tsx`: dedicated `/browser-mobile/:session_id` shell, bypassing full-user
   auth routing. Validates visit identity and exposes the bounded version-1 native
-  lifecycle bridge. Command results acknowledge acceptance, not completed Return.
+  lifecycle bridge. Command results acknowledge suspend/resume acceptance; native Return is removed.
 - `touch.ts` / `.test.ts`: imperative remote swipe versus local pinch/pan, drag-click
   suppression and geometry/document cancellation. No per-frame React publication.
 - `mobile-viewer.test.tsx`: suspension during pending takeover releases the late
@@ -344,3 +344,18 @@ existing owner-authorized ensure restores eligible saved URLs automatically.
 The optional desktop Close browser workspace action still discards this thread's
 tabs/REPL memory and saved URL hints while preserving profile sign-ins and other
 threads. Hosted mobile need not expose it for normal resource management.
+
+## Mobile visit bridge — M2
+
+`mobile.tsx` validates exact path, ULID/UUID and unique query IDs before installing
+the bridge or publishing ready. Only suspend/resume are supported; unknown
+commands reject. Superseded/unmounted lifecycle callbacks cannot publish successful
+ACKs. Native Return is removed; the shared visible Return button stays authoritative.
+`viewer.tsx` exposes authorization loss to the host; the shell emits the small
+authorization_lost event so native reauthorizes promptly instead of waiting for
+the five-minute credential timer. No page payload or control proof crosses the bridge.
+
+`mobile-bridge.test.tsx` exercises mounted identity, unsupported-command,
+deduplication and stale-ACK behavior. `mobile-viewer.test.tsx` covers authorization
+loss as well as passive fit and late takeover after suspension. Deploy matching
+service/hosted web before rebuilt M2 native; no daemon or database change.

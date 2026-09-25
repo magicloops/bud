@@ -45,7 +45,8 @@ control connection. It launches no service-local Chrome and imports no spike cod
   credit, live ownership/auth checks and bounded capture lifecycle. Lifecycle
   diagnostics report closure reasons and counts without page content or tickets.
 - `routes.ts`: authenticated inventory/control/input APIs and authorized media
-  upgrades. No page payloads are persisted or logged by these routes.
+  upgrades. Native bearer access to thread state hints only, with JWT and live
+  user/thread/Bud revalidation; other state/control/media scopes retain cookie auth. No page payloads are persisted or logged by these routes.
 - `control.test.ts`: controller exclusivity, takeover boundary, renewal, release
   and lost-acknowledgement recovery, plus private-controller viewport authorization. Known daemon rejections retain their canonical
   code; unknown failures remain uncertain without exposing page-bearing errors.
@@ -585,3 +586,35 @@ bindings, and completed close clears active evidence and the cleanup candidate.
 Daemon-local 24-hour idle expiry releases resources while preserving public
 URL hints and session identity. The fixed workspace count cap is removed. Normal
 broker/viewer ensure restores expired workspaces before use. Desktop close explicitly discards thread tabs and REPL memory.
+
+## Native thread discovery — mobile M1
+
+Only `/api/threads/:thread_id/browser-state` additionally accepts an explicit
+bearer principal. Native may omit Origin; supplied origins must be trusted. Cookie
+upgrades still require Origin; scoped mobile cookies cannot access thread/Bud
+feeds, even when accompanied by a bearer header. JWT verification and auth-user
+existence precede upgrade; live token and owned thread/Bud checks run before
+changed hints and at the existing idle security interval. Expiry/scope loss closes
+4404 without changing principal. JWT revocation retains the existing access-token
+TTL semantics; no new introspection mechanism or row stamping is added.
+
+`state-routes.test.ts` uses signed JWTs/test JWKS and mocked SQL reads to cover
+expiry, owner/deletion/unclaim changes, foreign 404, invalid 401 and Origin 403.
+Deploy service before the native app that removes inventory polling. No wire
+payload, migration, daemon or hosted-viewer change. Physical acceptance remains
+in the [mobile contract](../../../plan/bud-owned-browser/mobile-viewer-contract.md).
+
+## Mobile visit recovery — M2
+
+Bootstrap rejects any supplied untrusted Origin before consuming the grant;
+deliberate native no-Origin POST remains supported. An empty or stale scoped
+cookie cannot fall through to full-session auth. Native renewal returns 410
+browser_visit_expired for unusable visit proof, separating it from account 401.
+Owner-scoped mint cleanup removes expired consumed visits and abandoned grants.
+
+`mobile-routes.test.ts` covers Origin-before-redemption, allowed/no-Origin success,
+owner-bound lookup and scoped-cookie fallback rejection. State route fixtures
+verify renewal status separation. Real PostgreSQL mobile-auth tests cover idle
+expiry, eight-hour cap and abandoned grant cleanup. No new rows or schema changes;
+existing workspace owner/tenant inheritance remains. Deploy with the M2 hosted
+shell before rebuilt native; see the mobile contract and debug/mobile-browser-m2.md.

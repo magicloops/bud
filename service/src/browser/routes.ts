@@ -10,7 +10,7 @@ import { db, pool } from "../db/client.js";
 import { BrowserStateEvents, type BrowserStateHint } from "./state-events.js";
 import { attachBrowserState } from "./state-stream.js";
 import { subscribePresence } from "../transport/presence-events.js";
-import { authSessionTable } from "../db/schema.js";
+import { authSessionTable, authUserTable } from "../db/schema.js";
 import { config } from "../config.js";
 import {
   requireViewer,
@@ -101,7 +101,7 @@ const mobileAuth = new BrowserMobileAuth();
 
 async function browserActor(request: FastifyRequest): Promise<BrowserActor | null> {
   const token = request.headers.cookie?.split(";").map(v => v.trim()).find(v => v.startsWith(`${mobileCookie}=`))?.slice(mobileCookie.length + 1);
-  if (token) {
+  if (token !== undefined) {
     const mobile = await mobileAuth.resolve(token);
     return mobile ? { userId: mobile.created_by_user_id, sessionId: null, email: null, authType: "cookie", mobile, mobileToken: token } : null;
   }
@@ -255,11 +255,34 @@ export async function registerBrowserRoutes(
         : "/api/buds/:bud_id/browser/state";
       const authorized = new WeakMap<FastifyRequest, {scope: BrowserStateHint; check: () => Promise<boolean>}>();
       routes.get(path, {websocket: true, preValidation: async (request, reply) => {
-        const actor = await viewer(request, reply);
-        if (!actor) return;
+        // Only native thread discovery accepts bearer credentials. A scoped visit
+        // cannot become a thread principal, even if an Authorization header exists.
+        const bearer = scopeKind === "thread" && !!request.headers.authorization &&
+          !request.headers.cookie?.split(";").some(v => v.trim().startsWith(`${mobileCookie}=`));
+        const nativeViewer = async () => {
+          try { return await getOptionalBearerViewer(request); } catch { return null; }
+        };
+        const actor = bearer ? await nativeViewer() : await viewer(request, reply);
+        if (!actor) {
+          if (!reply.sent) reply.code(401).send({error:"unauthorized"});
+          return;
+        }
+        if (bearer && request.headers.origin !== undefined && !config.betterAuthTrustedOrigins.includes(request.headers.origin)) {
+          reply.code(403).send({error:"origin_denied"}); return;
+        }
+        reply.header("Cache-Control", "no-store");
+        const authenticated = async () => {
+          if (!bearer) return alive(actor);
+          // Verify this connection's original token again, never switch principal.
+          const current = await nativeViewer();
+          return current?.userId === actor.userId && !!await db.query.authUserTable.findFirst({
+            where: eq(authUserTable.id, actor.userId), columns: {id:true},
+          });
+        };
+        if (!await authenticated()) { reply.code(401).send({error:"unauthorized"}); return; }
         const params = request.params as Record<string,string>;
         const resolve = async (): Promise<BrowserStateHint | null> => {
-          if (!await alive(actor)) return null;
+          if (!await authenticated()) return null;
           if (scopeKind === "session") {
             const session = await control.repository.get(actor.userId, sessionId(request));
             return {bud_id:session.bud_id, thread_id:session.thread_id};
@@ -287,7 +310,7 @@ export async function registerBrowserRoutes(
         void attachBrowserState(socket,stateEvents,access.scope,access.check);
       });
     }
-    // Native bearer mints/revokes only. The embedded page receives no OAuth token.
+    // Native owns grant lifecycle. The embedded page receives no OAuth token.
     routes.post("/api/browser/sessions/:session_id/viewer-grants", {bodyLimit:1024}, async (request, reply) => {
       reply.header("Cache-Control","no-store");
       const actor = await getOptionalBearerViewer(request);
@@ -298,6 +321,9 @@ export async function registerBrowserRoutes(
     });
     routes.post("/api/browser/viewer-bootstrap", {bodyLimit:1024}, async (request, reply) => {
       reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer");
+      if (request.headers.origin !== undefined && !config.betterAuthTrustedOrigins.includes(request.headers.origin)) {
+        return reply.code(403).send({error:"origin_denied"});
+      }
       const {grant} = z.object({grant:z.string().regex(/^[\w-]{43}$/)}).strict().parse(request.body);
       const result = await mobileAuth.redeem(grant);
       if (!result) return reply.code(401).send({error:"browser_grant_expired"});
@@ -315,7 +341,7 @@ export async function registerBrowserRoutes(
         z.object({operation:z.literal("refresh"),grant:z.string().regex(/^[\w-]{43}$/)}).strict(),
       ]).parse(request.body);
       if (body.operation === "revoke") await mobileAuth.revoke(actor.userId,visit);
-      else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(401).send({error:"browser_visit_expired"});
+      else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(410).send({error:"browser_visit_expired"});
       return {ok:true};
     });
     // Bud owns the shared profile; actor and owner are resolved before resource I/O.
