@@ -555,3 +555,14 @@ and reserves one session-preserving LISTEN connection. Drizzle push cannot creat
 these triggers: deployed environments use the checked-in migration. Local push
 was canceled because it proposed an unrelated constraint/data change; the custom
 SQL was applied transactionally. See `debug/browser-event-driven-state.md`.
+
+## Stable thread ordering (0043)
+
+`thread.lastConversationAt` is separate from generic `lastActivityAt`. Migration
+`0043_tired_mauler.sql` backfills from user and explicitly final assistant messages
+with creation fallback. Its message INSERT trigger advances the timestamp
+monotonically in the same transaction; conflict retries, rollback, tools and
+commentary do not promote a thread. A filtered thread trigger publishes scope-only
+`bud_thread_list` hints after commit for ordering/title/deletion/ownership changes.
+These triggers require the migration; `db:push` alone cannot install them.
+`thread-order.test.ts` exercises the exact SQL in an isolated PostgreSQL schema.

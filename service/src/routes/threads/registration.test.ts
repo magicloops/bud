@@ -19,6 +19,7 @@ function createServer(): FastifyInstance & { routes: RegisteredRoute[] } {
 
   return {
     routes,
+    addHook: () => {},
     get: addRoute("GET"),
     post: addRoute("POST"),
     patch: addRoute("PATCH"),
@@ -42,6 +43,7 @@ test("split thread route modules register the expected unique endpoint set", asy
   const expected = [
     "DELETE /api/threads/:threadId",
     "GET /api/threads",
+    "GET /api/buds/:budId/thread-list/stream",
     "GET /api/threads/:threadId",
     "GET /api/threads/:threadId/agent/state",
     "GET /api/threads/:threadId/model-context",

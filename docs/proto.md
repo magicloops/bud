@@ -3970,3 +3970,24 @@ Recovery hints retain a 256 KiB total byte bound and 16 pages/workspace; the old
 32-workspace checkpoint count limit is removed. A failed checkpoint preserves
 previous hints but does not block idle resource cleanup. URL restoration remains
 best-effort; a newly created REPL never claims to retain expired bindings.
+
+## Thread-list ordering and invalidation
+
+Thread list/detail/create/model-preference responses expose `last_conversation_at`
+(ISO timestamp). It advances only on persisted user messages and explicitly final
+assistant responses, with creation fallback and monotonic updates. Consumers sort
+by this field, then `created_at`, then `thread_id`, all descending. Generic
+`last_activity_at` retains its existing activity meaning.
+
+`GET /api/buds/:budId/thread-list/stream` is authenticated SSE (cookie or bearer).
+Anonymous requests return 401; a signed-in non-owner receives 404 before attach.
+Events are `ready`, `changed`, and `heartbeat`, each with JSON data `{}`. There are
+no replay IDs: every ready/reconnect requires an owned thread-list snapshot.
+Changed is an invalidation, not a transcript or permission grant. Heartbeats do
+not require snapshot reads. Service revalidates auth/Bud ownership before hints
+and every 15 seconds; loss closes the stream. PostgreSQL notifications cover
+committed ordering, title, deletion and ownership changes across worker processes.
+Client merges must preserve the greater existing ordering timestamp.
+
+Migration `0043_tired_mauler.sql` must precede the updated service. Deploy service
+and web together, then rebuild mobile against this contract. No daemon upgrade.

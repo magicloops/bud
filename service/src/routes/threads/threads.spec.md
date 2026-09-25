@@ -254,3 +254,16 @@ page's distinct turn IDs plus owner and thread predicates. Nonterminal turns are
 omitted; unknown terminal/review totals are null. `/agent/state.invocations` exposes
 the same optional settled field through invocation serialization. No model context
 or message payload is rewritten; no additional endpoint or ownership authority.
+
+## Stable conversation ordering
+
+`core.ts` orders owned lists by `last_conversation_at`, `created_at`, then
+`thread_id`, all descending. `shared.ts` and list responses expose the canonical
+ordering timestamp independently of generic activity.
+
+`list-stream.ts` registers `GET /api/buds/:budId/thread-list/stream`: one shared
+PostgreSQL LISTEN connection per gateway, per-viewer owned Bud subscription,
+`ready`/`changed` invalidations and 15-second auth-checked heartbeats. Hints contain
+no thread data; clients re-read the owner-filtered list. Disconnect, revocation,
+backpressure and gateway shutdown clean up subscriptions. `list-stream.test.ts`
+covers anonymous/foreign rejection before LISTEN, scope filtering and revocation.

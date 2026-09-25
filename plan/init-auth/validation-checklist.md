@@ -571,3 +571,12 @@ image metadata inherits that authorized call. Local files live only on the daemo
   authoritative; no new persisted rows require stamping.
 - [ ] Physical signed-in web/mobile logout, grant expiry, owner revocation and
   cross-viewer takeover/Return acceptance; carry results into Phase 8.
+
+## Stable thread list stream
+
+- [x] Anonymous list-stream requests return 401 before subscribing.
+- [x] Foreign Bud requests return 404 before LISTEN/subscription.
+- [x] Hints for another Bud are ignored; current ownership loss closes the stream
+  before delivering another hint (route tests).
+- [ ] Real cookie/bearer session expiry and account-switch browser/mobile exercise.
+- [x] Thread list reads retain SQL owner predicates; no new user-stamped rows.

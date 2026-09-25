@@ -376,6 +376,7 @@ export const threadTable = pgTable(
     title: text("title"),
     lastMessagePreview: text("last_message_preview"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    lastConversationAt: timestamp("last_conversation_at", { withTimezone: true }).default(sql`now()`).notNull(),
     messageCount: integer("message_count").notNull().default(0),
     pinned: boolean("pinned").notNull().default(false),
     archived: boolean("archived").notNull().default(false),

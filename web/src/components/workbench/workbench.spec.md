@@ -38,12 +38,12 @@ Thread list sidebar for conversation navigation.
 
 **Type**: `ThreadSummary` - Thread metadata including:
 - `thread_id`, `bud_id`, `title`
-- `last_activity_at`, `last_message_preview`, `message_count`
+- `last_conversation_at`, `last_activity_at`, `last_message_preview`, `message_count`
 - `has_terminal_session`, `session_state`, `session_id`
 - stored/effective model selection fields (`model`, `reasoning_effort`, `effective_model`, `effective_reasoning_effort`, `model_selection_source`)
 
 **Features**:
-- Sorted by last activity (most recent first)
+- Sorted by persisted conversation timestamp, then creation and ID (descending); tool/stream activity cannot reorder rows
 - "New chat" lives IN the list as the first card-shaped item (dashed border
   + Plus icon; solid accent border when the new-thread route is active) —
   no separate header button

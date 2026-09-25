@@ -26,7 +26,7 @@ loader: async ({ params }) => {
     throw redirect({ to: '/$budId/new' })
   }
 
-  const mostRecent = threads.reduce(/* by last_activity_at */)
+  const mostRecent = threads.sort(compareThreads)[0]
   throw redirect({ to: '/$budId/$threadId', params: { threadId: mostRecent.thread_id } })
 }
 ```
@@ -34,7 +34,7 @@ loader: async ({ params }) => {
 **Features**:
 - Fetches threads for the current bud
 - Inherits auth gating from parent `/$budId`
-- Redirects to most recent thread (by `last_activity_at`, fallback to `created_at`)
+- Redirects to most recent thread (by `last_conversation_at`, then `created_at` and thread ID descending)
 - Redirects to `/new` if no threads exist
 - Error handling: throws on fetch failure (doesn't mask errors)
 

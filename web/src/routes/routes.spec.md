@@ -294,7 +294,7 @@ Nested routes for thread views:
 ```
 
 **Auto-Selection Behavior**: When navigating to `/$budId/`, users are automatically redirected to either:
-- The most recent thread (sorted by `last_activity_at`) if threads exist
+- The most recent thread (sorted by `last_conversation_at`, creation and ID descending) if threads exist
 - `/$budId/new` if no threads exist
 
 This ensures users always land on meaningful content rather than an empty view.
@@ -379,3 +379,11 @@ without a local send. An activity revision invalidates snapshot/bootstrap fetche
 started before a newer live transition or final, preventing older phase and
 activity values from overwriting the stream. Existing thread ownership and SSE
 authorization are unchanged. See [design](../../../design/assistant-output-activity.md).
+
+## Thread list invalidation
+
+The Bud layout subscribes once to its owned `/thread-list/stream`. Ready/change
+hints trigger serialized list refreshes (including inactive threads); heartbeat
+and normal agent progress do not poll. Requests abort on scope changes/unmount;
+failed refreshes retry. Loader, list, detail and patch merges preserve the newer
+conversation timestamp. The panel and default route share `compareThreads`.

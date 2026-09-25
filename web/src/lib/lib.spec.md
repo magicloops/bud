@@ -444,3 +444,11 @@ see [contract](../../../design/assistant-output-activity.md).
 
 `ApiAgentState.pending_browser_waits` is an optional collection of turn/invocation
 identity plus the original pending-tool envelope. Older services may omit it.
+
+### `thread-order.ts` / `thread-order.test.ts`
+
+Shared thread comparator uses persisted `last_conversation_at`, creation and ID
+(descending), never intermediate activity. Partial local summaries fall back to
+creation. `latestConversationAt` preserves newer timestamps across stale snapshots
+and partial patches. Tests cover activity noise, completion, ties and stale merges.
+`ApiThread` carries the ordering timestamp through canonical API responses.

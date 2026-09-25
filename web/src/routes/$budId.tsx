@@ -1,3 +1,4 @@
+import { latestConversationAt } from '@/lib/thread-order'
 import { createFileRoute, Outlet, useNavigate, useMatches, useRouter } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MutationStatus, type MutationStatusTone } from '@/components/ui/mutation-status'
@@ -7,6 +8,7 @@ import { BudSettingsModal, type BudSettingsTab } from '@/components/bud-settings
 import { deriveBudPalette, withFallbackAccentColors } from '@/lib/theme-colors'
 import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
+  createAuthEventSource,
   apiFetchJson,
   isApiError,
 } from '@/lib/transport'
@@ -21,6 +23,7 @@ const toThreadSummary = (thread: ApiThread): ThreadSummary => ({
   title: thread.title,
   created_at: thread.created_at,
   last_activity_at: thread.last_activity_at,
+  last_conversation_at: thread.last_conversation_at,
   last_message_preview: thread.last_message_preview,
   message_count: thread.message_count,
   pinned: thread.pinned,
@@ -50,6 +53,7 @@ const mergeThreadSummary = (
   return {
     ...existing,
     ...next,
+    last_conversation_at: latestConversationAt(existing.last_conversation_at, next.last_conversation_at),
     has_terminal_session: mergeOptional(next.has_terminal_session, existing.has_terminal_session),
     session_state: mergeOptional(next.session_state, existing.session_state),
     session_id: mergeOptional(next.session_id, existing.session_id),
@@ -151,8 +155,35 @@ function BudLayout() {
   }, [apiBuds])
 
   useEffect(() => {
-    setThreads(initialThreads.map(toThreadSummary))
+    setThreads(prev => initialThreads.map(thread => mergeThreadSummary(prev.find(old => old.thread_id === thread.thread_id), thread)))
   }, [initialThreads])
+
+  // One list-level stream covers inactive conversations; hints trigger owned reads.
+  useEffect(() => {
+    let disposed = false, running = false, dirty = false
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const controller = new AbortController()
+    const { source, checkUnauthorized } = createAuthEventSource(`/api/buds/${budId}/thread-list/stream`)
+    const refresh = async () => {
+      dirty = true
+      if (running || disposed) return
+      running = true
+      try {
+        do {
+          dirty = false
+          const rows = await apiFetchJson<ApiThread[]>(`/api/threads?bud_id=${budId}`, { signal: controller.signal })
+          if (!disposed) setThreads(prev => rows.map(thread => mergeThreadSummary(prev.find(old => old.thread_id === thread.thread_id), thread)))
+        } while (dirty && !disposed)
+      } catch {
+        if (!disposed) retry = setTimeout(() => void refresh(), 3000)
+      } finally { running = false }
+    }
+    const changed = () => { clearTimeout(retry); void refresh() }
+    source.addEventListener('ready', changed)
+    source.addEventListener('changed', changed)
+    source.onerror = () => { void checkUnauthorized() }
+    return () => { disposed = true; controller.abort(); clearTimeout(retry); source.close() }
+  }, [budId])
 
   const activeBudProfile = useMemo(() => {
     return buds.find((b) => b.id === budId)
@@ -208,7 +239,7 @@ function BudLayout() {
 
   const patchThreadSummary = useCallback((threadId: string, patch: Partial<ThreadSummary>) => {
     setThreads((prev) =>
-      prev.map((thread) => (thread.thread_id === threadId ? { ...thread, ...patch } : thread)),
+      prev.map((thread) => (thread.thread_id === threadId ? { ...thread, ...patch, last_conversation_at: latestConversationAt(thread.last_conversation_at, patch.last_conversation_at) } : thread)),
     )
   }, [])
 
