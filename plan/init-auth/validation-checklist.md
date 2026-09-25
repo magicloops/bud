@@ -580,3 +580,23 @@ image metadata inherits that authorized call. Local files live only on the daemo
   before delivering another hint (route tests).
 - [ ] Real cookie/bearer session expiry and account-switch browser/mobile exercise.
 - [x] Thread list reads retain SQL owner predicates; no new user-stamped rows.
+
+## Mobile browser thread discovery — M1
+
+- [x] Signed-JWT/test-JWKS HTTP and loopback WS fixtures: missing/invalid/expired
+  bearer 401, foreign thread 404 before attachment, absent native Origin accepted,
+  hostile Origin 403. Real token verifier; owner database reads are mocked.
+- [x] Attached bearer token expiry, auth-user deletion, thread deletion/owner loss
+  and Bud unclaim close 4404 before changed delivery. Existing stream tests cover
+  periodic idle reauthorization; SQL helpers bind the original owner.
+- [x] Bearer credentials do not widen session-state, media, metadata or Bud-state
+  routes. Existing scoped-cookie tests reject thread/Bud/wrong-session access.
+- [x] Native selection/account and cancellation fixtures discard delayed replies;
+  current REPL history preserves withheld output and exact cancellation identity.
+- [ ] Physical two-account login/logout, OAuth refresh during idle WSS, copied
+  thread IDs and account switch while discovery/image retrieval are in flight.
+- [ ] 60-second physical matching-stack settled traffic: zero recurring native
+  inventory GETs; count transport heartbeats separately.
+
+No new rows. JWT verification retains existing access-token TTL semantics; this
+phase does not add immediate refresh-token-driven access-token revocation.

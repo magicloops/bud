@@ -1,10 +1,14 @@
 # Phase 3b: iOS browser viewer — mobile team handoff
 
-Status: **Implementation in the working trees; physical-device acceptance outstanding.**
-Updated: 2026-09-22. Source baseline: main repository `e72c129` on
-`feat/bud-owned-browser`; mobile repository `e733459`.
-The contract companion now describes the implemented bootstrap and bridge.
-Historical requirements below remain the acceptance scope.
+Status: **Initial viewer implemented; current mobile follow-through scoped.**
+Updated: 2026-09-25. Service/web baseline and REPL work are merged; mobile PR #47
+(viewer) and stacked #48 (thread ordering) remain open. Exact deployed versions
+and full physical-device acceptance remain unverified.
+
+Start with the [current assessment and M1–M3 scope](../../../bud-mobile/plan/browser-sessions-current-scope.md).
+It supersedes the historical implementation sequence below: native REPL transcript
+presentation and event-driven discovery, visit/bridge recovery, then phone input
+and matching-stack acceptance. Keep the shared WK-hosted viewer architecture.
 
 ## Start here
 
@@ -44,8 +48,8 @@ to start; packaged-daemon release and Ubuntu support are not prerequisites.
 | Privacy | Taking control pauses agent browser access across the entire Bud. Only the controlling viewer receives private page content. Chat and unrelated terminal work can continue. |
 | Return | Explicit acknowledged Return to agent clears private intent and wakes eligible browser waits across threads. Deferred actions are reconsidered, not blindly replayed. |
 | Dismiss/background | Leaving the viewer is not Return to agent, Close tabs, Stop browser or Reset profile. Private work stays paused. |
-| Restart | Stored sign-ins survive daemon restart. Live DOM, focus, target IDs, back history and unsaved forms are not guaranteed to survive. Saved eligible URLs can be reopened explicitly. |
-| Empty workspace | No tabs is a usable empty state. The agent can explicitly open a new page after control is returned; do not trap users in recovery because there is no saved URL. |
+| Restart | Stored sign-ins survive daemon restart. Live DOM, focus, target IDs, back history and unsaved forms are not guaranteed to survive. Visible viewer/agent ensure automatically restores eligible public URLs, including query and fragment. |
+| Empty workspace | No tabs is a usable empty state. The agent can explicitly open a new page when authorized; do not trap users in recovery because there is no saved URL. |
 
 Current web/macOS behavior has local user validation and regression tests.
 Hosted iOS, keyboard, accessibility and competing-client behavior still need the
@@ -140,9 +144,9 @@ Keep “Browser” distinct from the existing proxied “Web view.” Expose a b
 entry only when owned inventory or a validated live browser event supplies a
 workspace. An empty inventory does not itself create Chrome or a tab.
 
-Use the existing chat stream and bootstrap state; no browser-specific SSE family:
+Use current chat bootstrap/history for tool identity and the authorized browser-state feed for discovery (native bearer support is scoped in M1); no new SSE family:
 
-- Successful `browser_open` results identify the session.
+- Current `browser_exec` results and authorized inventory/state hints identify browser work; do not depend on the retired `browser_open` tool.
 - Pending handoffs identify the session through `session_id` or the validated
   first-party `viewer_path`, and carry handoff/call/invocation identity.
 - Pending waits can exist while runtime `active` is false. Do not hide them just
@@ -162,8 +166,9 @@ consistently with the site's green-accent primary action.
 Return must call the shared viewer's action using that viewer's identity. Do not
 send a chat message saying “returned,” cancel the run, or invent a second native
 controller. If no viewer is mounted, open/bootstrap it and require the explicit
-Return action there. The existing web action can acquire a recoverable paused
-workspace and then return it; another live controller still wins.
+Return action there. Return requires current confirmed ownership. A live private workspace may need
+explicit Take control first; runtime replacement is repaired by shared ensure,
+not a compound acquire/return action. Another live controller still wins.
 
 Cancel uses the existing invocation cancellation route for the exact waiting
 invocation, not the newest unrelated turn. It does not return private browser
@@ -181,8 +186,8 @@ host mode. Add only the seams mobile needs:
   interface; the companion now records its implemented form.
 - Touch-accessible controls. No essential button depends on hover. Hide the web
   “new tab” link and app-level navigation in embedded mode; dismiss through native.
-- Preserve-layout mode as the mobile default. Current web defaults `fit=true`;
-  the embedded mode must explicitly change this default.
+- Fit defaults on, including passive agent-controlled viewing, subject to shared
+  sizing ownership. Another sizing viewer retains priority; no takeover for Fit.
 - Touch gesture and keyboard adaptations inside the shared input path, not a
   parallel native request queue. Keep current desktop behavior covered.
 
@@ -212,10 +217,10 @@ passwords early. If WebKit cannot provide reliable input, scope the smallest
 native text adapter at this gate; do not preemptively build two input systems.
 Do not infer password fields from screenshots or promise Password AutoFill.
 
-“Fit to view” is explicit remote resize. Keep keyboard and transient notices out
+“Fit to view” defaults on and uses the authorized remote resize path. Keep keyboard and transient notices out
 of its measurement. Use stable safe-area geometry, CSS-pixel bounds and the shared
 coalescer. While privately resizing, input stays blocked until a drawn frame
-matches the acknowledged target/document/viewport. Passive sizing is optional and
+matches the acknowledged target/document/viewport. Passive sizing is capability-gated and
 first-viewer-owned; a phone must not fight a desktop pane's sizing authority.
 
 Overlay notices and menus must not change the remote content area's size. Use
@@ -231,7 +236,7 @@ scroll position when opening or closing the viewer.
 | Return from OTP app | Refresh authentication/status, reconnect passive viewing if allowed. Require explicit Take control for a released/expired private lease; never auto-return to agent. Restore the viewer shell without replaying text. |
 | Media/network loss while active | Shared viewer handles bounded reconnect or proof-based recovery for the same mounted viewer. Clear stale input/focus. No queued mutation replay. |
 | Service restart | Resolve fresh metadata; private intent is not proof of a current controller. Existing in-memory recovery proof may restore the same authorized viewer once auth is valid. A new bootstrap principal must not inherit an old proof implicitly. |
-| Daemon restart | Clear old generation/target/focus state; offer explicit saved-page recovery, blank private workspace, or conversation. Sign-ins can persist without restorable tabs. |
+| Daemon restart | Visible shared ensure reconciles the runtime. Confirmed replacement clears old evidence and restores eligible public URLs; a surviving private runtime remains protected. No saved-page or blank-recovery buttons. |
 | Empty target list | Show “No page is open”; keep valid private control and Return usable. Do not reconnect indefinitely or require saved pages. |
 | Session 404 / account change / unclaim | Clear pixels and credentials, dispose viewer, stop retrying that session. Show unavailable without revealing another owner's data. |
 | Thread change / dismiss | Best-effort release, stop timers/socket, dispose private state. Closing presentation does not close remote tabs. |
@@ -252,7 +257,7 @@ encrypted from the service.
    first frame, passive idle, dismissal and app background. Verify hosted edge
    routing on an actual phone; do not use localhost as the phone's service host.
 3. **Shared web + mobile: private input slice.** Takeover/Return, touch/keyboard,
-   viewport preservation, lifecycle bridge and privacy cover. Validate two clients
+   default passive fitting, lifecycle bridge and privacy cover. Validate two clients
    and OTP/background before polishing visuals.
 4. **Mobile: inline chat slice.** Pending handoff bootstrap/live updates,
    Return through the existing viewer, invocation-specific Cancel, deduplication.

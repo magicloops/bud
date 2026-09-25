@@ -1,8 +1,10 @@
 # iOS browser handoff: current API and integration reference
 
-Updated 2026-09-23 for automatic browser recovery. Companion to
-[Phase 3b](phase-3b-ios-browser-viewer.md). Implementation is local; hosted physical-device
-acceptance and deployment remain outstanding.
+Updated 2026-09-25. Companion to [Phase 3b](phase-3b-ios-browser-viewer.md).
+Service/shared-viewer implementation is merged; native PR #47 remains open.
+Hosted physical-device acceptance and exact deployed versions remain unverified.
+See [mobile follow-through](../../../bud-mobile/plan/browser-sessions-current-scope.md)
+for the current assessment and remaining M1–M3 scope.
 Recheck these source files at the merged implementation revision:
 
 - [Routes and validation](../../service/src/browser/routes.ts)
@@ -24,8 +26,10 @@ Recheck these source files at the merged implementation revision:
 
 Browser routes accept either a live Better Auth cookie session or the scoped
 mobile visit below. Native bearer authentication discovers inventory and mints,
-refreshes or revokes visits; it does not directly control the browser. Mutations
-and WebSocket upgrades require an allowed first-party Origin. All reads and
+refreshes or revokes visits, and subscribes to read-only thread state hints; it
+does not directly control the browser. Cookie mutations and WebSocket upgrades
+require an allowed first-party Origin. Native thread-feed bearer upgrades may
+omit Origin; a supplied Origin must still be trusted. All reads and
 streams resolve owner/Bud/thread access before exposing data.
 
 Desktop controller identity combines auth session ID and viewer UUID; mobile
@@ -82,6 +86,22 @@ and validated Origin. Messages contain type and a connection-local counter, not
 authority or page data. Private renewals remain five seconds; native suspension
 still releases/stops the viewer. First inventory/history seed the reveal baseline.
 The embedded web shares one thread feed across pane/viewer/lifecycle controls.
+
+M1 native discovery now uses `/api/threads/:thread_id/browser-state` with bearer
+credentials in the Authorization header only. Subscribe before the initial read;
+ready/changed/reconnect/foreground trigger coalesced reads. Healthy idle has no
+inventory timer. Heartbeats only maintain liveness. Failed reads/connections back
+off to 30 seconds; definitive 401/403/404 clears availability and stops recovery.
+Native uses shared OAuth refresh on connect and retries an explicit 401 once.
+
+The route verifies the original JWT and live auth-user/thread/Bud ownership before
+upgrade and again before hints/at idle security checks. Expiry or scope loss closes
+4404. JWT validation follows existing access-token TTL semantics; this does not
+introduce a token revocation list/introspection. Scoped visits remain session-only,
+even if a bearer header accompanies them. Bearer access is not extended to session
+metadata/media/control or Bud state/lifecycle. Thread-list SSE is independent.
+Deploy this service change before the mobile build removing polling. No new schema
+migration or state payload is introduced. Physical idle/refresh checks remain open.
 
 ## Control
 
@@ -331,3 +351,22 @@ Client watchdog/reconnect and authorized current-state reads replace missed-even
 replay. Loss fences input; 4404 closes revoked/expired access. Heartbeats (15s) do
 not refresh browser metadata; separate live authorization checks run every 30s.
 Physical iPhone idle/takeover/Return/reconnect traffic measurement remains pending.
+
+## REPL and idle workspace lifecycle
+
+Current agent tools are `browser_exec` and `browser_request_handoff`. Mobile
+transcript presentation should consume current bounded output, execution state,
+optional image references and truncation/withheld notices, rather than old
+`browser_observe` observations. Live viewer frames remain separate from model
+evidence. Output artifacts are daemon-local handles, not browser download routes.
+
+There is no fixed workspace-count limit. The daemon expires resources after 24
+idle hours while protecting active operations/media/private controllers. Eligible
+public URL checkpoints and profile/sign-ins remain; normal ensure restores the
+workspace and REPL memory starts fresh. Private expiry does not disclose private
+URLs or implicitly return control. No native capacity-management screen is needed.
+
+Runtime recovery in the hosted shell does not recover an expired WK visit or
+terminated WK process. Native currently offers Close/reopen for those failures;
+the scoped Phase M2 improvement must reauthorize and use fresh visit identity,
+without inheriting private authority or replaying gestures/cells.
