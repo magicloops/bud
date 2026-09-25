@@ -61,7 +61,7 @@ export type BrowserReturnAction = {
   run: () => void;
 };
 
-export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange, onAuthorizationLost }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onAuthorizationLost?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
   const activeRef = useRef(active);
   const lifecycleEpoch = useRef(0);
   if (activeRef.current !== active) { activeRef.current = active; lifecycleEpoch.current++; }
@@ -78,6 +78,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const [notice, setNotice] = useState("");
   const [empty, setEmpty] = useState(false);
   const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    if (active && missing) onAuthorizationLost?.();
+  }, [active, missing, onAuthorizationLost]);
   const [owns, setOwns] = useState(false);
   const [working, setWorking] = useState(false);
   const [returning, setReturning] = useState(false);

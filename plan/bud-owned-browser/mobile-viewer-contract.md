@@ -1,7 +1,8 @@
 # iOS browser handoff: current API and integration reference
 
 Updated 2026-09-25. Companion to [Phase 3b](phase-3b-ios-browser-viewer.md).
-Service/shared-viewer implementation is merged; native PR #47 remains open.
+Baseline service/shared viewer is merged; M1/M2 follow-through is in development
+(service PR #133). Native PR #47 remains open.
 Hosted physical-device acceptance and exact deployed versions remain unverified.
 See [mobile follow-through](../../../bud-mobile/plan/browser-sessions-current-scope.md)
 for the current assessment and remaining M1–M3 scope.
@@ -285,13 +286,18 @@ Screenshot transport loss does not prove Chrome closed or private control ended.
 - WKWebView POSTs `{grant}` as JSON to that fixed bootstrap path. Atomic one-use
   redemption responds 303 to `/browser-mobile/:session_id?viewer_id=...&visit_id=...`.
   URLs contain public identities only. OAuth and grant secrets never enter JS.
+  Absent native Origin is allowed; supplied Origin must be trusted, checked before
+  redemption. Expired/unredeemed abandoned grants are cleaned on owner mint.
 - Cookie `__Secure-bud-browser-visit` is Secure, HttpOnly, SameSite=Strict,
   host-only, with Path `/api/browser/sessions/:session_id`, Max-Age 28800.
   Server-side validity is 15 minutes, bounded by eight hours from minting.
 - Native bearer POST `/api/browser/viewer-visits/:visit_id` accepts
   `{operation:"refresh",grant}` or `{operation:"revoke"}`. Refresh requires the
   original native possession secret and owner, cannot revive expiry, and preserves
-  cookie/controller identity. Foreground native refresh runs every five minutes.
+  cookie/controller identity. Foreground native refresh runs every five minutes
+  and before resume. Failed visit proof/expiry returns 410 browser_visit_expired;
+  missing/expired account bearer remains 401. Empty/stale scoped cookies never
+  fall back to full web-session authority.
 - Persisted `browser_viewer_visit` stores hashed secrets, owner/tenant, workspace,
   viewer UUID and expiry. Migration `0041_demonic_stephen_strange.sql` creates its
   composite workspace/owner FK and indexes. Visits survive service restart.
@@ -312,19 +318,19 @@ recovery contract above now requires matching service/daemon/shared web versions
 Viewer messages use `{version:1,visit_id,event,request_id?,...fields}` through
 `webkit.messageHandlers.budBrowser`. Native calls `window.budBrowserCommand` with
 `{version:1,visit_id,request_id,command}`. IDs are deduplicated in a bounded set.
-Validate the allowed first-party origin, main frame, visit nonce and bounded
+Validate actual WK securityOrigin as well as exact frame URL, main frame, visit
+and viewer identities (no duplicate/extra query IDs or fragment), and bounded
 payload on every native bridge message. Arbitrary web navigation cannot gain
 bridge access. Browser website contents remain images, never locally executed HTML.
 
 | Direction | Message | Purpose |
 | --- | --- | --- |
 | Viewer → native | `ready` | Mounted session/visit is ready; no frame bytes |
-| Viewer → native | `state` | Small presentation state: session, view status, ownership, Return availability/busy/error code |
+| Viewer → native | `authorization_lost` | Stop/cover and reauthorize the workspace before bounded visit replacement |
 | Viewer → native | `dismiss` | Request closing native presentation |
-| Native → viewer | `return_to_agent` | Invoke the shared explicit Return action; deduplicate request ID |
 | Native → viewer | `suspend` | Clear input/proofs/pixels, stop media/renewal, best-effort release; never return |
 | Native → viewer | `resume` | Refresh auth/status and passive media; no automatic private acquisition |
-| Viewer → native | `result` | Correlated command acceptance (`accepted`); never proof that Return completed |
+| Viewer → native | `result` | Correlated lifecycle acceptance (`accepted`); unknown commands reject |
 
 Do not bridge frames, cookies, grants, passwords, page text, focus tokens or raw
 JavaScript evaluation requests. Native Cancel uses the existing chat cancellation
@@ -367,6 +373,24 @@ workspace and REPL memory starts fresh. Private expiry does not disclose private
 URLs or implicitly return control. No native capacity-management screen is needed.
 
 Runtime recovery in the hosted shell does not recover an expired WK visit or
-terminated WK process. Native currently offers Close/reopen for those failures;
-the scoped Phase M2 improvement must reauthorize and use fresh visit identity,
-without inheriting private authority or replaying gestures/cells.
+terminated WK process. M2 native recovery keeps a stable presentation but replaces
+the isolated WK store, grant, visit ID and viewer UUID after fresh authorized
+inventory and grant mint. It revokes/disposes the old visit and transfers no private
+proof, input or focus. One automatic replacement is allowed per incident; a
+30-second acknowledged healthy interval ends the incident. Repeated failure offers
+Retry/Close; account/workspace denial stays cleared with Close only.
+
+Native covers/hides pixels immediately on suspension and fences all delayed
+renewals, grants and bridge replies. Recovery is foreground-only. Credential and
+inventory transient failures retry at 1/2/4 seconds; shell failures retry a safe GET
+up to three times after credential validation, never the one-use bootstrap POST.
+Grant mint is not retried after an uncertain response. Missing startup/resume ACK
+settles after 30 seconds with Retry/Close. The shell validates IDs before installing
+the bridge or publishing ready, and suppresses stale/unmounted lifecycle replies.
+The unused Return bridge command is removed; inline Return still opens the viewer
+for explicit confirmation.
+
+Deploy M2 service and hosted shell together before rebuilding mobile. The 410
+visit-expiry distinction and authorization_lost bridge event require this pairing.
+No new migration or daemon protocol/build change. Physical lock/OTP, real OAuth
+and competing-controller acceptance remain M3 gates.

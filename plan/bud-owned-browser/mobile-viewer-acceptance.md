@@ -184,3 +184,12 @@ Performance samples and p50/p95:
 Known limitations and follow-ups:
 Required migration / coordinated upgrade steps:
 ```
+
+## M2 automated record — September 25, 2026
+
+Visit recovery, actual WK origin/identity checks, bounded ACK waits and bootstrap
+Origin/credential hardening are implemented. See
+[debug/validation](../../debug/mobile-browser-m2.md). Automated fixtures do not
+close the physical gates above. Deploy matching service/hosted shell before
+rebuilt native; native Return bridge command is removed and visit renewal now
+distinguishes 410 expiry from 401 account failure. No new migration/daemon build.

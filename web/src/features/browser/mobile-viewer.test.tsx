@@ -103,3 +103,22 @@ test('mobile fits the phone surface while agent-controlled, stops on suspension 
   await settle();assert.equal(writes.length,3,'uncertain fitting is not retried');
  }finally{if(view)await act(async()=>view.unmount());globalThis.fetch=originalFetch;globalThis.ResizeObserver=originalObserver;}
 });
+
+test('hosted authorization loss notifies native once and never retries ensure', async () => {
+ const original=globalThis.fetch;
+ let losses=0, ensures=0;
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith('/ensure'))ensures++;
+  return Response.json({error:'unauthorized'},{status:401});
+ };
+ const {BrowserViewer}=await import('./viewer');
+ let view:ReactTestRenderer|undefined;
+ try {
+  await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser',mobile:true,active:true,
+    hostViewerId:'viewer',onAuthorizationLost:()=>{losses++;}}));});
+  assert.equal(losses,1);
+  assert.equal(ensures,0);
+  await act(async()=>StateSocket.change());
+  assert.equal(losses,1);
+ } finally {if(view)await act(async()=>view.unmount());globalThis.fetch=original;}
+});

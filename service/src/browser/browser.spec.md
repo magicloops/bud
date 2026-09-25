@@ -603,3 +603,18 @@ expiry, owner/deletion/unclaim changes, foreign 404, invalid 401 and Origin 403.
 Deploy service before the native app that removes inventory polling. No wire
 payload, migration, daemon or hosted-viewer change. Physical acceptance remains
 in the [mobile contract](../../../plan/bud-owned-browser/mobile-viewer-contract.md).
+
+## Mobile visit recovery — M2
+
+Bootstrap rejects any supplied untrusted Origin before consuming the grant;
+deliberate native no-Origin POST remains supported. An empty or stale scoped
+cookie cannot fall through to full-session auth. Native renewal returns 410
+browser_visit_expired for unusable visit proof, separating it from account 401.
+Owner-scoped mint cleanup removes expired consumed visits and abandoned grants.
+
+`mobile-routes.test.ts` covers Origin-before-redemption, allowed/no-Origin success,
+owner-bound lookup and scoped-cookie fallback rejection. State route fixtures
+verify renewal status separation. Real PostgreSQL mobile-auth tests cover idle
+expiry, eight-hour cap and abandoned grant cleanup. No new rows or schema changes;
+existing workspace owner/tenant inheritance remains. Deploy with the M2 hosted
+shell before rebuilt native; see the mobile contract and debug/mobile-browser-m2.md.

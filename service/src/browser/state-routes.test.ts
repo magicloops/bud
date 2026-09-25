@@ -94,6 +94,11 @@ test('native thread feed verifies bearer scope, expiry and live ownership withou
     assert.equal((await server.inject({url:path,headers:headers()})).statusCode,401);
   }
   assert.equal(subscriptions,0);
+  t.mock.method(BrowserMobileAuth.prototype,'refresh',async()=>false);
+  const expiredVisit=await server.inject({method:'POST',url:'/api/browser/viewer-visits/visit',
+    headers:{authorization:`Bearer ${token()}`},payload:{operation:'refresh',grant:'a'.repeat(43)}});
+  assert.equal(expiredVisit.statusCode,410,'visit expiry is not account authentication failure');
+  assert.equal(expiredVisit.json().error,'browser_visit_expired');
   const address=await server.listen({port:0,host:'127.0.0.1'});
   t.mock.timers.enable({apis:['Date']});
   for(const revoke of [()=>{threadExists=false;},()=>{budExists=false;},()=>{userExists=false;},()=>{t.mock.timers.tick(120_000); }]) {

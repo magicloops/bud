@@ -101,7 +101,7 @@ const mobileAuth = new BrowserMobileAuth();
 
 async function browserActor(request: FastifyRequest): Promise<BrowserActor | null> {
   const token = request.headers.cookie?.split(";").map(v => v.trim()).find(v => v.startsWith(`${mobileCookie}=`))?.slice(mobileCookie.length + 1);
-  if (token) {
+  if (token !== undefined) {
     const mobile = await mobileAuth.resolve(token);
     return mobile ? { userId: mobile.created_by_user_id, sessionId: null, email: null, authType: "cookie", mobile, mobileToken: token } : null;
   }
@@ -321,6 +321,9 @@ export async function registerBrowserRoutes(
     });
     routes.post("/api/browser/viewer-bootstrap", {bodyLimit:1024}, async (request, reply) => {
       reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer");
+      if (request.headers.origin !== undefined && !config.betterAuthTrustedOrigins.includes(request.headers.origin)) {
+        return reply.code(403).send({error:"origin_denied"});
+      }
       const {grant} = z.object({grant:z.string().regex(/^[\w-]{43}$/)}).strict().parse(request.body);
       const result = await mobileAuth.redeem(grant);
       if (!result) return reply.code(401).send({error:"browser_grant_expired"});
@@ -338,7 +341,7 @@ export async function registerBrowserRoutes(
         z.object({operation:z.literal("refresh"),grant:z.string().regex(/^[\w-]{43}$/)}).strict(),
       ]).parse(request.body);
       if (body.operation === "revoke") await mobileAuth.revoke(actor.userId,visit);
-      else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(401).send({error:"browser_visit_expired"});
+      else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(410).send({error:"browser_visit_expired"});
       return {ok:true};
     });
     // Bud owns the shared profile; actor and owner are resolved before resource I/O.

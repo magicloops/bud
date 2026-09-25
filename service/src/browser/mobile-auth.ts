@@ -14,7 +14,7 @@ export class BrowserMobileAuth {
   constructor(private readonly database: Pool = pool) {}
   async mint(session: BrowserSession, viewerId: string) {
     const id = ulid(), grant = randomBytes(32).toString("base64url");
-    await this.database.query("delete from browser_viewer_visit where created_by_user_id=$1 and absolute_expires_at<now()", [session.created_by_user_id]);
+    await this.database.query("delete from browser_viewer_visit where created_by_user_id=$1 and (absolute_expires_at<now() or expires_at<now() or (consumed_at is null and grant_expires_at<now()))", [session.created_by_user_id]);
     await this.database.query(`insert into browser_viewer_visit
       (id,session_id,thread_id,bud_id,viewer_id,created_by_user_id,tenant_id,grant_hash,grant_expires_at,expires_at,absolute_expires_at)
       values($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '60 seconds',now()+interval '15 minutes',now()+interval '8 hours')`,

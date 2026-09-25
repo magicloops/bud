@@ -600,3 +600,19 @@ image metadata inherits that authorized call. Local files live only on the daemo
 
 No new rows. JWT verification retains existing access-token TTL semantics; this
 phase does not add immediate refresh-token-driven access-token revocation.
+
+## Mobile visit recovery — M2
+
+- [x] HTTP fixtures reject foreign/null/empty bootstrap Origin before redemption;
+  deliberate no-Origin and trusted Origin succeed with scoped cookie/no-store.
+- [x] Empty/stale scoped cookies cannot fall back to full-account authentication.
+- [x] Native bearer renewal distinguishes visit expiry (410) from account auth (401).
+- [x] Real PostgreSQL fixtures verify idle expiry, absolute cap and owner-local
+  abandoned grant cleanup; no expired visit is revived.
+- [x] Native fixtures reject forged security origin, subframes, duplicate IDs and
+  stale ACKs, fence disposed grants/renewals, and stop missing-workspace recovery.
+- [ ] Physical two-account revoke/unclaim/deletion during WK recovery, real OAuth
+  refresh, lock-screen/app-switcher privacy and competing desktop private control.
+
+Recovery mints through existing authenticated owner-scoped workspace routes and
+retains owner/tenant stamping. New visits receive no old private proof or input.
