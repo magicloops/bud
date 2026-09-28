@@ -53,7 +53,7 @@ polling and divider changes. Dismissal/tab switching unmounts only this viewer,
 stops media/queued input and best-effort releases control; it never returns to the
 agent. A late acquisition acknowledgement after unmount also requests release.
 
-Fit pane defaults on. The private path uses advertised
+Fit is an explicit one-shot action. The private path uses advertised
 `can_resize_viewport`, and measures the control-free surface. Bounds: width
 240–2560 and height 160–2560 CSS px. Legacy view-only scales locally. Private resize uses the
 existing private controller; input waits for a drawn frame matching target,
@@ -130,12 +130,10 @@ Busy/resize states disable it and duplicate clicks are fenced synchronously.
 Obsolete visit responses remain ignored.
 
 
-Agent-state viewers with `can_resize_agent_viewport` also fit without acquiring
-control. The first live viewer wins sizing; other viewers keep scaled media. Passive
-fit acknowledgements do not wait for a matching frame, since the agent can navigate
-immediately afterward. Failures disable fit with an explicit retry toggle and leave
-media/agent ownership intact. Epoch/state changes cancel obsolete fitting. Repeated
-same-size fits are daemon no-ops, avoiding unnecessary observation invalidation.
+Agent-state viewers with `can_resize_agent_viewport` may explicitly Fit without
+acquiring control. Any authorized live viewer is eligible; active REPL cells reject
+busy. Both public/private fitting wait for matching drawn pixels with bounded
+request/frame deadlines. Failures offer explicit retry, never a resize loop.
 
 
 ## Browser availability presentation
@@ -266,16 +264,16 @@ required to repair a runtime restart.
 
 - `mobile.tsx`: dedicated `/browser-mobile/:session_id` shell, bypassing full-user
   auth routing. Validates visit identity and exposes the bounded version-1 native
-  lifecycle bridge. Command results acknowledge acceptance, not completed Return.
+  lifecycle bridge. Command results acknowledge suspend/resume acceptance; native Return is removed.
 - `touch.ts` / `.test.ts`: imperative remote swipe versus local pinch/pan, drag-click
   suppression and geometry/document cancellation. No per-frame React publication.
 - `mobile-viewer.test.tsx`: suspension during pending takeover releases the late
   acquired lease; resume keeps stable identity without acquisition or Return.
 
 Viewer host props supply stable viewer UUID, mobile mode and active lifecycle.
-Mobile starts passive with Fit on and uses the existing authorized agent viewport
-fit path without acquiring private control. Competing-viewer sizing remains
-service-owned; suspended viewers do not fit. Scoped auth
+Mobile starts passive and scales the existing remote viewport locally. Explicit
+Fit uses the authorized viewport path without acquiring private control;
+suspended viewers do not fit. Scoped auth
 failures clear media and stop retries without redirecting to full web sign-in.
 Suspension clears input/proofs and closes media, stops reconciliation/renewal, and releases
 private control without returning the agent. Late control replies are fenced by
@@ -344,3 +342,78 @@ existing owner-authorized ensure restores eligible saved URLs automatically.
 The optional desktop Close browser workspace action still discards this thread's
 tabs/REPL memory and saved URL hints while preserving profile sign-ins and other
 threads. Hosted mobile need not expose it for normal resource management.
+
+## Mobile visit bridge — M2
+
+`mobile.tsx` validates exact path, ULID/UUID and unique query IDs before installing
+the bridge or publishing ready. Only suspend/resume are supported; unknown
+commands reject. Superseded/unmounted lifecycle callbacks cannot publish successful
+ACKs. Native Return is removed; the shared visible Return button stays authoritative.
+`viewer.tsx` exposes authorization loss to the host; the shell emits the small
+authorization_lost event so native reauthorizes promptly instead of waiting for
+the five-minute credential timer. No page payload or control proof crosses the bridge.
+
+`mobile-bridge.test.tsx` exercises mounted identity, unsupported-command,
+deduplication and stale-ACK behavior. `mobile-viewer.test.tsx` covers authorization
+loss as well as passive fit and late takeover after suspension. Deploy matching
+service/hosted web before rebuilt M2 native; no daemon or database change.
+
+## M3 input validation in progress
+
+Touch wheels carry the gesture-start client point into the existing CSS-to-remote
+mapping instead of always scrolling the viewport center. The fixed anchor keeps
+nested-container targeting and adjacent wheel coalescing stable during a swipe.
+The touch installation reads the latest dispatch callback without reinstallation
+on busy/control updates. Document/viewport/input-epoch changes cancel obsolete
+gestures; pinch, pointer cancellation and unexpected capture loss suppress clicks.
+Normal capture release after a tap remains clickable. Ownership/frame/focus checks
+and the bounded serialized input queue are unchanged.
+
+`touch.test.ts` and mounted `mobile-viewer.test.tsx` cover targeting, cancellation
+and zoom lifetime. `mobile-input.fixture.html` is a developer test page with an
+off-center scroll box, link/tap counters, form fields and popup/query/fragment
+markers; it stores/sends no input data. Serve on loopback on the daemon machine
+for Chrome to open, then use the normal authenticated phone viewer. It is not a
+production application route. Physical keyboard/privacy/performance acceptance
+remains open; see `debug/mobile-browser-m3-input.md` at the repository root.
+
+
+## Request-driven geometry — M4
+
+- `request-viewport.ts` / `.test.ts`: snapshots intended CSS browser surface on
+  new/existing message send, using current split geometry or derived hidden-pane
+  dimensions. Keyboard-reduced/unavailable measurements omit the hint.
+- `media.ts` locally rescales retained frames with ResizeObserver, without remote
+  mutation, new capture demand, or per-frame React state; `media.test.ts` covers it.
+- `viewer.tsx` replaces persistent auto-fit with **Fit browser to this device**.
+  Open, reconnect, metadata, rotation and keyboard changes never remotely resize.
+  Keyboard-reduced explicit Fit asks to dismiss the keyboard instead of guessing.
+  Mobile uses a non-layout-removing cover while resize awaits matching drawn
+  target/document/viewport evidence; decode/draw/ACK continues. Generation,
+  privacy and lifecycle changes cancel obsolete waits. Uncertain private fitting
+  retains input fences; public rejection keeps scaled viewing and explicit retry.
+
+Mounted mobile tests cover no automatic sizing, covered ACK-before-frame, old
+frame rejection, matching reveal, rotation/resume and rejected-Fit no-replay.
+Physical device geometry/latency remains M3/M4 acceptance. See the protocol M4
+section for coordinated daemon/service/web/native upgrade requirements.
+
+## Mobile flick momentum
+
+`touch.ts` estimates recent single-finger release velocity and generates a bounded
+exponentially decaying wheel tail at the original gesture anchor. Slow dragging
+keeps its existing distance mapping; pinch/pan stays local. Tail lifetime is at
+most 3.5s, speed at most 4 displayed CSS pixels/ms and generated tail travel at
+most three canvas heights, with 650ms exponential decay. Busy transport preserves
+the bounded unsent distance; partial wheel admission preserves the remote wire-cap
+remainder. Pointer-up displacement is forwarded, including short up-only flicks. `viewer.tsx` admits momentum only while input transport is
+idle, preserving ordinary input ordering without queuing synthetic movement.
+Current ownership/state-feed/frame/resize guards apply to every dispatch.
+New touches, visibility/geometry/document/input-epoch changes, cancellation and
+cleanup discard unsent inertia; already dispatched input is not replayed or
+reversed. Tap-to-stop suppresses click. Deterministic gesture tests cover decay,
+reversal, slow/held releases, short successive flicks, latency-independent distance,
+partial admissions and cancellation/backpressure. Mounted tests verify rapid
+gestures behind an in-flight wheel and cancellation without queued inertia. See
+[scroll investigation](../../../../debug/mobile-browser-scroll-distance.md).
+No wire, native bridge, daemon or database change; reload hosted web to adopt.

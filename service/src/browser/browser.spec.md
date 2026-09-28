@@ -45,7 +45,8 @@ control connection. It launches no service-local Chrome and imports no spike cod
   credit, live ownership/auth checks and bounded capture lifecycle. Lifecycle
   diagnostics report closure reasons and counts without page content or tickets.
 - `routes.ts`: authenticated inventory/control/input APIs and authorized media
-  upgrades. No page payloads are persisted or logged by these routes.
+  upgrades. Native bearer access to thread state hints only, with JWT and live
+  user/thread/Bud revalidation; other state/control/media scopes retain cookie auth. No page payloads are persisted or logged by these routes.
 - `control.test.ts`: controller exclusivity, takeover boundary, renewal, release
   and lost-acknowledgement recovery, plus private-controller viewport authorization. Known daemon rejections retain their canonical
   code; unknown failures remain uncertain without exposing page-bearing errors.
@@ -183,13 +184,13 @@ receive a rejection. Normal chat and non-browser work remain available.
 
 `agent_viewport_resize` gates `fit_viewport`; metadata adds
 `can_resize_agent_viewport`. The viewport route reuses owner/cookie/Origin checks.
-When state is agent/open/nonprivate, only the first live media viewer (matching
-owner, generation and epoch) sizes the page. A disconnected first viewer releases
-that position. Secondary viewers scale locally and may enable Fit pane after the
-first leaves. This path does not prepare a new invocation, update DB sequence,
-acquire a controller or fence media on failure. Commands serialize at the daemon.
-Private fitting remains unchanged. Mixed-version peers retain private-only fitting.
-See [plan](../../../plan/bud-owned-browser/agent-viewport-fitting.md).
+When state is agent/open/nonprivate, any current authorized live media viewer
+matching owner/generation/carrier and authenticated viewer identity may explicitly
+Fit. Presence has no sizing priority. Resource serialization and the daemon's
+workspace cell mutex prevent competing mutations; busy cells reject. Private Fit
+still requires the current controller. Failure never retries a mutation or pauses
+agent work. Existing capability negotiation remains.
+
 
 
 ## Browser availability presentation
@@ -309,7 +310,7 @@ Native ping/pong every three seconds keeps both legs alive independently of cred
 Viewer pong and idle authorization deadlines are ten seconds; outstanding image
 ACKs remain five seconds. Daemon pong allowance is sixty seconds for bounded capture
 draining. Idle checks re-resolve authentication and owner/session/epoch authority;
-heartbeats do not renew private controllers. Idle live viewers retain fit ownership.
+heartbeats do not renew private controllers. Idle live viewers remain eligible for explicit Fit.
 No new web messages, tables or screenshot storage. Old peers/private groups retain
 continuous cadence. `media-idle.test.ts` covers idle liveness, fitting authority,
 refresh coalescing/delivery races, slow/new viewers and idle revocation; legacy
@@ -585,3 +586,67 @@ bindings, and completed close clears active evidence and the cleanup candidate.
 Daemon-local 24-hour idle expiry releases resources while preserving public
 URL hints and session identity. The fixed workspace count cap is removed. Normal
 broker/viewer ensure restores expired workspaces before use. Desktop close explicitly discards thread tabs and REPL memory.
+
+## Native thread discovery — mobile M1
+
+Only `/api/threads/:thread_id/browser-state` additionally accepts an explicit
+bearer principal. Native may omit Origin; supplied origins must be trusted. Cookie
+upgrades still require Origin; scoped mobile cookies cannot access thread/Bud
+feeds, even when accompanied by a bearer header. JWT verification and auth-user
+existence precede upgrade; live token and owned thread/Bud checks run before
+changed hints and at the existing idle security interval. Expiry/scope loss closes
+4404 without changing principal. JWT revocation retains the existing access-token
+TTL semantics; no new introspection mechanism or row stamping is added.
+
+`state-routes.test.ts` uses signed JWTs/test JWKS and mocked SQL reads to cover
+expiry, owner/deletion/unclaim changes, foreign 404, invalid 401 and Origin 403.
+Deploy service before the native app that removes inventory polling. No wire
+payload, migration, daemon or hosted-viewer change. Physical acceptance remains
+in the [mobile contract](../../../plan/bud-owned-browser/mobile-viewer-contract.md).
+
+## Mobile visit recovery — M2
+
+Bootstrap rejects any supplied untrusted Origin before consuming the grant;
+deliberate native no-Origin POST remains supported. An empty or stale scoped
+cookie cannot fall through to full-session auth. Native renewal returns 410
+browser_visit_expired for unusable visit proof, separating it from account 401.
+Owner-scoped mint cleanup removes expired consumed visits and abandoned grants.
+
+`mobile-routes.test.ts` covers Origin-before-redemption, allowed/no-Origin success,
+owner-bound lookup and scoped-cookie fallback rejection. State route fixtures
+verify renewal status separation. Real PostgreSQL mobile-auth tests cover idle
+expiry, eight-hour cap and abandoned grant cleanup. No new rows or schema changes;
+existing workspace owner/tenant inheritance remains. Deploy with the M2 hosted
+shell before rebuilt native; see the mobile contract and debug/mobile-browser-m2.md.
+
+
+## Request viewport — mobile M4
+
+`repository.ts` reads optional `browser_viewport` from the admitted invocation's
+input message, matching owner and thread, and places it on the authorized request
+in `transport.ts`. Request receipts retain this immutable dispatch metadata.
+Message admission validates bounds and stores it without creating a workspace;
+no prompt injection, new table or owner stamp is introduced. The daemon applies
+it before browser work, once per invocation/workspace preference. Tests cover
+stored propagation alongside private, foreign-owner and stale-invocation guards.
+Update daemon before service/web, refresh viewers, then rebuild native; see
+`docs/proto.md` M4 and `debug/mobile-browser-m4-viewport.md`.
+
+
+## Explicit native return from chat
+
+Bearer-only POST `/api/browser/sessions/:id/return-from-chat` accepts strict
+`{handoff_id,revision}` (1 KiB) and returns `{ok:true}` only after acknowledged
+return. Scoped visit cookies are rejected, even with a bearer; supplied Origin
+must be trusted. Owner-scoped workspace and pending handoff lookup precedes
+resource serialization and dispatch; foreign owners remain 404, stale decisions
+409. No rows are added; existing return stamps `returned_by_user_id` from owner.
+
+The coordinator resolves the controlling workspace across threads, fences prior
+controllers and uses pause/acquire with a server-only temporary controller before
+existing hide/prepare_return/finish_return. No client gains private media/input
+access. This supports dismissed/expired leases and service restart without a
+viewer or daemon protocol change. Uncertain failures retain private intent;
+completed handoffs cannot return a later takeover. Durable acknowledgement wakes
+eligible waits and never replays blocked actions. Runtime mismatch rejects rather
+than pretending private work was returned. Deploy service before mobile rebuild.

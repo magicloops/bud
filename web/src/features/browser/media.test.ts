@@ -5,6 +5,15 @@ import { BrowserCanvas } from "./media.ts";
 test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async t => {
   const originalSocket = globalThis.WebSocket;
   const originalBitmap = globalThis.createImageBitmap;
+  const originalObserver = globalThis.ResizeObserver;
+  let resized!: () => void;
+  let disconnected = false;
+  globalThis.ResizeObserver = class {
+    constructor(callback: () => void) { resized = callback; }
+    observe() {}
+    disconnect() { disconnected = true; }
+  } as unknown as typeof ResizeObserver;
+  let surfaceWidth = 300;
   const sockets: FakeSocket[] = [];
   class FakeSocket {
     onopen?: () => void;
@@ -25,7 +34,7 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
   let clears = 0;
   const canvas = {
     width: 0, height: 0, style: { width: "", height: "" },
-    parentElement: { getBoundingClientRect: () => ({ width: 300, height: 400 }) },
+    parentElement: { getBoundingClientRect: () => ({ width: surfaceWidth, height: 400 }) },
     getContext: () => ({ drawImage() {}, clearRect() { clears++; } }),
   };
   const states: string[] = [];
@@ -53,6 +62,12 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     assert.deepEqual(socket.sent.map(value => JSON.parse(value)), [
       { viewer_id: "viewer" }, { type: "ack", pixel_ratio: 2 }, { type: "ack", pixel_ratio: 2 },
     ]);
+    const creditBeforeResize = socket.sent.length;
+    surfaceWidth = 240;
+    resized();
+    assert.equal(canvas.style.width, "240px", "idle frames scale to local layout changes");
+    assert.equal(canvas.style.height, "160px");
+    assert.equal(socket.sent.length, creditBeforeResize, "local resizing sends no demand or mutation");
     socket.onmessage!({ data: '{"type":"empty"}' });
     assert.equal(client.frame, null);
     assert.equal(states.at(-1), "empty");
@@ -65,5 +80,7 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     client.close();
     globalThis.WebSocket = originalSocket;
     globalThis.createImageBitmap = originalBitmap;
+    globalThis.ResizeObserver = originalObserver;
+    assert.equal(disconnected, true);
   }
 });

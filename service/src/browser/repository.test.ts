@@ -29,7 +29,8 @@ test(
     await pool.query(`create table bud(bud_id text primary key,created_by_user_id text,tenant_id text,device_secret text,unique(bud_id,created_by_user_id));
     create table thread(thread_id uuid primary key,bud_id text,created_by_user_id text,tenant_id text,deleted_at timestamptz,
       unique(thread_id,bud_id,created_by_user_id));
-    create table agent_invocation(id text primary key,thread_id uuid,turn_id text,created_by_user_id text,
+    create table message(message_id uuid primary key,thread_id uuid,created_by_user_id text,metadata jsonb);
+    create table agent_invocation(id text primary key,input_message_id uuid,thread_id uuid,turn_id text,created_by_user_id text,
       fence integer,worker_id text,status text,lease_expires_at timestamptz,cancel_requested_at timestamptz);
     create table agent_invocation_action(id text primary key,invocation_id text,call_id text,fence integer,
       created_by_user_id text,status text,evidence jsonb);`);
@@ -53,6 +54,9 @@ test(
       "insert into agent_invocation(id,thread_id,turn_id,created_by_user_id,fence,worker_id,status,lease_expires_at,cancel_requested_at) values('inv',$1,'turn','alice',1,'worker','running',now()+interval '2 minutes',null)",
       [thread],
     );
+    const input = randomUUID();
+    await pool.query("insert into message values($1,$2,'alice',$3)", [input, thread, {browser_viewport:{width:390,height:740}}]);
+    await pool.query("update agent_invocation set input_message_id=$1 where id='inv'", [input]);
     let calls = 0;
     const context: BrowserAgentContext = {
       threadId: thread,
@@ -83,6 +87,7 @@ test(
       );
     }
     const r = await repo.prepare(first, "boot", { action: "open" });
+    assert.deepEqual(r.browser_viewport, {width:390,height:740});
     assert.equal(r.browser_color, "#EE50E6");
     await assert.rejects(
       repo.prepare(first, "boot", { action: "open" }),
@@ -96,6 +101,7 @@ test(
     const second = await repo.prepare(await next(), "boot", {
       action: "inspect", operation: "snapshot",
     });
+    assert.deepEqual(second.browser_viewport, r.browser_viewport);
     assert.equal(second.browser_color, undefined);
     assert.equal(second.session_id, r.session_id);
     assert.equal(second.sequence, r.sequence + 1);

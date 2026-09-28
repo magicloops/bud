@@ -522,6 +522,7 @@ test("durable message admission stamps the viewer and does not launch a detached
       assert.equal(input.owner, SESSION.user.id);
       assert.equal(input.threadId, ACCESS.thread.threadId);
       assert.equal(input.origin, "human");
+      assert.deepEqual((input.metadata as Record<string, unknown>).browser_viewport, {width:390,height:740});
       assert.equal(input.model, "gpt-5.6-sol");
       return { duplicate: false, message: { messageId: "msg", clientId: input.clientId, role: "user", content: input.text, metadata: {}, createdAt: new Date() },
         invocation: { id: "inv", turnId: "turn", status: "pending", model: input.model, origin: "human" } };
@@ -532,11 +533,20 @@ test("durable message admission stamps the viewer and does not launch a detached
   } as never, { maybeGenerateFromFirstUserMessage: async () => {} } as never);
   const handler = server.routes.get("POST /api/threads/:threadId/messages")!;
   const response = await invokeRoute(handler, { headers: {}, params: { threadId: ACCESS.thread.threadId },
-    body: { text: "hello", model: "gpt-5.6-sol", reasoning_effort: "low", client_id: "018f4f2a-0000-7000-9000-000000000000" } });
+    body: { text: "hello", browser_viewport: {width:390,height:740}, model: "gpt-5.6-sol", reasoning_effort: "low", client_id: "018f4f2a-0000-7000-9000-000000000000" } });
   assert.equal(response.statusCode, 201);
   assert.equal(admitted, 1);
   const payload = response.payload as { invocation: { invocation_id: string }; agent: { started: boolean; queued: boolean } };
   assert.equal(payload.invocation.invocation_id, "inv");
   assert.equal(payload.agent.started, false);
   assert.equal(payload.agent.queued, true);
+});
+
+
+test("message viewport rejects malformed geometry at admission", async () => {
+  const { CreateMessageSchema } = await import("./shared.js");
+  for (const browser_viewport of [{width:239,height:740},{width:390,height:2561},{width:NaN,height:740},{width:390.5,height:740},{width:"390",height:740},{width:390,height:740,viewer_id:"foreign"}]) {
+    assert.equal(CreateMessageSchema.safeParse({text:"hello",browser_viewport}).success,false);
+  }
+  assert.equal(CreateMessageSchema.safeParse({text:"hello"}).success,true);
 });

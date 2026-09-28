@@ -82,6 +82,7 @@ test('private fit fences input; input failure survives a late renewal and releas
     await act(async () => take.props.onClick())
     assert.equal(view.root.findAllByType('p').some(p => p.children.includes('Sign in and return control.')), true)
     await act(async () => clients.at(-1)!.show())
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
     assert.equal(sizes.length, 1)
     const connections = clients.length
@@ -234,8 +235,8 @@ test('passive pane fits without acquisition; failed fitting preserves media and 
   const originalObserver = globalThis.ResizeObserver;
   const originalAnimationFrame = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
-  let measure!: () => void;
-  globalThis.ResizeObserver = class { constructor(callback: () => void) { measure = callback } observe() {} disconnect() {} } as unknown as typeof ResizeObserver;
+
+  globalThis.ResizeObserver = class { constructor(_callback: () => void) {} observe() {} disconnect() {} } as unknown as typeof ResizeObserver;
   const clients: FakeCanvas[] = [];
   class FakeCanvas {
     frame: BrowserFrame | null = null;
@@ -265,16 +266,20 @@ test('passive pane fits without acquisition; failed fitting preserves media and 
     await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser' }), { createNodeMock: () => ({ value: '', getBoundingClientRect: () => ({ width, height: 480 }) }) }) });
     await act(async () => clients[0].show());
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
+    assert.equal(writes.length, 0);
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick());
+    await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
+    await act(async () => { clients[0].frame!.viewport_id = 'size'; clients[0]['status']('connected', clients[0].frame!.targets); });
     assert.equal(writes.length, 1);
     assert.equal(clients[0].closed, false);
     assert.equal(view.root.findByType('textarea').props.disabled, true);
     fail = true; width = 700;
-    await act(async () => measure());
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick());
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
     assert.equal(writes.length, 2);
     assert.equal(writes.every(url => url.endsWith('/viewport')), true);
     assert.equal(clients[0].closed, false);
-    assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /agent can continue/);
+    assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /try Fit again/);
     await act(async () => view.unmount());
     assert.equal(writes.length, 2); // No private acquire/release, including on dismissal.
   } finally {
@@ -619,6 +624,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
     await act(async () => clients.at(-1)!.show())
     await take()
     await act(async () => clients.at(-1)!.show())
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
     assert.equal(sizes.length, 1) // Private fit acknowledged; waiting for the matching frame.
     assert.equal(view.root.findByType('textarea').props.disabled, true)
@@ -633,6 +639,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
     await take()
     assert.deepEqual(operations, ['acquire', 'release', 'acquire'])
     await act(async () => clients.at(-1)!.show())
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
     assert.equal(sizes.length, 1)
     assert.equal(view.root.findByType('textarea').props.disabled, false)

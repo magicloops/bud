@@ -26,6 +26,7 @@ export class BrowserCanvas {
       ...details,
     }));
   }
+  private observer?: ResizeObserver;
   private disposed = false;
   private decoding = false;
   private canvas: HTMLCanvasElement;
@@ -48,6 +49,10 @@ export class BrowserCanvas {
     this.canvas = canvas;
     this.captureRatio = captureRatio;
     this.status = status;
+    if (typeof ResizeObserver !== "undefined" && canvas.parentElement) {
+      this.observer = new ResizeObserver(() => this.scale());
+      this.observer.observe(canvas.parentElement);
+    }
     this.socket = new WebSocket(url);
     this.diagnostic("created");
     this.socket.onopen = () => {
@@ -69,11 +74,19 @@ export class BrowserCanvas {
       this.diagnostic("socket_closed", { code: event.code, clean: event.wasClean, reason: this.closeReason });
       if (!this.disposed) {
         this.disposed = true;
+        this.observer?.disconnect();
         this.clear();
         this.status("unavailable");
       }
     };
     this.socket.onerror = () => this.close("socket_error");
+  }
+  private scale() {
+    if (!this.frame || this.disposed) return;
+    const bounds = this.canvas.parentElement?.getBoundingClientRect();
+    const factor = bounds ? Math.min(1, bounds.width / this.frame.width, bounds.height / this.frame.height) : 1;
+    this.canvas.style.width = `${this.frame.width * factor}px`;
+    this.canvas.style.height = `${this.frame.height * factor}px`;
   }
   private clear() {
     this.frame = null;
@@ -132,14 +145,10 @@ export class BrowserCanvas {
         throw new Error("invalid frame size");
       }
       this.processingStage = "canvas_draw";
-      const bounds = this.canvas.parentElement?.getBoundingClientRect();
-      const displayScale = bounds ? Math.min(1, bounds.width / data.width, bounds.height / data.height) : 1;
       if (this.canvas.width !== bitmap.width) this.canvas.width = bitmap.width;
       if (this.canvas.height !== bitmap.height)
         this.canvas.height = bitmap.height;
       // Bitmap density is a transport choice, never remote layout geometry.
-      this.canvas.style.width = `${data.width * displayScale}px`;
-      this.canvas.style.height = `${data.height * displayScale}px`;
       this.canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
       this.frame = {
         target_id: data.target_id,
@@ -150,6 +159,7 @@ export class BrowserCanvas {
         height: data.height,
         targets: data.targets,
       };
+      this.scale();
       this.frames++;
       this.lastFrameAt = Date.now();
       if (this.frames === 1) this.diagnostic("first_frame");
@@ -172,6 +182,7 @@ export class BrowserCanvas {
     this.closeReason = reason;
     this.diagnostic("closing", { reason });
     this.disposed = true;
+    this.observer?.disconnect();
     this.clear();
     this.socket.close();
     this.status("unavailable");

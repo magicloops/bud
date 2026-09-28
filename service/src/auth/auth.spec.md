@@ -129,3 +129,11 @@ Browser inventory/bootstrap uses these bearer helpers. Embedded browser cookies
 are resolved only inside `browser/routes.ts`, never by generic `getOptionalViewer`.
 They confer no full-account session or chat access. See
 [scoped browser auth](../browser/browser.spec.md#mobile-viewer-visits-phase-3b).
+
+Native thread browser-state discovery also uses bearer verification, confined to
+that read-only route. The original token and live auth-user/thread/Bud ownership
+are rechecked before delivery and during idle authorization. JWT refresh-token
+revocation alone does not revoke an already issued access token before expiry;
+no new introspection/revocation list is introduced. Other browser state scopes,
+control and media retain web-session/scoped-visit authentication. See mobile M1
+in the browser spec for Origin policy and coordinated deployment.

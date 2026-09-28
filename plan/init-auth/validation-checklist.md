@@ -580,3 +580,73 @@ image metadata inherits that authorized call. Local files live only on the daemo
   before delivering another hint (route tests).
 - [ ] Real cookie/bearer session expiry and account-switch browser/mobile exercise.
 - [x] Thread list reads retain SQL owner predicates; no new user-stamped rows.
+
+## Mobile browser thread discovery — M1
+
+- [x] Signed-JWT/test-JWKS HTTP and loopback WS fixtures: missing/invalid/expired
+  bearer 401, foreign thread 404 before attachment, absent native Origin accepted,
+  hostile Origin 403. Real token verifier; owner database reads are mocked.
+- [x] Attached bearer token expiry, auth-user deletion, thread deletion/owner loss
+  and Bud unclaim close 4404 before changed delivery. Existing stream tests cover
+  periodic idle reauthorization; SQL helpers bind the original owner.
+- [x] Bearer credentials do not widen session-state, media, metadata or Bud-state
+  routes. Existing scoped-cookie tests reject thread/Bud/wrong-session access.
+- [x] Native selection/account and cancellation fixtures discard delayed replies;
+  current REPL history preserves withheld output and exact cancellation identity.
+- [ ] Physical two-account login/logout, OAuth refresh during idle WSS, copied
+  thread IDs and account switch while discovery/image retrieval are in flight.
+- [ ] 60-second physical matching-stack settled traffic: zero recurring native
+  inventory GETs; count transport heartbeats separately.
+
+No new rows. JWT verification retains existing access-token TTL semantics; this
+phase does not add immediate refresh-token-driven access-token revocation.
+
+## Mobile visit recovery — M2
+
+- [x] HTTP fixtures reject foreign/null/empty bootstrap Origin before redemption;
+  deliberate no-Origin and trusted Origin succeed with scoped cookie/no-store.
+- [x] Empty/stale scoped cookies cannot fall back to full-account authentication.
+- [x] Native bearer renewal distinguishes visit expiry (410) from account auth (401).
+- [x] Real PostgreSQL fixtures verify idle expiry, absolute cap and owner-local
+  abandoned grant cleanup; no expired visit is revived.
+- [x] Native fixtures reject forged security origin, subframes, duplicate IDs and
+  stale ACKs, fence disposed grants/renewals, and stop missing-workspace recovery.
+- [ ] Physical two-account revoke/unclaim/deletion during WK recovery, real OAuth
+  refresh, lock-screen/app-switcher privacy and competing desktop private control.
+
+Recovery mints through existing authenticated owner-scoped workspace routes and
+retains owner/tenant stamping. New visits receive no old private proof or input.
+
+
+## Request-driven viewport — mobile M4
+
+- [x] Route/SQL fixtures validate bounded geometry and resolve only the admitted
+  invocation's owner/thread-bound input metadata; existing foreign/private/stale
+  admission tests pass. No extra browser allocation or owner-stamped table.
+- [x] Relay/controller tests retain live viewer ownership checks; both eligible
+  public viewers can explicitly Fit, without changing private-controller rules.
+- [x] Real Chrome rejects public Fit during a running cell and applies request
+  dimensions before observation/new tabs; same-invocation Fit is retained.
+- [ ] Real two-account web/mobile request and Fit: foreign 404 before dispatch,
+  hostile Origin denied, scoped visit restricted to its session; revoke/unclaim
+  during a covered transition cannot reveal retained private frames.
+
+The historical first-viewer sizing-election checks above are superseded by M4.
+Presence grants no mutation; authorized explicit Fit still serializes and never
+steals private control. Message/invocation owner and tenant stamps are unchanged.
+
+
+## Native chat browser return
+
+- [x] Coordinator tests reject foreign owners, stale revision and wrong/completed
+  handoff; unknown transition ACK does not return private authority.
+- [x] HTTP tests deny missing bearer and scoped viewer cookies on return-from-chat.
+- [x] Isolated PostgreSQL continuation uses the controlling workspace from another
+  thread and resumes the original REPL wait without replaying its cell.
+- [ ] Real two-account bearer calls: foreign 404, revoked ownership rejection,
+  malformed body 400 and supplied hostile Origin 403 before dispatch.
+- [ ] Physical phone Return after dismissal/expiry: no sheet, eligible turn resumes;
+  another live viewer is fenced and stale cards cannot return a newer takeover.
+
+Resource owner derives from authorized Bud/thread/workspace; existing handoff
+return stamps the owner as returned_by_user_id. No new table or client controller.

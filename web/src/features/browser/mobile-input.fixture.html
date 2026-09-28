@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bud mobile input acceptance</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 18px system-ui; margin: 0; padding: 16px; background: #fffaf0; color: #202020; }
+  header { position: sticky; top: 0; background: #fffaf0; padding: 8px; border: 1px solid; z-index: 1; }
+  section { margin: 24px 0; }
+  button,a,input,textarea { font: inherit; min-height: 44px; }
+  input,textarea { display: block; max-width: 100%; width: 100%; margin: 8px 0 20px; }
+  #nested { margin-left: 45%; width: 55%; height: 240px; overflow: auto; border: 3px solid #507250; }
+  #nested a { display: block; padding: 16px 8px; border-bottom: 1px solid; }
+  .block { min-height: 300px; padding: 20px; border: 1px solid #777; }
+</style>
+<header><strong>Mobile input test</strong><br><output id="counts" aria-live="polite">Ready</output></header>
+<p>Use disposable text only. This page sends no network requests and stores nothing.
+Open it in Bud's managed Chrome, then view through the phone's normal Browser entry.</p>
+<section>
+<h2>Off-center nested scroll</h2>
+<p>Swipe inside the green box: only the box should scroll. Swipe to its left: the page should scroll. Swiping over links must not activate them.</p>
+<div id="nested" tabindex="0" aria-label="Nested scroll test"></div>
+</section>
+<section>
+<h2>Keyboard</h2>
+<label>Plain text<input autocomplete="off" placeholder="Type, delete, paste, emoji, CJK"></label>
+<label>Multiline<textarea rows="4" placeholder="Newline, composition, and repeated deletion"></textarea></label>
+<label>Disposable secret<input type="password" autocomplete="new-password" placeholder="Never use a real password here"></label>
+<p>Confirm text in Chrome matches the intended input exactly. Pinch, pan, then tap a field; verify the correct field gets focus.</p>
+<button id="tap" type="button">Count a tap</button>
+<a href="?case=popup#destination" target="_blank" rel="noopener">Open test popup</a>
+</section>
+<div class="block">Page section 1: rotate, open/close keyboard, and verify geometry.</div>
+<div class="block">Page section 2: swipe quickly and stop; check for delayed motion or clicks.</div>
+<div class="block" id="destination">Page section 3: Back should return to the previous page. Query and fragment are intentional restoration markers.</div>
+<script>
+  const nested = document.querySelector('#nested');
+  let links = 0, taps = 0;
+  const show = () => { document.querySelector('#counts').textContent = `Page Y: ${Math.round(scrollY)} · Box Y: ${nested.scrollTop} · Link activations: ${links} · Taps: ${taps}`; };
+  for (let i = 1; i <= 20; i++) {
+    const link = document.createElement('a');
+    link.href = '#row-' + i; link.textContent = 'Link row ' + i;
+    link.addEventListener('click', event => { event.preventDefault(); links++; show(); });
+    nested.append(link);
+  }
+  addEventListener('scroll', show, {passive: true});
+  nested.addEventListener('scroll', show, {passive: true});
+  document.querySelector('#tap').addEventListener('click', () => { taps++; show(); });
+  show();
+</script>
+</html>

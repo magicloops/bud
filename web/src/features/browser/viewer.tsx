@@ -61,7 +61,7 @@ export type BrowserReturnAction = {
   run: () => void;
 };
 
-export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange, onAuthorizationLost }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onAuthorizationLost?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
   const activeRef = useRef(active);
   const lifecycleEpoch = useRef(0);
   if (activeRef.current !== active) { activeRef.current = active; lifecycleEpoch.current++; }
@@ -78,6 +78,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const [notice, setNotice] = useState("");
   const [empty, setEmpty] = useState(false);
   const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    if (active && missing) onAuthorizationLost?.();
+  }, [active, missing, onAuthorizationLost]);
   const [owns, setOwns] = useState(false);
   const [working, setWorking] = useState(false);
   const [returning, setReturning] = useState(false);
@@ -90,7 +93,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const [ensureFailed, setEnsureFailed] = useState(false);
   const [ensureRetry, setEnsureRetry] = useState(0);
   const menuButton = useRef<HTMLButtonElement>(null);
-  const [fit, setFit] = useState(true);
+  const [fitRequest, setFitRequest] = useState(0);
+  const consumedFit = useRef(0);
   const [resizing, setResizing] = useState(false);
   // Input stays fenced after a fit until a frame proves the new geometry. The
   // ref is authoritative for dispatch; the state keeps the UI from looking live.
@@ -450,7 +454,13 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }, [base, canView, mediaVersion, session?.generation, mediaEpoch, owns, resetInput, failPrivate, blockInput]);
   useEffect(() => {
     const permitted = owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport;
-    if (!active || ended || !fit || !permitted || !connected || !selectedTarget || !surface.current) return;
+    if (!active || ended || fitRequest === consumedFit.current || !permitted || !connected || !selectedTarget || !surface.current) return;
+    consumedFit.current = fitRequest;
+    // Do not turn a keyboard-reduced surface into a new remote layout.
+    if (typeof window !== "undefined" && window.visualViewport && window.visualViewport.height < window.innerHeight * .75) {
+      setError("Dismiss the keyboard before fitting the browser to this device.");
+      return;
+    }
     const abort = new AbortController();
     const fitter = new ViewportFitter(async (size) => {
       blockInput(true);
@@ -466,13 +476,10 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         const frame = media.current?.frame;
         if (!frame || frame.target_id !== selectedTarget) throw new Error("page changed");
         const result = await fetchJson<{ viewport_id: string }>(`${base}/viewport`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
+          method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
           body: JSON.stringify({ ...size, viewer_id: viewerId.current, target_id: frame.target_id, document_id: frame.document_id }),
         });
         abort.signal.throwIfAborted();
-        // Passive fitting has no input to fence; the agent may navigate before
-        // the next frame. Do not wait for an obsolete document in that case.
-        if (!owns) { blockInput(false); return; }
         // An ACK alone is not proof that the displayed pixels use the new coordinates.
         await new Promise<void>((resolve, reject) => {
           const finish = (error?: Error) => {
@@ -499,30 +506,30 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         if (owns) failPrivate("Page resizing was not confirmed. Private control is paused; take control again before interacting.", 2);
         else {
           blockInput(false);
-          setFit(false);
-          setError("Pane fitting was not applied. Another viewer may be sizing the page, or the page changed. Enable Fit pane to try again; the agent can continue.");
+          setError("Browser sizing was not confirmed. The browser may be busy or the page changed. You can try Fit again.");
         }
       }
     });
     const element = surface.current;
     const measure = () => { const bounds = element.getBoundingClientRect(); fitter.measure(bounds.width, bounds.height); };
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
     measure();
     return () => {
-      observer.disconnect(); fitter.stop(); abort.abort();
+      fitter.stop(); abort.abort();
       // Any already sent resize can still complete. Require a new frame before input.
       setResizing(false);
     };
-  }, [active, ended, fit, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput, fetchJson]);
+  }, [active, ended, fitRequest, owns, connected, selectedTarget, session?.generation, session?.can_resize_viewport, session?.can_resize_agent_viewport, session?.control_state, passiveEpoch, base, resetInput, failPrivate, blockInput, fetchJson]);
   const send = useCallback(
-    (action: Record<string, unknown>) => {
-      if (!stateCurrent.current || !stateFeed.ready || !activeRef.current || !owns || working || resizeBlocked.current || !connected || !media.current?.frame) {
-        return;
+    (action: Record<string, unknown>, momentum = false) => {
+      if (!stateCurrent.current || !stateFeed.ready || !activeRef.current || !owns || !ownsRef.current || working || changingControl.current || resizeBlocked.current || !connected || !media.current?.frame) {
+        return false;
       }
+      // Inertia never joins the pending input queue. The gesture retains its
+      // bounded unsent tail while busy and discards it on touch/cancellation.
+      if (momentum && (sending.current || queue.current.length)) return "busy" as const;
       if (!enqueueInput(queue.current, { action, frame: media.current.frame })) {
         setError("Input is catching up. Please wait.");
-        return;
+        return false;
       }
       if (sending.current) return;
       const epoch = inputEpoch.current;
@@ -577,6 +584,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     },
     [owns, working, connected, base, resetInput, failPrivate, fetchJson, stateFeed],
   );
+  const touchSend = useRef(send);
+  touchSend.current = send;
   useEffect(() => {
     const element = typing.current;
     if (!mobile || !element?.addEventListener) return;
@@ -624,12 +633,21 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   useEffect(() => {
     const element = canvas.current;
     if (!mobile || !active || !element) return;
-    return installBrowserTouch(element, dy => {
+    return installBrowserTouch(element, (dy, anchor, momentum) => {
+      const frame=media.current?.frame, bounds=element.getBoundingClientRect();
+      if(!frame || bounds.width <= 0 || bounds.height <= 0) return false;
+      const factor=frame.height/bounds.height;
+      const delta=Math.max(-2000,Math.min(2000,dy*factor));
+      const result=touchSend.current({kind:"scroll",
+        x:Math.max(0,Math.min(frame.width-1,(anchor.clientX-bounds.left)*frame.width/bounds.width)),
+        y:Math.max(0,Math.min(frame.height-1,(anchor.clientY-bounds.top)*frame.height/bounds.height)),
+        delta_y:delta}, momentum);
+      return result===false || result==="busy" ? result : Math.abs(delta/factor);
+    }, () => {
       const frame=media.current?.frame;
-      if(frame) send({kind:"scroll",x:frame.width/2,y:frame.height/2,
-        delta_y:Math.max(-2000,Math.min(2000,dy*frame.height/element.getBoundingClientRect().height))});
-    }, () => { const frame=media.current?.frame; return frame ? `${frame.target_id}:${frame.document_id}:${frame.viewport_id}` : ""; });
-  }, [mobile, active, send, selectedTarget, session?.generation]);
+      return frame ? `${frame.target_id}:${frame.document_id}:${frame.viewport_id}:${inputEpoch.current}:${element.clientWidth}:${element.clientHeight}` : "";
+    });
+  }, [mobile, active, ended]);
   if (ended) {
     return (
       <main className={`flex min-h-0 flex-col items-start justify-center gap-3 overflow-y-auto bg-background p-6 text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
@@ -643,7 +661,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }
   return (
     <main className={`group/browser-pane relative min-h-0 min-w-0 w-full overflow-hidden bg-background text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
-      <div ref={surface} className="absolute inset-0 overflow-hidden bg-secondary">
+      <div ref={surface} data-browser-surface className="absolute inset-0 overflow-hidden bg-secondary">
+        {mobile && resizing && <div role="status" className="absolute inset-0 z-10 flex items-center justify-center bg-secondary text-sm">Fitting browser…</div>}
         {empty && <div role="status" className="absolute inset-0 flex items-center justify-center p-6 text-sm text-muted-foreground">
           {owns ? "No page is open. Return to agent to open a page." : "No page is open. Ask Bud to open a page."}
         </div>}
@@ -866,8 +885,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         )}
       </div>
       <div className="mb-2 flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-        <label><input type="checkbox" checked={fit} disabled={resizing || !(owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport)} onChange={event => setFit(event.target.checked)} /> Fit pane</label>
-        <span>{resizing ? "Fitting page…" : !session?.can_resize_viewport ? "Update Bud to enable fitting" : !owns && !session?.can_resize_agent_viewport ? "Update Bud to fit while the agent browses" : !fit ? "Keeping page size" : ""}</span>
+        <button type="button" className={button} disabled={resizing || !connected || !(owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport)} onClick={() => setFitRequest(value => value + 1)}>Fit browser to this device</button>
+        <span>{resizing ? "Fitting page…" : !session?.can_resize_viewport ? "Update Bud to enable fitting" : ""}</span>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         Basic page input is supported. File uploads, passkeys and

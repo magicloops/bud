@@ -267,3 +267,13 @@ PostgreSQL LISTEN connection per gateway, per-viewer owned Bud subscription,
 no thread data; clients re-read the owner-filtered list. Disconnect, revocation,
 backpressure and gateway shutdown clean up subscriptions. `list-stream.test.ts`
 covers anonymous/foreign rejection before LISTEN, scope filtering and revocation.
+
+
+## Browser request geometry — M4
+
+`shared.ts` validates optional `browser_viewport:{width,height}` (integer CSS
+pixels, 240–2560 by 160–2560). `messages.ts` stores it in user-message metadata
+in both durable admission and ordinary insertion, preserving existing owner and
+tenant inheritance. No browser allocation, prompt text or continuous device state.
+Browser dispatch uses the durable invocation's exact input message. Malformed
+sizes reject before persistence; route tests verify validation and admission data.

@@ -52,11 +52,12 @@ test('mobile suspension fences a late takeover and resumes passively with stable
  }finally{if(view)await act(async()=>view.unmount());globalThis.fetch=original;globalThis.setInterval=intervals;globalThis.clearInterval=clear;}
 });
 
-test('mobile fits the phone surface while agent-controlled, stops on suspension and preserves media on fit failure', async () => {
+test('mobile fits only explicitly, covers until matching drawn frame, and does not retry on resume', async () => {
  const originalFetch=globalThis.fetch, originalObserver=globalThis.ResizeObserver;
+ const originalWindow=globalThis.window;
  const clients: Canvas[]=[];
  const writes: {path:string;body:Record<string,unknown>}[]=[];
- let measure=()=>{}, width=390, height=740, rejectFit=false;
+ let width=390, height=740, rejectFit=false;
  class Canvas {
   frame={target_id:'page',document_id:'doc',frame_token:'frame',viewport_id:'old',width:1200,height:900,targets:[{target_id:'page',origin:'https://example.test'}]};
   closed=false;
@@ -65,7 +66,7 @@ test('mobile fits the phone surface while agent-controlled, stops on suspension 
   close(){this.closed=true}
  }
  Object.assign(globalThis,{__mobileCanvas:Canvas});
- globalThis.ResizeObserver=class {constructor(callback:()=>void){measure=callback}observe(){}disconnect(){}} as unknown as typeof ResizeObserver;
+ globalThis.ResizeObserver=class {constructor(_callback:()=>void){}observe(){}disconnect(){}} as unknown as typeof ResizeObserver;
  const metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:'agent',revision:1,can_view:true,can_resize_viewport:true,can_resize_agent_viewport:true};
  globalThis.fetch=async(url,init)=>{
   if(String(url).endsWith('/ensure')) return Response.json(metadata);
@@ -83,23 +84,142 @@ test('mobile fits the phone surface while agent-controlled, stops on suspension 
  const settle=async()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,180))});
  try{
   await act(async()=>{view=create(createElement(BrowserViewer,{...props,active:true}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:e.type==='div'?{getBoundingClientRect:()=>({width,height})}:null})});
-  assert.equal(view.root.findByType('input').props.checked,true);
-  assert.equal(view.root.findByType('input').props.disabled,false);
+  const fit=()=>view.root.findAllByType('button').find(b=>b.children.includes('Fit browser to this device'))!;
+  assert.equal(fit().props.disabled,true);
   assert.equal(writes.length,0);
   await act(async()=>clients.at(-1)!.show());await settle();
+  assert.equal(writes.length,0,'passive viewing does not resize');
+  globalThis.window={innerHeight:800,visualViewport:{height:400}} as Window & typeof globalThis;
+  await act(async()=>fit().props.onClick());await settle();
+  assert.equal(writes.length,0,'keyboard-reduced Fit must not change remote geometry');
+  assert.ok(JSON.stringify(view.toJSON()).includes('Dismiss the keyboard'));
+  globalThis.window=originalWindow;
+  await act(async()=>fit().props.onClick());await settle();
+  assert.ok(JSON.stringify(view.toJSON()).includes('Fitting browser…'));
+  await act(async()=>clients.at(-1)!.show());
+  assert.ok(JSON.stringify(view.toJSON()).includes('Fitting browser…'),'old frame cannot reveal');
+  await act(async()=>{clients.at(-1)!.frame.viewport_id='phone';clients.at(-1)!.show()});
+  assert.equal(JSON.stringify(view.toJSON()).includes('Fitting browser…'),false);
   assert.deepEqual(writes[0].body,{width:390,height:740,viewer_id:'phone-viewer',target_id:'page',document_id:'doc'});
   assert.equal(clients.length,1);
-  width=740;height=390;await act(async()=>measure());await settle();
-  assert.equal(writes[1].body.width,740);
+  width=740;height=390;await settle();
+  assert.equal(writes.length,1,'rotation does not resize');
   await act(async()=>view.update(createElement(BrowserViewer,{...props,active:false})));
-  width=400;await act(async()=>measure());await settle();
-  assert.equal(writes.length,2,'suspension must stop resizing');
+  width=400;await settle();
+  assert.equal(writes.length,1,'suspension must stop resizing');
   rejectFit=true;
   await act(async()=>view.update(createElement(BrowserViewer,{...props,active:true})));
   await act(async()=>clients.at(-1)!.show());await settle();
+  assert.equal(writes.length,1,'resume does not resize');
+  await act(async()=>fit().props.onClick());await settle();
   const current=clients.at(-1)!;
   assert.equal(current.closed,false,'fit failure must preserve passive media');
-  assert.equal(view.root.findByType('input').props.checked,false);
-  await settle();assert.equal(writes.length,3,'uncertain fitting is not retried');
- }finally{if(view)await act(async()=>view.unmount());globalThis.fetch=originalFetch;globalThis.ResizeObserver=originalObserver;}
+  assert.equal(JSON.stringify(view.toJSON()).includes('Fitting browser…'),false);
+  await settle();assert.equal(writes.length,2,'uncertain fitting is not retried');
+ }finally{if(view)await act(async()=>view.unmount());globalThis.fetch=originalFetch;globalThis.ResizeObserver=originalObserver;globalThis.window=originalWindow;}
+});
+
+test('hosted authorization loss notifies native once and never retries ensure', async () => {
+ const original=globalThis.fetch;
+ let losses=0, ensures=0;
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith('/ensure'))ensures++;
+  return Response.json({error:'unauthorized'},{status:401});
+ };
+ const {BrowserViewer}=await import('./viewer');
+ let view:ReactTestRenderer|undefined;
+ try {
+  await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser',mobile:true,active:true,
+    hostViewerId:'viewer',onAuthorizationLost:()=>{losses++;}}));});
+  assert.equal(losses,1);
+  assert.equal(ensures,0);
+  await act(async()=>StateSocket.change());
+  assert.equal(losses,1);
+ } finally {if(view)await act(async()=>view.unmount());globalThis.fetch=original;}
+});
+
+test('mobile swipes target the finger origin and local zoom survives control callback updates', async()=>{
+ const original=globalThis.fetch;
+ const inputs:Record<string,number|string>[]=[];
+ const clients:Canvas[]=[];
+ const metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:'agent',revision:1,can_view:true,can_show_window:true};
+ class Canvas {
+  frame={target_id:'page',document_id:'doc',frame_token:'frame',viewport_id:'viewport',width:600,height:1200,targets:[{target_id:'page',origin:'https://example.test'}]};
+  constructor(_canvas:unknown,_url:string,_viewer:string,readonly status:(state:string,targets:typeof this.frame.targets)=>void){clients.push(this)}
+  show(){this.status('connected',this.frame.targets)} close(){}
+ }
+ Object.assign(globalThis,{__mobileCanvas:Canvas});
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/input')){inputs.push(JSON.parse(String(init?.body)).input);return Response.json({focus_token:null})}
+  if(String(url).endsWith('/control'))return Response.json({...metadata,control_state:'human_private',revision:2,can_view:false});
+  return Response.json(metadata);
+ };
+ const {BrowserViewer}=await import('./viewer');
+ const canvas=Object.assign(new EventTarget(),{style:{transform:'',touchAction:''},clientWidth:300,clientHeight:600,setPointerCapture(){},getBoundingClientRect:()=>({left:10,top:20,width:300,height:600})});
+ const pointer=(type:string,id:number,x:number,y:number)=>canvas.dispatchEvent(Object.assign(new Event(type),{pointerType:'touch',pointerId:id,clientX:x,clientY:y}));
+ let view:ReactTestRenderer|undefined;
+ try {
+  await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser',mobile:true,active:true,embedded:true}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:null})});
+  await act(async()=>clients.at(-1)!.show());
+  await act(async()=>view!.root.findAllByType('button').find(b=>b.children.includes('Take control'))!.props.onClick());
+  await act(async()=>clients.at(-1)!.show());
+  await act(async()=>{pointer('pointerdown',1,250,200);pointer('pointermove',1,251,160);pointer('pointerup',1,251,160)});
+  assert.deepEqual(inputs,[{kind:'scroll',x:480,y:360,delta_y:80}]);
+  await act(async()=>{pointer('pointerdown',1,50,100);pointer('pointerdown',2,150,100);pointer('pointermove',2,250,100);pointer('pointerup',2,250,100);pointer('pointerup',1,50,100)});
+  assert.match(canvas.style.transform,/scale\(2\)/);
+  // Pause changes working/owns/send but does not dispose the mounted touch surface.
+  await act(async()=>view!.root.findAllByType('button').find(b=>b.children.includes('Pause'))!.props.onClick());
+  assert.match(canvas.style.transform,/scale\(2\)/);
+  assert.equal(inputs.length,1,'pinch must not inject remote wheels');
+ } finally {if(view)await act(async()=>view.unmount());globalThis.fetch=original}
+});
+
+test('rapid mobile gestures dispatch behind an in-flight wheel without queuing canceled momentum',async(t)=>{
+ const original=globalThis.fetch, originalRaf=globalThis.requestAnimationFrame, originalCancel=globalThis.cancelAnimationFrame;
+ let now=0, next=0;
+ const callbacks=new Map<number,FrameRequestCallback>();
+ t.mock.method(performance,'now',()=>now);
+ globalThis.requestAnimationFrame=callback=>{callbacks.set(++next,callback);return next};
+ globalThis.cancelAnimationFrame=id=>{callbacks.delete(id)};
+ const inputs:{delta_y:number}[]=[], pending:((response:Response)=>void)[]=[], clients:Canvas[]=[];
+ const metadata={session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:'agent',revision:1,can_view:true};
+ class Canvas {
+  frame={target_id:'page',document_id:'doc',frame_token:'frame',viewport_id:'viewport',width:600,height:1200,targets:[{target_id:'page',origin:'https://example.test'}]};
+  constructor(_canvas:unknown,_url:string,_viewer:string,readonly status:(state:string,targets:typeof this.frame.targets)=>void){clients.push(this)}
+  show(){this.status('connected',this.frame.targets)} close(){}
+ }
+ Object.assign(globalThis,{__mobileCanvas:Canvas});
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/input')){inputs.push(JSON.parse(String(init?.body)).input);return new Promise(resolve=>pending.push(resolve))}
+  if(String(url).endsWith('/control'))return Response.json({...metadata,control_state:'human_private',revision:2,can_view:false});
+  return Response.json(metadata);
+ };
+ const {BrowserViewer}=await import('./viewer');
+ const canvas=Object.assign(new EventTarget(),{style:{},clientWidth:300,clientHeight:600,setPointerCapture(){},getBoundingClientRect:()=>({left:0,top:0,width:300,height:600})});
+ const pointer=(type:string,y:number)=>canvas.dispatchEvent(Object.assign(new Event(type),{pointerType:'touch',pointerId:1,clientX:100,clientY:y}));
+ const advance=(ms:number)=>{now+=ms;const ready=[...callbacks.values()];callbacks.clear();ready.forEach(cb=>cb(now))};
+ let view:ReactTestRenderer|undefined;
+ try {
+  await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser',mobile:true,active:true,embedded:true}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:null})});
+  await act(async()=>clients.at(-1)!.show());
+  await act(async()=>view!.root.findAllByType('button').find(b=>b.children.includes('Take control'))!.props.onClick());
+  await act(async()=>clients.at(-1)!.show());
+  await act(async()=>{pointer('pointerdown',400);advance(12);pointer('pointerup',300);advance(320)});
+  assert.deepEqual(inputs.map(i=>i.delta_y),[200],'busy transport cannot dispatch momentum');
+  await act(async()=>{pointer('pointerdown',400);advance(12);pointer('pointerup',250);advance(16)});
+  assert.equal(inputs.length,1);
+  await act(async()=>pending.shift()!(Response.json({focus_token:null})));
+  assert.deepEqual(inputs.map(i=>i.delta_y),[200,300],'second gesture drains immediately after the first request');
+  await act(async()=>pending.shift()!(Response.json({focus_token:null})));
+  assert.equal(inputs.length,2,'old momentum was never queued');
+  await act(async()=>advance(16));
+  assert.equal(inputs.length,3,'new flick continues once transport is idle');
+  await act(async()=>{pointer('pointerdown',200);pointer('pointerup',200)});
+  await act(async()=>pending.shift()!(Response.json({focus_token:null})));
+  await act(async()=>advance(320));
+  assert.equal(inputs.length,3,'tap-to-stop discards unsent tail');
+ } finally {
+  if(view)await act(async()=>view.unmount());
+  globalThis.fetch=original;globalThis.requestAnimationFrame=originalRaf;globalThis.cancelAnimationFrame=originalCancel;
+ }
 });

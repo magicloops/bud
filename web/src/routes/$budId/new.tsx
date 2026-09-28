@@ -1,3 +1,4 @@
+import { requestViewport } from '@/features/browser/request-viewport'
 /**
  * New Thread View - workspace for composing a new thread
  *
@@ -143,6 +144,7 @@ function NewThreadView() {
     const formData = new FormData(e.currentTarget)
     const submittedMessage = String(formData.get('message') ?? '')
     const trimmedMessage = submittedMessage.trim()
+    const browserViewport = requestViewport(chatPaneRef.current, chatPaneWidth)
     if (!trimmedMessage) {
       setError('Message cannot be empty')
       return
@@ -178,6 +180,7 @@ function NewThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: trimmedMessage,
+          browser_viewport: browserViewport,
           client_id: clientId,
           model: (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined,
           reasoning_effort: (modelTouchedRef.current || reasoningTouchedRef.current) && selectedModel ? reasoningEffort : undefined

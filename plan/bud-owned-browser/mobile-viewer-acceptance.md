@@ -1,8 +1,27 @@
 # iOS browser handoff: acceptance and delivery checklist
 
-Status: **Not run.** Updated 2026-09-22. Use with the
-[implementation plan](phase-3b-ios-browser-viewer.md) and
-[contract reference](mobile-viewer-contract.md).
+Status: **Partial acceptance; further screenshot-control tuning paused.** Updated
+2026-09-27. User reports mobile viewing is sufficient for watching agent work and
+M4 sizing works. Interactive scrolling and the full privacy/device matrix are not
+signed off. This is not a release approval or a change to available controls.
+Use with the [implementation plan](phase-3b-ios-browser-viewer.md),
+[contract](mobile-viewer-contract.md) and
+[mobile roadmap](../../../bud-mobile/plan/browser-sessions-current-scope.md).
+
+## Current scope and outstanding work
+
+M1/M2 and M4 are implemented with automated validation. Bootstrap Origin, opening
+copy and direct chat Return fixes are implemented; device Return/continuation
+confirmation remains open. Momentum/queue fixes are implemented but do not meet
+user expectations. The five-second uncertain-input failure remains unresolved.
+See [latest evidence](../../../bud-mobile/plan/browser-sessions/m3-acceptance-evidence.md).
+
+Pause gesture, capture and timeout tuning. Future interactive work is scoped in
+[Phase 5: streaming and control investigation](phase-5-webrtc-media.md), including
+capture/encoding, input dispatch and WebRTC/TURN connectivity. Retain the checklist
+below: interactive performance cases are deferred, not passed. Viewing auth,
+account isolation, background privacy, recovery and quiet-idle checks remain
+closeout work for the current tranche. No new runtime tests in this doc update.
 
 ## Environment and evidence
 
@@ -54,10 +73,12 @@ Use disposable test credentials and keep private payloads out of traces.
       private images. Delayed pre-takeover frames cannot appear afterward.
 - [ ] User can keep chatting during browser waits. Inline prompt stays visible
       when agent runtime is inactive but invocation is waiting_for_user.
-- [ ] Inline Return uses the same mounted viewer identity. No duplicate acquire
-      loop or second native controller; double taps produce one effective return.
-- [ ] Recoverable paused workspace with no current owner still allows explicit
-      Return through acquire-then-return; no permanently dimmed button.
+- [ ] Inline chat Return uses the owner-authorized handoff/revision endpoint without
+      opening the viewer or granting native private input. Double taps produce
+      one effective return; stale handoffs cannot return unrelated newer work.
+- [ ] Live private workspace without this visit's lease offers explicit Take
+      control, then Return after acknowledged ownership. Confirmed runtime
+      replacement clears extinct authority without requiring Return as repair.
 - [ ] Another live web/mobile controller cannot be stolen implicitly. Test same
       workspace and different thread on the same shared browser.
 - [ ] Confirmed Return resumes eligible browser waits; agent observes current
@@ -85,7 +106,9 @@ Use disposable test credentials and keep private payloads out of traces.
       the same safe paused behavior; release need not reach the server to be safe.
 - [ ] Keyboard/menu/handoff text appearing does not resize the remote page.
       Explicit Fit waits for matching viewport pixels before private input.
-- [ ] Passive phone fitting does not fight a desktop sizing viewer.
+- [ ] Phone/web passive open, reconnect and rotation cause zero remote resizes.
+      Explicit Fit from either eligible viewer changes the page once; the other
+      scales locally. Active-cell Fit rejects busy without a retry loop.
 - [ ] Remote Back changes the remote tab; local dismiss returns to chat instead.
 - [ ] Remote OAuth popup targets stay remote and selectable; local WebKit popup
       handling does not replace the hosted viewer with website HTML.
@@ -103,9 +126,11 @@ Use disposable test credentials and keep private payloads out of traces.
 | Response lost after click/text/Return dispatch | Unknown outcome is visible; no automatic resend; fresh metadata/observation drives next choice |
 | Service restart, passive viewer | Reattach when available without asking user to take private control unnecessarily |
 | Service restart, private viewer | Private intent remains; same authorized mounted viewer can use valid proof, otherwise explicit takeover |
-| Daemon restart | Old generation/target/focus discarded; stored sign-in persists; explicit reopen/blank workspace works |
-| Zero eligible saved URLs | Recovery reports zero pages without dead-end; Return then explicit agent open works |
-| Recovery request uncertain | Do not claim nothing opened or automatically issue reopen again |
+| Daemon restart | Visible ensure reconciles runtime; confirmed replacement discards old evidence and restores eligible full public URLs; surviving private runtime stays protected |
+| Zero eligible saved URLs | Usable empty workspace; agent opens an explicit URL without saved-page or takeover/Return repair |
+| Recovery request uncertain | Reconcile through shared ensure; never replay uncertain cell or page mutations |
+| Expired native visit / WK process killed | Fresh owner-checked bootstrap with bounded recovery; no inherited private proof or automatic takeover/Return (M2) |
+| 24-hour idle workspace expiry | Public checkpoints/profile persist; next use restores pages and fresh REPL state; private expiry never returns automatically |
 | Session close/thread deletion/unclaim | Frame/authority cleared; unavailable terminal state, no endless retry |
 | Resize or acquire completes after dismiss | Late result cannot resurrect input/UI; best-effort release and lease fallback |
 | Web control while mobile suspended | No silent mobile reacquire on foreground; report competing controller |
@@ -129,6 +154,10 @@ These are provisional targets, not established mobile measurements:
   decoded images, timers, script handlers or pending requests.
 - Verify no capture with no eligible viewers, no ongoing phone decode/polling in
   background, and operation-driven passive viewing with no idle screenshot loop.
+- Measure 60 seconds after healthy settlement: zero periodic native inventory or
+  hosted metadata/resource GETs. Count state heartbeats, five-second private lease
+  renewals and five-minute native visit renewal separately; none imply new pixels.
+  Native zero-poll acceptance depends on Phase M1, not just hosted Phase 7f.
 - Slow network must not play an old-frame backlog after reconnect. Keep frame
   credit bounded and never move frames through chat state or the native bridge.
 - Compare chat scroll and terminal responsiveness with/without browser viewing;
@@ -136,8 +165,8 @@ These are provisional targets, not established mobile measurements:
 - Profile release/device builds for acceptance; do not attribute debugger-only
   latency to production behavior. Reduce density/cadence before enlarging queues.
 
-If targets fail, record measurements and the smallest mitigation. Do not expand
-this phase into WebRTC or a native rendering engine without a separate decision.
+Interactive targets are deferred to the Phase 5 investigation; do not resume
+screenshot tuning merely to close them. Viewing/privacy checks remain applicable.
 
 ## Automated coverage and final handoff
 
@@ -173,3 +202,37 @@ Performance samples and p50/p95:
 Known limitations and follow-ups:
 Required migration / coordinated upgrade steps:
 ```
+
+## M2 automated record — September 25, 2026
+
+Visit recovery, actual WK origin/identity checks, bounded ACK waits and bootstrap
+Origin/credential hardening are implemented. See
+[debug/validation](../../debug/mobile-browser-m2.md). Automated fixtures do not
+close the physical gates above. Deploy matching service/hosted shell before
+rebuilt native; native Return bridge command is removed and visit renewal now
+distinguishes 410 expiry from 401 account failure. No new migration/daemon build.
+
+## M3 progress — September 25, 2026
+
+Deterministic touch regressions exposed viewport-center swipe targeting,
+callback-driven zoom resets and pinch/cancel click leakage. Shared touch fixes and
+29 viewer/input/state/geometry regression tests pass; web TypeScript passes.
+[Debug note](../../debug/mobile-browser-m3-input.md) and
+[device procedure/evidence](../../../bud-mobile/plan/browser-sessions/m3-acceptance-evidence.md)
+record the scope. A standalone `web/src/features/browser/mobile-input.fixture.html`
+provides off-center scrolling, link/tap counters, forms and popup/URL markers.
+Physical keyboard, privacy, idle traffic and performance gates above remain open.
+
+
+## M4 automated record — September 27, 2026
+
+Request-bound geometry, explicit one-shot Fit, local idle scaling and covered
+matching-frame reveal are implemented. See [validation](../../debug/mobile-browser-m4-viewport.md).
+Phone acceptance must compare the first agent observation with the native viewport
+hint, then test cross-device opening without resize, explicit Fit, keyboard-visible
+send, rotation and private takeover. Record first-drawn/revealed latency separately
+from socket/frame arrival. Native uses window safe areas and standard inline-bar
+height; exact correspondence with real WK content geometry remains a device gate.
+No new migration/helper API. Rebuild/restart daemon before service/web, reload all
+viewers to remove old auto-fit, then rebuild native. Automated tests do not close
+the physical gates above.

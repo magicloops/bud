@@ -18,6 +18,33 @@ pub(crate) struct Cdp {
     poisoned: bool,
 }
 
+/// The caller's deadline can drop a CDP future before its own timeout logs.
+/// Keep this separate from channel poisoning: observing cancellation never makes
+/// the interrupted command safe to replay.
+struct CallDiagnostic<'a> {
+    method: &'a str,
+    started: Instant,
+    stage: &'static str,
+    frames_received: u64,
+    finished: bool,
+}
+
+impl Drop for CallDiagnostic<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            tracing::warn!(
+                component = "browser_cdp",
+                event = "call_cancelled",
+                method = self.method,
+                stage = self.stage,
+                elapsed_ms = self.started.elapsed().as_millis() as u64,
+                frames_received = self.frames_received,
+                "Browser CDP call cancelled before acknowledgement"
+            );
+        }
+    }
+}
+
 impl Cdp {
     pub fn interrupted(&self) -> bool {
         self.poisoned
@@ -89,19 +116,24 @@ impl Cdp {
         self.poisoned = true;
         let started = Instant::now();
         let mut sent_ms = None;
-        let mut frames_received = 0;
-        let mut stage = "send";
+        let mut diagnostic = CallDiagnostic {
+            method,
+            started,
+            stage: "send",
+            frames_received: 0,
+            finished: false,
+        };
         let result = tokio::time::timeout(Duration::from_secs(10), async {
             self.socket.send(Message::Text(request.to_string())).await?;
             sent_ms = Some(started.elapsed().as_millis());
-            stage = "receive";
+            diagnostic.stage = "receive";
             while let Some(frame) = self.socket.next().await {
-                frames_received += 1;
+                diagnostic.frames_received += 1;
                 match frame? {
                     Message::Text(text) => {
-                        stage = "decode";
+                        diagnostic.stage = "decode";
                         let value: Value = serde_json::from_str(&text)?;
-                        stage = "receive";
+                        diagnostic.stage = "receive";
                         if value["id"].as_u64() == Some(id) {
                             return Ok(value);
                         }
@@ -116,6 +148,9 @@ impl Cdp {
             bail!("browser_channel_closed")
         })
         .await;
+        diagnostic.finished = true;
+        let stage = diagnostic.stage;
+        let frames_received = diagnostic.frames_received;
         let failure = match &result {
             Err(_) => Some("timeout"),
             Ok(Err(_)) => Some("transport_or_decode"),
@@ -145,5 +180,76 @@ impl Cdp {
             bail!("browser_command_rejected");
         }
         Ok(response["result"].clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct Log(Arc<Mutex<Vec<u8>>>);
+    impl Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn caller_cancellation_logs_method_without_payload_and_keeps_channel_poisoned() {
+        let log = Log(Arc::new(Mutex::new(Vec::new())));
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let (received_tx, received_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+            let message = socket.next().await.unwrap().unwrap();
+            assert!(message.is_text());
+            received_tx.send(()).unwrap();
+            // Keep the channel open but never acknowledge the command.
+            std::future::pending::<()>().await;
+        });
+        let mut cdp = Cdp::connect(&endpoint).await.unwrap();
+        {
+            let call = cdp.call(
+                None,
+                "Input.dispatchMouseEvent",
+                json!({"private":"do-not-log"}),
+            );
+            tokio::pin!(call);
+            tokio::select! {
+                _ = received_rx => {},
+                result = &mut call => panic!("unexpected completion: {result:?}"),
+                _ = tokio::time::sleep(Duration::from_secs(2)) => panic!("command never arrived"),
+            }
+        }
+        assert!(cdp.interrupted());
+        assert_eq!(
+            cdp.call(None, "Target.getTargets", json!({}))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "browser_channel_interrupted"
+        );
+        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("call_cancelled"), "{text}");
+        assert!(text.contains("Input.dispatchMouseEvent"), "{text}");
+        assert!(text.contains("receive"), "{text}");
+        assert!(!text.contains("do-not-log"));
+        server.abort();
     }
 }

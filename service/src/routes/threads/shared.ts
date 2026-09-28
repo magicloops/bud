@@ -61,7 +61,13 @@ export const CreateThreadSchema = z.object({
   reasoning_effort: z.string().min(1).nullable().optional(),
 });
 
+export const BrowserViewportSchema = z.object({
+  width: z.number().int().min(240).max(2560),
+  height: z.number().int().min(160).max(2560),
+}).strict();
+
 export const CreateMessageSchema = z.object({
+  browser_viewport: BrowserViewportSchema.optional(),
   text: z.string().min(1),
   client_id: z.string().uuid().optional(),
   cwd: z.string().optional(),
