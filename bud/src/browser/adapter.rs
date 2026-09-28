@@ -92,6 +92,8 @@ pub struct Browser {
     viewport: Option<Viewport>,
     viewport_id: Option<String>,
     fitted_sizes: HashMap<String, (u32, u32)>,
+    preferred_size: Option<(u32, u32)>,
+    sizing_invocation: Option<String>,
     last_wheel: Option<Instant>,
 }
 
@@ -300,6 +302,8 @@ impl Browser {
             viewport: None,
             viewport_id: None,
             fitted_sizes: HashMap::new(),
+            preferred_size: None,
+            sizing_invocation: None,
             last_wheel: None,
         })
     }
@@ -592,7 +596,9 @@ impl Browser {
             bail!("browser_target_not_found");
         }
         if let Some(session) = self.sessions.get(target) {
-            return Ok(session.clone());
+            let session = session.clone();
+            self.apply_preferred_size(target, &session).await?;
+            return Ok(session);
         }
         if self.sessions.len() >= 32 {
             bail!("browser_target_limit");
@@ -613,6 +619,7 @@ impl Browser {
             .call(Some(&session), "Page.enable", json!({}))
             .await?;
         self.sessions.insert(target.into(), session.clone());
+        self.apply_preferred_size(target, &session).await?;
         Ok(session)
     }
 
@@ -658,6 +665,7 @@ impl Browser {
         {
             bail!("browser_target_not_found");
         }
+        self.session(target).await?; // Apply request geometry before any semantic observation/action.
         if self.semantic_dirty {
             self.semantic
                 .call(json!({"operation":"invalidate"}))
@@ -734,6 +742,42 @@ impl Browser {
         self.viewport_id.clone()
     }
 
+    /// Admission has already checked the invocation and private-control fences.
+    /// Only a new invocation changes the preference; explicit Fit survives later cells.
+    pub(super) fn request_viewport(
+        &mut self,
+        invocation: &str,
+        viewport: Option<super::manager::BrowserViewport>,
+    ) {
+        if self.sizing_invocation.as_deref() == Some(invocation) {
+            return;
+        }
+        self.sizing_invocation = Some(invocation.to_owned());
+        if let Some(viewport) = viewport {
+            self.preferred_size = Some((viewport.width, viewport.height));
+        }
+    }
+
+    async fn apply_preferred_size(&mut self, target: &str, session: &str) -> Result<()> {
+        let Some((width, height)) = self.preferred_size else {
+            return Ok(());
+        };
+        if self.fitted_sizes.get(target) == Some(&(width, height)) {
+            return Ok(());
+        }
+        self.invalidate_references();
+        self.cdp
+            .call(
+                Some(session),
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":false}),
+            )
+            .await?;
+        self.fitted_sizes.insert(target.into(), (width, height));
+        self.viewport_id = Some(ulid::Ulid::new().to_string());
+        Ok(())
+    }
+
     /// Authorized viewport mutation. Never navigate/reload the page to fit it.
     pub async fn resize_viewport(
         &mut self,
@@ -763,6 +807,7 @@ impl Browser {
         let viewport_id = ulid::Ulid::new().to_string();
         self.viewport_id = Some(viewport_id.clone());
         self.fitted_sizes.insert(target.into(), (width, height));
+        self.preferred_size = Some((width, height));
         Ok(
             json!({"viewport_applied":true,"viewport_id":viewport_id,"target_id":target,"document_id":document,"width":width,"height":height}),
         )
@@ -1413,6 +1458,7 @@ impl Browser {
             .insert(target.clone(), self.workspace.clone());
         self.invalidate_references();
         self.targets().await?; // Apply existing native presentation policy.
+        self.session(&target).await?; // New targets inherit request/explicit Fit geometry.
         Ok(target)
     }
 
@@ -1575,6 +1621,8 @@ impl Browser {
             viewport: None,
             viewport_id: None,
             fitted_sizes: HashMap::new(),
+            preferred_size: None,
+            sizing_invocation: None,
             last_wheel: None,
         })
     }

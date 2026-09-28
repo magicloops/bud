@@ -235,7 +235,7 @@ export async function registerThreadMessageRoutes(
           idempotencyKey: `message:${effectiveClientId}`, clientId: effectiveClientId, text: body.text,
           model: selection.model, reasoningEffort: selection.reasoningEffort,
           persistModelSelection: selection.source === "explicit_request",
-          metadata: { ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
+          metadata: { ...(body.browser_viewport ? { browser_viewport: body.browser_viewport } : {}), ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
         });
         const message = serializeMessage(admitted.message);
         if (!admitted.duplicate) {
@@ -302,6 +302,7 @@ export async function registerThreadMessageRoutes(
       ? await agentService.getPathContextForThread(thread.threadId)
       : null;
     const metadata: Record<string, unknown> = {
+      ...(body.browser_viewport ? { browser_viewport: body.browser_viewport } : {}),
       ...(body.cwd ? { preferred_cwd: body.cwd } : {}),
       ...(pathContext ? { path_context: pathContext } : {}),
       ...toModelSelectionMetadata(selection),

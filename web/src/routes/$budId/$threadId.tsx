@@ -1,3 +1,4 @@
+import { requestViewport } from '@/features/browser/request-viewport'
 import { BrowserWaitActionsContext, BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
 import { BrowserViewer, type BrowserReturnAction } from '@/features/browser/viewer'
 import { useAuthSession } from '@/contexts/auth-session-context'
@@ -950,6 +951,7 @@ function ThreadViewContent() {
     const formData = new FormData(e.currentTarget)
     const submittedMessage = String(formData.get('message') ?? '')
     const trimmedMessage = submittedMessage.trim()
+    const browserViewport = requestViewport(chatPaneRef.current, chatPaneWidth)
     if (!trimmedMessage) {
       setError('Message cannot be empty')
       return
@@ -975,6 +977,7 @@ function ThreadViewContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: trimmedMessage,
+          browser_viewport: browserViewport,
           client_id: optimisticId,
           model: explicitSelectionThreadRef.current === threadId ? selectedModel || undefined : undefined,
           reasoning_effort: explicitSelectionThreadRef.current === threadId && selectedModel ? reasoningEffort : undefined
@@ -1032,6 +1035,7 @@ function ThreadViewContent() {
     }
   }, [
     addOptimisticUserMessage,
+    chatPaneWidth,
     budId,
     ensureAgentStreamConnected,
     performCancelAgentTurn,

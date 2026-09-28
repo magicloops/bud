@@ -84,7 +84,10 @@ export class BrowserRepository {
         [context.threadId, context.budId, context.ownerUserId],
       );
       const authority = await client.query(
-        `select i.lease_expires_at, t.tenant_id from agent_invocation i
+        `select i.lease_expires_at, t.tenant_id,
+          (select m.metadata->'browser_viewport' from message m where m.message_id=i.input_message_id
+            and m.thread_id=i.thread_id and m.created_by_user_id=i.created_by_user_id) as browser_viewport
+          from agent_invocation i
         join thread t on t.thread_id=i.thread_id join bud b on b.bud_id=t.bud_id
         where i.id=$1 and i.fence=$2 and i.worker_id=$3 and i.turn_id=$4
         and i.status='running' and i.lease_expires_at>clock_timestamp() and i.cancel_requested_at is null
@@ -251,6 +254,7 @@ export class BrowserRepository {
         ? await resolveBrowserColor(client, context.ownerUserId, context.budId) : undefined;
       const request: BrowserCommand = {
         ...(browserColor ? { browser_color: browserColor } : {}),
+        ...(authority.rows[0].browser_viewport ? { browser_viewport: authority.rows[0].browser_viewport } : {}),
         browser_id: resource.id,
         browser_epoch: resource.control_epoch,
         private_content: resource.private_content,

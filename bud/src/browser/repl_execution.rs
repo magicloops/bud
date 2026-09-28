@@ -261,6 +261,11 @@ impl BrowserManager {
         {
             anyhow::bail!("browser_stale_request");
         }
+        // Record intent only at an authorized browser entry, not for a cell
+        // that does local computation or is canceled while waiting for the lock.
+        if let Some(browser) = entry.browser.as_mut() {
+            browser.request_viewport(&request.invocation_id, request.browser_viewport);
+        }
         let result = if let Some(action) = action {
             let mut operation = request.clone();
             operation.command = action;
@@ -513,6 +518,7 @@ mod tests {
     fn request(sequence: u64, code: &str) -> Request {
         Request {
             browser_color: None,
+            browser_viewport: None,
             repl_images: None,
             request_id: format!("cell-{sequence}"),
             device_session_id: "device".into(),
@@ -1292,6 +1298,73 @@ mod tests {
         );
         manager.shutdown().await.unwrap();
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_request_viewport_precedes_observation_and_explicit_fit_survives_cells() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
+        manager.connect("device".into());
+        let mut open = request(1, "");
+        open.command = Action::Open { url: None };
+        assert!(manager.execute(open).await.ok);
+        let mut first = request(2, "var tab=await browser.tabs.current(); console.log(JSON.stringify(await tab.evaluate(()=>[innerWidth,innerHeight]))); var second=await browser.tabs.create(); console.log(JSON.stringify(await second.evaluate(()=>[innerWidth,innerHeight]))); var snap=await second.snapshot(); console.log(JSON.stringify({target:snap.target_id,document:snap.document_id}))");
+        first.browser_viewport = Some(BrowserViewport {
+            width: 390,
+            height: 740,
+        });
+        let result = manager.execute(first).await;
+        assert!(result.ok, "{result:?}");
+        let lines: Vec<_> = result.data["text"].as_str().unwrap().lines().collect();
+        assert_eq!(&lines[..2], &["[390,740]", "[390,740]"]);
+        let ids: Value = serde_json::from_str(lines[2]).unwrap();
+        let mut fit = request(2, "");
+        fit.request_id = "fit".into();
+        fit.command = Action::FitViewport {
+            target_id: ids["target"].as_str().unwrap().into(),
+            document_id: ids["document"].as_str().unwrap().into(),
+            width: 640,
+            height: 480,
+        };
+        let (cell, ()) = tokio::join!(
+            manager.execute(request(3, "await new Promise(r=>setTimeout(r,200))")),
+            async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                assert_eq!(
+                    manager.execute(fit.clone()).await.error,
+                    Some("browser_busy")
+                );
+            }
+        );
+        assert!(cell.ok, "{cell:?}");
+        assert!(manager.execute(fit).await.ok);
+        let mut same = request(
+            4,
+            "console.log(JSON.stringify(await second.evaluate(()=>[innerWidth,innerHeight])))",
+        );
+        same.browser_viewport = Some(BrowserViewport {
+            width: 390,
+            height: 740,
+        });
+        let result = manager.execute(same).await;
+        assert!(result.ok, "{result:?}");
+        assert_eq!(result.data["text"], "[640,480]\n");
+        let mut next = request(
+            5,
+            "console.log(JSON.stringify(await second.evaluate(()=>[innerWidth,innerHeight])))",
+        );
+        next.invocation_id = "next-invocation".into();
+        next.control_epoch = 2;
+        next.browser_viewport = Some(BrowserViewport {
+            width: 800,
+            height: 600,
+        });
+        let result = manager.execute(next).await;
+        assert!(result.ok, "{result:?}");
+        assert_eq!(result.data["text"], "[800,600]\n");
+        manager.shutdown().await.unwrap();
     }
 
     #[tokio::test]

@@ -416,3 +416,13 @@ The existing-thread route forwards `agent.turn_timing` to the message hook's
 settled lookup and passes that lookup to ChatTimeline. The owner/thread-keyed
 workbench remount clears it on identity changes. Timing callbacks do not mutate
 turn/spinner status or trigger transcript refreshes.
+
+
+## Requesting-client browser geometry — M4
+
+Both `new.tsx` and `$threadId.tsx` snapshot `requestViewport` before clearing the
+composer or creating a thread, and send optional `browser_viewport` in the message
+body. This measures the intended browser peer/split surface even when it is not
+mounted. No browser is opened by sending a non-browser request; geometry remains
+metadata outside prompt text. Divider changes affect only the next send/explicit
+Fit, never a passive remote resize.

@@ -48,6 +48,7 @@ function fixture() {
       if (owner !== "alice") throw new BrowserError("browser_not_found");
       return { ...session };
     },
+    async pending() { return returned ? null : {id:"handoff"}; },
     async hasRunningInvocation() {
       return running;
     },
@@ -537,4 +538,36 @@ test("concurrent ensures share a single recovery; uncertain acknowledgements kee
   await Promise.all([assert.rejects(first, /recovery_uncertain/), assert.rejects(second, /recovery_uncertain/)]);
   assert.equal(f.session.private_content, true);
   assert.equal(f.returned, 0);
+});
+
+
+test("chat return works after dismissal and restart without a viewer lease", async () => {
+  for (const restart of [false, true]) {
+    const f = fixture();
+    await f.control.acquire("alice", "browser", "viewer", 1);
+    await f.control.release("alice", "browser", "viewer");
+    const control = restart ? f.restart() : f.control;
+    await assert.rejects(control.returnFromChat("bob", "browser", "handoff", f.session.revision), /not_found/);
+    await assert.rejects(control.returnFromChat("alice", "browser", "old", f.session.revision), /handoff_unavailable/);
+    await assert.rejects(control.returnFromChat("alice", "browser", "handoff", 1), /revision_conflict/);
+    await control.returnFromChat("alice", "browser", "handoff", f.session.revision);
+    assert.equal(f.returned, 1);
+    assert.equal(f.session.control_state, "agent");
+    assert.deepEqual(f.requests.slice(-4).map(r => r.command.operation), ["pause", "acquire", "prepare_return", "finish_return"]);
+    assert.equal(control.ownsControl("alice", "browser", "viewer"), false);
+    await assert.rejects(control.returnFromChat("alice", "browser", "handoff", f.session.revision), /handoff_unavailable/);
+    assert.equal(f.returned, 1);
+  }
+});
+
+test("chat return fences active viewers and never completes an uncertain return", async () => {
+  for (const stage of ["pause", "acquire", "prepare_return", "finish_return"]) {
+    const f = fixture();
+    await f.control.acquire("alice", "browser", "viewer", 1);
+    f.fail = stage;
+    await assert.rejects(f.control.returnFromChat("alice", "browser", "handoff", f.session.revision), /uncertain/);
+    assert.equal(f.returned, 0);
+    assert.equal(f.session.private_content, true);
+    assert.equal(f.control.ownsControl("alice", "browser", "viewer"), false);
+  }
 });

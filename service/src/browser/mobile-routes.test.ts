@@ -39,6 +39,11 @@ test("bootstrap rejects foreign Origin before consuming grants; stale scoped coo
     const result = await server.inject({url:"/api/browser/sessions/session",headers:{cookie:`${mobileCookie}=${value}; other=full-login`}});
     assert.equal(result.statusCode,401);
   }
+  for (const headers of [{}, {cookie:`${mobileCookie}=stale`}]) {
+    const result = await server.inject({method:"POST",url:"/api/browser/sessions/session/return-from-chat",
+      headers,payload:{handoff_id:"h",revision:1}});
+    assert.equal(result.statusCode, headers.cookie ? 403 : 401);
+  }
   assert.equal(resolve.mock.callCount(),2);
   assert.equal(fullAuth.mock.callCount(),0);
 });

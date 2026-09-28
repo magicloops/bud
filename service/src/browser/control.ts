@@ -434,6 +434,7 @@ export class BrowserControl {
         if (!this.isSizingViewer(owner, session, viewer)) throw new BrowserError("browser_viewport_other_viewer");
         const request = this.repository.command(session, { action: "fit_viewport", ...viewport });
         const result = await this.dispatch(carrier, request, AbortSignal.timeout(15_000));
+        if (!result.ok && result.error === "browser_busy") throw new BrowserError("browser_busy");
         if (!result.ok || result.data?.viewport_applied !== true || typeof result.data?.viewport_id !== "string" || !result.data.viewport_id.length || result.data.viewport_id.length > 128)
           throw new BrowserError("browser_viewport_unconfirmed");
         return { viewport_applied: true, viewport_id: result.data.viewport_id };
@@ -517,24 +518,47 @@ export class BrowserControl {
       let session = await this.repository.get(owner, sessionId);
       if (session.revision !== revision)
         throw new BrowserError("browser_revision_conflict");
-      if (this.windowAvailable(session)) await this.setNativeWindow(session, control, false);
-      this.controllers.delete(sessionId);
-      session = await this.transition(
-        session,
-        "prepare_return",
-        "resume_pending",
-        AbortSignal.timeout(30_000),
-        control.id,
-      );
-      session = await this.transition(
-        session,
-        "finish_return",
-        "resume_pending",
-        AbortSignal.timeout(5000),
-      );
-      await this.repository.returned(owner, sessionId, session.revision);
-      return this.repository.get(owner, sessionId);
+      return this.finishReturn(session, control);
     });
+  }
+
+  /** Explicit owner action from chat; never grants a client input/media authority. */
+  async returnFromChat(owner: string, sessionId: string, handoffId: string, revision: number) {
+    return this.exclusive(owner, sessionId, async () => {
+      const waiting = await this.repository.get(owner, sessionId);
+      const handoff = await this.repository.pending(owner, sessionId);
+      if (!handoff || handoff.id !== handoffId) throw new BrowserError("browser_handoff_unavailable");
+      if (waiting.revision !== revision) throw new BrowserError("browser_revision_conflict");
+      if (this.runtimeStatus(waiting) !== "available") throw new BrowserError("browser_handoff_unavailable");
+      if (!["paused", "human_private", "resume_pending"].includes(waiting.control_state))
+        throw new BrowserError("browser_control_conflict");
+      let session = waiting.control_session_id
+        ? await this.repository.get(owner, waiting.control_session_id) : waiting;
+      if (session.browser_id !== waiting.browser_id || session.revision !== revision)
+        throw new BrowserError("browser_revision_conflict");
+      // Re-establish a short server-only controller with existing daemon commands.
+      // This also handles expired/released leases and service restarts. No viewer
+      // is minted and no private frame or input permission is given to the caller.
+      for (const [id, old] of this.controllers) {
+        if (old.browser === session.browser_id) this.controllers.delete(id);
+      }
+      session = await this.pause(session, AbortSignal.timeout(35_000));
+      const id = randomUUID();
+      session = await this.transition(session, "acquire", "human_private", AbortSignal.timeout(5000), id);
+      const authority: Controller = { owner, browser: session.browser_id, viewer: "owner-return",
+        id, expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session) };
+      return this.finishReturn(session, authority);
+    });
+  }
+
+  private async finishReturn(session: BrowserSession, control: Controller) {
+    const owner = session.created_by_user_id, sessionId = session.id;
+    if (this.windowAvailable(session)) await this.setNativeWindow(session, control, false);
+    this.controllers.delete(sessionId);
+    session = await this.transition(session, "prepare_return", "resume_pending", AbortSignal.timeout(30_000), control.id);
+    session = await this.transition(session, "finish_return", "resume_pending", AbortSignal.timeout(5000));
+    await this.repository.returned(owner, sessionId, session.revision);
+    return this.repository.get(owner, sessionId);
   }
 
   async close(owner: string, sessionId: string, revision: number) {

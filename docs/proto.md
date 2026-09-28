@@ -3991,3 +3991,44 @@ Client merges must preserve the greater existing ordering timestamp.
 
 Migration `0043_tired_mauler.sql` must precede the updated service. Deploy service
 and web together, then rebuild mobile against this contract. No daemon upgrade.
+
+
+## Request-driven browser geometry — Mobile M4
+
+Authenticated POST `/api/threads/:thread_id/messages` accepts optional strict
+`browser_viewport:{width,height}` in integer CSS pixels (width 240–2560, height
+160–2560). Invalid values return 400. Existing viewer/thread/Bud authorization
+and message/invocation owner stamps precede persistence. The preference lives in
+input message metadata; browser admission resolves that invocation's exact input
+message with matching thread/owner, never a global device preference or prompt.
+Non-browser requests do not allocate Chrome. No database migration is required.
+
+The existing browser command `request` adds optional `browser_viewport` with the
+same strict shape/bounds, outside model code/arguments. At authorized cell browser
+entry the daemon records the invocation preference under workspace/page locks.
+Target attachment applies it before observation/action, including newly managed
+and restored targets. Same-invocation calls do not undo an accepted explicit Fit;
+a later invocation with dimensions replaces the preference. Missing hints preserve
+current dimensions/defaults. Local-only cells do not resize or request captures.
+Canceled/stale/private requests retain existing admission and delivery fences.
+
+This supersedes first-live-viewer sizing and automatic Fit-on-open. Any authorized
+live media viewer may explicitly Fit an agent-owned workspace; presence alone
+never resizes. Existing resource serialization orders requests. The daemon rejects
+Fit with `browser_busy` while a REPL cell holds that workspace, even between bridge
+calls. Private Fit still requires the exact controller. Neither path transfers
+control. Browser viewport capabilities, target/document checks and reference
+invalidation remain; a viewport hint is not a grant.
+
+Both clients scale locally on open, reconnect, rotation and keyboard changes.
+Explicit Fit is one mutation without automatic replay. Mobile keeps decoding,
+drawing and ACKing behind a cover until the acknowledged target/document/viewport
+is drawn in the current generation. Request and matching-frame waits are bounded;
+privacy/suspension clears obsolete state, and uncertain private input stays fenced.
+No native bridge, media shape, screenshot density or user-agent change.
+
+Coordinated upgrade: rebuild/restart the M4 daemon before deploying M4 service/web,
+then reload existing web/WK viewers and rebuild mobile. Old strict daemons reject
+the new envelope field; old mounted auto-fit viewers can undo intended sizing.
+Use these matching working-tree builds for acceptance; release SHAs are assigned
+when committed. No additional helper API or migration is introduced.

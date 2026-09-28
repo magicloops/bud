@@ -1,12 +1,27 @@
 # iOS browser handoff: acceptance and delivery checklist
 
-Status: **Full matching-stack matrix pending.** Updated 2026-09-25. High-level
-phone/ngrok testing occurred; desktop/agent scrolling was accepted. Mobile
-scrolling and the device/privacy matrix below are not signed off. Use with the
-[implementation plan](phase-3b-ios-browser-viewer.md) and
-[contract reference](mobile-viewer-contract.md).
-The [mobile follow-through plan](../../../bud-mobile/plan/browser-sessions-current-scope.md)
-tracks implementation prerequisites M1–M2 and physical acceptance M3.
+Status: **Partial acceptance; further screenshot-control tuning paused.** Updated
+2026-09-27. User reports mobile viewing is sufficient for watching agent work and
+M4 sizing works. Interactive scrolling and the full privacy/device matrix are not
+signed off. This is not a release approval or a change to available controls.
+Use with the [implementation plan](phase-3b-ios-browser-viewer.md),
+[contract](mobile-viewer-contract.md) and
+[mobile roadmap](../../../bud-mobile/plan/browser-sessions-current-scope.md).
+
+## Current scope and outstanding work
+
+M1/M2 and M4 are implemented with automated validation. Bootstrap Origin, opening
+copy and direct chat Return fixes are implemented; device Return/continuation
+confirmation remains open. Momentum/queue fixes are implemented but do not meet
+user expectations. The five-second uncertain-input failure remains unresolved.
+See [latest evidence](../../../bud-mobile/plan/browser-sessions/m3-acceptance-evidence.md).
+
+Pause gesture, capture and timeout tuning. Future interactive work is scoped in
+[Phase 5: streaming and control investigation](phase-5-webrtc-media.md), including
+capture/encoding, input dispatch and WebRTC/TURN connectivity. Retain the checklist
+below: interactive performance cases are deferred, not passed. Viewing auth,
+account isolation, background privacy, recovery and quiet-idle checks remain
+closeout work for the current tranche. No new runtime tests in this doc update.
 
 ## Environment and evidence
 
@@ -58,8 +73,9 @@ Use disposable test credentials and keep private payloads out of traces.
       private images. Delayed pre-takeover frames cannot appear afterward.
 - [ ] User can keep chatting during browser waits. Inline prompt stays visible
       when agent runtime is inactive but invocation is waiting_for_user.
-- [ ] Inline Return uses the same mounted viewer identity. No duplicate acquire
-      loop or second native controller; double taps produce one effective return.
+- [ ] Inline chat Return uses the owner-authorized handoff/revision endpoint without
+      opening the viewer or granting native private input. Double taps produce
+      one effective return; stale handoffs cannot return unrelated newer work.
 - [ ] Live private workspace without this visit's lease offers explicit Take
       control, then Return after acknowledged ownership. Confirmed runtime
       replacement clears extinct authority without requiring Return as repair.
@@ -90,7 +106,9 @@ Use disposable test credentials and keep private payloads out of traces.
       the same safe paused behavior; release need not reach the server to be safe.
 - [ ] Keyboard/menu/handoff text appearing does not resize the remote page.
       Explicit Fit waits for matching viewport pixels before private input.
-- [ ] Passive phone fitting does not fight a desktop sizing viewer.
+- [ ] Phone/web passive open, reconnect and rotation cause zero remote resizes.
+      Explicit Fit from either eligible viewer changes the page once; the other
+      scales locally. Active-cell Fit rejects busy without a retry loop.
 - [ ] Remote Back changes the remote tab; local dismiss returns to chat instead.
 - [ ] Remote OAuth popup targets stay remote and selectable; local WebKit popup
       handling does not replace the hosted viewer with website HTML.
@@ -147,8 +165,8 @@ These are provisional targets, not established mobile measurements:
 - Profile release/device builds for acceptance; do not attribute debugger-only
   latency to production behavior. Reduce density/cadence before enlarging queues.
 
-If targets fail, record measurements and the smallest mitigation. Do not expand
-this phase into WebRTC or a native rendering engine without a separate decision.
+Interactive targets are deferred to the Phase 5 investigation; do not resume
+screenshot tuning merely to close them. Viewing/privacy checks remain applicable.
 
 ## Automated coverage and final handoff
 
@@ -193,3 +211,28 @@ Origin/credential hardening are implemented. See
 close the physical gates above. Deploy matching service/hosted shell before
 rebuilt native; native Return bridge command is removed and visit renewal now
 distinguishes 410 expiry from 401 account failure. No new migration/daemon build.
+
+## M3 progress — September 25, 2026
+
+Deterministic touch regressions exposed viewport-center swipe targeting,
+callback-driven zoom resets and pinch/cancel click leakage. Shared touch fixes and
+29 viewer/input/state/geometry regression tests pass; web TypeScript passes.
+[Debug note](../../debug/mobile-browser-m3-input.md) and
+[device procedure/evidence](../../../bud-mobile/plan/browser-sessions/m3-acceptance-evidence.md)
+record the scope. A standalone `web/src/features/browser/mobile-input.fixture.html`
+provides off-center scrolling, link/tap counters, forms and popup/URL markers.
+Physical keyboard, privacy, idle traffic and performance gates above remain open.
+
+
+## M4 automated record — September 27, 2026
+
+Request-bound geometry, explicit one-shot Fit, local idle scaling and covered
+matching-frame reveal are implemented. See [validation](../../debug/mobile-browser-m4-viewport.md).
+Phone acceptance must compare the first agent observation with the native viewport
+hint, then test cross-device opening without resize, explicit Fit, keyboard-visible
+send, rotation and private takeover. Record first-drawn/revealed latency separately
+from socket/frame arrival. Native uses window safe areas and standard inline-bar
+height; exact correspondence with real WK content geometry remains a device gate.
+No new migration/helper API. Rebuild/restart daemon before service/web, reload all
+viewers to remove old auto-fit, then rebuild native. Automated tests do not close
+the physical gates above.

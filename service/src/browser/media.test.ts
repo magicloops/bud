@@ -132,7 +132,7 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
   await until(() => slowFrames === 1 && fastFrames >= 5);
   const session = { id: "browser", browser_id: "shared", generation: "generation", control_epoch: 1, browser_epoch: 1 } as BrowserSession;
   assert.equal(control.isSizingViewer("alice", session, "/fast"), true);
-  assert.equal(control.isSizingViewer("alice", session, "/slow"), false);
+  assert.equal(control.isSizingViewer("alice", session, "/slow"), true);
   assert.equal(control.isSizingViewer("bob", session, "/fast"), false);
   assert.equal(control.isSizingViewer("alice", { ...session, control_epoch: 2 }, "/fast"), true);
   assert.equal(slowFrames, 1);
@@ -218,7 +218,7 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   const second = await connect('second');
   await until(() => frames >= 4);
   assert.equal(attachments, 1, 'new epoch joins the same daemon socket');
-  assert.equal(control.isSizingViewer('alice', session, '/second'), false);
+  assert.equal(control.isSizingViewer('alice', session, '/second'), true);
   empty = true;
   const beforeEmpty = frames;
   daemon.send('{"refresh":true}');

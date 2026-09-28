@@ -675,3 +675,34 @@ URL hint storage retains its 256 KiB total bound but no fixed 32-workspace count
 Checkpoint failure retains previous hints and does not prevent idle resource
 cleanup; restoration remains best-effort. Both memory-backed fixtures and disk
 stores enforce the byte bound before accepting a changed manifest.
+
+
+## Request-driven viewport — mobile M4
+
+`manager.rs` admits optional strict envelope `browser_viewport` within existing
+CSS bounds. `repl_execution.rs` records it at an authorized browser operation,
+after cancellation/sequence/private checks under the page lock. Local computation
+alone does not set sizing intent. `adapter.rs` keeps one preferred size and last
+sizing invocation per workspace; target sessions apply changed dimensions before
+semantic work/capture and new target creation inherits them. References/viewport
+identity invalidate on actual changes. Same-invocation cells preserve explicit
+Fit; later invocation hints replace it. Missing hints preserve existing/default
+geometry. Runtime loss reconstructs the preference on subsequent admitted work.
+
+Agent-state Fit takes the workspace REPL mutex before the page lock and rejects
+busy rather than changing geometry between operations in a running cell. Private
+Fit remains controller-bound. No helper API change. The real-Chrome request
+viewport regression covers first observation, tab creation, busy Fit, retained
+explicit Fit and a new invocation. Rebuild/restart before updated service dispatch;
+see `debug/mobile-browser-m4-viewport.md` for validation and device gates.
+
+## CDP cancellation diagnostics
+
+`cdp.rs` logs `call_cancelled` from a drop guard when a caller deadline cancels an
+in-flight command before CDP's own timeout. The record contains only internal
+method, send/receive/decode stage, elapsed milliseconds and frame count; never
+parameters or responses. Channel poisoning and no-replay behavior are unchanged.
+A local fake-WebSocket regression verifies cancellation after receipt, redacted
+logging and refusal to reuse the interrupted channel. Rebuild/restart the daemon
+to diagnose human-input five-second timeouts; see
+[scroll investigation](../../../debug/mobile-browser-scroll-distance.md).

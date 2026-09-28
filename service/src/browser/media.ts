@@ -82,11 +82,10 @@ export class BrowserMedia {
     control.isSizingViewer = (owner, session, viewerId) => {
       const group = this.groups.get(groupKey(session.id, session.generation, session.browser_epoch));
       if (!group || group.closed || group.owner !== owner || !group.carrier.current()) return false;
-      const first = [...group.viewers].find(viewer => viewer.socket.readyState === WebSocket.OPEN &&
+      return [...group.viewers].some(viewer => viewer.viewer === viewerId && viewer.socket.readyState === WebSocket.OPEN &&
         (group.operationDriven
           ? viewer.aliveUntil > Date.now() && viewer.authorizationUntil > Date.now() && (viewer.ready || viewer.deadline > Date.now())
           : viewer.deadline > Date.now()));
-      return first?.viewer === viewerId;
     };
     this.timer = setInterval(() => this.sweep(), 1000);
     this.timer.unref();

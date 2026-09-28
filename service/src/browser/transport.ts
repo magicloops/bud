@@ -55,6 +55,7 @@ const cellDataSchema = z.object({
 }).strict();
 type Tracker = SessionTracker | GrpcSessionTracker;
 export type BrowserCommand = {
+  browser_viewport?: { width: number; height: number };
   browser_color?: string;
   repl_images?: { endpoint:string; ticket:string }[];
   request_id: string;

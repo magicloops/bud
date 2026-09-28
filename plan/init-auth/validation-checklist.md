@@ -616,3 +616,37 @@ phase does not add immediate refresh-token-driven access-token revocation.
 
 Recovery mints through existing authenticated owner-scoped workspace routes and
 retains owner/tenant stamping. New visits receive no old private proof or input.
+
+
+## Request-driven viewport — mobile M4
+
+- [x] Route/SQL fixtures validate bounded geometry and resolve only the admitted
+  invocation's owner/thread-bound input metadata; existing foreign/private/stale
+  admission tests pass. No extra browser allocation or owner-stamped table.
+- [x] Relay/controller tests retain live viewer ownership checks; both eligible
+  public viewers can explicitly Fit, without changing private-controller rules.
+- [x] Real Chrome rejects public Fit during a running cell and applies request
+  dimensions before observation/new tabs; same-invocation Fit is retained.
+- [ ] Real two-account web/mobile request and Fit: foreign 404 before dispatch,
+  hostile Origin denied, scoped visit restricted to its session; revoke/unclaim
+  during a covered transition cannot reveal retained private frames.
+
+The historical first-viewer sizing-election checks above are superseded by M4.
+Presence grants no mutation; authorized explicit Fit still serializes and never
+steals private control. Message/invocation owner and tenant stamps are unchanged.
+
+
+## Native chat browser return
+
+- [x] Coordinator tests reject foreign owners, stale revision and wrong/completed
+  handoff; unknown transition ACK does not return private authority.
+- [x] HTTP tests deny missing bearer and scoped viewer cookies on return-from-chat.
+- [x] Isolated PostgreSQL continuation uses the controlling workspace from another
+  thread and resumes the original REPL wait without replaying its cell.
+- [ ] Real two-account bearer calls: foreign 404, revoked ownership rejection,
+  malformed body 400 and supplied hostile Origin 403 before dispatch.
+- [ ] Physical phone Return after dismissal/expiry: no sheet, eligible turn resumes;
+  another live viewer is fenced and stale cards cannot return a newer takeover.
+
+Resource owner derives from authorized Bud/thread/workspace; existing handoff
+return stamps the owner as returned_by_user_id. No new table or client controller.

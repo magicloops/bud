@@ -311,6 +311,19 @@ export async function registerBrowserRoutes(
       });
     }
     // Native owns grant lifecycle. The embedded page receives no OAuth token.
+    routes.post("/api/browser/sessions/:session_id/return-from-chat", {bodyLimit:1024}, async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      // Native owner intent only. Scoped viewer cookies cannot authorize this action.
+      if (request.headers.cookie?.split(";").some(v => v.trim().startsWith(`${mobileCookie}=`)))
+        return reply.code(403).send({error:"browser_scope_denied"});
+      const actor = await getOptionalBearerViewer(request);
+      if (!actor) return reply.code(401).send({error:"unauthorized"});
+      if (request.headers.origin !== undefined && !config.betterAuthTrustedOrigins.includes(request.headers.origin))
+        return reply.code(403).send({error:"origin_denied"});
+      const body = z.object({handoff_id:id, revision:z.number().int().nonnegative()}).strict().parse(request.body);
+      await control.returnFromChat(actor.userId, sessionId(request), body.handoff_id, body.revision);
+      return {ok:true};
+    });
     routes.post("/api/browser/sessions/:session_id/viewer-grants", {bodyLimit:1024}, async (request, reply) => {
       reply.header("Cache-Control","no-store");
       const actor = await getOptionalBearerViewer(request);

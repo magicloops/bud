@@ -28,7 +28,7 @@ Recheck these source files at the merged implementation revision:
 Browser routes accept either a live Better Auth cookie session or the scoped
 mobile visit below. Native bearer authentication discovers inventory and mints,
 refreshes or revokes visits, and subscribes to read-only thread state hints; it
-does not directly control the browser. Cookie mutations and WebSocket upgrades
+has one explicit owner-return action described below; it cannot send private input. Cookie mutations and WebSocket upgrades
 require an allowed first-party Origin. Native thread-feed bearer upgrades may
 omit Origin; a supplied Origin must still be trusted. All reads and
 streams resolve owner/Bud/thread access before exposing data.
@@ -247,12 +247,21 @@ is uncertain: clear the queue, reconcile, and do not replay it.
 
 Width is an integer 240–2560, height 160–2560, in CSS pixels. Response:
 `{"viewport_applied":true,"viewport_id":"..."}`. The shared coalescer waits
-150 ms, keeps one request in flight and only the latest pending size. Private
-input stays fenced until matching pixels are drawn. Passive fitting is allowed
-only for the authorized first sizing viewer and capable agent-controlled runtime;
-rejection must not interrupt the agent. Mobile defaults to Fit on, using the
-visible viewer surface without taking private control. Competing viewers retain
-local scaling when another viewer owns sizing.
+150 ms before one explicit mutation; it never follows layout changes automatically.
+Public and private Fit wait for a drawn matching target/document/viewport frame.
+Any authorized live viewer may explicitly Fit an agent-controlled runtime, with
+`browser_busy` during an active cell; private Fit still requires the controller.
+Opening, reconnecting, keyboard and rotation only scale locally. Mobile covers
+accepted transitions without stopping decoding/drawing/ACKs; request and frame
+waits are bounded, privacy wins, and uncertain private input remains fenced.
+
+Agent message sends may include `browser_viewport:{width,height}` measured in
+stable CSS pixels/native logical points before send. The service binds it to the
+invocation input, and the daemon applies it before browser work. Later cells in
+that invocation preserve an accepted explicit Fit. Missing hints preserve current
+size/defaults. No viewport data crosses the native lifecycle bridge. Coordinate
+M4 daemon restart, service/shared web upgrade and viewer reload, then native rebuild.
+
 
 ## Errors and recovery presentation
 
@@ -267,7 +276,7 @@ authentication, 403 disallowed Origin, 404 unavailable/foreign resource, general
 | `browser_controller_exists` | Explain another viewer has control; no silent stealing |
 | `browser_control_expired`, `browser_control_uncertain` | Stop input; shared proof-based recovery if eligible, otherwise explicit takeover |
 | `browser_input_uncertain`, `browser_viewport_unconfirmed` | Preserve the primary failure; pause/clear input, no mutation retry |
-| `browser_viewport_other_viewer` | Preserve local scaling; do not fight another viewer's dimensions |
+| `browser_viewport_other_viewer` | Live viewer eligibility was lost; preserve local scaling and refresh authority |
 | `browser_busy` | Show bounded temporary busy state; no blanket automatic mutation retries |
 | `browser_no_previous_page` | Nonfatal “No previous page” |
 | `browser_recovery_unavailable`, `browser_recovery_uncertain` | Show truthful unavailable/uncertain state; allow explicit new URL and never replay uncertain mutations |
@@ -286,8 +295,10 @@ Screenshot transport loss does not prove Chrome closed or private control ended.
 - WKWebView POSTs `{grant}` as JSON to that fixed bootstrap path. Atomic one-use
   redemption responds 303 to `/browser-mobile/:session_id?viewer_id=...&visit_id=...`.
   URLs contain public identities only. OAuth and grant secrets never enter JS.
-  Absent native Origin is allowed; supplied Origin must be trusted, checked before
-  redemption. Expired/unredeemed abandoned grants are cleaned on owner mint.
+  Native explicitly sets the configured service Origin (scheme/host/port, no
+  trailing slash) because initial WK POST otherwise sends the opaque `null` origin.
+  Absent Origin remains allowed; supplied Origin must be trusted, checked before
+  redemption. Null/foreign origins remain rejected. Expired/unredeemed abandoned grants are cleaned on owner mint.
 - Cookie `__Secure-bud-browser-visit` is Secure, HttpOnly, SameSite=Strict,
   host-only, with Path `/api/browser/sessions/:session_id`, Max-Age 28800.
   Server-side validity is 15 minutes, bounded by eight hours from minting.
@@ -344,8 +355,8 @@ navigation/popups. Do not copy proxy preview's permissive HTTP(S) navigation or
 its `WKWebView.goBack()` behavior. Any external-link feature needs an explicit
 user gesture and must not export private remote URLs or credentials implicitly.
 
-Native currently invokes suspend/resume; inline Return opens the visible viewer
-for explicit confirmation there. Resume acceptance follows the React lifecycle
+Native invokes suspend/resume for lifecycle; inline Return uses the bearer action
+below without opening the viewer. Resume acceptance follows the React lifecycle
 commit; native also fences it by current request/visit and foreground state.
 
 ## Phase 7f deployment dependency
@@ -387,10 +398,32 @@ up to three times after credential validation, never the one-use bootstrap POST.
 Grant mint is not retried after an uncertain response. Missing startup/resume ACK
 settles after 30 seconds with Retry/Close. The shell validates IDs before installing
 the bridge or publishing ready, and suppresses stale/unmounted lifecycle replies.
-The unused Return bridge command is removed; inline Return still opens the viewer
-for explicit confirmation.
+The unused Return bridge command is removed; inline Return uses the native bearer
+action below.
 
 Deploy M2 service and hosted shell together before rebuilding mobile. The 410
 visit-expiry distinction and authorization_lost bridge event require this pairing.
 No new migration or daemon protocol/build change. Physical lock/OTP, real OAuth
 and competing-controller acceptance remain M3 gates.
+
+
+## Native chat Return (2026-09-27)
+
+POST `/api/browser/sessions/:session_id/return-from-chat` with account bearer
+credentials and `{handoff_id,revision}` from current inventory. Strict 1 KiB body;
+200 `{ok:true}` means daemon-confirmed return and durable handoff resolution.
+No viewer ID, grant mint, browser sheet or JavaScript bridge is involved. Missing
+bearer is 401, scoped cookie is 403, foreign workspace is 404, stale revision or
+missing/completed handoff is 409. Supplied Origin must be trusted.
+
+This explicit owner action may end the owner's active control on another device;
+old media/input is fenced. The service selects the controlling workspace, creates
+only a server-side temporary authority with existing daemon transitions, and
+returns it. Viewer `/control` retains its live-controller requirement. Dismissal,
+backgrounding and opening still never implicitly return. Failed/ambiguous return
+refreshes state and presents an error; no automatic mutation retry. Native blocks
+duplicate taps and ignores late results after selection/account changes.
+
+Deploy service first, then rebuild mobile. Existing daemon commands suffice; no
+migration or native bridge extension. Runtime-replaced/offline cases remain
+explicit failures for this action and use existing recovery, not fabricated return.

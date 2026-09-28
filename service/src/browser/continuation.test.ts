@@ -11,6 +11,8 @@ import { BrowserToolWait } from "../agent/browser-tool-executor.js";
 import { BrowserResourceRepository } from "./resource-repository.js";
 import { AgentConversationLoader } from "../agent/conversation-loader.js";
 import type { CanonicalMessage } from "../llm/types.js";
+import { BrowserControl } from "./control.js";
+import type { BrowserCarrier } from "./transport.js";
 import { BrowserControlRepository } from "./control-repository.js";
 
 test(
@@ -252,6 +254,22 @@ test(
         assert.equal((await repo.findForThread("alice",thread,lease.id))?.status,"waiting_for_user");
         const candidate=await controls.prepareEnsure("alice",sessionId,"new-boot",false);
         await controls.acknowledgeRecovery(candidate.resource,candidate.session);
+      } else if (provider === "repl") {
+        // Native chat can return after the viewer/controller has disappeared.
+        // Return from the waiting thread must use the actual controlling workspace.
+        const controlling = (await pool.query("select id from browser_session where id<>$1 and boot_id='boot' and closed_at is null limit 1",[sessionId])).rows[0].id;
+        await pool.query("update browser_resource set control_session_id=$1 where id=$2",[controlling,resource.id]);
+        const dispatches: string[] = [];
+        const control = new BrowserControl(controls,
+          () => ({bootId:"boot",handoff:true,current:()=>true}) as BrowserCarrier,
+          async (_carrier, request) => {
+            assert.equal(request.session_id, controlling);
+            dispatches.push(String((request.command.control as {operation:string}).operation));
+            return {ok:true,outcome:"completed",data:{control_acknowledged:true}};
+          });
+        const pending = await controls.pending("alice", sessionId);
+        await control.returnFromChat("alice", sessionId, pending.id, (await controls.get("alice",sessionId)).revision);
+        assert.deepEqual(dispatches,["pause","acquire","prepare_return","finish_return"]);
       } else {
       let returning = await controls.prepare(
         "alice",

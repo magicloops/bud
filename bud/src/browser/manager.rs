@@ -126,10 +126,18 @@ pub struct ReplImageUpload {
     pub ticket: String,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserViewport {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Authority is supplied by the service, never by model arguments.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    pub browser_viewport: Option<BrowserViewport>,
     pub browser_color: Option<String>,
     pub repl_images: Option<Vec<ReplImageUpload>>,
     pub request_id: String,
@@ -405,6 +413,9 @@ impl BrowserManager {
             || request.control_epoch == 0
             || request.sequence == 0
             || request.invocation_fence == 0
+            || request.browser_viewport.is_some_and(|v| {
+                !(240..=2560).contains(&v.width) || !(160..=2560).contains(&v.height)
+            })
             || !valid_action(&request.command)
             || [
                 &request.browser_id,
@@ -688,6 +699,15 @@ impl BrowserManager {
         {
             return Reply::error(&request, "browser_repl_stop_unconfirmed", true);
         }
+        // Fit cannot change layout between operations of an executing cell.
+        let _fit_cell = if passive_fit {
+            match entry.repl.clone().try_lock_owned() {
+                Ok(guard) => Some(guard),
+                Err(_) => return Reply::error(&request, "browser_busy", false),
+            }
+        } else {
+            None
+        };
         let cell = if matches!(request.command, Action::Exec { .. }) {
             match entry.repl.clone().try_lock_owned() {
                 Ok(guard) => Some(guard),
@@ -721,6 +741,9 @@ impl BrowserManager {
             Ok(guard) => guard,
             Err(_) => return Reply::error(&request, "browser_busy", false),
         };
+        if cancellation.borrow().as_deref() == Some(&request.request_id) {
+            return Reply::error(&request, "browser_canceled", false);
+        }
         if connection.borrow().as_deref() != Some(&request.device_session_id) {
             return Reply::error(&request, "browser_stale_connection", false);
         }
@@ -1267,6 +1290,15 @@ impl BrowserManager {
                         .await?,
                 );
             }
+            // An agent-created replacement must inherit its admitted preference
+            // before creating or observing a page. Viewer ensure has no hint.
+            if matches!(action, Action::Open { .. }) && request.browser_viewport.is_some() {
+                entry
+                    .browser
+                    .as_mut()
+                    .unwrap()
+                    .request_viewport(&request.invocation_id, request.browser_viewport);
+            }
             entry.browser.as_mut().unwrap().recover_channel().await?;
             let restart_watch = self
                 .checkpoint_task
@@ -1774,6 +1806,7 @@ mod tests {
     fn request(sequence: u64, command: Action) -> Request {
         Request {
             browser_color: None,
+            browser_viewport: None,
             repl_images: None,
             request_id: format!("request-{sequence}"),
             device_session_id: "device".into(),
