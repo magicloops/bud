@@ -14,7 +14,7 @@ it does not commit Bud to a production media transport.
 | [control-lifecycle-review.md](control-lifecycle-review.md) | Historical close-versus-pause audit; recommendations superseded by the agent-default control plan |
 | [README.md](README.md) | Parent plan: objectives, fixed boundaries, phase order, impacted contracts, progress and coordinated upgrade requirements |
 | [phase-1-capture-and-baseline.md](phase-1-capture-and-baseline.md) | Fixtures, reproducible baseline, dedicated CDP source, local ACKs and target/document/viewport provenance gate |
-| [phase-2-bounded-wss.md](phase-2-bounded-wss.md) | Private admission, binary framing, bounded pipeline, rendering/input association, authority fences and focused tests |
+| [phase-2-bounded-wss.md](phase-2-bounded-wss.md) | Implemented private admission, binary framing and bounded pipeline; current agent-default lifecycle and remaining acceptance register |
 | [phase-3-measurement-and-decision.md](phase-3-measurement-and-decision.md) | Network/device matrix, timing methodology, acceptance bars, resource/ownership validation and results template |
 | [phase-1-findings.md](phase-1-findings.md) | Local capture/no-go evidence, limitations and the next rendering-lifecycle scope |
 | [phase-1-measurements.json](phase-1-measurements.json) | Synthetic-only summaries from four local Chrome matrix runs; excludes per-frame samples and images |
@@ -40,9 +40,12 @@ it does not commit Bud to a production media transport.
 
 ## Status and deferred work
 
-No new runtime dependencies or code in this directory. Unchecked phase items
-are the work register. Production selection, encoded video/RTC, a faster input
-lane and Linux support remain separate decisions. The five-second uncertain-input
-failure stays unresolved until evidence establishes its cause or disposition.
+No new runtime dependencies or code in this directory. Phase 2 implementation and
+qualitative web/mobile retests are recorded; unchecked live acceptance and formal
+Phase 3 measurements remain open. The companion agent-default plan owns pre-merge
+lifecycle checks and coordinated migration/build cutover. Production selection,
+encoded video/RTC, a faster input lane and Linux support remain separate decisions.
+Successful enabled-stream retests do not prove the historical five-second input
+stall eliminated in all conditions; retain its trace/stop criterion for measurements.
 
 Parent documentation index: [bud.spec.md](../../bud.spec.md).

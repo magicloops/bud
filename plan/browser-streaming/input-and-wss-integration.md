@@ -2,6 +2,27 @@
 
 Status: guarded input/source, binary WSS relay and shared canvas candidate implemented. Full-stack acceptance and Phase 3 measurement remain open. Continues the pixel-provenance experiment.
 
+## Current landing status (2026-09-28)
+
+The candidate is committed in [Bud PR #134](https://github.com/magicloops/bud/pull/134)
+with [mobile PR #50](https://github.com/magicloops/bud-mobile/pull/50). The implementation
+and validation sections below preserve the original streaming integration evidence.
+Their no-migration/no-native-change statements describe that initial slice only.
+The combined PRs now include native keyboard support and the
+[agent-default control plan](../browser-agent-default/README.md), including migrations
+0044–0047 and coordinated builds. That plan supersedes same-viewer recovery and
+persistent pause: close/background/failure ends the override; reopening is passive.
+
+User retests confirmed improved mobile scrolling without the reconnect loop,
+working taps and text entry, and deletion of the final character. Geometry/reset
+and rich-editor fixes are summarized in the [parent progress record](README.md#progress).
+The new control flow also received positive user feedback. These are qualitative
+results, not completion of the full local/ngrok failure or measurement matrices.
+Follow [Phase 5 merge readiness](../browser-agent-default/phase-5-validation-and-cutover.md)
+for current test totals, physical checks and cutover. Phase 3 measurements remain
+follow-up work while streaming stays default-off; managed nonactivating launch
+supervision is still probe-only.
+
 ## Ownership
 
 The existing owner-authorized workspace route resolves web/mobile identity;

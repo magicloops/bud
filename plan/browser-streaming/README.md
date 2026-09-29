@@ -1,6 +1,6 @@
 # Plan: Proposal A — CDP screencast over dedicated WSS
 
-Status: **Phase 2 guarded input/WSS candidate implemented; full-stack and measurement gates remain open.** September 28, 2026.
+Status: **Phase 2 candidate implemented and in PR; qualitative web/mobile retests passed. Remaining lifecycle acceptance and Phase 3 measurements are open.** Updated September 28, 2026.
 
 See [measured findings](phase-1-findings.md) and the
 [reproducible probe](../../spikes/browser-streaming/README.md). Phase 2/3 are
@@ -53,8 +53,9 @@ capture/input contention. Keep the relay in the service initially.
 The [scroll investigation](../../debug/mobile-browser-scroll-distance.md) records
 two distinct problems: expensive screenshot captures delay input, and some input
 operations themselves stall for roughly five seconds. Streaming may address the
-first; the second remains unresolved. Existing momentum behavior stays fixed
-during this comparison so it cannot disguise the source of improvement.
+first; the historical command stall is not proven eliminated across all conditions.
+Later enabled-stream mobile retests confirmed working scrolling. Keep momentum
+settings fixed during the formal comparison so they cannot disguise transport gains.
 
 ## Scope and boundaries
 
@@ -63,8 +64,10 @@ during this comparison so it cannot disguise the source of improvement.
   tests, without building private-stream fan-out.
 - A dedicated local CDP event connection; compressed image bytes over the
   existing WSS relay topology; the shared web/WK canvas renderer.
-- Existing HTTP input, daemon command dispatch, lease renewal, takeover, Return
-  and agent continuation. Screencast frames must supply valid input provenance;
+- Existing HTTP input and daemon command dispatch, with lease renewal, takeover,
+  Return and continuation governed by the implemented
+  [agent-default control contract](../browser-agent-default/README.md).
+  Screencast frames must supply valid input provenance;
   retaining HTTP does not mean retaining screenshot capture to mint each token.
 - Passive, operation-driven screenshots and the browser REPL remain unchanged.
   Continuous capture starts only for an admitted, visible private viewer.
@@ -115,10 +118,10 @@ separate schema review. Temporary metrics are local, content-free artifacts.
 |---|---|
 | Bud↔service command carrier | Media-mode admission/attachment metadata only if needed; no images on this carrier |
 | Dedicated media WSS | Versioned binary frame format, bounded feedback and generation reset semantics |
-| Input / private authority | Same admission and uncertain-action behavior; new frame source must uphold current guards |
-| Agent tools / chat SSE / database schema | No planned changes |
+| Input / private authority | Frame/focus guards and no uncertain replay remain; the companion agent-default plan replaces sticky pause with expiring human override |
+| Agent tools / chat SSE / database schema | No streaming-only changes; the companion control plan changes help semantics and ships migrations 0044–0047 |
 | Web and hosted mobile viewer | Binary decoding, bounded presentation and visibility lifecycle |
-| Native mobile | Physical-device validation; code changes only for a demonstrated bridge/lifecycle gap |
+| Native mobile | Keyboard bridge and lifecycle integration in mobile PR #50; physical failure-matrix validation remains |
 
 ## Implementation map and documentation
 
@@ -146,38 +149,51 @@ Read these specs before implementation; update each when its contract changes:
 
 ## Test environment and eventual rollout
 
-Implement on a development branch with matching daemon/service/web builds and
-the existing mobile app first. Record a new native build only if required. Run
+Use matching daemon/service/web builds and the rebuilt mobile candidate. Record
+the actual installed native build for acceptance. Run
 package-local tests from their package directories. Use a controlled test service
 for hosted/ngrok measurements; publishing or deploying is a separate action.
 
-No migration, dependency installation or deployment is part of this planning
-change. If A is selected, write a separate landing checklist with exact supported
-versions, capabilities, limits, deployment order and rollback. Service merges
-auto-deploy while daemon/mobile updates do not: stage the matching daemon first
-with candidate admission disabled, then coordinate service/web activation and
-any native update. Reject unsupported pairings explicitly; retain only bridges
-needed for that actual upgrade. Reverting the experiment restores the existing
-passive viewer and honestly retains its unresolved private-control limitations.
+The combined change is [Bud PR #134](https://github.com/magicloops/bud/pull/134)
+with [mobile PR #50](https://github.com/magicloops/bud-mobile/pull/50).
+Streaming remains default-off behind `BUD_BROWSER_STREAMING_EXPERIMENT=1`;
+agent-default ownership is not gated by that flag. The companion control plan
+requires migrations 0044–0047 and matching service/web, daemon and mobile builds.
+Follow its [cutover checklist](../browser-agent-default/phase-5-validation-and-cutover.md)
+before merging: the service auto-deploys from main, while daemon/mobile upgrades
+are separate. Disabling streaming does not roll back the new authority/schema model.
+No deployment has been performed for these PRs.
+
+Formal Phase 3 latency/network/resource measurements gate production selection
+and default enablement, not landing a default-off experiment. Ownership, input
+fencing and the ungated lifecycle acceptance still require validation before merge.
+Nonactivating managed macOS launch supervision remains probe-only.
 
 ## Progress
 
 - [x] Select and scope the Proposal A experiment.
 - [x] Implement and repeat the isolated source probe; document failed hidden/minimized capture and hidden wheel timeouts.
-- [ ] Phase 1: baseline, capture and provenance gates.
-- [ ] Phase 2: bounded private WSS integration and guard tests.
-- [ ] Phase 3: physical-device evidence and go/no-go decision.
+- [x] Implement guarded source/input evidence, binary WSS relay and shared canvas;
+  record focused component, disposable Chrome and TLS relay validation.
+- [x] Record user-confirmed web typing and mobile scrolling, tapping and final-character
+  deletion retests. These are qualitative results, not measured latency acceptance.
+- [x] Replace persistent pause/automatic reacquisition with agent-default ownership
+  and a short-lived explicit human override; implementation and automated tests complete.
+- [ ] Finish the focused pre-merge lifecycle matrix and coordinated cutover in
+  [agent-default Phase 5](../browser-agent-default/phase-5-validation-and-cutover.md).
+- [ ] Complete formal baseline/candidate measurements and Phase 3 go/no-go decision.
 
-The remaining boxes are deliberately open. The [integration candidate](input-and-wss-integration.md) passes focused component and TLS relay tests; complete headed/WSS/hosted-canvas acceptance and physical measurements are still required.
+The [reconnect investigation](../../debug/browser-streaming-reconnect-storm.md)
+identified overlapping resets and a fractional-scroll layout/visual-viewport
+mismatch. Reset coalescing and normalized visual geometry fixed the reproduced
+paths; the user confirmed mobile scrolling without the reconnect loop. Separate
+subpixel scroll-offset handling fixed rejected taps, and guarded rich-editor edits
+fixed final-character deletion. See [mobile tap evidence](../../debug/browser-streaming-mobile-taps.md)
+and [backspace evidence](../../debug/browser-keyboard-backspace.md).
 
-Manual web feedback now confirms improved scrolling and working search-field
-text entry after the guarded shadow-focus fix. See the integration document for
-that evidence and the next physical iPhone/local/ngrok validation scope; the
-measurement and lifecycle gates above remain open.
-
-The subsequent enabled-stream test exposed a blocking
-[zero-frame reconnect storm and failed Return to agent](../../debug/browser-streaming-reconnect-storm.md).
-The source retirement cause is unconfirmed; outer recovery currently renews the
-attempt budget, and failed return leaves Bud-wide private intent blocking new
-threads. Resolve source diagnostics/reproduction, bounded recovery, and explicit
-return before resuming performance acceptance measurements.
+The former outer automatic-reacquisition loop and sticky Return gate are superseded
+by the agent-default lifecycle. User feedback says the new flow works well; it does
+not establish the complete background, process-death, network-loss or real-account
+failure matrix. Those checks remain open, along with hidden-window acceptance and
+the formal performance/resource study. Earlier debug entries describe investigation
+history; this progress section and the companion control plan state current scope.

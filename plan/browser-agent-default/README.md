@@ -1,6 +1,6 @@
 # Plan: Agent-default browser control
 
-Status: implemented locally; automated validation passed, physical acceptance and deployment pending. Updated 2026-09-28.
+Status: implementation committed and PRs open; automated validation passed and user reports the flow works well. Remaining physical failure-matrix checks and coordinated deployment pending. Updated 2026-09-28.
 
 ## Product contract
 
@@ -130,7 +130,10 @@ pre-launch clients: matching controlled upgrades are required.
 
 ## Implementation record
 
-Service/DB, daemon, hosted web and companion mobile changes are in the working trees.
+Service/DB, daemon and hosted web changes are in [Bud PR #134](https://github.com/magicloops/bud/pull/134)
+(`52f73dc`); companion mobile changes are in [mobile PR #50](https://github.com/magicloops/bud-mobile/pull/50)
+(`f78fec1`). These commits identify the implementation; acceptance runs must also
+record the actual installed build and environment.
 Recovery tickets, automatic reacquisition and prepare/finish-return are removed.
 Help requests do not acquire authority; chat redirection cancels the obsolete wait.
 
@@ -140,4 +143,7 @@ They are not authority sources. Public authority derives only from the live over
 background reconciliation clears these fences without a user Return action.
 
 See Phase 5 for exact migration/build evidence and the remaining physical checks.
-No commits, PR updates or deployment have been performed for this task.
+Commits and PR creation are complete. Merge and deployment remain pending. Streaming
+is a default-off experiment in the same Bud PR; this authority change is ungated.
+Formal streaming performance measurements may follow merge, but the focused
+lifecycle checks and coordinated migration/build cutover must not be deferred.

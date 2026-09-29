@@ -1,6 +1,13 @@
 # Phase 3: device measurements and go/no-go
 
-Status: **Not started; no measured results.** Parent: [Proposal A plan](README.md).
+Status: **Formal end-to-end comparison not started; qualitative web/mobile retests and local probe results exist.** Parent: [Proposal A plan](README.md).
+
+This phase gates production transport selection/default enablement. It may follow
+merge of the default-off experiment; it does not defer ownership, input fencing,
+or the ungated [agent-default lifecycle acceptance](../browser-agent-default/phase-5-validation-and-cutover.md).
+No input-to-visible p95, sustained phone frame-rate or resource-soak claim is made.
+Use the committed candidate and matching mobile build recorded in that cutover
+checklist; record actual tested binaries and network topology for each run.
 
 ## Comparison procedure
 
@@ -101,10 +108,13 @@ unresolved. Do not declare it fixed by a media transport change.
 - [ ] Navigation, popup selection, target closure, keyboard/composition, Fit and
   portrait/landscape transitions; correct frame/input barriers throughout.
 - [ ] Takeover with a public viewer attached, two accounts and two devices;
-  Return from mobile chat resumes the waiting agent exactly as today.
-- [ ] Pause mobile app, resume, Wi-Fi/cellular handover, lose media/control
+  explicit Return, Close and expiry end the human override. An associated waiting
+  agent continues only after cleanup, with an honest end reason rather than an
+  assertion that the human task succeeded. A help prompt alone grants no control.
+- [ ] Background mobile app, resume, Wi-Fi/cellular handover, lose media/control
   separately, expire lease/visit/session, sign out, restart service/daemon/Chrome.
-  Reconnect neither replays gestures nor silently changes ownership.
+  Reconnect/foreground never reacquires human control or replays gestures. Missing
+  release falls back to the six-second lease; measure execution readiness separately.
 - [ ] Thirty-minute private interaction soak including idle intervals, terminal
   traffic and a bounded file transfer. Record resource high-water marks, stream
   resets, event-loop delay, terminal latency and phone thermal behavior against

@@ -1,6 +1,6 @@
 # Phase 2: bounded private screencast over WSS
 
-Status: **Not started; requires Phase 1 capture and identity gates.**
+Status: **Implemented candidate; focused tests and qualitative web/mobile retests passed. Full lifecycle and performance acceptance remain open.** Updated 2026-09-28.
 Parent: [Proposal A plan](README.md).
 
 ## Objective and topology
@@ -22,29 +22,37 @@ use the existing permitted origin/routing model. They still share host bandwidth
 and service resources with other traffic; dedicated sockets do not eliminate TCP
 head-of-line delays or infrastructure contention.
 
+Implementation evidence is in [input/WSS integration](input-and-wss-integration.md).
+Checked implementation items below do not imply completion of the full live-device
+matrix. The [agent-default plan](../browser-agent-default/README.md) supersedes
+original persistent-pause/recovery requirements. PRs: [Bud #134](https://github.com/magicloops/bud/pull/134)
+and [mobile #50](https://github.com/magicloops/bud-mobile/pull/50).
+
 ## Admission and lifecycle
 
-- [ ] Reuse the existing web/scoped-mobile authentication, origin checks,
+- [x] Reuse the existing web/scoped-mobile authentication, origin checks,
   ownership resolution, short-lived single-use daemon ticket and controller
   authority. Validate before starting a source or delivering any frame.
-- [ ] Bind the experiment stream to workspace, selected target, controller,
+- [x] Bind the experiment stream to workspace, selected target, controller,
   private epoch, runtime/control-connection generation and a fresh media
   generation. A successful WebSocket handshake is not control admission.
-- [ ] Define one explicit experiment media protocol version/mode in the existing
+- [x] Define one explicit experiment media protocol version/mode in the existing
   attachment exchange; reject mismatches. Scope any selector to developer tests.
   Do not build a permanent old/new matrix or silently fall back on capture failure.
-- [ ] Start only after private control is admitted and the viewer is visible.
+- [x] Start only after private control is admitted and the viewer is visible.
   Stop on viewer close/background, target closure, authority fence, lease expiry,
-  main control loss or disconnect. Visibility resume requires live authority and
-  a fresh generation; it does not reacquire or return control automatically.
-- [ ] Keep lease renewal independent of capture and input locks. Preserve current
-  safe same-viewer recovery rules, unknown-action pause and explicit chat Return.
-  Takeover fences public viewers before private work; Return destroys the private
-  source/queues before any new passive observation.
+  main control loss or disconnect. Close/background/disconnect end the human
+  override; reopen/resume is view-only and requires explicit Take control for a new
+  override. Agent execution waits for acknowledged cleanup when necessary.
+- [x] Keep lease renewal independent of capture and input locks: six-second maximum
+  lease, renewal every two seconds while the controller is visible and healthy.
+  Unknown input is never replayed; end the override and fence execution until
+  cleanup/reconciliation proves old input cannot run. Takeover fences public
+  viewers; ending control destroys private source/queues before passive observation.
 
-## Draft media contract
+## Media contract
 
-Finalize the precise schema in `docs/proto.md` during implementation. Bud-owned
+The implemented wire contract is documented in [docs/proto.md](../../docs/proto.md). Bud-owned
 fields use snake_case; external CDP fields stay within the local adapter.
 
 Use one binary WebSocket message per image: a fixed version/header-length prefix,
@@ -98,29 +106,38 @@ of compressed JPEG payloads during the experiment.
 
 Written TCP bytes cannot be replaced by a newer frame. If old bytes prevent
 progress, terminate the obsolete transport and clear presentation/input state;
-do not repeatedly reconnect to hide overload. One bounded recovery attempt after
-backoff is enough for the spike; repeated stalls end that trial with a reason.
+do not repeatedly reconnect to hide overload. Under the agent-default lifecycle,
+a failed private connection ends its human override and returns the viewer to passive state with a reason; reconnect must
+not automatically reacquire control.
 Generation reset must prevent late callbacks from drawing old images. Source
 capture stops when its consumer is gone or persistently stalled.
 
 ## Input and transition barriers
 
-- [ ] Keep HTTP/SQL admission and action ordering unchanged. Connect accepted
+- [x] Retain HTTP/SQL admission and action ordering under the agent-default
+  authority contract. Connect accepted
   screencast provenance to the existing input validator, including stronger
   click/text freshness and stable same-document wheel context.
-- [ ] On target/navigation/viewport changes, invalidate unsent input and old
+- [x] On target/navigation/viewport changes, invalidate unsent input and old
   frames, suspend interaction, then reveal matching new pixels/metadata together.
   Apply the Phase 1 proof; never stamp a late image with current identity.
-- [ ] Preserve M4 requesting-device geometry and explicit Fit for subsequent
+- [x] Preserve M4 requesting-device geometry and explicit Fit for subsequent
   devices. Frame decode or viewer resize must not continuously resize Chrome.
-- [ ] Acknowledge Chrome completion separately from media credit/presentation.
+- [x] Acknowledge Chrome completion separately from media credit/presentation.
   Do not replay an uncertain action or relax the five-second timeout to pass.
   Capture may continue visually while an input is pending, but remains fenced by
   authority and cannot block the command/renewal paths.
-- [ ] A second viewer gets only the output current privacy rules allow. It must
+- [x] A second viewer gets only the output current privacy rules allow. It must
   not attach to the private group by selecting the experiment mode or target ID.
 
 ## Focused validation and exit
+
+Focused source, input, relay, canvas and lifecycle tests have passed; see the
+[integration evidence](input-and-wss-integration.md) and latest
+[cross-tier test totals](../browser-agent-default/phase-5-validation-and-cutover.md).
+The checks below remain the full acceptance register, including adversarial/live
+combinations not established by those focused tests. Do not read unchecked boxes
+as missing implementation or mark them complete from component coverage alone.
 
 - [ ] Source event/reply interleaving and ACK liveness under blocked WSS writes.
 - [ ] Binary bounds, malformed lengths, decoded dimensions and format validation.
@@ -135,5 +152,6 @@ capture stops when its consumer is gone or persistently stalled.
   regressions; continuous capture does not run for passive/hidden viewers.
 
 Exit with a runnable matched-build candidate, protocol/spec updates and passing
-focused tests. Native Swift changes are not assumed: first exercise the existing
-WK host. Phone performance and reliability acceptance belong to Phase 3.
+focused tests. Native keyboard/lifecycle integration is included in mobile PR #50. Focused
+lifecycle acceptance is a pre-merge requirement in agent-default Phase 5; formal
+phone performance and resource acceptance belong to Phase 3.

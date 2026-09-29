@@ -1,6 +1,28 @@
 # Phase 5: Validation, removal and coordinated cutover
 
-Status: automated validation complete; physical acceptance and deployment pending. Requires Phases 1–4. Parent: [plan](README.md).
+Status: implementation and automated validation complete; PRs open. User-confirmed normal behavior, remaining physical failure-matrix checks and deployment pending. Requires Phases 1–4. Parent: [plan](README.md).
+
+## Merge readiness
+
+- [x] Commit matching implementation: [Bud #134](https://github.com/magicloops/bud/pull/134)
+  at `52f73dc`, [mobile #50](https://github.com/magicloops/bud-mobile/pull/50) at `f78fec1`.
+- [x] Record automated validation below and qualitative user feedback that the new
+  control flow works well; earlier retests confirmed scrolling, taps, typing and
+  final-character deletion. This is not a full physical failure-matrix pass.
+- [ ] Record focused web/physical-iPhone checks: Close → follow-up → reopen passive;
+  background/lock; network loss and missing-release expiry; no automatic reacquire;
+  passive second-device isolation; help prompt answered through chat without takeover.
+- [ ] Complete review of both PRs. At the 2026-09-28 readiness review both were
+  mergeable, with no reported GitHub status checks or review approvals. Recheck at
+  merge time; local test evidence is not a CI approval.
+- [ ] Prepare the coordinated cutover below before the service's automatic deployment;
+  record installed daemon/mobile build IDs and perform the post-upgrade smoke test.
+
+Formal streaming network comparisons, latency/FPS measurements and the 30-minute
+soak remain in [streaming Phase 3](../browser-streaming/phase-3-measurement-and-decision.md).
+They gate production selection/default enablement, not merge of the default-off
+experiment. Agent-default ownership is ungated and requires the lifecycle checks.
+The full acceptance register below remains open wherever live evidence is missing.
 
 ## Acceptance matrix
 
@@ -46,21 +68,26 @@ connections. Record actual builds, timing and results; unchecked items are not p
 The service auto-deploys on main merge; daemon and mobile ship separately. These
 phases require a coordinated change, not independent merges into a running old stack.
 
-1. Record migration filename, matching service/web commit, daemon build and mobile
-   build. Specify the minimal capability/version rejection for unsupported pairings;
+1. Use checked-in migrations `0044_conscious_skaar.sql`, `0045_lucky_makkari.sql`,
+   `0046_browser_override_cutover.sql` and `0047_yielding_sabretooth.sql`. Record the
+   final service/web commit, installed daemon build and mobile build (candidate
+   source revisions are listed above). Specify the minimal capability/version
+   rejection for unsupported pairings;
    do not silently execute old sticky-pause semantics.
 2. Quiesce browser operations and old controllers/workers for the controlled cutover.
    Resolve old pending task waits honestly; do not mark unanswered tasks successful.
-3. Apply the reviewed checked-in migration through the service deployment workflow.
+3. Apply migrations 0044–0047 with `pnpm db:migrate` through the service deployment workflow.
    Install matching daemon and service/hosted web before resuming browser operations.
    Confirm runtime reconciliation retires legacy holds without resetting profiles.
 4. Install rebuilt mobile before mobile acceptance testing; old clients must fail
    clearly rather than acquire incompatible control. Verify restart and recovery.
 5. Resume browser work and run the close/background/help-request smoke matrix.
 
-Local schema work includes db:push; deployment requires the generated migration,
-not db:push. Final implementation must document exact deployment ordering and any
-brief downtime. Execution of merges/deployments remains separately authorized.
+The local schema procedure is recorded below; deployment requires checked-in
+migrations, not db:push. Keep browser operations quiesced through migration and
+matching service/web/daemon activation, then install mobile and test fresh visits
+before resuming. Record the actual deployment/build timing. Execution of merges
+and deployments remains separately authorized.
 
 Rollback requires a reviewed matching stack/schema strategy or forward correction;
 do not start old binaries against a destructively migrated authority model. Preserve
