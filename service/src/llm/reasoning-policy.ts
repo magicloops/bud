@@ -205,7 +205,7 @@ export function resolveEffectiveModelSelection(
 
   // Service-default path: unless the caller pins a service-wide reasoning
   // level, leave it OMITTED so the default model's catalog defaultLevel
-  // applies (GPT-5.6 Luna => "high"). `defaultReasoning` still backstops
+  // applies (GPT-6 Luna => "high"). `defaultReasoning` still backstops
   // non-catalog service defaults inside resolveModelReasoning.
   const modelReasoning = resolveCandidateOrThrow(
     input.serviceDefaultModel,

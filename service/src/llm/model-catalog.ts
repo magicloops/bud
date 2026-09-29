@@ -72,10 +72,9 @@ export type ReasoningLevelOption = {
   label: string;
 };
 
-const OPENAI_ASTRA_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
-// GPT-5.6 (Sol/Terra/Luna) adds `max` — the first OpenAI tier with all six
-// levels (developers.openai.com model pages, GA 2026-07-09).
-const OPENAI_GPT_5_6_REASONING_LEVELS = [
+const OPENAI_REQUIRED_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+// Models that support disabling reasoning as well as the full effort range.
+const OPENAI_OPTIONAL_REASONING_LEVELS = [
   "none",
   "low",
   "medium",
@@ -214,8 +213,85 @@ export const MODEL_CATALOG = [
     },
     reasoning: {
       kind: "openai_reasoning_effort",
-      levels: OPENAI_ASTRA_REASONING_LEVELS,
+      levels: OPENAI_REQUIRED_REASONING_LEVELS,
       defaultLevel: "medium",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "gpt-6.1-sol",
+    provider: "openai",
+    providerModel: "gpt-6.1-sol",
+    displayName: "GPT-6.1 Sol",
+    family: "gpt",
+    tier: "frontier",
+    sortOrder: 101,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_REQUIRED_REASONING_LEVELS,
+      defaultLevel: "medium",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "gpt-6-sol",
+    provider: "openai",
+    providerModel: "gpt-6-sol",
+    displayName: "GPT-6 Sol",
+    family: "gpt",
+    tier: "balanced",
+    sortOrder: 102,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_OPTIONAL_REASONING_LEVELS,
+      defaultLevel: "medium",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "gpt-6-luna",
+    provider: "openai",
+    providerModel: "gpt-6-luna",
+    displayName: "GPT-6 Luna",
+    family: "gpt",
+    tier: "fast",
+    sortOrder: 103,
+    globalDefault: true,
+    defaultForProvider: true,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_OPTIONAL_REASONING_LEVELS,
+      defaultLevel: "high",
       requestField: "reasoning.effort",
     },
   },
@@ -243,7 +319,7 @@ export const MODEL_CATALOG = [
     },
     reasoning: {
       kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      levels: OPENAI_OPTIONAL_REASONING_LEVELS,
       defaultLevel: "low",
       requestField: "reasoning.effort",
     },
@@ -268,7 +344,7 @@ export const MODEL_CATALOG = [
     },
     reasoning: {
       kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      levels: OPENAI_OPTIONAL_REASONING_LEVELS,
       defaultLevel: "low",
       requestField: "reasoning.effort",
     },
@@ -281,8 +357,6 @@ export const MODEL_CATALOG = [
     family: "gpt",
     tier: "fast",
     sortOrder: 108,
-    globalDefault: true,
-    defaultForProvider: true,
     capabilities: {
       vision: true,
       tools: true,
@@ -295,7 +369,7 @@ export const MODEL_CATALOG = [
     },
     reasoning: {
       kind: "openai_reasoning_effort",
-      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      levels: OPENAI_OPTIONAL_REASONING_LEVELS,
       defaultLevel: "high",
       requestField: "reasoning.effort",
     },

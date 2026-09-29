@@ -132,6 +132,9 @@ function registerTestProviders(t: TestContext) {
   providerRegistry.register(
     createProvider("openai", [
       "gpt-6-astra",
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -173,7 +176,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     mock.restoreAll();
   });
   const previousDefaultModel = config.defaultModel;
-  config.defaultModel = "gpt-5.6-luna";
+  config.defaultModel = "gpt-6-luna";
   t.after(() => {
     config.defaultModel = previousDefaultModel;
   });
@@ -190,8 +193,8 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
 
   assert.equal(reply.statusCode, 200);
-  assert.equal(payload.service_default_model, "gpt-5.6-luna");
-  assert.equal(payload.default_model, "gpt-5.6-luna");
+  assert.equal(payload.service_default_model, "gpt-6-luna");
+  assert.equal(payload.default_model, "gpt-6-luna");
   assert.equal(payload.default_reasoning_effort, "high");
   assert.equal(payload.models.some((model) => "available" in model), false);
   assert.deepEqual(payload.models.map((model) => model.id), [
@@ -200,6 +203,9 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     "claude-haiku-4-5",
     "claude-opus-4-7",
     "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -217,7 +223,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   ]);
   assert.equal(opus47.reasoning.default_level, "xhigh");
 
-  const luna = payload.models.find((model) => model.id === "gpt-5.6-luna");
+  const luna = payload.models.find((model) => model.id === "gpt-6-luna");
   assert.ok(luna);
   assert.equal(luna.is_default, true);
   assert.equal(luna.capabilities.usable_context_window_tokens, 272_000);
