@@ -76,7 +76,8 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   `logs [-n] [-f]` tails `<base>/logs/daemon.log`
 - `parse_env_file` handles the installer's single-quoted `KEY='value'` format;
   `upsert_env_var`/`remove_env_var` edit `bud.env` surgically (single config
-  home)
+  home); upserts reject read errors and collapse duplicate assignments so an
+  older trailing value cannot override the new selection
 - `bud llm probe|enable|disable`: probes candidate URLs (configured →
   `127.0.0.1:8888/v1` → `127.0.0.1:8000/v1`) through the daemon's own ds4
   detection (`local_llm::probe_ds4_url` — one rule for installer, CLI, and
@@ -122,6 +123,20 @@ offering the same daemon restart `bud upgrade` uses (`--yes`, `--no-restart`).
 Startup upgrades already-enabled managed helpers separately. Prepare/remove share
 its stable base-directory installation lock and drop it before a restart. Status
 and doctor never install or enable helpers.
+
+On macOS, prepare offers a native-window (headed) choice for site sign-ins;
+`--headed` and `--headless` are mutually exclusive scriptable alternatives.
+The prompt defaults to the last `BUD_BROWSER_HEADED` assignment in the selected
+base's `bud.env`, then inherited environment, then headed on macOS (headless
+elsewhere). The prompt explains that a window makes account sign-in easier.
+`--yes` and non-TTY setup use the same default, preserving prior choices. Explicit
+`--headed` rejects unsupported non-macOS hosts before installation. After a
+successful probe, prepare persists `BUD_BROWSER_HEADED=1|0` using the shared env
+writer, then offers restart. The probe remains headless; this does not certify
+headed launch. Native windows start minimized and use the same persistent profile.
+Status reports the configured next-start mode (JSON `configured_headed`), not a
+claim about the live Chrome process. Foreground `bud run` still needs the env
+variable explicitly; managed start/restart loads `bud.env`.
 
 ### `app.rs`
 

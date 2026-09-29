@@ -241,14 +241,23 @@ pub fn parse_env_file(content: &str) -> Vec<(String, String)> {
 /// surgical).
 pub fn upsert_env_var(path: &std::path::Path, key: &str, value: &str) -> Result<()> {
     let quoted = format!("{key}={}", sh_single_quote(value));
-    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("cannot read daemon environment"),
+    };
     let mut lines: Vec<String> = Vec::new();
     let mut replaced = false;
     for line in content.lines() {
         let trimmed = line.trim_start().trim_start_matches("export ").trim_start();
-        if trimmed.starts_with(&format!("{key}=")) && !replaced {
-            lines.push(quoted.clone());
-            replaced = true;
+        if trimmed
+            .split_once('=')
+            .is_some_and(|(name, _)| name.trim() == key)
+        {
+            if !replaced {
+                lines.push(quoted.clone());
+                replaced = true;
+            }
         } else {
             lines.push(line.to_string());
         }

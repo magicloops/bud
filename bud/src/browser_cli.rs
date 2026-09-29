@@ -21,6 +21,7 @@ use crate::lifecycle::{self, LifecyclePaths};
 pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
     let installation = addon::installation_lock(&base)?;
+    let headed = select_headed(opts, configured_headed(&base)?, cfg!(target_os = "macos"))?;
     std::fs::create_dir_all(addon::addon_dir(&base))?;
     let target = crate::upgrade::runtime_target()?;
     let dev = opts.helper_dir.is_some() || opts.node.is_some();
@@ -164,7 +165,19 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
         dev,
     };
     addon::write_manifest(&base, &manifest)?;
+    lifecycle::upsert_env_var(
+        &base.join("bud.env"),
+        "BUD_BROWSER_HEADED",
+        if headed { "1" } else { "0" },
+    )?;
     println!("Wrote {}", addon::manifest_path(&base).display());
+    println!(
+        "Saved browser mode: {} (applies on daemon restart).",
+        if headed { "headed" } else { "headless" }
+    );
+    if headed {
+        println!("A Chrome window makes it easier to sign in to your accounts. Chrome starts minimized; use ‘Show browser window’ in the Bud web viewer. Site sign-ins stay in the same Bud profile.");
+    }
     if opts.json {
         println!("{}", serde_json::to_string_pretty(&manifest)?);
     }
@@ -179,6 +192,7 @@ pub async fn prepare(args: &BudArgs, opts: &BrowserPrepareArgs) -> Result<()> {
 
 pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
     let base = args.resolved_paths().base_dir;
+    let headed = configured_headed(&base)?.unwrap_or(false);
     let manifest = addon::read_manifest(&base)?;
     let override_runtime = addon::env_override().transpose()?;
     let probe = match (&override_runtime, &manifest) {
@@ -196,6 +210,7 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&json!({
                 "prepared": manifest.is_some(),
+                "configured_headed": headed,
                 "override": override_runtime.is_some(),
                 "manifest": manifest,
                 "stale": manifest.as_ref().map(|m| m.stale()).unwrap_or_default(),
@@ -207,6 +222,10 @@ pub async fn status(args: &BudArgs, opts: &BrowserStatusArgs) -> Result<()> {
         );
         return Ok(());
     }
+    println!(
+        "Configured browser mode: {} (loaded on daemon start; probe is headless).",
+        if headed { "headed" } else { "headless" }
+    );
     if let Some(runtime) = &override_runtime {
         println!(
             "Override: BUD_BROWSER_* environment ({})",
@@ -421,6 +440,47 @@ fn confirm(question: &str, assume_yes: bool, default: bool) -> Result<bool> {
     })
 }
 
+/// Match managed startup: the last persisted assignment overrides inherited env.
+fn configured_headed(base: &Path) -> Result<Option<bool>> {
+    let path = base.join("bud.env");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("cannot read browser mode from bud.env"),
+    };
+    Ok(lifecycle::parse_env_file(&content)
+        .into_iter()
+        .rev()
+        .find(|(key, _)| key == "BUD_BROWSER_HEADED")
+        .map(|(_, value)| value)
+        .or_else(|| std::env::var("BUD_BROWSER_HEADED").ok())
+        .map(|value| value == "1"))
+}
+
+fn select_headed(
+    opts: &BrowserPrepareArgs,
+    current: Option<bool>,
+    supported: bool,
+) -> Result<bool> {
+    if opts.headed && !supported {
+        bail!("--headed is supported only on macOS; use --headless on this host");
+    }
+    if opts.headed || opts.headless {
+        return Ok(opts.headed);
+    }
+    // Setup defaults to a native window on supported hosts; an explicit prior
+    // choice still wins. Status separately reflects the runtime's unset default.
+    let current = current.unwrap_or(supported);
+    if !supported || opts.yes {
+        return Ok(current);
+    }
+    confirm(
+        "Enable a Chrome window? This makes it easier to sign in to your accounts. It starts minimized and can be shown from Bud.",
+        false,
+        current,
+    )
+}
+
 /// The daemon reads the manifest at startup, so changes take effect on restart.
 fn offer_restart(args: &BudArgs, assume_yes: bool, no_restart: bool) -> Result<()> {
     let paths = LifecyclePaths::resolve(args)?;
@@ -445,4 +505,65 @@ fn offer_restart(args: &BudArgs, assume_yes: bool, no_restart: bool) -> Result<(
         println!("Restart later with: bud restart");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{BrowserCommand, BudCommand};
+    use clap::Parser;
+
+    #[test]
+    fn browser_mode_flags_and_unattended_defaults() {
+        for (flag, expected) in [("--headed", true), ("--headless", false)] {
+            let args =
+                BudArgs::try_parse_from(["bud", "browser", "prepare", flag, "--yes"]).unwrap();
+            let Some(BudCommand::Browser(BrowserCommand::Prepare(opts))) = args.command else {
+                panic!("expected browser prepare");
+            };
+            assert_eq!(
+                select_headed(&opts, Some(!expected), true).unwrap(),
+                expected
+            );
+            if expected {
+                assert!(select_headed(&opts, None, false).is_err());
+            }
+        }
+        assert!(
+            BudArgs::try_parse_from(["bud", "browser", "prepare", "--headed", "--headless"])
+                .is_err()
+        );
+        let opts = BrowserPrepareArgs {
+            yes: true,
+            ..Default::default()
+        };
+        assert!(!select_headed(&opts, Some(false), true).unwrap());
+        assert!(select_headed(&opts, Some(true), true).unwrap());
+        assert!(select_headed(&opts, None, true).unwrap());
+        assert!(!select_headed(&opts, None, false).unwrap());
+    }
+
+    #[test]
+    fn browser_mode_round_trips_without_losing_other_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bud.env");
+        let other = "# existing configuration\nBUD_SERVER_URL='wss://example.test/ws'\n";
+        std::fs::write(
+            &path,
+            format!("{other}BUD_BROWSER_HEADED='0'\nexport BUD_BROWSER_HEADED = '1'\n"),
+        )
+        .unwrap();
+        assert_eq!(configured_headed(dir.path()).unwrap(), Some(true));
+        for value in ["0", "1"] {
+            lifecycle::upsert_env_var(&path, "BUD_BROWSER_HEADED", value).unwrap();
+            assert_eq!(configured_headed(dir.path()).unwrap(), Some(value == "1"));
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(content.starts_with(other));
+            assert_eq!(content.matches("BUD_BROWSER_HEADED").count(), 1);
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(configured_headed(dir.path()).is_err());
+        assert!(lifecycle::upsert_env_var(&path, "BUD_BROWSER_HEADED", "1").is_err());
+    }
 }
