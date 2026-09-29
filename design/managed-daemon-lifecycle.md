@@ -228,3 +228,23 @@ itself carries no secrets (claim tokens are never persisted).
   daemon …`? Top-level `bud start/stop/status` reads best for normal users.
 - Log policy: single file with size-based rotation in the daemon, or defer to
   journald/launchd stdout capture per platform?
+
+## Direct macOS launch (2026-09-28)
+
+launchd now registers the Bud executable directly as `bud service-run <base>`.
+The internal pre-Tokio entrypoint reads `<base>/bud.env` using the installer-format
+parser and execs the same binary with explicit `--base-dir` and terminal support.
+File values override inherited environment; the explicit launch base wins over a
+conflicting file value. Missing env files are allowed; unreadable files fail.
+Values are data: shell expansion and commands are not supported. Foreground CLI,
+terminal-holder startup and Linux EnvironmentFile behavior remain unchanged.
+
+macOS start/restart rewrite and reload the generated plist. Future upgrades invoke
+the newly installed binary's service installer so old generator code cannot keep
+shell registrations. When upgrading through a pre-fix binary, run `bud restart`
+with the new binary once (or rerun `bud service install` / the installer).
+`AbandonProcessGroup`, keepalive, logging, identity and profiles are preserved.
+
+This removes the registered `/bin/sh` launcher. The actual System Settings name
+and cached old entry still require an installed-Mac check; app-bundle branding
+and SMAppService remain separate. See [debug/validation record](../debug/macos-background-shell-attribution.md).

@@ -9,6 +9,7 @@ Source code for the Bud device daemon. The daemon is split into focused modules 
 Thin CLI entrypoint:
 
 - prints build metadata for `--version` before entering normal CLI parsing
+- handles internal `service-run <base>` before Tokio: loads installer-format `bud.env` as data, then execs the same binary with an explicit base directory
 - parses `BudArgs` with `clap`
 - initializes tracing
 - runs the daemon inside a Tokio `LocalSet`
@@ -53,8 +54,9 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
 - `ServiceManager::detect()` → launchd (macOS) / systemd user (Linux with a
   reachable user manager) / none
 - generates the launchd plist (`~/Library/LaunchAgents/dev.bud.daemon.plist`;
-  sources `bud.env` via a `/bin/sh -c 'set -a; . bud.env; …'` wrapper since
-  launchd has no EnvironmentFile; `RunAtLoad`, `KeepAlive.SuccessfulExit=false`,
+  directly executes `bud service-run <base>` (no shell); the pre-runtime bootstrap
+  loads `bud.env` on each launch, preserving file-over-inherited-env precedence
+  and explicit base-dir selection; `RunAtLoad`, `KeepAlive.SuccessfulExit=false`,
   `AbandonProcessGroup=true`, stdout/err → `<base>/logs/daemon.log`) and the
   systemd user unit (`~/.config/systemd/user/bud.service`;
   `EnvironmentFile=-<base>/bud.env`, `Restart=on-failure`, **`KillMode=process`**,
@@ -63,6 +65,8 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
 - `service install` writes + loads the service (bootstrap/enable --now) and
   best-effort `loginctl enable-linger` on Linux; `service uninstall` unloads
   and removes it; identity is never touched
+- macOS start/restart regenerate and reload the installed plist, migrating old
+  shell registrations while retaining holder-safe supervision
 - verbs `start|stop|restart` dispatch to the platform manager when the service
   file exists, otherwise a pidfile fallback (`<base>/bud.pid`): detached
   `setsid` spawn with env parsed from `bud.env`, SIGTERM to the daemon pid
@@ -88,7 +92,8 @@ override), compares the baked release version (`BUD_BUILD_VERSION`;
 dev fallback: git describe / `v<crate>-dev`), downloads the target's archive
 (baked `BUD_BUILD_TARGET`, runtime os/arch fallback), verifies sha256,
 extracts the binary, and installs via the ETXTBSY-safe staged rename.
-Restarts the managed service (or pidfile daemon) so the new inode runs;
+Refreshes managed registration by invoking the newly installed binary with
+`--base-dir <base> service install` (or restarts the pidfile daemon) so the new inode runs;
 "different version" — including rollbacks — counts as an update, since
 the manifest is the authority on stable. `bud status` gains a
 best-effort version/update line (1.5s budget, silent on failure).

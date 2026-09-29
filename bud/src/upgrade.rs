@@ -271,8 +271,17 @@ pub async fn run_upgrade(paths: &LifecyclePaths, check_only: bool, force: bool) 
 
     // The running daemon still executes the OLD inode until restarted.
     if paths.service_installed(lifecycle::ServiceManager::detect()) {
-        println!("Restarting the Bud service ...");
-        lifecycle::restart(paths)?;
+        println!("Refreshing and restarting the Bud service ...");
+        // Run the installed version's generator, not the upgrader's old code.
+        let status = std::process::Command::new(&paths.binary)
+            .arg("--base-dir")
+            .arg(&paths.base_dir)
+            .args(["service", "install"])
+            .status()
+            .context("cannot refresh the upgraded Bud service")?;
+        if !status.success() {
+            bail!("Bud was upgraded, but service refresh failed; run `bud service install`");
+        }
     } else if lifecycle::daemon_running(paths) {
         println!("Restarting the Bud daemon ...");
         lifecycle::restart(paths)?;
