@@ -144,6 +144,14 @@ pub struct BrowserPrepareArgs {
     #[arg(long, default_value_t = false)]
     pub managed: bool,
 
+    /// Enable a native browser window for signing in (macOS; starts minimized).
+    #[arg(long, conflicts_with = "headless")]
+    pub headed: bool,
+
+    /// Run without a native browser window.
+    #[arg(long, conflicts_with = "headed")]
+    pub headless: bool,
+
     /// Development: use this checkout's `bud/browser-helper` directory
     /// (must contain node_modules) instead of the embedded helper.
     #[arg(long)]
@@ -153,7 +161,7 @@ pub struct BrowserPrepareArgs {
     #[arg(long)]
     pub node: Option<String>,
 
-    /// Accept the managed download and the daemon restart without prompting.
+    /// Accept download/restart prompts; preserve browser mode unless specified.
     #[arg(short = 'y', long, default_value_t = false)]
     pub yes: bool,
 
