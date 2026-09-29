@@ -8,7 +8,7 @@
 //!   `AbandonProcessGroup`) and the pidfile fallback (SIGTERM to the daemon
 //!   pid only, never a process group) both encode this.
 //! - `bud.env` is the single configuration home. Both service files and the
-//!   pidfile fallback source it; nothing else writes daemon env.
+//!   pidfile fallback load it; nothing else writes daemon env.
 //! - Identity is never touched by install/uninstall/start/stop.
 
 use std::io::{Read, Seek, SeekFrom};
@@ -131,14 +131,9 @@ fn home_dir() -> PathBuf {
 // Service file generation (pure — fixture-tested)
 // ---------------------------------------------------------------------------
 
-/// launchd has no EnvironmentFile: source `bud.env` in a shell wrapper so it
-/// stays the single configuration home.
+/// Register Bud itself so macOS does not attribute background activity to sh.
+/// The internal entrypoint loads bud.env before the daemon runtime starts.
 pub fn launchd_plist(paths: &LifecyclePaths) -> String {
-    let exec = format!(
-        "set -a; [ -f {env} ] && . {env}; set +a; exec {bin} --terminal-enabled",
-        env = shell_quote(&paths.env_file.to_string_lossy()),
-        bin = shell_quote(&paths.binary.to_string_lossy()),
-    );
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -148,9 +143,9 @@ pub fn launchd_plist(paths: &LifecyclePaths) -> String {
 	<string>{label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/sh</string>
-		<string>-c</string>
-		<string>{exec}</string>
+		<string>{binary}</string>
+		<string>service-run</string>
+		<string>{base}</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -171,7 +166,8 @@ pub fn launchd_plist(paths: &LifecyclePaths) -> String {
 </plist>
 "#,
         label = LAUNCHD_LABEL,
-        exec = xml_escape(&exec),
+        binary = xml_escape(&paths.binary.to_string_lossy()),
+        base = xml_escape(&paths.base_dir.to_string_lossy()),
         log = xml_escape(&paths.log_file.to_string_lossy()),
     )
 }
@@ -200,10 +196,6 @@ WantedBy=default.target
         bin = paths.binary.display(),
         log = paths.log_file.display(),
     )
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -309,6 +301,31 @@ fn load_env_file(paths: &LifecyclePaths) -> Vec<(String, String)> {
     std::fs::read_to_string(&paths.env_file)
         .map(|content| parse_env_file(&content))
         .unwrap_or_default()
+}
+
+/// Build the direct-launch bootstrap without mutating the process environment.
+/// Called before Tokio exists; exec retains launchd's PID and supervision.
+fn service_run_command(binary: &std::path::Path, base: &std::path::Path) -> Result<Command> {
+    let env_file = base.join("bud.env");
+    let content = match std::fs::read_to_string(&env_file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("cannot read managed daemon environment"),
+    };
+    let mut command = Command::new(binary);
+    command
+        .arg("--base-dir")
+        .arg(base)
+        .args(["--terminal-enabled", "run"])
+        .envs(parse_env_file(&content));
+    Ok(command)
+}
+
+pub fn service_run(base: &std::path::Path) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    let binary = std::env::current_exe().context("cannot resolve managed daemon executable")?;
+    let error = service_run_command(&binary, base)?.exec();
+    Err(error).context("cannot execute managed daemon")
 }
 
 // ---------------------------------------------------------------------------
@@ -417,12 +434,7 @@ pub fn start(paths: &LifecyclePaths) -> Result<()> {
     if paths.service_installed(manager) {
         match manager {
             ServiceManager::Launchd => {
-                let plist = paths.launchd_plist_path();
-                let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
-                run_checked(
-                    "launchctl",
-                    &["bootstrap", &gui_domain(), &plist.to_string_lossy()],
-                )?;
+                service_install(paths)?;
             }
             ServiceManager::SystemdUser => {
                 run_checked("systemctl", &["--user", "start", SYSTEMD_UNIT_NAME])?;
@@ -459,14 +471,8 @@ pub fn restart(paths: &LifecyclePaths) -> Result<()> {
     if paths.service_installed(manager) {
         match manager {
             ServiceManager::Launchd => {
-                run_checked(
-                    "launchctl",
-                    &[
-                        "kickstart",
-                        "-k",
-                        &format!("{}/{}", gui_domain(), LAUNCHD_LABEL),
-                    ],
-                )?;
+                // Re-register, rather than kickstart a stale shell-based job.
+                service_install(paths)?;
             }
             ServiceManager::SystemdUser => {
                 run_checked("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
@@ -927,23 +933,84 @@ mod tests {
     }
 
     #[test]
-    fn launchd_plist_sources_env_and_abandons_process_group() {
+    fn launchd_plist_launches_bud_directly_and_abandons_process_group() {
         let plist = launchd_plist(&test_paths());
         assert!(
             plist.contains("<key>AbandonProcessGroup</key>"),
             "holders must survive"
         );
         assert!(plist.contains("dev.bud.daemon"));
-        // env sourced through the shell wrapper (launchd has no EnvironmentFile)
-        assert!(
-            plist.contains(". &apos;/home/user/.bud/bud.env&apos;")
-                || plist.contains(". '/home/user/.bud/bud.env'")
-        );
-        assert!(plist.contains("exec '/home/user/.bud/bin/bud' --terminal-enabled"));
+        assert!(plist.contains("<string>/home/user/.bud/bin/bud</string>"));
+        assert!(plist.contains("<string>service-run</string>"));
+        assert!(plist.contains("<string>/home/user/.bud</string>"));
+        assert!(!plist.contains("/bin/sh"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("/home/user/.bud/logs/daemon.log"));
         // KeepAlive on failure only: `bud stop` must stick.
         assert!(plist.contains("<key>SuccessfulExit</key>"));
+    }
+
+    #[test]
+    fn direct_service_loads_installer_env_as_data_and_pins_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("Bud's & config");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::write(base.join("bud.env"),
+            "BUD_SERVER_URL='wss://example.test/ws'\nBUD_BASE_DIR='/wrong'\nNAME='it'\\''s bud'\nLITERAL='$(touch never-execute)'\n").unwrap();
+        let command = service_run_command(std::path::Path::new("/bud"), &base).unwrap();
+        let env: std::collections::HashMap<_, _> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.unwrap().to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(env["BUD_SERVER_URL"], "wss://example.test/ws");
+        assert_eq!(env["NAME"], "it's bud");
+        assert_eq!(env["LITERAL"], "$(touch never-execute)");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args[0], "--base-dir");
+        assert_eq!(args[1], base.as_os_str());
+        assert_eq!(args[2], "--terminal-enabled");
+        assert_eq!(args[3], "run");
+        std::fs::remove_file(base.join("bud.env")).unwrap();
+        assert_eq!(
+            service_run_command(std::path::Path::new("/bud"), &base)
+                .unwrap()
+                .get_envs()
+                .count(),
+            0
+        );
+        std::fs::create_dir(base.join("bud.env")).unwrap();
+        assert!(service_run_command(std::path::Path::new("/bud"), &base).is_err());
+    }
+
+    #[test]
+    fn launchd_arguments_escape_xml_without_shell_quoting() {
+        let mut paths = test_paths();
+        paths.base_dir = PathBuf::from("/tmp/Bud's & <base>");
+        paths.binary = paths.base_dir.join("bin/bud");
+        let plist = launchd_plist(&paths);
+        assert!(plist.contains("<string>/tmp/Bud's &amp; &lt;base&gt;/bin/bud</string>"));
+        assert!(plist.contains("<string>/tmp/Bud's &amp; &lt;base&gt;</string>"));
+        #[cfg(target_os = "macos")]
+        {
+            use std::io::Write;
+            let mut child = Command::new("/usr/bin/plutil")
+                .args(["-lint", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(plist.as_bytes())
+                .unwrap();
+            assert!(child.wait().unwrap().success());
+        }
     }
 
     #[test]

@@ -12,6 +12,18 @@ fn main() -> Result<()> {
         let rest: Vec<String> = std::env::args().skip(2).collect();
         return stem::holder::main(&rest).map_err(|e| anyhow::anyhow!("term-hold: {e}"));
     }
+    // launchd registers this binary directly; load configuration before Tokio.
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("service-run")) {
+        let mut args = std::env::args_os().skip(2);
+        let base = args
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("service-run requires a base directory"))?;
+        anyhow::ensure!(
+            args.next().is_none(),
+            "service-run accepts only a base directory"
+        );
+        return bud::lifecycle::service_run(std::path::Path::new(&base));
+    }
     daemon_main()
 }
 
