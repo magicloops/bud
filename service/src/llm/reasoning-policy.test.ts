@@ -157,3 +157,21 @@ test("stale client retirement fallback is explicit and unknown fresh IDs remain 
   assert.equal(resolved.reasoningAdjusted, true);
   assert.throws(() => resolveEffectiveModelSelection({ ...input, requestedModel: "typo-model" }), InvalidModelSelectionError);
 });
+
+test("GPT-6 Luna is the high-effort fallback and preserves saved selections", () => {
+  const input = { serviceDefaultModel: "gpt-6-luna", validateAvailability: false };
+  const selection = resolveEffectiveModelSelection(input);
+  assert.equal(selection.model, "gpt-6-luna");
+  assert.equal(selection.reasoningEffort, "high");
+  assert.equal(selection.source, "service_default");
+  const saved = resolveEffectiveModelSelection({ ...input, threadModel: "gpt-5.6-luna", threadReasoning: "low" });
+  assert.equal(saved.model, "gpt-5.6-luna");
+  assert.equal(saved.reasoningEffort, "low");
+  assert.equal(saved.source, "thread");
+  assert.throws(() => resolveEffectiveModelSelection({ ...input,
+    requestedModel: "gpt-6.1-sol", requestedReasoning: "none",
+  }), InvalidReasoningEffortError);
+  for (const requestedModel of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+    assert.equal(resolveEffectiveModelSelection({ ...input, requestedModel, requestedReasoning: "max" }).reasoningEffort, "max");
+  }
+});

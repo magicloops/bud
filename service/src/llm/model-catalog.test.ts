@@ -16,12 +16,15 @@ test("model catalog exposes the current default model lineup", () => {
     "claude-haiku-4-5",
     "claude-opus-4-7",
     "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "ds4-deepseek-v4-flash",
   ]);
-  assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.6-luna");
+  assert.equal(getGlobalDefaultModelEntry().id, "gpt-6-luna");
 });
 
 test("model catalog captures provider-specific reasoning levels", () => {
@@ -121,4 +124,22 @@ test("retired OpenAI names and snapshots are absent", () => {
   for (const id of ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.4-2026-03-05", "gpt-5.4-mini-2026-03-17", "gpt-5.4-nano-2026-03-17"]) {
     assert.equal(getCatalogEntry(id), null);
   }
+});
+
+test("new Sol and Luna models expose documented capabilities and reasoning", () => {
+  for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+    const entry = getCatalogEntry(id);
+    assert.ok(entry);
+    assert.equal(entry.providerModel, id);
+    assert.deepEqual(entry.capabilities, {
+      vision: true, tools: true, streaming: true, structuredOutputs: true,
+      contextWindowTokens: 1_050_000, maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000, reservedOutputTokens: 128_000,
+    });
+    assert.deepEqual(entry.reasoning.levels, id === "gpt-6.1-sol"
+      ? ["low", "medium", "high", "xhigh", "max"]
+      : ["none", "low", "medium", "high", "xhigh", "max"]);
+    assert.equal(entry.reasoning.defaultLevel, id === "gpt-6-luna" ? "high" : "medium");
+  }
+  assert.equal(getCatalogEntry("gpt-5.6-luna")?.globalDefault, undefined);
 });

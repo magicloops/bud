@@ -20,9 +20,12 @@ OpenAI provider using the Responses API (~795 lines).
 | Model | Type | Notes |
 |-------|------|-------|
 | `gpt-6-astra` | Reasoning | Supports low through max; default medium; no none |
+| `gpt-6.1-sol` | Reasoning | Requires reasoning; low through max; default medium |
+| `gpt-6-sol` | Reasoning | Supports none through max; default medium |
+| `gpt-6-luna` | Reasoning | Supports none through max; Bud default high; global default model |
 | `gpt-5.6-sol` | Reasoning | GPT-5.6 frontier tier; supports `max` |
 | `gpt-5.6-terra` | Reasoning | GPT-5.6 balanced tier; supports `max` |
-| `gpt-5.6-luna` | Reasoning | GPT-5.6 fast tier; supports `max`; global default model |
+| `gpt-5.6-luna` | Reasoning | GPT-5.6 fast tier; supports `max` |
 
 Public product IDs and capability limits are owned by `model-catalog.ts`; both `supportedModels` and `supportsModel` use that catalog. Arbitrary GPT IDs and retired aliases are not accepted.
 
@@ -64,7 +67,7 @@ The OpenAI request copy recursively omits unsupported `uniqueItems`; canonical s
 
 This allows tool definitions to use clean standard JSON Schema while ensuring OpenAI strict mode compliance.
 
-`openai-tool-schema.test.ts` captures streaming and non-streaming requests with the full enabled agent catalog, using Astra and checking its reasoning, encrypted replay request, omitted sampling parameters, nested strict schemas, omitted `uniqueItems`, retained bounds, optional-null conversion and canonical immutability.
+`openai-tool-schema.test.ts` captures streaming and non-streaming requests with the full enabled agent catalog, using Astra, GPT-6.1 Sol, GPT-6 Sol and GPT-6 Luna and checking its reasoning, encrypted replay request, omitted sampling parameters, nested strict schemas, omitted `uniqueItems`, retained bounds, optional-null conversion and canonical immutability.
 
 **Streaming Events Mapped**:
 | OpenAI Event | Canonical Event |

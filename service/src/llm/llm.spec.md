@@ -29,7 +29,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐
 │ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
 │                 │ │                 │ │ BudLocalDs4Provider      │
-│ - GPT-5.6 / Astra   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
+│ - GPT-5.6 / GPT-6   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
 │ - reasoning     │ │ - thinking      │ │ - Responses + thinking   │
 └─────────────────┘ └─────────────────┘ └──────────────────────────┘
 ```
@@ -156,7 +156,7 @@ Central product model catalog and reasoning-control metadata.
 - keep provider/model-specific reasoning levels, defaults, labels, and capability metadata in one place
 - keep provider hard context-window metadata separate from Bud usable-context
   policy metadata (`usableContextWindowTokens` and `reservedOutputTokens`)
-- define the global default model (`gpt-5.6-luna`, default level `high`)
+- define the global default model (`gpt-6-luna`, default level `high`)
 
 **Current Product Models**:
 
@@ -167,9 +167,12 @@ Central product model catalog and reasoning-control metadata.
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` | Manual thinking budgets: `none`, `low`, `medium`, `high`; default `none` |
 | `claude-opus-4-7` | `claude-opus-4-7` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `xhigh` |
 | `gpt-6-astra` | `gpt-6-astra` | OpenAI `reasoning.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `medium` |
+| `gpt-6.1-sol` | `gpt-6.1-sol` | OpenAI `reasoning.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `medium` |
+| `gpt-6-sol` | `gpt-6-sol` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `medium` |
+| `gpt-6-luna` | `gpt-6-luna` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `high`; global default |
 | `gpt-5.6-sol` | `gpt-5.6-sol` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
 | `gpt-5.6-terra` | `gpt-5.6-terra` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
-| `gpt-5.6-luna` | `gpt-5.6-luna` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `high`; global default |
+| `gpt-5.6-luna` | `gpt-5.6-luna` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `high` |
 | `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | ds4 Responses `reasoning.effort`: `none` (`Fast`) and `low` (`Thinking`); default `none`; `max` deferred until context is at least 393,216 |
 
 **Usable Context Policy**:
@@ -182,7 +185,7 @@ Central product model catalog and reasoning-control metadata.
   contextWindowTokens - reservedOutputTokens)`: the output reserve protects the
   hard window only, and the usable cap applies to input directly
   (design/context-window-output-reserve-correction.md)
-- GPT-6 Astra and the GPT-5.6 family (Sol/Terra/Luna) declare
+- GPT-6 Astra, GPT-6.1 Sol, GPT-6 Sol/Luna and the GPT-5.6 family (Sol/Terra/Luna) declare
   `contextWindowTokens: 1_050_000` with `usableContextWindowTokens: 272_000` —
   Bud's chosen active input window — and
   `reservedOutputTokens: 128_000`, producing a 272,000 token usable input
@@ -200,7 +203,7 @@ Model-specific reasoning validation and lowering.
 - use the catalog default when a request omits `reasoning_effort`
 - reject unsupported model/reasoning combinations with `InvalidReasoningEffortError`
 - build the canonical `ReasoningConfig` consumed by providers
-- resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-5.6-luna` + its catalog default `high`; the service-default path leaves reasoning omitted so the default model's catalog `defaultLevel` applies unless `serviceDefaultReasoning` is pinned)
+- resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-6-luna` + its catalog default `high`; the service-default path leaves reasoning omitted so the default model's catalog `defaultLevel` applies unless `serviceDefaultReasoning` is pinned)
 - read projections may fall back from invalid saved preferences without rewriting them; execution rejects retired GPT-5.4/GPT-5.5 thread preferences unless an explicit supported model is submitted
 - reject retired IDs and dated variants; approved automation model snapshots never silently switch models
 
@@ -210,7 +213,7 @@ Standalone Node tests for catalog invariants and reasoning option labels.
 
 **Current Coverage**:
 - current product model order and global default
-- provider-specific reasoning levels for GPT-5.6/GPT-6 Astra, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
+- provider-specific reasoning levels for GPT-5.6/GPT-6/GPT-6.1, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
 - stable reasoning labels exposed to API clients
 
 ### `reasoning-policy.test.ts`
