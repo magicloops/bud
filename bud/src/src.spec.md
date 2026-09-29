@@ -57,7 +57,8 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   directly executes `bud service-run <base>` (no shell); the pre-runtime bootstrap
   loads `bud.env` on each launch, preserving file-over-inherited-env precedence
   and explicit base-dir selection; `RunAtLoad`, `KeepAlive.SuccessfulExit=false`,
-  `AbandonProcessGroup=true`, stdout/err → `<base>/logs/daemon.log`) and the
+  `AbandonProcessGroup=true`, `ProcessType=Interactive` for responsive terminal
+  and browser work, stdout/err → `<base>/logs/daemon.log`) and the
   systemd user unit (`~/.config/systemd/user/bud.service`;
   `EnvironmentFile=-<base>/bud.env`, `Restart=on-failure`, **`KillMode=process`**,
   `StandardOutput/Error=append:` the same log file) — generated content is
@@ -67,6 +68,10 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   and removes it; identity is never touched
 - macOS start/restart regenerate and reload the installed plist, migrating old
   shell registrations while retaining holder-safe supervision
+- macOS upgrades invoke the updated binary's service install, applying Interactive
+  scheduling to the replacement daemon. Owned Chrome must also relaunch; surviving
+  orphan processes are not retroactively migrated. See
+  [launch-policy scope and rollout](../../plan/macos-interactive-daemon.md).
 - verbs `start|stop|restart` dispatch to the platform manager when the service
   file exists, otherwise a pidfile fallback (`<base>/bud.pid`): detached
   `setsid` spawn with env parsed from `bud.env`, SIGTERM to the daemon pid

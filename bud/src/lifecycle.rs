@@ -133,6 +133,8 @@ fn home_dir() -> PathBuf {
 
 /// Register Bud itself so macOS does not attribute background activity to sh.
 /// The internal entrypoint loads bud.env before the daemon runtime starts.
+/// Interactive scheduling is required for responsive terminal/browser work:
+/// Background caused multi-second native Chrome input delays on an installed Mac.
 pub fn launchd_plist(paths: &LifecyclePaths) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -157,7 +159,7 @@ pub fn launchd_plist(paths: &LifecyclePaths) -> String {
 	<key>AbandonProcessGroup</key>
 	<true/>
 	<key>ProcessType</key>
-	<string>Background</string>
+	<string>Interactive</string>
 	<key>StandardOutPath</key>
 	<string>{log}</string>
 	<key>StandardErrorPath</key>
@@ -954,6 +956,7 @@ mod tests {
         assert!(plist.contains("<string>/home/user/.bud</string>"));
         assert!(!plist.contains("/bin/sh"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+        assert!(plist.contains("<key>ProcessType</key>\n\t<string>Interactive</string>"));
         assert!(plist.contains("/home/user/.bud/logs/daemon.log"));
         // KeepAlive on failure only: `bud stop` must stick.
         assert!(plist.contains("<key>SuccessfulExit</key>"));
