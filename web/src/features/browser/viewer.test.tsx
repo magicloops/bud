@@ -47,12 +47,13 @@ test('private fit fences input; input failure survives a late renewal and releas
   let resizeReply!: (reply: Response) => void
   let renewReply!: (reply: Response) => void
   let rejectInput = false
+  let rejectionCode = "browser_input_uncertain"
   const inputs: Record<string, unknown>[] = []
   let keyboardFocus = 0
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/input')) {
       inputs.push(JSON.parse(String(init?.body)).input)
-      return rejectInput ? Response.json({ error: 'browser_input_uncertain' }, { status: 409 }) : Response.json({ focus_token: 'focus' })
+      return rejectInput ? Response.json({ error: rejectionCode }, { status: 409 }) : Response.json({ focus_token: 'focus' })
     }
     if (String(url).endsWith('/viewport')) {
       sizes.push(JSON.parse(String(init?.body)))
@@ -62,7 +63,7 @@ test('private fit fences input; input failure survives a late renewal and releas
       const operation = JSON.parse(String(init?.body)).operation
       operations.push(operation)
       if (operation === 'renew') return new Promise(resolve => { renewReply = resolve })
-      return Response.json({ ...metadata, handoff: undefined, control_state: operation === 'acquire' ? 'human_private' : 'paused', revision: 2, can_view: false })
+      return Response.json({ ...metadata, handoff: undefined, override_id: 'override', control_state: operation === 'acquire' ? 'human_private' : 'paused', revision: 2, can_view: false })
     }
     return Response.json(metadata)
   }
@@ -108,13 +109,32 @@ test('private fit fences input; input failure survives a late renewal and releas
     assert.deepEqual(inputs.at(-1), { kind: 'text', text: 'Hello', focus_token: 'focus' })
     assert.equal(textEvent.target.value, '')
     assert.equal(view.root.findByProps({ 'aria-label': 'Browser controls panel' }).props.hidden, true)
+    // Known field rejections remain recoverable and expose only safe diagnostics.
+    for (const code of ['browser_stale_or_unsupported_focus', 'untrusted response with private text']) {
+      rejectionCode = code
+      rejectInput = true
+      const count = inputs.length
+      await act(async () => view.root.findByType('textarea').props.onChange({ nativeEvent: { isComposing: false }, target: { value: 'x' } }))
+      assert.equal(inputs.length, count + 1) // No replay.
+      const message = view.root.findByProps({ role: 'alert' }).children.join('')
+      if (code.startsWith('browser_')) assert.match(message, /browser_stale_or_unsupported_focus/)
+      else assert.equal(message.includes(code), false)
+      assert.equal(view.root.findByType('textarea').props.disabled, false)
+      await act(async () => view.root.findByType('textarea').props.onChange({ nativeEvent: { isComposing: false }, target: { value: 'y' } }))
+      assert.equal(inputs.length, count + 1) // Cleared focus: rejected locally.
+      assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /viewer_focus_required/)
+      rejectInput = false
+      await act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
+    }
+    rejectionCode = 'browser_input_uncertain'
     rejectInput = true
     await act(async () => heartbeat!())
     await act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
     const failure = view.root.findByProps({ role: 'alert' }).children.join('')
     assert.match(failure, /input was not confirmed/)
+    assert.match(failure, /browser_input_uncertain; click; screenshots; \d+ ms/)
     assert.equal(heartbeat, undefined)
-    await act(async () => renewReply(Response.json({ ...metadata, control_state: 'human_private', revision: 2, can_view: false })))
+    await act(async () => renewReply(Response.json({ ...metadata, override_id: 'override', control_state: 'human_private', revision: 2, can_view: false })))
     assert.equal(view.root.findByProps({ role: 'alert' }).children.join(''), failure)
     assert.equal(view.root.findByType('textarea').props.disabled, true)
     await act(async () => view.unmount())
@@ -202,7 +222,7 @@ test(`passive media preserves agent epochs and fences handoffs`, async () => {
     assert.equal(clients[recovered - 1].closed, true)
     assert.equal(clients.length, recovered + 1)
     // Another viewer takes private control: do not reconnect or acquire it.
-    metadata = { ...metadata, control_state: 'human_private', control_epoch: 5, revision: 3, can_view: false }
+    metadata = { ...metadata, override_id: 'override', control_state: 'human_private', control_epoch: 5, revision: 3, can_view: false }
     await poll()
     assert.equal(clients.at(-1)!.closed, true)
     await poll()
@@ -311,7 +331,7 @@ test('chat return action uses the owning viewer and clears after return or dismi
       const body = JSON.parse(String(init?.body))
       writes.push(body)
       if (body.operation === 'return') return new Promise(resolve => { finishReturn = resolve })
-      return Response.json({ ...metadata, control_state: 'human_private', revision: 2 })
+      return Response.json({ ...metadata, override_id: 'override', control_state: 'human_private', revision: 2 })
     }
     return Response.json(metadata)
   }
@@ -372,7 +392,7 @@ test('service restart reconnects passive media and invalidates private ownership
   let ownsControl = false
   let privateState = false
   const writes: string[] = []
-  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', override_id: privateState ? 'override' : null, revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
   globalThis.fetch = async (_url, init) => {
     if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
@@ -418,7 +438,7 @@ test('service restart reconnects passive media and invalidates private ownership
   }
 })
 
-test('previously authorized viewer restores its private lease after service restart without replaying input', async () => {
+test('previously authorized viewer releases on media loss and never restores private control', async () => {
   const originalFetch = globalThis.fetch
   const originalTimeout = globalThis.setTimeout
   const originalClear = globalThis.clearTimeout
@@ -442,7 +462,7 @@ test('previously authorized viewer restores its private lease after service rest
   let privateState = false
   let lostReply = true
   const writes: { operation: string; viewer_id: string; recovery_ticket?: string }[] = []
-  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', override_id: privateState ? 'override' : null, revision: privateState ? 2 : 1, can_view: !privateState, owns_control: ownsControl, runtime_status: 'available' })
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
@@ -476,11 +496,10 @@ test('previously authorized viewer restores its private lease after service rest
     assert.equal(view.root.findByType('textarea').props.disabled, true)
     // Media loss now triggers the first read immediately; its recovery reply was lost.
     await tick() // A subsequent notification retries idempotently with the original proof.
-    assert.ok(action)
-    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'recover', 'recover'])
+    assert.equal(action, null)
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'release'])
     assert.equal(writes.every(w => w.viewer_id === writes[0].viewer_id), true)
-    assert.equal(writes[1].recovery_ticket, 'proof-before-restart')
-    assert.equal(writes[2].recovery_ticket, 'proof-before-restart')
+    assert.equal(writes[1].recovery_ticket, undefined)
     const count = clients.length
     await tick()
     assert.equal(clients.length, count)
@@ -533,7 +552,7 @@ test('native window controls retain private media and a failed hide preserves Re
   const writes: string[] = [];
   let privateControl = false;
   let failHide = false;
-  const snapshot = () => ({session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:privateControl?'human_private':'agent',revision:privateControl?3:1,can_view:!privateControl,can_show_window:true,owns_control:privateControl});
+  const snapshot = () => ({session_id:'browser',thread_id:'thread',bud_id:'bud',generation:'gen',state:'ready',control_state:privateControl?'human_private':'agent',override_id:privateControl?'override':null,revision:privateControl?3:1,can_view:!privateControl,can_show_window:true,owns_control:privateControl});
   globalThis.fetch = async (_url,init) => {
     if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
@@ -605,7 +624,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
     if (String(url).endsWith('/control')) {
       const operation = JSON.parse(String(init?.body)).operation
       operations.push(operation)
-      return Response.json({ ...metadata(), control_state: operation === 'acquire' ? 'human_private' : 'paused', revision: operations.length + 1, can_view: false })
+      return Response.json({ ...metadata(), override_id: 'override', control_state: operation === 'acquire' ? 'human_private' : 'paused', revision: operations.length + 1, can_view: false })
     }
     return Response.json(metadata())
   }
@@ -658,7 +677,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
   }
 })
 
-test('recovery is attempted on the first poll that reports the browser available, not one tick later', async () => {
+test('reconnect remains passive after the browser becomes available', async () => {
   const originalFetch = globalThis.fetch
   const originalTimeout = globalThis.setTimeout
   const originalClear = globalThis.clearTimeout
@@ -682,7 +701,7 @@ test('recovery is attempted on the first poll that reports the browser available
   let privateState = false
   let ownsControl = false
   const writes: { operation: string; recovery_ticket?: string }[] = []
-  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision, can_view: !privateState, owns_control: ownsControl, runtime_status: runtime })
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen', state: 'ready', control_state: privateState ? 'human_private' : 'agent', revision, override_id: privateState ? 'override' : null, can_view: !privateState, owns_control: ownsControl, runtime_status: runtime })
   globalThis.fetch = async (_url, init) => {
     if (String(_url).endsWith('/ensure')) return Response.json({});
     if (init?.method === 'POST') {
@@ -705,12 +724,12 @@ test('recovery is attempted on the first poll that reports the browser available
     ownsControl = false; runtime = 'disconnected'
     await act(async () => clients.at(-1)!.status('unavailable'))
     await tick() // Still disconnected: nothing to recover yet.
-    assert.deepEqual(writes.map(w => w.operation), ['acquire'])
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'release'])
     runtime = 'available'; revision = 3
     await tick() // The first available poll recovers on the same tick.
-    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'recover'])
-    assert.equal(writes[1].recovery_ticket, 'proof')
-    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')), true)
+    assert.deepEqual(writes.map(w => w.operation), ['acquire', 'release'])
+    assert.equal(writes[1].recovery_ticket, undefined)
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')), false)
   } finally {
     if (view) await act(async () => view.unmount())
     globalThis.fetch = originalFetch

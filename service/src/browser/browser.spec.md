@@ -35,9 +35,6 @@ control connection. It launches no service-local Chrome and imports no spike cod
   cancellation, unavailable peers and no replay after uncertain sends.
 - `control-repository.ts`: owner-scoped inventory, handoff records, revision/epoch
   transitions, private-content persistence, explicit return and offline close.
-- `recovery-ticket.ts` / `.test.ts`: domain-separated HMAC proofs of prior private
-  control, bound to auth-session/viewer and browser generation/epoch, expiring in
-  ten minutes. Stable service secret allows restart recovery without a DB change.
 - `control.ts`: one-controller lease coordination, acknowledged pause/acquire/
   return, user takeover requests, heartbeat and failure recovery. Bounded failure
   diagnostics distinguish controller lookup failure from daemon rejection.
@@ -650,3 +647,94 @@ viewer or daemon protocol change. Uncertain failures retain private intent;
 completed handoffs cannot return a later takeover. Durable acknowledgement wakes
 eligible waits and never replays blocked actions. Runtime mismatch rejects rather
 than pretending private work was returned. Deploy service before mobile rebuild.
+
+## Experimental private binary stream
+
+`media.ts` selects private-only screencast demand when the local service has
+`BUD_BROWSER_STREAMING_EXPERIMENT=1`; default is off. Existing route authorization,
+owner/thread/Bud scope, mobile visit, Origin, one-use ticket, carrier and controller
+checks run before admission and again during delivery/idle sweeps. No route,
+credential, table or owner stamp is added. Passive screenshots stay unchanged.
+
+`stream-media.ts` implements strict BSC1 packet/reset parsing, one private viewer,
+three-frame/2 MiB credit, 1 MiB JPEG/4 KiB header bounds, monotonic sequence and
+exact terminal feedback. One asynchronous frame authorization plus one latest
+pending image prevents unbounded work; replaced/old-generation images are
+explicitly discarded. One-second reset/feedback deadlines close stalled pipelines.
+Control fences dispose relay state before late authorization can send data.
+
+`stream-media.test.ts` covers malformed bounds, credit overflow/duplicates,
+unforwarded/foreign feedback, stalled credit, revocation and reset races.
+`stream-wss.test.ts` exercises real TLS WebSockets through BrowserMedia with
+injected controller/carrier authority. It requires local development certificates
+and `BUD_STREAM_TEST_CA` pointing to their public root CA; no TLS bypass. It is a
+protocol fixture, not real-account SQL authorization or real image decoding.
+
+Use coordinated daemon/service/shared-web experiment builds; unsupported pairings
+close without fallback. Full-stack ownership and phone/ngrok acceptance remain
+open in [the integration plan](../../../plan/browser-streaming/input-and-wss-integration.md).
+
+Private stream reset authorization coalesces overlapping generations into one
+latest pending reset, fences old frames immediately, and retains the original
+bounded reset deadline. Only the newest authorized reset is forwarded. Media
+rejection diagnostics report an allowlisted code and reset/binary category;
+`frames` includes accepted binary packets (not proof of viewer presentation).
+
+
+Private input projects `focus_editable` only as an explicit true boolean accompanied by a focus token, after the existing owner/controller checks. No new route, row, or public page data.
+
+Successful clicks emit a temporary `input_focus` lifecycle diagnostic containing
+only session ID, fixed input kind and boolean hint/token presence and effective
+editability. Wheels and text emit no such record; focus tokens and page contents
+are never logged. This supports mobile keyboard debugging from service logs.
+
+## Saved agent view after private dismissal
+
+`GET /api/browser/sessions/:session_id/shared-frame` returns `{snapshot:null}` or
+`{snapshot:{image,mime_type,captured_at}}` (base64 PNG/JPEG, Unix milliseconds).
+The existing live web/scoped-visit principal and owner/thread/Bud repository lookup
+precede image reads; scoped visits cannot cross workspaces. Revalidate auth and
+ownership before response; generation/closed changes withhold obsolete images.
+No-store; no target/frame/focus tokens and no daemon capture or control transition.
+
+`media.ts` retains at most 32 latest authorized passive images for 24 hours in
+memory (1.4M characters each). Retention occurs after delivery authorization and
+synchronous fence checks. Private screenshot/screencast paths never enter this
+cache. Empty public frames supersede old pixels; viewer disconnect/control fences
+preserve only the shared snapshot. `image-artifacts.ts.latest` supplies the newest
+existing owner/thread/session/generation-bound agent screenshot if newer or no
+passive snapshot exists; its existing seven-day expiry still applies. Artifact IDs
+are monotonic within a writer to order captures in the same millisecond.
+Service restart loses passive cache but preserves configured durable artifacts.
+No background captures, DB changes, native changes or new private permission.
+
+## Current authority contract — agent default (2026-09-28)
+
+This section supersedes earlier 15-second memory-only leases, private pause,
+recovery tickets and prepare/finish-return semantics. `control-repository.ts`
+persists exact override/viewer/carrier/deadline on the owned browser_resource;
+`control.ts` caches only acknowledged current authority. Six-second deadlines renew
+every two seconds. Identity and unexpired deadline are checked on renew/input/end;
+late or repeated end cannot affect a newer override. Release immediately retires
+intent, then the broker's independent 250ms sweep reconciles an acknowledged daemon
+End. Offline cleanup retries automatically. Startup retires old overrides.
+
+Public `control_state` is agent or human_private, with separate `execution_ready`.
+Persisted paused/resume_pending/private_content are internal execution/disclosure
+fences until cleanup, never independent human locks. `owns_control` and override
+identity are scoped to the authenticated viewer. Revoking a mobile visit ends only
+its exact viewer's override; passive disposal cannot release another device.
+Recovery-ticket files and the recover HTTP operation are removed. Input and
+renew/release/return require override_id; native-window/resize under human authority
+must match it. Unsupported daemons reject takeover through agent_default_control.
+
+Help requests create task waits without pausing the resource. Actual takeover
+associates the pending task with its override. Reconciliation wakes eligible waits
+once with the real reason and no claimed task completion. Ordinary chat input
+supersedes an unanswered help task without acquiring browser authority. Canceled,
+foreign, deleted and completed invocations cannot be resurrected. Diagnostics log
+bounded lifecycle reasons and readiness duration, never tokens, text or pixels.
+
+Validation includes owned DB transitions, receipt/expiry races, archived workspace
+cleanup, native visit isolation and post-commit notification filtering. See
+[cutover](../../../plan/browser-agent-default/phase-5-validation-and-cutover.md).

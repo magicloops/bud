@@ -2935,7 +2935,13 @@ Additional `request.command` variants:
 
 Input kinds are `click {x,y}`, `scroll {x,y,delta_y}`, `text {focus_token,text}` and
 `key {focus_token,key}`. Keys: Tab, Enter, Backspace, Delete, ArrowLeft, ArrowRight,
-Home, End. Input result contains only an opaque `focus_token`. Coordinates refer
+Home, End. Input result contains an opaque `focus_token` and a `focus_editable` boolean
+for the acknowledged active element. True means a writable supported text input
+or textarea, or a contenteditable host with a contained selection (including open
+shadow roots). Rich hosts support committed text, Backspace/Delete and Enter;
+ranges across nested editable/noneditable islands reject. This does not include
+iframe editors or IME composition. No field value is returned. Missing/false never requests automatic
+keyboard presentation. The hint grants no input authority. Coordinates refer
 to the unscaled captured viewport, not canvas pixels. Stale document, viewport,
 focus or frames older than three seconds reject; uncertain inputs are not replayed.
 
@@ -4032,3 +4038,154 @@ then reload existing web/WK viewers and rebuild mobile. Old strict daemons rejec
 the new envelope field; old mounted auto-fit viewers can undo intended sizing.
 Use these matching working-tree builds for acceptance; release SHAs are assigned
 when committed. No additional helper API or migration is introduced.
+
+## Experimental private screencast media version 1
+
+The local Proposal A candidate is selected only by the service environment
+`BUD_BROWSER_STREAMING_EXPERIMENT=1` and an admitted private controller. It is off
+by default. Passive operation-driven screenshots retain their existing contract.
+Use matching daemon/service/shared-web builds; older strict daemons or viewers
+reject the experimental messages and close media. There is no automatic fallback,
+new capability advertisement, migration, input endpoint or native bridge message.
+
+Existing owner/thread/Bud authorization, scoped mobile visit, Origin checks,
+controller lease and carrier-bound one-use media ticket remain mandatory. Both
+media legs use the existing dedicated outbound WebSocket routes; image bytes do
+not travel on the daemon control socket. One private viewer is admitted per group.
+TLS terminates at the trusted service, so this is not end-to-end encryption.
+
+After daemon ticket admission, the service sends
+`{mode:"screencast_v1",target_id:string|null}`. The daemon emits a text reset:
+`{type:"reset",media_version:1,media_generation:string,targets:[{target_id,origin}]}`.
+Reset is at most 40 KiB, with at most 16 origins of 2048 characters each; IDs are
+nonempty and at most 128 characters. It clears client pixels/input evidence and
+fences late image decoding. Navigation, resize and target changes create a new
+source generation. Unknown/closed selected targets close this experimental stream
+instead of silently selecting another page. Existing recovery/Return stays explicit.
+
+Each binary message is `BSC1` (four ASCII bytes), a four-byte unsigned big-endian
+JSON-header byte length, UTF-8 JSON header, then one JPEG. Header fields:
+
+- `media_generation`, connection-monotonic positive safe-integer `frame_sequence`;
+- `target_id`, `document_id`, `frame_token`, optional/nullable `viewport_id`;
+- `width`, `height`: original CSS viewport dimensions, positive and at most 8192;
+- `bitmap_width`, `bitmap_height`: integer decoded dimensions, at most 2560 per
+  axis and four million pixels total;
+- `image_bytes`: exact JPEG byte length; `source_age_ms`: daemon source receipt
+  age when sent, between zero and 150 ms. This is not measured end-to-end latency.
+
+Header limit is 4 KiB; image limit is 1 MiB. At most three frames and 2 MiB total
+packet bytes may await terminal feedback. Sequence numbers never reset on a
+media-generation reset within the same connection. The daemon caps delivery near
+30 fps, retains only the latest unsent source frame and discards unsent frames
+older than 150 ms. CDP frame ACKs are independent of remote viewer credit.
+
+The viewer sends `{type:"frame_ack",media_generation,frame_sequence,
+disposition:"presented"|"discarded"}` exactly once for each delivered packet.
+Feedback names an outstanding, actually forwarded frame; duplicate, foreign and
+unforwarded acknowledgements close media. The relay may discard its own replaced
+pending frames with the same exact feedback. It bounds asynchronous authorization
+work and permits only one latest pending image. Reset authorization and outstanding
+feedback have one-second deadlines; a stalled/oversized pipeline closes rather
+than buffering indefinitely. Native pings/authorization sweeps remain independent
+of image credit and never renew private control.
+
+The shared canvas holds one decoding image and one latest pending image, disposing
+superseded images. Pixels and input metadata publish atomically. Target selection
+fences immediately, discarding old arriving/decoding frames until the next reset.
+Unknown/mixed media formats close instead of attempting compatibility decoding.
+
+Existing HTTP human input carries the original displayed `frame_token`; queued
+non-wheel input is not rebound to newer pixels. The daemon retains at most 96
+receipts per generation for three seconds, then checks current target, document,
+layout and focus under the existing input authority. Wheels retain the same
+stable generation context and current geometry checks. Retiring authority/source
+invalidates all its input evidence immediately. Unknown input is never replayed.
+
+Capture uses a dedicated local CDP attachment with focus emulation scoped to its
+admitted target. It neither exposes CDP to clients nor changes the command
+attachment's viewport. After one idle second, a bounded screenshot on that same
+source connection refreshes static-page evidence; it is not a transport fallback.
+Before/after layout, document and intervening-frame checks discard stale idle
+captures. It does not hold the command page lock while capturing. Source shutdown
+stops screencast and disables focus emulation; Return requires confirmed cleanup
+before proceeding. Unconfirmed cleanup fails closed.
+
+Rollout/testing: stage the matching daemon and shared viewer with the service flag
+off, then enable only a controlled local service for acceptance. Restart the test
+service to change mode and reattach viewers; do not enable on a mixed stack.
+Disable the flag and reattach to restore the existing private screenshot path.
+Native iOS uses the same hosted canvas and needs no code change for this candidate.
+Physical device/network, full-stack ownership, launch supervision and soak gates
+remain open in [the experiment plan](../plan/browser-streaming/input-and-wss-integration.md).
+
+## Agent-default browser authority — 2026-09-28 (supersedes earlier handoff lifetime)
+
+Resource ownership remains the authenticated Bud/thread owner. Web requests resolve
+live account auth; hosted mobile resolves its exact scoped visit before any read,
+input, stream or control operation. No control credential transfers between visits.
+
+Public session/resource `control_state` is `agent|human_private`, derived from a
+live override, and `execution_ready` indicates acknowledged agent execution state.
+Runtime availability is separately reported. Viewer-qualified session GET includes
+`owns_control` and nullable `override_id` only for that authenticated viewer.
+Persisted `paused|resume_pending` and `private_content` remain internal cleanup and
+disclosure fences, not lasting human authority.
+
+HTTP control POST still carries `viewer_id`, `revision`, `operation`:
+- `acquire` is explicit and returns a new `override_id` on acknowledged admission.
+- `renew`, `release`, `return` require that exact `override_id`. Release/return are
+  idempotent for an ended ID, and never end a newer one. Return marks explicit intent;
+  disposal release does not attest human task completion.
+- `show_window` explicitly acquires if needed; existing human window/viewport
+  operations must match `override_id`. `close` closes the workspace, not the pane.
+- `recover` and recovery tickets are removed. Renew is never acquisition.
+- `/input` adds required `override_id` alongside existing bounded input/frame/focus
+  evidence. Unknown delivery is never replayed. Auth/Origin/owner checks are unchanged.
+
+A takeover lasts at most six seconds from its granted deadline; an active visible
+viewer renews every two seconds. Media/status loss, Close, hidden document, native
+background/disposal and uncertain input stop renewal and send best-effort release.
+Native visit revocation releases only the matching visit's current override.
+Reopen, foreground and transport reconnect never acquire. No background networking
+promise is required for expiry.
+
+Daemon capability `capabilities.browser.agent_default_control: true` is required
+for the service's handoff capability. Existing command envelopes and epoch/sequence
+fences remain. Nested `command:{action:"control",control:{...}}` supports:
+
+```json
+{"operation":"acquire","controller_id":"<override ID>","lease_expires_at_ms":1790000006000}
+{"operation":"renew","controller_id":"<same override ID>","lease_expires_at_ms":1790000008000}
+{"operation":"pause"}
+{"operation":"end"}
+```
+
+Pause is internal takeover admission/drain only. End is service-owned reconciliation
+under a newer resource/workspace epoch after DB override retirement, not an
+unqualified client unlock. Old release/prepare_return/finish_return daemon variants
+are removed. Successful transitions return `control_acknowledged:true`.
+Acquire/renew reject expired deadlines and deadlines more than 6000ms in the future;
+remaining wall-clock time converts to a daemon monotonic deadline on admission.
+Delayed transport cannot start a fresh six-second window on receipt. Clock skew
+can reject admission; deployment requires reasonably synchronized clocks.
+
+Local authority checks and a 100ms daemon sweep expire independently of the page
+mutex. Input/media are fenced first; bounded channel/window cleanup completes before
+agent mutation is admitted. A disconnected runtime can delay execution, never
+preserve human ownership. Service persists exact viewer/carrier/deadline and scans
+reconciliation independently every 250ms. Restart invalidates earlier overrides;
+lost cleanup ACKs retry higher-epoch End without replaying human input. This uses
+the existing control receipt channel, not a new unsolicited expiry event.
+
+`browser_request_handoff` parks its task without pausing the browser. Taking control
+associates its pending task with the override. Acknowledged end resolves eligible
+waits once with `resolution_reason`; automatic return has no fictitious human actor
+and continuation reports `task_completion_confirmed:false`. Normal chat redirects
+an unanswered task as `superseded_by_user_message` / `user_redirected` instead of
+claiming it completed. Cancellation/deletion/ownership fences still win.
+
+Apply migrations 0044–0047 with old controllers quiesced, then matching service,
+hosted web and daemon before reopening browser work; rebuild native mobile.
+No old/new sticky-pause compatibility path is supported. See
+[cutover plan](../plan/browser-agent-default/phase-5-validation-and-cutover.md).

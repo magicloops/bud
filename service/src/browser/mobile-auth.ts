@@ -45,9 +45,9 @@ export class BrowserMobileAuth {
       and expires_at>now() and absolute_expires_at>now() returning id`, [id,owner,hashSecret(grant)])).rowCount === 1;
   }
   async revoke(owner: string, id: string) {
-    await this.database.query("delete from browser_viewer_visit where id=$1 and created_by_user_id=$2", [id,owner]);
+    return (await this.database.query<MobileVisit>("delete from browser_viewer_visit where id=$1 and created_by_user_id=$2 returning *", [id,owner])).rows[0] ?? null;
   }
 }
 export function scopedBrowserOperation(operation: string) {
-  return ["acquire","renew","release","return","recover"].includes(operation);
+  return ["acquire","renew","release","return"].includes(operation);
 }

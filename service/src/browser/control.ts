@@ -11,7 +11,7 @@ import {
 } from "./transport.js";
 import type { BrowserHandoffContext } from "../agent/browser-tool-executor.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
-import { BrowserRecoveryTickets } from "./recovery-ticket.js";
+
 
 type Controller = {
   owner: string;
@@ -21,7 +21,6 @@ type Controller = {
   expires: number;
   revision: number;
   carrier: BrowserCarrier;
-  recoveredTicket?: string;
 };
 
 /** Single-service coordinator. DB revisions persist decisions; leases never survive restart. */
@@ -37,21 +36,32 @@ export class BrowserControl {
     readonly repository = new BrowserControlRepository(),
     private readonly carrierFor = browserCarrier,
     private readonly dispatch = dispatchBrowser,
-    private readonly recoveryTickets = new BrowserRecoveryTickets(),
   ) {}
 
+  private reconciling = false;
   expireControllers() {
+    if (this.reconciling) return;
+    this.reconciling = true;
+    void this.reconcile().catch(() => {}).finally(() => { this.reconciling = false; });
+  }
+
+  async reconcile() {
     for (const [id, control] of this.controllers) {
-      if (
-        this.busy.has(control.browser) ||
-        (control.expires > Date.now() && control.carrier.current())
-      )
-        continue;
+      if (control.expires > Date.now() && control.carrier.current()) continue;
+      this.onDiagnostic({session_id:id,event:"override_ended",override_id:control.id,reason:control.carrier.current()?"expired":"disconnected"});
       this.controllers.delete(id);
       this.onFence(control.browser);
-      void this.repository
-        .pauseAfterFailure(control.owner, id, control.revision)
-        .catch(() => {});
+      await this.repository.endOverride(control.owner,id,control.id,
+        control.carrier.current() ? "expired" : "disconnected").catch(() => {});
+    }
+    for (const session of await this.repository.reconciliationCandidates()) {
+      if (this.busy.has(session.browser_id)) continue;
+      this.busy.add(session.browser_id);
+      try {
+        if (session.override_id) await this.repository.endOverride(session.created_by_user_id,session.id,session.override_id,"expired",session);
+        await this.finishReturn({...session,override_id:null});
+      } catch { /* Durable intent remains eligible for the next bounded sweep. */ }
+      finally { this.busy.delete(session.browser_id); }
     }
   }
 
@@ -83,8 +93,9 @@ export class BrowserControl {
     nextState: string,
     signal: AbortSignal,
     controllerId?: string,
+    leaseExpires?: number,
   ): Promise<BrowserSession> {
-    const carrier = this.carrier(session, operation === "pause");
+    const carrier = this.carrier(session, operation === "pause" || operation === "end");
     if (operation !== "renew") this.onFence(session.browser_id);
     const { session: next, request } = await this.repository.prepare(
       session.created_by_user_id,
@@ -96,6 +107,7 @@ export class BrowserControl {
         action: "control",
         operation,
         ...(controllerId ? { controller_id: controllerId } : {}),
+        ...(leaseExpires ? { lease_expires_at_ms: leaseExpires } : {}),
       },
       nextState,
     );
@@ -154,7 +166,6 @@ export class BrowserControl {
       throw new BrowserError("browser_durable_handoff_required");
     const { session, id } = await this.repository.requestAgent(context);
     await this.exclusive(session.created_by_user_id, session.id, async () => {
-      await this.pause(session, context.signal);
       await context.parkDurably!(context.directive.callId, id);
     });
     return { handoff_id: id, viewer_path: `/browser/${session.id}` };
@@ -204,7 +215,7 @@ export class BrowserControl {
       if (session.revision !== revision)
         throw new BrowserError("browser_revision_conflict");
       const current = this.controllers.get(sessionId);
-      if (current && current.expires > Date.now() && current.carrier.current())
+      if (session.override_id || (current && current.expires > Date.now() && current.carrier.current()))
         throw new BrowserError("browser_controller_exists");
       if ([...this.controllers.values()].some(c => c.browser === session.browser_id && c.expires > Date.now() && c.carrier.current()))
         throw new BrowserError("browser_controller_exists");
@@ -212,43 +223,22 @@ export class BrowserControl {
     });
   }
 
-  private async acquireSession(session: BrowserSession, viewer: string, recoveredTicket?: string) {
+  private async acquireSession(session: BrowserSession, viewer: string) {
     this.controllers.delete(session.id);
     const signal = AbortSignal.timeout(35_000);
     session = await this.pause(session, signal);
     const id = randomUUID();
-    session = await this.transition(session, "acquire", "human_private", signal, id);
+    const expires = Date.now() + 6000;
+    session = await this.transition(session, "acquire", "human_private", signal, id, expires);
+    await this.repository.grantOverride(session.created_by_user_id,session.id,session.revision,id,viewer,
+      this.carrier(session).tracker.sessionId,expires);
     this.controllers.set(session.id, {
-      owner: session.created_by_user_id, browser: session.browser_id, viewer, id, recoveredTicket,
-      expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session),
+      owner: session.created_by_user_id, browser: session.browser_id, viewer, id,
+      expires, revision: session.revision, carrier: this.carrier(session),
     });
-    this.onStateChange(session);
-    return session;
-  }
-
-  recoveryTicket(session: BrowserSession, viewer: string): string | undefined {
-    return this.ownsControl(session.created_by_user_id, session.id, viewer)
-      ? this.recoveryTickets.issue(session, viewer) : undefined;
-  }
-
-  async recoverViewer(owner: string, sessionId: string, viewer: string, ticket: string) {
-    await this.repository.get(owner, sessionId);
-    return this.exclusive(owner, sessionId, async () => {
-      const session = await this.repository.get(owner, sessionId);
-      const claims = this.recoveryTickets.verify(ticket, session, viewer);
-      if (this.runtimeStatus(session) !== "available") throw new BrowserError("browser_handoff_unavailable");
-      const current = this.controllers.get(sessionId);
-      if (current && current.expires > Date.now() && current.carrier.current()) {
-        if (current.owner !== owner || current.viewer !== viewer) throw new BrowserError("browser_controller_exists");
-        if (current.recoveredTicket === ticket) return session;
-      }
-      if ([...this.controllers.values()].some(c => c.browser === session.browser_id && c !== current && c.expires > Date.now() && c.carrier.current()))
-        throw new BrowserError("browser_controller_exists");
-      if (claims.epoch !== session.control_epoch || !session.private_content ||
-          !["paused", "human_private"].includes(session.control_state))
-        throw new BrowserError("browser_recovery_invalid");
-      return this.acquireSession(session, viewer, ticket);
-    });
+    const current = await this.repository.get(session.created_by_user_id,session.id);
+    this.onStateChange(current);
+    return current;
   }
 
   private controller(
@@ -287,7 +277,7 @@ export class BrowserControl {
       throw new BrowserError("browser_closed");
     const current = this.controllers.get(sessionId);
     const control =
-      current?.viewer === viewer
+      current?.viewer === viewer && current.id === session.override_id
         ? this.controller(owner, sessionId, viewer)
         : undefined;
     if (
@@ -303,11 +293,11 @@ export class BrowserControl {
     };
   }
 
-  private async failController(owner: string, sessionId: string, control: Controller, revision: number) {
+  private async failController(owner: string, sessionId: string, control: Controller) {
     if (this.controllers.get(sessionId) !== control) return;
     this.controllers.delete(sessionId);
     this.onFence(control.browser);
-    await this.repository.pauseAfterFailure(owner, sessionId, revision);
+    await this.repository.endOverride(owner, sessionId, control.id, "input_uncertain");
   }
 
   async input(
@@ -319,6 +309,8 @@ export class BrowserControl {
     return this.exclusive(owner, sessionId, async () => {
       const control = this.controller(owner, sessionId, viewer);
       const session = await this.repository.get(owner, sessionId);
+      if (session.override_id !== input.override_id || control.id !== input.override_id) throw new BrowserError("browser_control_expired");
+      const { override_id: _override, ...payload } = input;
       if (session.control_state !== "human_private")
         throw new BrowserError("browser_private_or_paused");
       if ((input.input as { kind?: string } | undefined)?.kind === "back" && !control.carrier.historyNavigation)
@@ -329,7 +321,7 @@ export class BrowserControl {
         control.carrier.bootId,
         session.revision,
         randomUUID(),
-        { action: "human_input", controller_id: control.id, ...input },
+        { action: "human_input", controller_id: control.id, ...payload },
         "human_private",
       );
       const result = await this.dispatch(
@@ -339,14 +331,24 @@ export class BrowserControl {
       );
       if (!result.ok) {
         if (result.outcome === "unknown" || result.error === "browser_interrupted")
-          await this.failController(owner, sessionId, control, prepared.session.revision);
+          await this.failController(owner, sessionId, control);
         throw new BrowserError(
           result.outcome === "unknown"
             ? "browser_input_uncertain"
             : (result.error ?? "browser_input_rejected"),
         );
       }
+      const focusEditable = typeof result.data?.focus_token === "string" && result.data?.focus_editable === true;
+      if ((input.input as { kind?: string } | undefined)?.kind === "click") {
+        this.onDiagnostic({
+          session_id: sessionId, event: "input_focus", input_kind: "click",
+          hint_present: typeof result.data?.focus_editable === "boolean",
+          has_focus_token: typeof result.data?.focus_token === "string",
+          focus_editable: focusEditable,
+        });
+      }
       return {
+        focus_editable: focusEditable,
         focus_token:
           typeof result.data?.focus_token === "string"
             ? result.data.focus_token
@@ -375,17 +377,22 @@ export class BrowserControl {
   }
 
   async nativeWindow(owner: string, sessionId: string, viewer: string, revision: number,
-    show: boolean, targetId?: string) {
+    show: boolean, targetId?: string, overrideId?: string) {
     return this.exclusive(owner, sessionId, async () => {
       let session = await this.repository.get(owner, sessionId);
       if (session.revision !== revision) throw new BrowserError("browser_revision_conflict");
       if (!this.windowAvailable(session)) throw new BrowserError("browser_window_unsupported");
+      let acquired = false;
       if (show && !this.ownsControl(owner, sessionId, viewer)) {
         if ([...this.controllers.values()].some(c => c.browser === session.browser_id &&
             c.expires > Date.now() && c.carrier.current())) throw new BrowserError("browser_controller_exists");
+        if (session.override_id) throw new BrowserError("browser_controller_exists");
         session = await this.acquireSession(session, viewer);
+        acquired = true;
       }
-      await this.setNativeWindow(session, this.controller(owner, sessionId, viewer), show, targetId);
+      const controller = this.controller(owner, sessionId, viewer);
+      if (!acquired && (controller.id !== overrideId || session.override_id !== overrideId)) throw new BrowserError("browser_control_expired");
+      await this.setNativeWindow(session, controller, show, targetId);
       return this.repository.get(owner, sessionId);
     });
   }
@@ -423,7 +430,7 @@ export class BrowserControl {
   }
 
   async resizeViewport(owner: string, sessionId: string, viewer: string,
-    viewport: { target_id: string; document_id: string; width: number; height: number }) {
+    viewport: { target_id: string; document_id: string; width: number; height: number }, overrideId?: string) {
     // Do not expose coordinator occupancy to a foreign viewer. Recheck inside the operation.
     await this.repository.get(owner, sessionId);
     return this.exclusive(owner, sessionId, async () => {
@@ -440,6 +447,7 @@ export class BrowserControl {
         return { viewport_applied: true, viewport_id: result.data.viewport_id };
       }
       const control = this.controller(owner, sessionId, viewer);
+      if (control.id !== overrideId || session.override_id !== overrideId) throw new BrowserError("browser_control_expired");
       if (session.control_state !== "human_private") throw new BrowserError("browser_private_or_paused");
       if (!this.viewportAvailable(session)) throw new BrowserError("browser_viewport_unsupported");
       const prepared = await this.repository.prepare(owner, sessionId, control.carrier.bootId,
@@ -447,118 +455,80 @@ export class BrowserControl {
       const result = await this.dispatch(control.carrier, prepared.request, AbortSignal.timeout(5000));
       if (!result.ok || result.data?.viewport_applied !== true || typeof result.data?.viewport_id !== "string" || !result.data.viewport_id.length || result.data.viewport_id.length > 128)
       {
-        await this.failController(owner, sessionId, control, prepared.session.revision);
+        await this.failController(owner, sessionId, control);
         throw new BrowserError("browser_viewport_unconfirmed");
       }
       return { viewport_applied: true, viewport_id: result.data.viewport_id };
     });
   }
 
-  async renew(owner: string, sessionId: string, viewer: string) {
-    // Foreign session IDs are 404 before any controller state is consulted.
-    const session = await this.repository.get(owner, sessionId);
-    const existing = this.controller(owner, sessionId, viewer);
-    if (existing.carrier.independentRenewal) {
-      if (session.control_state !== "human_private") throw new BrowserError("browser_private_or_paused");
-      const request = this.repository.command(session, {
-        action: "control", operation: "renew", controller_id: existing.id,
-      });
-      const result = await this.dispatch(existing.carrier, request, AbortSignal.timeout(5000));
-      // A concurrent release/failure/acquisition wins over a late renewal reply.
-      if (this.controllers.get(sessionId) !== existing) throw new BrowserError("browser_control_expired");
-      if (!result.ok || result.data?.control_acknowledged !== true) {
-        await this.failController(owner, sessionId, existing, session.revision);
-        throw new BrowserError("browser_control_uncertain");
-      }
-      existing.expires = Date.now() + 15_000;
-      return session;
+  async renew(owner: string, sessionId: string, viewer: string, overrideId: string) {
+    const session = await this.repository.get(owner,sessionId);
+    const control = this.controller(owner,sessionId,viewer);
+    if (control.id !== overrideId || session.override_id !== overrideId) throw new BrowserError("browser_control_expired");
+    const expires = Date.now() + 6000;
+    // Persist first. A lost reply cannot extend the service deadline from receipt time.
+    await this.repository.renewOverride(owner,sessionId,overrideId,viewer,control.carrier.tracker.sessionId,expires);
+    const request = this.repository.command(session, {action:"control",operation:"renew",controller_id:overrideId,lease_expires_at_ms:expires});
+    const result = await this.dispatch(control.carrier,request,AbortSignal.timeout(5000));
+    if (this.controllers.get(sessionId) !== control || control.expires <= Date.now()) {
+      await this.failController(owner,sessionId,control);
+      throw new BrowserError("browser_control_expired");
     }
-
-    // A short input request may own the coordinator. Heartbeats can wait for
-    // that known operation; they never queue or replay a page mutation.
-    const deadline = Date.now() + 5000;
-    while (this.busy.has(existing.browser) && Date.now() < deadline) {
-      this.controller(owner, sessionId, viewer);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!result.ok || result.data?.control_acknowledged !== true) {
+      await this.failController(owner,sessionId,control);
+      throw new BrowserError(result.outcome === "rejected" && ["browser_control_expired","browser_stale_request"].includes(result.error ?? "") ? result.error! : "browser_control_uncertain");
     }
-    return this.exclusive(owner, sessionId, async () => {
-      const control = this.controller(owner, sessionId, viewer);
-      const session = await this.repository.get(owner, sessionId);
-      const next = await this.transition(
-        session,
-        "renew",
-        "human_private",
-        AbortSignal.timeout(5000),
-        control.id,
-      );
-      control.expires = Date.now() + 15_000;
-      return next;
-    });
+    control.expires = Math.max(control.expires, expires);
+    return this.repository.get(owner,sessionId);
   }
 
-  async release(owner: string, sessionId: string, viewer: string) {
-    return this.exclusive(owner, sessionId, async () => {
-      this.controller(owner, sessionId, viewer);
-      this.controllers.delete(sessionId);
-      return this.pause(
-        await this.repository.get(owner, sessionId),
-        AbortSignal.timeout(35_000),
-      );
-    });
-  }
-
-  async returnToAgent(
-    owner: string,
-    sessionId: string,
-    viewer: string,
-    revision: number,
-  ) {
-    return this.exclusive(owner, sessionId, async () => {
-      const control = this.controller(owner, sessionId, viewer);
-      let session = await this.repository.get(owner, sessionId);
-      if (session.revision !== revision)
-        throw new BrowserError("browser_revision_conflict");
-      return this.finishReturn(session, control);
-    });
-  }
-
-  /** Explicit owner action from chat; never grants a client input/media authority. */
-  async returnFromChat(owner: string, sessionId: string, handoffId: string, revision: number) {
-    return this.exclusive(owner, sessionId, async () => {
-      const waiting = await this.repository.get(owner, sessionId);
-      const handoff = await this.repository.pending(owner, sessionId);
-      if (!handoff || handoff.id !== handoffId) throw new BrowserError("browser_handoff_unavailable");
-      if (waiting.revision !== revision) throw new BrowserError("browser_revision_conflict");
-      if (this.runtimeStatus(waiting) !== "available") throw new BrowserError("browser_handoff_unavailable");
-      if (!["paused", "human_private", "resume_pending"].includes(waiting.control_state))
-        throw new BrowserError("browser_control_conflict");
-      let session = waiting.control_session_id
-        ? await this.repository.get(owner, waiting.control_session_id) : waiting;
-      if (session.browser_id !== waiting.browser_id || session.revision !== revision)
-        throw new BrowserError("browser_revision_conflict");
-      // Re-establish a short server-only controller with existing daemon commands.
-      // This also handles expired/released leases and service restarts. No viewer
-      // is minted and no private frame or input permission is given to the caller.
-      for (const [id, old] of this.controllers) {
-        if (old.browser === session.browser_id) this.controllers.delete(id);
-      }
-      session = await this.pause(session, AbortSignal.timeout(35_000));
-      const id = randomUUID();
-      session = await this.transition(session, "acquire", "human_private", AbortSignal.timeout(5000), id);
-      const authority: Controller = { owner, browser: session.browser_id, viewer: "owner-return",
-        id, expires: Date.now() + 15_000, revision: session.revision, carrier: this.carrier(session) };
-      return this.finishReturn(session, authority);
-    });
-  }
-
-  private async finishReturn(session: BrowserSession, control: Controller) {
-    const owner = session.created_by_user_id, sessionId = session.id;
-    if (this.windowAvailable(session)) await this.setNativeWindow(session, control, false);
+  async release(owner: string, sessionId: string, viewer: string, overrideId: string, reason = "closed") {
+    const session = await this.repository.get(owner,sessionId);
+    // Idempotent ending for a retired ID; never look up the newer controller by viewer alone.
+    if (session.override_id !== overrideId) return session;
+    if (session.override_viewer_id !== viewer) throw new BrowserError("browser_control_expired");
     this.controllers.delete(sessionId);
-    session = await this.transition(session, "prepare_return", "resume_pending", AbortSignal.timeout(30_000), control.id);
-    session = await this.transition(session, "finish_return", "resume_pending", AbortSignal.timeout(5000));
-    await this.repository.returned(owner, sessionId, session.revision);
-    return this.repository.get(owner, sessionId);
+    this.onFence(session.browser_id);
+    await this.repository.endOverride(owner,sessionId,overrideId,reason);
+    this.onDiagnostic({session_id:sessionId,event:"override_ended",override_id:overrideId,reason});
+    this.expireControllers();
+    return this.repository.get(owner,sessionId);
+  }
+
+  async releaseVisit(owner: string, sessionId: string, visitId: string) {
+    const session = await this.repository.get(owner,sessionId).catch(() => null);
+    if (session?.override_id && session.override_viewer_id?.startsWith(`mobile_${visitId}:`))
+      await this.release(owner,sessionId,session.override_viewer_id,session.override_id,"closed");
+  }
+
+  async returnToAgent(owner: string, sessionId: string, viewer: string, _revision: number, overrideId: string) {
+    return this.release(owner,sessionId,viewer,overrideId,"explicit_return");
+  }
+
+  async returnFromChat(owner: string, sessionId: string, handoffId: string, revision: number) {
+    const session = await this.repository.get(owner,sessionId);
+    const handoff = await this.repository.pending(owner,sessionId);
+    if (!handoff || handoff.id !== handoffId) throw new BrowserError("browser_handoff_unavailable");
+    if (session.revision !== revision) throw new BrowserError("browser_revision_conflict");
+    if (!session.override_id || !session.override_viewer_id || !session.control_session_id)
+      throw new BrowserError("browser_control_expired");
+    return this.release(owner,session.control_session_id,session.override_viewer_id,session.override_id,"explicit_return");
+  }
+
+  private async finishReturn(session: BrowserSession) {
+    const started=Date.now();
+    const carrier=this.carrier(session,true);
+    const prepared=await this.repository.prepareEnd(session,carrier.bootId);
+    this.onFence(session.browser_id);
+    const result=await this.dispatch(carrier,prepared.request,AbortSignal.timeout(5000));
+    if (!result.ok || result.data?.control_acknowledged !== true) {
+      await this.repository.failEnd(prepared.resource);
+      throw new BrowserError("browser_control_uncertain");
+    }
+    await this.repository.acknowledgeEnd(prepared.resource);
+    this.onDiagnostic({session_id:session.id,event:"agent_execution_ready",generation:prepared.session.generation,duration_ms:Date.now()-started});
+    this.onStateChange({...prepared.session,control_state:"agent",private_content:false,override_id:null});
   }
 
   async close(owner: string, sessionId: string, revision: number) {
@@ -571,7 +541,7 @@ export class BrowserControl {
       const controlling = this.controllers.has(sessionId);
       this.controllers.delete(sessionId);
       this.onFence(controlling ? session.browser_id : sessionId);
-      if (controlling) await this.repository.pauseAfterFailure(owner, sessionId, session.revision);
+      this.expireControllers();
       for (const id of invocations)
         await new InvocationRepository().requestCancel(owner, id);
       // The broker's existing bounded cleanup loop owns offline close delivery.

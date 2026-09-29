@@ -51,13 +51,32 @@ test('committed changes reach separate service listeners; rollback and sequence/
   for (let n=0;n<50 && seen.length<3;n++) await delay(10);
   assert.equal(seen.length,3,'owner changes invalidate without leaking identity');
   assert.equal(JSON.stringify(seen).includes('alice'),false);
+  // Upgrade an existing paused resource, then exercise acquisition versus renewal hints.
+  await c.query(`alter table browser_resource add column retired_at timestamptz,
+    add column desired_state text default 'open', add column control_epoch int default 1,
+    add column override_id text, add column override_expires_at timestamptz,
+    add column override_end_reason text, add column updated_at timestamptz`);
+  await c.query(await readFile(new URL('../../drizzle/migrations/0046_browser_override_cutover.sql',import.meta.url),'utf8'));
+  const upgraded=(await c.query('select * from browser_resource')).rows[0];
+  assert.equal(upgraded.control_state,'paused');
+  assert.equal(upgraded.override_end_reason,'service_restarted');
+  assert.equal(upgraded.control_epoch,2);
+  await delay(40);
+  const beforeLease=seen.length;
+  await c.query("update browser_resource set override_id='override',override_expires_at=now()+interval '6 seconds'");
+  for(let n=0;n<50 && seen.length===beforeLease;n++) await delay(10);
+  assert.equal(seen.length,beforeLease+1);
+  await c.query("update browser_resource set override_expires_at=now()+interval '6 seconds'");
+  await delay(40);
+  assert.equal(seen.length,beforeLease+1,'renewal does not invalidate inventory');
+  const beforeReconnect=seen.length;
   const pid = (await listenerClient!.query('select pg_backend_pid() pid')).rows[0].pid;
   await c.query('select pg_terminate_backend($1)', [pid]);
   for (let n=0;n<50 && !losses;n++) await delay(10);
   assert.equal(losses,1,'listener loss invalidates attached viewers');
   await events.ready();
   await c.query("update browser_session set state='closed'");
-  for (let n=0;n<50 && seen.length<4;n++) await delay(10);
-  assert.equal(seen.length,4,'a new LISTEN connection receives subsequent commits');
+  for (let n=0;n<50 && seen.length<beforeReconnect+1;n++) await delay(10);
+  assert.equal(seen.length,beforeReconnect+1,'a new LISTEN connection receives subsequent commits');
   c.release();
 });

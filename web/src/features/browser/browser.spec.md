@@ -104,7 +104,7 @@ frames use PNG (image_format), capped at 2560 per axis, 4M pixels and the existi
 viewport/focus are unchanged. Canvas samples display density on ACK without React
 frame state. Old-service/new-daemon and new-service/old-daemon keep legacy captures.
 
-Page clicks focus a visually hidden textarea outside the controls menu, so committed
+Desktop page clicks focus a visually hidden textarea outside the controls menu, so committed
 text, paste and IME use the existing private-input queue without opening the menu.
 Focus is synchronous with preventScroll and only taken while input is enabled.
 No global keyboard capture; the bridge is disabled on control/media loss.
@@ -417,3 +417,101 @@ partial admissions and cancellation/backpressure. Mounted tests verify rapid
 gestures behind an in-flight wheel and cancellation without queued inertia. See
 [scroll investigation](../../../../debug/mobile-browser-scroll-distance.md).
 No wire, native bridge, daemon or database change; reload hosted web to adopt.
+
+## Experimental private stream canvas
+
+`stream-canvas.ts` handles version-1 resets and bounded BSC1 binary JPEG packets
+selected by the service's private streaming experiment. One decode plus one latest
+pending image; replaced images return exact discarded credit. Decoded dimensions
+must match the header, and pixels/frame metadata publish together. Reset, target
+selection, disposal and control loss fence late decoding and clear sensitive pixels.
+`stream-canvas.test.ts` covers these races and malformed packet bounds.
+
+`media.ts` chooses this decoder only after a valid reset; default/passive JPEG/PNG
+behavior remains. A local optional `media_generation` in BrowserFrame lets the
+input queue retain original displayed receipts across newer frames of the same
+generation. `viewer.tsx` sends that original token for non-wheel input; the daemon
+still checks three-second age, current document/layout/focus and live authority.
+Wheels use current same-generation evidence. Generation/viewport changes reject
+queued input; failures never replay it. `input-queue.test.ts` covers both modes.
+
+Shared hosted WK uses this renderer directly; no native bridge change. Matching
+service/web/daemon builds are required with the service experiment flag enabled.
+Physical iPhone and latency/readability validation is pending; default remains
+existing screenshot media. See `plan/browser-streaming/input-and-wss-integration.md`.
+
+Input rejection UI distinguishes local page/focus guards from allowlisted daemon
+focus/viewport errors and displays their fixed diagnostic codes. Unknown server
+messages are never echoed. Focus/queue reset and no-replay behavior remain;
+uncertain execution still pauses control. Mounted tests cover safe diagnostics,
+local missing-focus rejection and continued uncertainty fencing. See
+`debug/browser-streaming-text-entry.md` for the shadow-input investigation.
+
+Unconfirmed input errors additionally identify the allowlisted failure category,
+input kind, selected media mode and elapsed request milliseconds. They contain no
+page/input payload or arbitrary exception text. Mounted desktop and mobile tests
+cover screenshot/stream diagnostics and momentum cancellation without replay.
+
+Mobile page taps send a remote click and dismiss the local keyboard; they never
+infer editability from canvas pixels or an opaque focus token. Confirmed editable
+clicks request keyboard presentation through the native shell. The explicit
+Keyboard button also focuses the existing textarea synchronously in the user
+gesture as a fallback. Normal focus-token checks protect committed text. The button
+is disabled when input is fenced. `mobile-viewer.test.tsx` verifies click coordinates,
+no keyboard before confirmation, editable-only requests, late callback fencing,
+explicit typing and dismissal on another tap.
+Coordinated daemon/service/web/mobile builds adopt the editable-focus hint and
+native keyboard bridge; no database migration.
+See [tap investigation](../../../../debug/browser-streaming-mobile-taps.md).
+
+
+Confirmed mobile clicks with `focus_editable:true` request keyboard presentation through the native shell. Pending/rejected/noneditable clicks never request it. Callback checks tap/input generations, active owner, current document/target and a three-second deadline. The explicit Keyboard button remains a fallback. Matching native bridge build is required.
+
+Temporary `browser-keyboard` console diagnostics distinguish click acknowledgement,
+editable hint presence, native request/reply and guarded DOM focus. They record
+only fixed stages and booleans, with no page data, tokens or identities. DOM focus
+is not proof of software-keyboard presentation; physical device validation remains.
+
+The hidden keyboard transport textarea disables automatic capitalization and
+correction as well as autocomplete/spelling. Its buffer clears after committed
+text and has no remote sentence context; manual Shift and composition remain
+available. See `debug/browser-keyboard-capitalization.md`.
+
+Mobile keyboard buffering retains one local space sentinel with the caret
+after it, so software Backspace has deletion context even when all committed text
+has been forwarded. Commit handlers strip only that leading sentinel and rearm
+it; composition is preserved until commit. Remote values are never mirrored.
+Mobile deletion updates the local buffer normally; its input event forwards one
+Backspace/Delete and rearms the buffer. Mobile Backspace keydown/beforeinput do not also send that deletion.
+Forward Delete on a hardware keyboard and Enter remain intercepted; desktop key
+dispatch is unchanged.
+See `debug/browser-keyboard-backspace.md`.
+
+## Reopening a private workspace
+
+The inactive-controller viewer fetches `shared-frame` once on entry/resume or
+explicit reconnect and shows a separate read-only image labeled Last agent view
+with its capture time. It never supplies canvas/input evidence, opens private
+media, resizes, acquires or returns control. Existing live agent viewing resumes
+when metadata permits it. Empty/unavailable snapshots show an honest saved-view
+message; Take control stays in the controls menu. Suspension, auth loss, lifetime
+change and takeover clear/fence image requests. No image polling or native bridge
+change. See `debug/browser-reopen-shared-frame.md` and mounted mobile tests.
+
+## Current authority UX — agent default (2026-09-28)
+
+viewer.tsx retains an exact override_id only after explicit acquisition. Close,
+unmount, inactive native bridge, document hidden/pagehide, media/status loss or
+unknown input synchronously stop input/renewal, detach private media and send a
+best-effort release. Late acquisition/window replies are lifetime-fenced and release
+the returned ID. Missing delivery falls back to six-second daemon/service expiry.
+Visible active control renews every two seconds; passive reconnect/foreground never
+acquires. Pause and proof recovery are removed; explicit Return ends the override.
+Saved shared frames are passive fallbacks while current agent viewing reconnects.
+Keyboard/menu focus alone is not a lifecycle exit. Service execution_ready is
+separate from binary public authority; internal cleanup never asks for manual Return.
+
+Help prompts offer Take control without a prior lock; normal chat can redirect the
+waiting task. This supersedes historical private-pause/recovery descriptions above.
+Mounted tests cover hidden release, passive closure, reconnect, native suspension,
+input and handoff behavior. Physical phone/network acceptance remains in the plan.

@@ -566,3 +566,24 @@ commentary do not promote a thread. A filtered thread trigger publishes scope-on
 `bud_thread_list` hints after commit for ordering/title/deletion/ownership changes.
 These triggers require the migration; `db:push` alone cannot install them.
 `thread-order.test.ts` exercises the exact SQL in an isolated PostgreSQL schema.
+
+## Browser override authority (2026-09-28)
+
+browser_resource now stores nullable override_id, override_viewer_id,
+override_carrier_id and override_expires_at as an all-or-none group, plus
+ended_override_id and override_end_reason. An expiry index supports internal
+reconciliation. Existing owner/tenant/FK constraints remain. Resource execution
+receipts accept pause/acquire/end only. Internal paused/resume_pending and
+private_content fence unfinished cleanup, not ownership; public authority derives
+from the unexpired override. Renewal does not bump revision or emit inventory hints.
+
+browser_handoff adds override_id and resolution_reason. Asking for help alone
+stores no override. Automatic endings preserve a system reason and null
+returned_by_user_id; continuation never asserts that the human completed the task.
+A new user message supersedes a pending help task through invocation cancellation.
+
+Migrations 0044–0047 add these columns/checks, replace the resource notification
+trigger, backfill old holds as automatic reconciliation candidates, and remove
+old return-operation receipts. Profile/sign-in data and unanswered tasks survive.
+Reviewed SQL was applied locally after db:push proposed unrelated constraint
+recreation; deployment uses the checked-in migrations with a quiesced matching stack.

@@ -1,0 +1,962 @@
+{
+  "runs": [
+    {
+      "run": "AhU6Hd",
+      "raw_results": "/var/folders/_n/tdtkt70j47qgsv8_3yq9vmj80000gn/T/bud-screencast-results-AhU6Hd/results.json",
+      "started_at": "2026-09-28T07:36:14.782Z",
+      "browser": "Chrome/154.0.8037.57",
+      "source_sha256": {
+        "run.mjs": "ece9d70ed70678d9f94e90c10de459e35d814690eb7f5fdf17981aa76093cfdd",
+        "cdp.mjs": "3d69e1265919e2df310c4404fa564a269acc3234fdd9aff94743869c9948a3d8",
+        "private-capture.mjs": "6d35881abe248c6455592cea8531efe16edd7b4003052105cad6251494b05bf2",
+        "provenance.mjs": "14a764a047e19b80469a2b50c0bc344b2cc838a6f6bcbb3320d91cf89547b64b",
+        "fixture.html": "c75a5439898fa9f3261779f01819334f832d8f3e63ff813a5671054466219ced"
+      },
+      "counts": [
+        {
+          "kind": "continuous",
+          "phase": "old_document",
+          "matches_expected": false,
+          "frames": 70
+        },
+        {
+          "kind": "continuous",
+          "phase": "transition_in_flight",
+          "matches_expected": false,
+          "frames": 7
+        },
+        {
+          "kind": "continuous",
+          "phase": "commands_completed",
+          "matches_expected": true,
+          "frames": 102
+        },
+        {
+          "kind": "restarted_static",
+          "phase": "fresh_generation",
+          "matches_expected": true,
+          "frames": 8
+        },
+        {
+          "kind": "restarted_resize_only",
+          "phase": "fresh_after_resize",
+          "matches_expected": true,
+          "frames": 8
+        }
+      ],
+      "cases": [
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 2,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 1,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 3,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 3,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 3,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 3,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 5,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 4,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 6,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 6,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 6,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 6,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 8,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 7,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 9,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 9,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 9,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 9,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 11,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 10,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 12,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 12,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 12,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 12,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 14,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 24,
+          "first_pixels": {
+            "magic": 165,
+            "document": 13,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 15,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 15,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 15,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 15,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 17,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 21,
+          "first_pixels": {
+            "magic": 165,
+            "document": 16,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 18,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 18,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 18,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 18,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 20,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 19,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 21,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 21,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 21,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 21,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 23,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 22,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 24,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 24,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 24,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 24,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        }
+      ]
+    },
+    {
+      "run": "nWHW78",
+      "raw_results": "/var/folders/_n/tdtkt70j47qgsv8_3yq9vmj80000gn/T/bud-screencast-results-nWHW78/results.json",
+      "started_at": "2026-09-28T07:36:49.634Z",
+      "browser": "Chrome/154.0.8037.57",
+      "source_sha256": {
+        "run.mjs": "ece9d70ed70678d9f94e90c10de459e35d814690eb7f5fdf17981aa76093cfdd",
+        "cdp.mjs": "3d69e1265919e2df310c4404fa564a269acc3234fdd9aff94743869c9948a3d8",
+        "private-capture.mjs": "6d35881abe248c6455592cea8531efe16edd7b4003052105cad6251494b05bf2",
+        "provenance.mjs": "e342ac0e3523e4e28936470607a3e1f6105009fd495d73ae4c6638b47dc23269",
+        "fixture.html": "c75a5439898fa9f3261779f01819334f832d8f3e63ff813a5671054466219ced"
+      },
+      "counts": [
+        {
+          "kind": "continuous",
+          "phase": "old_document",
+          "matches_expected": false,
+          "frames": 73
+        },
+        {
+          "kind": "continuous",
+          "phase": "transition_in_flight",
+          "matches_expected": false,
+          "frames": 4
+        },
+        {
+          "kind": "continuous",
+          "phase": "commands_completed",
+          "matches_expected": true,
+          "frames": 107
+        },
+        {
+          "kind": "restarted_static",
+          "phase": "fresh_generation",
+          "matches_expected": true,
+          "frames": 8
+        },
+        {
+          "kind": "restarted_resize_only",
+          "phase": "fresh_after_resize",
+          "matches_expected": true,
+          "frames": 8
+        }
+      ],
+      "cases": [
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 2,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 25,
+          "first_pixels": {
+            "magic": 165,
+            "document": 1,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 3,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 3,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 3,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 3,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 5,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 4,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 6,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 6,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 6,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 6,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 8,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 7,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 9,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 9,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 9,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 9,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 11,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 10,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 12,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 12,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 12,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 12,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 14,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 13,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 15,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 15,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 15,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 15,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 17,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 16,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 18,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 18,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 18,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 18,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 20,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 22,
+          "first_pixels": {
+            "magic": 165,
+            "document": 19,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 21,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 21,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 21,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 21,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "continuous",
+          "expected": {
+            "document": 23,
+            "width": 400,
+            "height": 700
+          },
+          "frame_count": 23,
+          "first_pixels": {
+            "magic": 165,
+            "document": 22,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_static",
+          "expected": {
+            "document": 24,
+            "width": 440,
+            "height": 816
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 24,
+            "width": 440,
+            "height": 816,
+            "bitmap_width": 440,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        },
+        {
+          "kind": "restarted_resize_only",
+          "expected": {
+            "document": 24,
+            "width": 380,
+            "height": 740
+          },
+          "frame_count": 1,
+          "first_pixels": {
+            "magic": 165,
+            "document": 24,
+            "width": 380,
+            "height": 740,
+            "bitmap_width": 419,
+            "bitmap_height": 816
+          },
+          "post_boundary_mismatches": []
+        }
+      ]
+    }
+  ]
+}

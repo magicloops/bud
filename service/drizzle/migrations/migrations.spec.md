@@ -237,7 +237,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0046` currently)
+- Snapshot files for each migration (`0000` through `0047` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -459,3 +459,16 @@ unchanged from Drizzle generation. Local reviewed SQL was applied transactionall
 after db:push encountered unrelated invocation-constraint recreation. Deployment:
 `pnpm db:migrate` before updated service/web/mobile; no daemon change. Exact SQL
 backfill, commit/rollback, duplicate, stale write and hint filtering tests pass.
+
+## Agent-default browser migrations — 0044–0047
+
+- `0044_conscious_skaar.sql`: override identity/viewer/carrier/deadline, complete-lease check and expiry index; handoff override/reason fields.
+- `0045_lucky_makkari.sql`: introduces acknowledged end operation in the resource receipt constraint.
+- `0046_browser_override_cutover.sql`: generated custom migration; old holds become fenced reconciliation candidates, resource hints include override identity but exclude routine renewals.
+- `0047_yielding_sabretooth.sql`: clears obsolete prepare_return/finish_return receipts and restricts operations to pause/acquire/end.
+
+Generated snapshots/journal are unedited. Reviewed SQL applied locally after
+canceling unrelated db:push constraint churn. Isolated PostgreSQL fixtures cover
+schema transitions and the upgraded notification trigger. Quiesce old browser
+workers/controllers, migrate, install matching service/web/daemon/mobile, then
+resume. Do not roll back to sticky-pause binaries against this schema.

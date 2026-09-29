@@ -1560,3 +1560,14 @@ and agent instructions to manually close another conversation are removed. Exist
 broker ensure runs before each new cell, restoring eligible public URLs as needed;
 fresh runtime generation/creation metadata distinguishes a new heap from retained
 bindings. Receipts and private-control checks are unchanged; old cells never replay.
+
+## Agent-default browser task waits (2026-09-28)
+
+browser_request_handoff parks an invocation without changing browser authority.
+The prompt offers explicit Take control or alternative chat instructions. Actual
+takeover associates the task with an override; acknowledged cleanup resumes
+eligible waits with its ending reason and task_completion_confirmed=false.
+InvocationRepository supersedes pending help on a new user message, preserving
+cancellation and message idempotency rather than claiming a successful human task.
+Browser-private rejections explain automatic return on leaving/expiry and allow
+chat/non-browser work; terminal bypass of the execution fence remains forbidden.

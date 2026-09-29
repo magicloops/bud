@@ -650,3 +650,46 @@ steals private control. Message/invocation owner and tenant stamps are unchanged
 
 Resource owner derives from authorized Bud/thread/workspace; existing handoff
 return stamps the owner as returned_by_user_id. No new table or client controller.
+
+## Proposal A private screencast experiment
+
+- [x] Relay fixtures withhold binary frames on failed/late authorization and dispose
+  pending deliveries on control revocation. Exact forwarded-credit checks reject
+  duplicate, foreign-generation and unforwarded acknowledgements.
+- [x] Disposable Chrome rejects retired frame evidence after navigation, preserves
+  focus/text guards and confirms source/focus cleanup before Return.
+- [x] TLS WebSocket fixture verifies ticket-bound experiment selection and stream
+  revocation with injected authority; it does not prove live SQL/account checks.
+- [ ] Real cookie/scoped-mobile owner and second-account media attachment: foreign
+  workspace 404, hostile Origin denied, copied/expired/reused ticket rejected.
+- [ ] Logout, unclaim, visit expiry, competing controller and Return during blocked
+  decode/authorization clear private pixels and never resume/replay human input.
+- [ ] Two owned workspaces: target selection cannot capture/input the other
+  workspace, including popup, native-window and navigation races on matching builds.
+
+No new routes or rows. Existing browser-session/thread/Bud ownership and exact
+private controller govern this flagged media mode; source IDs and frame receipts
+are not credentials. See `plan/browser-streaming/input-and-wss-integration.md`.
+
+## Saved browser agent view
+
+- [x] Route fixtures: expired scoped visit 401, wrong session/owner 404 before
+  artifact lookup; successful response no-store and image-only.
+- [x] Artifact lookup filters owner/thread/session/generation. Relay tests prove
+  private frames and post-fence delivery cannot enter the public snapshot cache.
+- [x] Mounted mobile regression shows a read-only saved frame without private
+  media/control writes and discards late responses after suspension.
+- [ ] Physical two-account web/iPhone: reopen after takeover shows saved agent
+  pixels; account switch, deletion/unclaim and visit revocation clear them.
+
+Existing workspace ownership and authenticated viewer resolution protect this GET;
+no new rows, row stamps or private media authority.
+
+## Agent-default browser override validation — 2026-09-28
+
+- [x] Exact owner/viewer/override/carrier checks for renewal and input; expired IDs cannot revive.
+- [x] Old release cannot end a newer override; passive visit revocation cannot end another device's control.
+- [x] Owned resource/thread/Bud SQL reads remain scoped; internal archived-workspace cleanup is not exposed as inventory.
+- [x] Automatic continuation preserves cancellation/deletion fences and does not stamp a human completion actor.
+- [x] Notification renewals stay quiet; takeover identity changes invalidate metadata after commit.
+- [ ] Physical account-switch/logout during takeover and local/ngrok end/reconnect smoke checks.

@@ -16,6 +16,7 @@ import type { BrowserHandoffContext } from "../agent/browser-tool-executor.js";
 
 export class BrowserBroker implements BrowserAgentBackend {
   private timer?: ReturnType<typeof setInterval>;
+  private controlTimer?: ReturnType<typeof setInterval>;
   private cleaning?: Promise<void>;
   private readonly shutdown = new AbortController();
   constructor(
@@ -120,12 +121,15 @@ export class BrowserBroker implements BrowserAgentBackend {
           this.cleaning = undefined;
         });
     };
+    this.controlTimer = setInterval(() => this.control.expireControllers(), 250);
+    this.controlTimer.unref();
     tick();
     this.timer = setInterval(tick, 5000);
     this.timer.unref();
   }
   async stop(): Promise<void> {
     clearInterval(this.timer);
+    clearInterval(this.controlTimer);
     this.shutdown.abort();
     await this.cleaning;
   }

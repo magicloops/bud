@@ -13,9 +13,15 @@ export type BrowserResource = {
   private_content: boolean;
   control_epoch: number;
   control_session_id: string | null;
+  override_id: string | null;
+  override_viewer_id: string | null;
+  override_carrier_id: string | null;
+  override_expires_at: Date | null;
+  ended_override_id: string | null;
+  override_end_reason: string | null;
   revision: number;
   control_request_id: string | null;
-  control_operation: "pause" | "acquire" | "prepare_return" | "finish_return" | null;
+  control_operation: "pause" | "acquire" | "end" | null;
   desired_state: "open" | "stop_pending" | "stopped" | "reset_pending";
   lifecycle_request_id: string | null;
   requested_by_user_id: string | null;
@@ -23,7 +29,7 @@ export type BrowserResource = {
 };
 
 /**
- * Durable Bud-wide intent. No controller lease, page data or second scheduler.
+ * Durable Bud-wide intent and exact expiring human override; no page data.
  * Lock order: owned Bud -> browser resource -> thread/invocation -> workspace.
  * Control/admission transactions use this same order.
  */
@@ -82,7 +88,7 @@ export class BrowserResourceRepository {
     return this.releaseAuthority(expected, true, workspace);
   }
 
-  /** Call only for an acknowledged finish_return from the exact captured carrier. */
+  /** Call only for an acknowledged end from the exact captured carrier. */
   acknowledgeReturn(expected: BrowserResource): Promise<BrowserResource> {
     return this.releaseAuthority(expected, false);
   }
@@ -94,7 +100,7 @@ export class BrowserResourceRepository {
         if (resource.id !== expected.id || resource.control_epoch !== expected.control_epoch || resource.profile_generation !== expected.profile_generation || resource.desired_state !== "open")
           throw new BrowserError("browser_stale_acknowledgement");
       } else this.receipt(resource, expected, "control");
-      if (!restarted && (resource.control_state !== "resume_pending" || resource.control_operation !== "finish_return")) throw new BrowserError("browser_control_conflict");
+      if (!restarted && (resource.control_state !== "resume_pending" || resource.control_operation !== "end")) throw new BrowserError("browser_control_conflict");
       await this.lockThreads(client, resource);
       // Lock invocations before handoffs, matching cancellation and continuation.
       await client.query(`select i.id from agent_invocation i join browser_handoff h on h.invocation_id=i.id
@@ -110,21 +116,21 @@ export class BrowserResourceRepository {
         if (!ready.rowCount) throw new BrowserError("browser_not_found");
       }
       await client.query(`update browser_handoff h set status=case when
-          i.cancel_requested_at is null and i.status='waiting_for_user' and t.deleted_at is null
+          i.cancel_requested_at is null and i.status in ('running','waiting_for_user') and t.deleted_at is null
           and s.closed_at is null and s.desired_state='open' then 'returned' else 'canceled' end,
-          returned_by_user_id=case when $3 then null else $2 end,resolved_at=now()
+          returned_by_user_id=case when $3 then null else $2 end,resolution_reason=$4,resolved_at=now()
         from agent_invocation i,browser_session s,thread t where h.invocation_id=i.id
         and s.id=h.session_id and t.thread_id=s.thread_id and s.browser_id=$1
         and h.created_by_user_id=$2 and i.created_by_user_id=$2 and s.created_by_user_id=$2
-        and t.created_by_user_id=$2 and h.status='pending'`, [resource.id, resource.created_by_user_id, restarted]);
+        and t.created_by_user_id=$2 and h.status='pending' and (h.kind<>'agent' or h.override_id=$5)`, [resource.id, resource.created_by_user_id, restarted || resource.override_end_reason !== 'explicit_return', restarted ? 'runtime_replaced' : resource.override_end_reason,restarted ? resource.override_id ?? resource.ended_override_id : resource.ended_override_id]);
       await client.query(`update browser_handoff h
         set status=case when s.closed_at is null and s.desired_state='open' and t.deleted_at is null then 'returned' else 'canceled' end,
-        returned_by_user_id=case when $3 then null else $2 end,resolved_at=now()
+        returned_by_user_id=case when $3 then null else $2 end,resolution_reason=$4,resolved_at=now()
         from browser_session s,thread t where s.id=h.session_id and t.thread_id=s.thread_id and t.created_by_user_id=$2 and s.browser_id=$1
-        and h.created_by_user_id=$2 and h.invocation_id is null and h.status='pending'`,
-        [resource.id, resource.created_by_user_id, restarted]);
+        and h.created_by_user_id=$2 and h.invocation_id is null and h.status='pending' and (h.kind<>'agent' or h.override_id=$5)`,
+        [resource.id, resource.created_by_user_id, restarted || resource.override_end_reason !== "explicit_return", restarted ? "runtime_replaced" : resource.override_end_reason,restarted ? resource.override_id ?? resource.ended_override_id : resource.ended_override_id]);
       return (await client.query<BrowserResource>(`update browser_resource set control_state='agent',private_content=false,
-        control_session_id=null,control_epoch=control_epoch+$2,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id, Number(restarted)])).rows[0];
+        control_session_id=null,override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,control_epoch=control_epoch+$2,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id, Number(restarted)])).rows[0];
     });
   }
 
@@ -141,8 +147,8 @@ export class BrowserResourceRepository {
   /** Service recovery never clears private intent or claims that data was reset. */
   async recover(): Promise<void> {
     await this.database.query(`update browser_resource set control_state='paused',revision=revision+1,
-      control_epoch=control_epoch+1,updated_at=now() where retired_at is null
-      and control_state in ('human_private','resume_pending')`);
+      control_epoch=control_epoch+1,ended_override_id=coalesce(override_id,ended_override_id),override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,override_end_reason='service_restarted',updated_at=now() where retired_at is null and desired_state='open'
+      and control_state in ('human_private','resume_pending','paused')`);
   }
 
   requestLifecycle(owner: string, bud: string, revision: number,
@@ -154,6 +160,7 @@ export class BrowserResourceRepository {
         throw new BrowserError("browser_lifecycle_pending");
       return (await client.query<BrowserResource>(`update browser_resource set desired_state=$2,
         control_state='paused',control_epoch=control_epoch+1,revision=revision+1,
+        override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,
         lifecycle_request_id=$3,requested_by_user_id=$4,updated_at=now() where id=$1 returning *`,
         [resource.id, operation === "reset" ? "reset_pending" : "stop_pending", ulid(), owner])).rows[0];
     });
@@ -176,6 +183,7 @@ export class BrowserResourceRepository {
         from browser_session s where s.id=h.session_id and s.browser_id=$1 and h.status='pending'`, [resource.id]);
       return (await client.query<BrowserResource>(`update browser_resource set desired_state='stopped',
         profile_generation=profile_generation+$2,control_session_id=null,
+        override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,
         private_content=case when $2=1 then false else private_content end,
         revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id, Number(reset)])).rows[0];
     });

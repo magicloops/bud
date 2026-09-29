@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bud screencast fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px system-ui; background: #eef2ff; color: #102040; }
+  header { position: fixed; top: 0; padding: 12px; width: 100%; background: #132048; color: white; z-index: 2; }
+  main { padding: 130px 16px 30px; }
+  section { height: 90vh; padding: 12px; border: 2px solid #6377ad; }
+  #nested { height: 180px; overflow: auto; background: white; }
+  #nested div { height: 900px; background: repeating-linear-gradient(#ddf 0 40px, #fff 40px 80px); }
+  #motion { height: 18px; background: #43dfaa; transform-origin: left; }
+  input, button, a { font: inherit; margin: 8px 0; }
+  small { font-size: 12px; }
+</style>
+<header><strong id="identity"></strong><div id="state"></div><div id="motion"></div></header>
+<main>
+  <section><h1>First screen</h1><small>Readability: Il1 O0 123456789 punctuation !?;: — αβγ</small>
+    <p><a href="?document=next#fragment">New document</a> · <a href="#last">Fragment</a></p>
+    <button id="popup">Open owned popup</button><form><input aria-label="Fixture text" placeholder="Type here"><button>Submit</button></form>
+    <div id="nested"><div>Nested scroll area</div></div>
+  </section>
+  <section><h2>Second screen</h2><p>Short-page flick destination.</p></section>
+  <section id="last"><h2>Third screen</h2><p>End of short page.</p></section>
+</main>
+<script>
+  const label = new URL(location.href).searchParams.get('document') || 'A';
+  const markerId = Number(new URL(location.href).searchParams.get('marker') || 0);
+  const marker = document.createElement('canvas');
+  marker.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:32px;z-index:99999;pointer-events:none';
+  document.body.append(marker);
+  function paintMarker() {
+    marker.width = innerWidth;
+    marker.height = 32;
+    const bits = [0xa5, markerId, innerWidth, innerHeight].map((n, i) => n.toString(2).padStart(i < 2 ? 8 : 12, '0')).join('');
+    const ctx = marker.getContext('2d');
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = bits[i] === '1' ? '#fff' : '#000';
+      ctx.fillRect(i * innerWidth / 40, 0, Math.ceil(innerWidth / 40), 32);
+    }
+  }
+  paintMarker();
+  addEventListener('resize', paintMarker);
+  document.querySelector('#identity').textContent = `SYNTHETIC TARGET ${label}`;
+  let ticks = 0, wheels = 0, distance = 0;
+  let scrollTravel = 0, previousY = scrollY;
+  let animated = !new URL(location.href).searchParams.has('static');
+  let clicks = 0, keys = 0, submissions = 0, focusEvents = 0, blurEvents = 0;
+  const nested = document.querySelector('#nested');
+  function render() {
+    document.querySelector('#state').textContent = `tick ${ticks} · y ${Math.round(scrollY)} · nested ${nested.scrollTop} · wheel ${wheels}`;
+    document.querySelector('#motion').style.transform = `scaleX(${0.1 + (ticks % 60) / 67})`;
+  }
+  function animate() { if (animated) { ticks++; render(); } requestAnimationFrame(animate); }
+  window.fixture = {
+    snapshot: () => ({ label, ticks, wheels, clicks, keys, submissions, focus_events: focusEvents, blur_events: blurEvents, distance, scroll_travel: scrollTravel, y: scrollY, nested_y: nested.scrollTop, visibility: document.visibilityState, focused: document.hasFocus(), width: innerWidth, height: innerHeight }),
+    animate: (value) => { animated = value; render(); },
+    bump: () => { ticks++; render(); },
+  };
+  addEventListener('wheel', (event) => { wheels++; distance += event.deltaY; render(); }, { passive: true });
+  addEventListener('scroll', () => { scrollTravel += Math.abs(scrollY - previousY); previousY = scrollY; render(); }, { passive: true });
+  nested.addEventListener('scroll', render, { passive: true });
+  addEventListener('click', () => clicks++);
+  addEventListener('keydown', () => keys++);
+  addEventListener('focus', () => focusEvents++);
+  addEventListener('blur', () => blurEvents++);
+  document.querySelector('form').onsubmit = event => { event.preventDefault(); submissions++; };
+  document.querySelector('#popup').onclick = () => window.open('?document=popup');
+  requestAnimationFrame(animate);
+</script>
+</html>

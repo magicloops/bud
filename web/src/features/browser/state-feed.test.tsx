@@ -16,15 +16,15 @@ Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true})
 
 for(const privateControl of [false,true]) test(`mounted shared viewer: 60 seconds idle, private=${privateControl}`,async t=>{
   t.mock.timers.enable({apis:['setTimeout','setInterval']})
-  const originalSocket=globalThis.WebSocket, originalFetch=globalThis.fetch, originalDocument=globalThis.document
+  const originalSocket=globalThis.WebSocket, originalFetch=globalThis.fetch, originalDocument=globalThis.document, originalWindow=globalThis.window
   const document=Object.assign(new EventTarget(),{visibilityState:'visible'})
-  Object.assign(globalThis,{WebSocket:StateSocket,document})
+  Object.assign(globalThis,{WebSocket:StateSocket,document,window:Object.assign(new EventTarget(),{location:{origin:'http://localhost'}})})
   StateSocket.all=[]
   let captures=0, owns=false
   const sessionId='browser_01AAAAAAAAAAAAAAAAAAAAAAAA'
   const requests:{url:string;operation?:string}[]=[]
   const snapshot=()=>({session_id:sessionId,thread_id:'thread',bud_id:'bud',generation:'g',revision:owns?2:1,
-    state:'ready',control_state:owns?'human_private':'agent',can_view:!owns,owns_control:owns})
+    state:'ready',control_state:owns?'human_private':'agent',can_view:!owns,owns_control:owns,override_id:owns?'override':null})
   globalThis.fetch=async(url,init)=>{
     const operation=init?.body?JSON.parse(String(init.body)).operation:undefined
     requests.push({url:String(url),operation})
@@ -44,16 +44,19 @@ for(const privateControl of [false,true]) test(`mounted shared viewer: 60 second
   }
   let view!:ReactTestRenderer
   try{
-    await act(async()=>{view=create(createElement(Harness),{createNodeMock:()=>({value:''})})})
+    await act(async()=>{view=create(createElement(Harness),{createNodeMock:()=>({value:'',blur(){}})})})
     assert.equal(StateSocket.all.length,1,'inventory, metadata and lifecycle share one socket')
     if(privateControl) await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Take control'))!.props.onClick())
     const before=requests.length, frames=captures
     document.visibilityState='hidden'
     await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
+    const afterLeave=requests.length
     for(let n=0;n<12;n++)await act(async()=>{StateSocket.all[0].emit('heartbeat');t.mock.timers.tick(5000)})
     const added=requests.slice(before)
-    assert.equal(added.length,privateControl?12:0)
-    assert.ok(added.every(r=>r.operation==='renew'))
+    assert.equal(requests.length,afterLeave,'hidden timers never poll or renew')
+    assert.equal(added.filter(r=>r.operation==='release').length,privateControl?1:0)
+    assert.ok(added.every(r=>r.operation==='release'||r.url.endsWith('/shared-frame')))
+    assert.equal(requests.filter(r=>r.operation==='acquire').length,privateControl?1:0)
     assert.equal(captures,frames,'idle timers do not attach or recapture')
     document.visibilityState='visible'
     await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
@@ -62,7 +65,7 @@ for(const privateControl of [false,true]) test(`mounted shared viewer: 60 second
     assert.equal(view.toJSON(),null,'live revocation clears the protected viewer')
   }finally{
     if(view)await act(async()=>view.unmount())
-    Object.assign(globalThis,{WebSocket:originalSocket,fetch:originalFetch,document:originalDocument})
+    Object.assign(globalThis,{WebSocket:originalSocket,fetch:originalFetch,document:originalDocument,window:originalWindow})
     Reflect.deleteProperty(globalThis,'__stateCanvas')
   }
 })

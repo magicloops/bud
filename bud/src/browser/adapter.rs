@@ -24,6 +24,7 @@ pub struct Target {
 }
 
 struct Focus {
+    editable: bool,
     target: String,
     document: String,
     object: String,
@@ -90,6 +91,8 @@ pub struct Browser {
     sessions: HashMap<String, String>,
     focus: Option<Focus>,
     viewport: Option<Viewport>,
+    stream_guard: Option<super::stream_guard::StreamGuard>,
+    stream_cleanup: Option<Arc<std::sync::atomic::AtomicU8>>,
     viewport_id: Option<String>,
     fitted_sizes: HashMap<String, (u32, u32)>,
     preferred_size: Option<(u32, u32)>,
@@ -300,6 +303,8 @@ impl Browser {
             sessions: HashMap::new(),
             focus: None,
             viewport: None,
+            stream_guard: None,
+            stream_cleanup: None,
             viewport_id: None,
             fitted_sizes: HashMap::new(),
             preferred_size: None,
@@ -583,6 +588,7 @@ impl Browser {
     }
 
     pub(super) async fn hide_before_return(&mut self) -> Result<()> {
+        self.retire_stream().await?;
         if self.process.lock().unwrap().background_windows {
             self.native_window(None, false).await?;
         }
@@ -711,7 +717,7 @@ impl Browser {
         self.insert_text(text).await
     }
 
-    /// Guarded committed text for ordinary inputs. Check and write
+    /// Guarded committed text for ordinary inputs and contenteditable hosts, including open shadow roots. Check and write
     /// in one JS task so navigation/focus changes cannot redirect input.
     /// This is NOT yet the general mobile composition/selection implementation.
     pub async fn insert_text(&mut self, text: &str) -> Result<()> {
@@ -729,8 +735,8 @@ impl Browser {
             bail!("browser_stale_focus");
         }
         let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
-            "objectId":object, "returnByValue":true, "arguments":[{"value":text}],
-            "functionDeclaration":"function(text) { if (!this.isConnected || this.ownerDocument.activeElement !== this || this.disabled || this.readOnly ) return false; if (this.selectionStart === null) { this.value = this.value + text; } else { this.setRangeText(text, this.selectionStart, this.selectionEnd, 'end'); } this.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})); return true; }"
+            "objectId":object, "returnByValue":true, "arguments":[{"value":"text"},{"value":text}],
+            "functionDeclaration":include_str!("human_edit.js")
         })).await?;
         if result["result"]["value"] != true {
             bail!("browser_stale_or_unsupported_focus");
@@ -1028,7 +1034,7 @@ impl Browser {
                 Some(session),
                 "Runtime.evaluate",
                 json!({
-                    "expression":"document.activeElement", "objectGroup":"bud-human-focus"
+                    "expression":"(() => { let active = document.activeElement; while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement; return active; })()", "objectGroup":"bud-human-focus"
                 }),
             )
             .await?;
@@ -1038,14 +1044,77 @@ impl Browser {
         if self.document(session).await? != document {
             return Ok(None);
         }
+        let editable = self.cdp.call(Some(session), "Runtime.callFunctionOn", json!({
+            "objectId":object,"returnByValue":true,"arguments":[{"value":"probe"}],
+            "functionDeclaration":include_str!("human_edit.js")
+        })).await?["result"]["value"] == true;
+        if self.document(session).await? != document { return Ok(None); }
         let token = ulid::Ulid::new().to_string();
         self.focus = Some(Focus {
+            editable,
             target: target.into(),
             document: document.into(),
             object: object.into(),
             token: token.clone(),
         });
         Ok(Some(token))
+    }
+
+    /// Called only under the page lock after private media admission.
+    pub(super) async fn prepare_stream(
+        &mut self,
+        target: &str,
+    ) -> Result<(super::screencast::SourceConfig, String)> {
+        self.retire_stream().await?;
+        let session = self.session(target).await?; // repeats workspace ownership
+        self.invalidate_references();
+        let document = self.document(&session).await?;
+        let metrics = self
+            .cdp
+            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let metrics = super::screencast::viewport(&metrics)?;
+        let width = metrics["clientWidth"]
+            .as_f64()
+            .context("browser_viewport_unavailable")?;
+        let height = metrics["clientHeight"]
+            .as_f64()
+            .context("browser_viewport_unavailable")?;
+        let guard =
+            super::stream_guard::StreamGuard::new(target.into(), document.clone(), width, height);
+        let generation = guard.generation.clone();
+        let cleanup = Arc::new(std::sync::atomic::AtomicU8::new(1));
+        self.stream_cleanup = Some(cleanup.clone());
+        let config = super::screencast::SourceConfig {
+            endpoint: self.endpoint.clone(),
+            target: target.into(),
+            document,
+            width,
+            height,
+            live: guard.live.clone(),
+            cleanup,
+        };
+        self.stream_guard = Some(guard);
+        Ok((config, generation))
+    }
+
+    pub(super) fn stream_frame(
+        &mut self,
+        generation: &str,
+        frame: &super::screencast::SourceFrame,
+    ) -> Result<serde_json::Value> {
+        let guard = self
+            .stream_guard
+            .as_mut()
+            .filter(|g| g.generation == generation)
+            .context("browser_frame_discarded")?;
+        let token = guard
+            .record(frame.metrics.clone(), frame.received)
+            .context("browser_frame_discarded")?;
+        Ok(
+            json!({"target_id":guard.target,"document_id":guard.document,"frame_token":token,
+            "viewport_id":self.viewport_id,"width":guard.width,"height":guard.height}),
+        )
     }
 
     pub async fn human_input(
@@ -1061,28 +1130,50 @@ impl Browser {
             bail!("browser_stale_focus");
         }
         let scroll = matches!(input, HumanInput::Scroll { .. });
-        let viewport = self
-            .viewport
-            .as_ref()
-            .filter(|v| v.target == target && v.document == document)
-            .context("browser_stale_viewport")?;
-        let valid_token = if scroll {
-            frame_token
-                .split_once(':')
-                .zip(viewport.token.split_once(':'))
-                .is_some_and(|((context, suffix), (current, _))| {
-                    context == current && !suffix.is_empty()
-                })
-        } else {
-            viewport.token == frame_token && viewport.captured.elapsed() < Duration::from_secs(3)
+        let action = match input {
+            HumanInput::Click { .. } => "click", HumanInput::Scroll { .. } => "scroll",
+            HumanInput::Text { .. } => "text", HumanInput::Key { .. } => "key",
+            HumanInput::Back => "back",
         };
-        if !valid_token {
-            bail!("browser_stale_viewport");
-        }
-        if !viewport.stable && !matches!(input, HumanInput::Scroll { .. }) {
-            bail!("browser_stale_viewport");
-        }
-        let expected_metrics = viewport.metrics.clone();
+        let diagnostic_session = self.workspace.clone();
+        let streaming = self.stream_guard.is_some();
+        let reject = |reason: &'static str| {
+            tracing::info!(component = "browser_input", event = "viewport_rejected",
+                session_id = %diagnostic_session, action, reason,
+                streaming, "Browser input viewport rejected");
+            anyhow::anyhow!("browser_stale_viewport")
+        };
+        let expected_metrics = if let Some(guard) = &self.stream_guard {
+            guard
+                .resolve(target, document, frame_token, scroll)
+                .ok_or_else(|| reject("stream_receipt"))?
+                .metrics
+                .clone()
+        } else {
+            let viewport = self
+                .viewport
+                .as_ref()
+                .filter(|v| v.target == target && v.document == document)
+                .ok_or_else(|| reject("passive_receipt_missing"))?;
+            let valid_token = if scroll {
+                frame_token
+                    .split_once(':')
+                    .zip(viewport.token.split_once(':'))
+                    .is_some_and(|((context, suffix), (current, _))| {
+                        context == current && !suffix.is_empty()
+                    })
+            } else {
+                viewport.token == frame_token
+                    && viewport.captured.elapsed() < Duration::from_secs(3)
+            };
+            if !valid_token {
+                return Err(reject("passive_token_or_age"));
+            }
+            if !viewport.stable && !matches!(input, HumanInput::Scroll { .. }) {
+                return Err(reject("passive_capture_unstable"));
+            }
+            viewport.metrics.clone()
+        };
         if self.document(&session).await? != document {
             bail!("browser_stale_focus");
         }
@@ -1092,15 +1183,43 @@ impl Browser {
             .await?;
         // Wheel movement intentionally advances scroll offsets before the next
         // capture. Keep page/context guards and reject any size change.
-        let current_metrics = &metrics["cssLayoutViewport"];
-        let matches_metrics = if scroll {
-            current_metrics["clientWidth"] == expected_metrics["clientWidth"]
-                && current_metrics["clientHeight"] == expected_metrics["clientHeight"]
+        let stream_metrics;
+        let current_metrics = if self.stream_guard.is_some() {
+            stream_metrics = super::screencast::viewport(&metrics)?;
+            &stream_metrics
         } else {
-            *current_metrics == expected_metrics
+            &metrics["cssLayoutViewport"]
         };
+        let fields: &[&str] = if scroll {
+            &["clientWidth", "clientHeight"]
+        } else {
+            &["clientWidth", "clientHeight", "pageX", "pageY"]
+        };
+        let matches_metrics = fields.iter().all(|key| {
+            if streaming {
+                super::stream_guard::metric_matches(key, &expected_metrics[*key], &current_metrics[*key])
+            } else {
+                current_metrics[*key].as_f64().is_some()
+                    && current_metrics[*key].as_f64() == expected_metrics[*key].as_f64()
+            }
+        });
         if !matches_metrics {
-            bail!("browser_stale_viewport");
+            for key in fields {
+                if current_metrics[*key].as_f64() != expected_metrics[*key].as_f64() {
+                    tracing::info!(component = "browser_input", event = "geometry_mismatch",
+                        session_id = %self.workspace, action, field = *key,
+                        expected = expected_metrics[*key].as_f64(), current = current_metrics[*key].as_f64(),
+                        "Browser input geometry mismatch");
+                }
+            }
+            return Err(reject("geometry_changed"));
+        }
+        if self
+            .stream_guard
+            .as_ref()
+            .is_some_and(|g| g.resolve(target, document, frame_token, scroll).is_none())
+        {
+            return Err(reject("stream_receipt_changed_during_validation"));
         }
         match input {
             HumanInput::Back => {
@@ -1126,16 +1245,10 @@ impl Browser {
                 return Ok(json!({"focus_token":null}));
             }
             HumanInput::Click { x, y } | HumanInput::Scroll { x, y, .. } => {
-                if *x
-                    > metrics["cssLayoutViewport"]["clientWidth"]
-                        .as_f64()
-                        .unwrap_or(0.0)
-                    || *y
-                        > metrics["cssLayoutViewport"]["clientHeight"]
-                            .as_f64()
-                            .unwrap_or(0.0)
+                if *x > current_metrics["clientWidth"].as_f64().unwrap_or(0.0)
+                    || *y > current_metrics["clientHeight"].as_f64().unwrap_or(0.0)
                 {
-                    bail!("browser_stale_viewport");
+                    return Err(reject("coordinates_outside_viewport"));
                 }
                 if let HumanInput::Scroll { delta_y, .. } = input {
                     self.cdp
@@ -1179,15 +1292,16 @@ impl Browser {
                     })
                     .context("browser_stale_focus")?;
                 let result = self.cdp.call(Some(&session), "Runtime.callFunctionOn", json!({
-                    "objectId":focus.object,"returnByValue":true,"arguments":[{"value":key}],"userGesture":true,
-                    "functionDeclaration":"function(key) { if (!this.isConnected || this.ownerDocument.activeElement !== this) return false; if (key === 'Enter') { if (this instanceof HTMLInputElement && this.form) { this.form.requestSubmit(); return true; } if (this instanceof HTMLButtonElement || this instanceof HTMLAnchorElement) { this.click(); return true; } return false; } if (key === 'Tab') { const items=[...document.querySelectorAll('input,textarea,button,select,a[href],[tabindex]')].filter(e=>!e.disabled && e.tabIndex>=0 && e.getClientRects().length); const next=items[(items.indexOf(this)+1)%items.length]; if (!next) return false; next.focus(); return true; } if (!(this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) || this.disabled || this.readOnly) return false; if (this.selectionStart === null) { if (key==='Backspace') { this.value=this.value.slice(0,-1); this.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'})); } return true; } let a=this.selectionStart,b=this.selectionEnd; if (key==='Backspace'||key==='Delete') { if(a===b) { if(key==='Backspace') a=Math.max(0,a-1); else b=Math.min(this.value.length,b+1); } this.setRangeText('',a,b,'end'); this.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:key==='Backspace'?'deleteContentBackward':'deleteContentForward'})); } else { const p=key==='Home'?0:key==='End'?this.value.length:key==='ArrowLeft'?Math.max(0,a-1):Math.min(this.value.length,b+1); this.setSelectionRange(p,p); } return true; }"
+                    "objectId":focus.object,"returnByValue":true,"arguments":[{"value":"key"},{"value":key}],"userGesture":true,
+                    "functionDeclaration":include_str!("human_edit.js")
                 })).await?;
                 if result["result"]["value"] != true {
                     bail!("browser_unsupported_field");
                 }
             }
         }
-        Ok(json!({"focus_token":self.remember_human_focus(target,&session,document).await?}))
+        let token = self.remember_human_focus(target, &session, document).await?;
+        Ok(json!({"focus_token":token,"focus_editable":self.focus.as_ref().is_some_and(|f| f.editable)}))
     }
 
     /// Close-time hint removal for a workspace without a live handle; best-effort
@@ -1377,10 +1491,29 @@ impl Browser {
         Ok(())
     }
 
+    async fn retire_stream(&mut self) -> Result<()> {
+        self.stream_guard = None;
+        if let Some(cleanup) = &self.stream_cleanup {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                while cleanup.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .context("browser_stream_cleanup_unconfirmed")?;
+            if cleanup.load(std::sync::atomic::Ordering::SeqCst) != 1 {
+                bail!("browser_stream_cleanup_unconfirmed");
+            }
+        }
+        self.stream_cleanup = None;
+        Ok(())
+    }
+
     pub fn invalidate_references(&mut self) {
         self.semantic_dirty = true;
         self.focus = None;
         self.viewport = None;
+        self.stream_guard = None;
         self.last_wheel = None;
     }
 
@@ -1619,6 +1752,8 @@ impl Browser {
             sessions: HashMap::new(),
             focus: None,
             viewport: None,
+            stream_guard: None,
+            stream_cleanup: None,
             viewport_id: None,
             fitted_sizes: HashMap::new(),
             preferred_size: None,
@@ -1790,3 +1925,7 @@ mod cache_tests {
         assert!(profile_flags(true).contains(&"--use-mock-keychain"));
     }
 }
+
+#[cfg(test)]
+#[path = "stream_tests.rs"]
+mod stream_tests;

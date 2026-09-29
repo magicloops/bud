@@ -26,32 +26,46 @@ type Session = {
   can_take_control?: boolean;
   can_show_window?: boolean;
   owns_control?: boolean;
-  recovery_ticket?: string;
+  override_id?: string | null;
   private_progress_lost?: boolean;
   recovery_status?: string;
   handoff?: { reason: string } | null;
 };
+type SharedFrame = { image: string; mime_type: "image/png" | "image/jpeg"; captured_at: number };
+// Local deletion context only; never transmitted to the remote page.
+const keyboardSentinel = " ";
 const button =
   "min-h-11 min-w-11 rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
 const controlErrors: Record<string, string> = {
   browser_window_unsupported: "Native window controls are unavailable on this Bud.",
-  browser_window_unconfirmed: "The browser window change was not confirmed. Browser work remains private. Try Hide browser window before returning to the agent.",
+  browser_window_unconfirmed: "The browser window change was not confirmed. Try the window action again. Closing this view still returns control to the agent.",
   browser_recovery_unavailable: "The shared page could not be restored. Ask Bud to open a page; saved sign-ins remain.",
   browser_recovery_uncertain: "Browser restoration could not be confirmed. No page action was replayed.",
   browser_revision_conflict: "Browser status changed. Wait for status to refresh, then try again.",
-  browser_controller_exists: "Another viewer has control. Pause it there or close it and wait for its control lease to expire.",
-  browser_control_expired: "Private control expired. Take control again to reconnect.",
+  browser_controller_exists: "Another viewer has control. Close the controlling view or wait for its control to expire.",
+  browser_control_expired: "Browser control expired. Take control again to reconnect.",
   browser_stale_request: "Bud rejected an outdated browser request. Take control again to establish a fresh control session.",
   browser_stale_control: "Bud rejected an outdated control version. Take control again.",
   browser_control_conflict: "Bud's browser control state changed. Take control again.",
   browser_stale_connection: "The Bud connection changed. Wait for it to reconnect, then take control again.",
   browser_closed: "The browser was closed. Return to the conversation to open another.",
   browser_handoff_unavailable: "The browser runtime is disconnected, restarted, or does not support handoff. Check that the correct Bud is running.",
-  browser_control_uncertain: "Bud did not confirm the control transition. The browser remains paused.",
+  browser_control_uncertain: "Bud did not confirm the control transition. Control is returning to the agent.",
   browser_busy: "The browser is processing another request. Please try again shortly.",
   browser_agent_still_running: "The agent has not finished pausing. Please try again shortly.",
   browser_interrupted: "This browser session was interrupted. Ask the agent to open the page again, or take control.",
   browser_not_found: "This browser session is no longer available. Return to the conversation.",
+};
+
+// Only fixed diagnostic codes/messages may reach the UI, never raw page errors.
+const inputErrors: Record<string, string> = {
+  browser_stale_or_unsupported_focus: "The selected field lost focus or does not support text entry.",
+  browser_stale_focus: "The selected field changed. Select it again.",
+  browser_focus_required: "Select a text field before typing.",
+  browser_unsupported_field: "This field does not support that editing action.",
+  browser_stale_viewport: "The displayed page changed. Wait for the view to update and select the field again.",
+  viewer_page_changed: "The page changed before this input could be sent.",
+  viewer_focus_required: "Select a text field before typing.",
 };
 
 export type BrowserReturnAction = {
@@ -61,7 +75,7 @@ export type BrowserReturnAction = {
   run: () => void;
 };
 
-export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange, onAuthorizationLost }: { stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onAuthorizationLost?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
+export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false, hostViewerId, active = true, embedded = false, onDismiss, onReturnActionChange, onControlErrorChange, onAuthorizationLost, onKeyboardRequest }: { onKeyboardRequest?: (focus: () => void) => void; stateFeed?: BrowserStateFeed; sessionId: string; mobile?: boolean; hostViewerId?: string; active?: boolean; embedded?: boolean; onDismiss?: () => void; onAuthorizationLost?: () => void; onReturnActionChange?: (action: BrowserReturnAction | null) => void; onControlErrorChange?: (error: { sessionId: string; message: string } | null) => void }) {
   const activeRef = useRef(active);
   const lifecycleEpoch = useRef(0);
   if (activeRef.current !== active) { activeRef.current = active; lifecycleEpoch.current++; }
@@ -84,9 +98,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const [owns, setOwns] = useState(false);
   const [working, setWorking] = useState(false);
   const [returning, setReturning] = useState(false);
-  const [recovering, setRecovering] = useState(false);
-  const recoveryTicket = useRef<string | null>(null);
-  const recoveryPending = useRef(false);
+  const overrideId = useRef<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const ensureNeeded = useRef(true);
   const [ensuring, setEnsuring] = useState(true);
@@ -118,6 +130,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const media = useRef<BrowserCanvas | null>(null);
   const mounted = useRef(true);
   const focus = useRef<string | null>(null);
+  const tapGeneration = useRef(0);
   const inputEpoch = useRef(0);
   const queue = useRef<QueuedInput[]>([]);
   const sending = useRef(false);
@@ -128,37 +141,40 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const stateFeed = sharedFeed ?? ownFeed;
   const stateCurrent = useRef(false);
   const refreshState = useRef(() => {});
+  const resetTyping = useCallback((element = typing.current) => {
+    if (!element) return;
+    element.value = mobile ? keyboardSentinel : "";
+    if (mobile) element.setSelectionRange?.(1, 1);
+  }, [mobile]);
+  const committedText = (value: string) => mobile && value.startsWith(keyboardSentinel) ? value.slice(1) : value;
   const resetInput = useCallback(() => {
     inputEpoch.current++;
     queue.current = [];
     focus.current = null;
-    if (typing.current) typing.current.value = "";
-  }, []);
-  const failPrivate = useCallback((message: string, priority: number, recover = false) => {
-    if (!mounted.current) return;
-    if (priority > failurePriority.current) {
+    resetTyping();
+  }, [resetTyping]);
+  const failPrivate = useCallback((message: string, priority: number) => {
+    if (mounted.current && priority > failurePriority.current) {
       failurePriority.current = priority;
       setError(message);
     }
     const wasOwner = ownsRef.current;
-    if (!recover) recoveryTicket.current = null;
-    recoveryPending.current = recover && !!recoveryTicket.current;
-    setRecovering(recoveryPending.current);
     ownsRef.current = false;
-    setOwns(false);
+    if (mounted.current) setOwns(false);
     resetInput();
-    media.current?.close("private_control_failure");
-    // Release is a privacy fence, never a return or replay of page input.
-    if (wasOwner && sessionRef.current && !recoveryPending.current)
-      void fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation: "release", revision: sessionRef.current.revision, viewer_id: viewerId.current }) }).catch(() => {});
+    const detached = media.current;
+    media.current = null;
+    detached?.close("private_control_failure");
+    const ended = overrideId.current;
+    overrideId.current = null;
+    if (wasOwner && ended && sessionRef.current)
+      void fetchJson(`${base}/control`, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "release", override_id: ended, revision: sessionRef.current.revision, viewer_id: viewerId.current }) }).catch(() => {});
   }, [base, resetInput, fetchJson]);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      recoveryTicket.current = null;
-      recoveryPending.current = false;
       resetInput();
     };
   }, [resetInput]);
@@ -189,11 +205,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           setEnsuring(false);
           attemptedEnsure = false;
           if (recovered.private_progress_lost) {
-            recoveryTicket.current = null;
-            recoveryPending.current = false;
             ownsRef.current = false;
             setOwns(false);
-            setRecovering(false);
             resetInput();
             setNotice(recovered.recovery_status === "empty" || recovered.recovery_status === "unavailable"
               ? "No shared page was available. Unfinished private browsing was not recovered."
@@ -210,9 +223,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           );
           if (version === controlVersion.current && !changingControl.current && ownsRef.current &&
               data.owns_control === false && data.revision >= (sessionRef.current?.revision ?? 0))
-            failPrivate("Browser control was lost. Take control again to reconnect; the agent remains paused.", 1, true);
-          if (stateFeed.ready && recoveryPending.current && !changingControl.current && !ownsRef.current && data.runtime_status === "available")
-            await latestControl.current("recover");
+            failPrivate("Browser control was lost. Take control again to reconnect; control returns to the agent.", 1);
         }
       } catch (failure) {
         if (!signal.aborted && isApiError(failure) && [401,403,404,410].includes(failure.status)) {
@@ -221,6 +232,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           return false;
         }
         if (!signal.aborted) {
+          if (ownsRef.current) failPrivate("Browser status was lost. Control is returning to the agent.", 1);
           setEnsuring(false);
           if (attemptedEnsure) setEnsureFailed(true);
           const code = isApiError(failure) ? failure.message : "";
@@ -231,23 +243,18 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     };
     const observer = observeBrowserState(stateFeed, read, {
       hidden: () => ownsRef.current,
-      lost: () => { stateCurrent.current = false; resetInput(); setStatusError("Browser status connection lost. Reconnecting…"); },
+      lost: () => { stateCurrent.current = false; failPrivate("", 0); resetInput(); setStatusError("Browser status connection lost. Reconnecting…"); },
       revoked: () => { stateCurrent.current = false; failPrivate("Browser authorization ended. Close and reopen the viewer.", 2); setMissing(true); },
     });
     refreshState.current = observer.refresh;
     return () => { stateCurrent.current = false; refreshState.current = () => {}; observer.stop(); };
   }, [base, failPrivate, active, fetchJson, mobile, resetInput, ensureRetry, stateFeed]);
   const control = useCallback(
-    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "recover" | "show_window" | "hide_window") => {
+    async (operation: "acquire" | "return" | "release" | "renew" | "close" | "show_window" | "hide_window") => {
       if (!session || (!activeRef.current && operation !== "release")) return;
       const lifecycle = lifecycleEpoch.current;
       if (changingControl.current) return;
-      if (operation === "recover" && !recoveryTicket.current) return;
-      if (operation !== "recover" && operation !== "renew") {
-        recoveryTicket.current = null;
-        recoveryPending.current = false;
-        setRecovering(false);
-      }
+      if (operation === "acquire" && typeof document !== "undefined" && document.visibilityState === "hidden") return;
       if (operation === "renew") {
         if (renewing.current || !ownsRef.current) return;
         renewing.current = true;
@@ -275,17 +282,16 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
             ...(operation === "show_window" && selectedTarget ? { target_id: selectedTarget } : {}),
             revision,
             viewer_id: viewerId.current,
-            ...(operation === "recover" ? { recovery_ticket: recoveryTicket.current } : {}),
+            override_id: overrideId.current ?? undefined,
           }),
         });
         if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current) {
-          if ((operation === "acquire" || operation === "recover" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private")
+          if ((operation === "acquire" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private")
             void fetchJson(`${base}/control`, { method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ operation: "release", revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
+              body: JSON.stringify({ operation: "release", override_id: data.override_id, revision: data.revision, viewer_id: viewerId.current }) }).catch(() => {});
           return;
         }
         if (operation === "renew" && !ownsRef.current) return;
-        if (data.recovery_ticket) recoveryTicket.current = data.recovery_ticket;
         setSession(previous => previous && previous.revision > data.revision ? previous : ({
           ...data,
           handoff: data.handoff === undefined ? previous?.handoff : data.handoff,
@@ -293,22 +299,18 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         if (!failurePriority.current) setError("");
         if (operation !== "renew") {
           const acquired =
-            (operation === "acquire" || operation === "recover" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private";
+            (operation === "acquire" || operation === "show_window" || operation === "hide_window") && data.control_state === "human_private";
           const keptPrivateMedia = ownsRef.current && acquired && (operation === "show_window" || operation === "hide_window");
+          overrideId.current = acquired ? data.override_id ?? null : null;
           ownsRef.current = acquired;
           setOwns(acquired);
-          recoveryPending.current = false;
-          setRecovering(false);
           if (!keptPrivateMedia) setMediaVersion((v) => v + 1);
         }
       } catch (failure) {
         if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current || (operation === "renew" && !ownsRef.current)) return;
         const code = isApiError(failure) ? failure.message : "";
-        if ((operation === "renew" || operation === "recover") && recoveryTicket.current &&
-            (!code || ["browser_control_expired", "browser_control_uncertain", "browser_unavailable",
-              "browser_handoff_unavailable", "browser_stale_connection", "browser_busy", "browser_agent_still_running"].includes(code))) {
-          failPrivate("Reconnecting your private browser view…", 1, true);
-          if (operation === "recover") throw failure;
+        if (operation === "renew") {
+          failPrivate("Browser control ended. Returning to agent viewing.", 1);
           refreshState.current();
           return;
         }
@@ -319,32 +321,33 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           // failed. Resolve ownership rather than losing the renewable lease.
           try {
             const current = await fetchJson<Session>(`${base}?viewer_id=${encodeURIComponent(viewerId.current)}`);
+            if (!mounted.current || !activeRef.current || lifecycle !== lifecycleEpoch.current) {
+              if (current.override_id) void fetchJson(`${base}/control`, {method:"POST", keepalive:true,
+                headers:{"Content-Type":"application/json"}, body:JSON.stringify({operation:"release",
+                  override_id:current.override_id,revision:current.revision,viewer_id:viewerId.current})}).catch(() => {});
+              return;
+            }
             if (mounted.current) {
               setSession(previous => previous && previous.revision > current.revision ? previous : current);
+              overrideId.current = current.override_id ?? null;
               ownsRef.current = current.owns_control === true;
               setOwns(ownsRef.current);
             }
           } catch { /* Keep the window-specific failure visible. */ }
           return;
         }
-        recoveryTicket.current = null;
-        recoveryPending.current = false;
-        setRecovering(false);
         setError(
           controlErrors[code]
             ? `${controlErrors[code]} (${code}; ${operation})`
             : "Could not confirm control. Check the connection and try again.",
         );
-        ownsRef.current = false;
-        setOwns(false);
-        resetInput();
-        media.current?.close("control_request_failed");
+        failPrivate("", 0);
       } finally {
         if (operation === "renew") renewing.current = false;
         if (operation !== "renew") {
           controlVersion.current++;
           changingControl.current = false;
-          if (operation !== "recover") refreshState.current();
+          refreshState.current();
         }
         if (mounted.current && operation !== "renew") {
           setWorking(false);
@@ -360,20 +363,33 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }, [control]);
   useEffect(() => {
     if (!owns || !active) return;
-    const timer = setInterval(() => void latestControl.current("renew"), 5000);
+    const timer = setInterval(() => { if (typeof document === "undefined" || document.visibilityState !== "hidden") void latestControl.current("renew"); }, 2000);
     return () => clearInterval(timer);
   }, [owns, active]);
   useEffect(() => () => {
-    if (ownsRef.current) void latestControl.current("release");
-  }, []);
+    lifecycleEpoch.current++;
+    failPrivate("", 0);
+  }, [failPrivate]);
   useEffect(() => {
     if (!active) {
       failPrivate("", 0);
-      recoveryTicket.current = null;
-      recoveryPending.current = false;
       typing.current?.blur();
     }
   }, [active, failPrivate]);
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const leave = () => {
+      if (document.visibilityState === "hidden") {
+        lifecycleEpoch.current++;
+        failPrivate("", 0);
+        typing.current?.blur();
+      }
+    };
+    const pagehide = () => { lifecycleEpoch.current++; failPrivate("", 0); };
+    document.addEventListener("visibilitychange", leave);
+    window.addEventListener("pagehide", pagehide);
+    return () => { document.removeEventListener("visibilitychange", leave); window.removeEventListener("pagehide", pagehide); };
+  }, [failPrivate]);
   const ended = missing || ensureFailed || session?.runtime_status === "daemon_restarted" || session?.runtime_status === "ended" || session?.state === "closing" || session?.state === "closed" || session?.state === "interrupted";
   const canReturn = !missing && owns && !ended;
   useEffect(() => {
@@ -388,9 +404,6 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }, [onReturnActionChange, canReturn, sessionId, working, resizing, returning]);
   useEffect(() => {
     if (!ended) return;
-    recoveryTicket.current = null;
-    recoveryPending.current = false;
-    setRecovering(false);
     ownsRef.current = false;
     setOwns(false);
     resetInput();
@@ -398,6 +411,26 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     setSelectedTarget("");
   }, [ended, resetInput]);
   const canView = active && !ensuring && !ended && (session?.can_view || owns);
+  const savedOnly = active && !ensuring && !ended && !!session && !session.can_view && !owns && !working;
+  const [savedFrame, setSavedFrame] = useState<SharedFrame | null>(null);
+  const [loadingSaved, setLoadingSaved] = useState(false);
+  useEffect(() => {
+    setSavedFrame(null);
+    setLoadingSaved(false);
+    if (!savedOnly) return;
+    const abort = new AbortController();
+    setLoadingSaved(true);
+    void fetchJson<{snapshot: SharedFrame | null}>(`${base}/shared-frame`, {signal: abort.signal})
+      .then(result => { if (!abort.signal.aborted) setSavedFrame(result.snapshot ?? null); })
+      .catch(failure => {
+        if (!abort.signal.aborted && isApiError(failure) && [401,403,404,410].includes(failure.status)) {
+          setMissing(true);
+          failPrivate("Browser authorization ended. Close and reopen the viewer.", 2);
+        }
+      })
+      .finally(() => { if (!abort.signal.aborted) setLoadingSaved(false); });
+    return () => abort.abort();
+  }, [base, savedOnly, session?.generation, fetchJson, failPrivate, mediaVersion]);
   // Fitting follows invocation epochs even while the passive canvas survives.
   const passiveEpoch = owns ? undefined : session?.control_epoch;
   // Agent media ignores invocation epochs. Fitting still fences
@@ -430,7 +463,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           setTargets([]);
           setSelectedTarget("");
           if (ownsRef.current && !changingControl.current)
-            failPrivate("Browser view was lost. Private control is paused; take control again to reconnect.", 1, true);
+            failPrivate("Browser view was lost. Control is returning to the agent.", 1);
           else if (!ownsRef.current && !changingControl.current)
             retry = setTimeout(() => {
               if (mounted.current && media.current === client) setMediaVersion(v => v + 1);
@@ -477,7 +510,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         if (!frame || frame.target_id !== selectedTarget) throw new Error("page changed");
         const result = await fetchJson<{ viewport_id: string }>(`${base}/viewport`, {
           method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
-          body: JSON.stringify({ ...size, viewer_id: viewerId.current, target_id: frame.target_id, document_id: frame.document_id }),
+          body: JSON.stringify({ ...size, override_id: overrideId.current ?? undefined, viewer_id: viewerId.current, target_id: frame.target_id, document_id: frame.document_id }),
         });
         abort.signal.throwIfAborted();
         // An ACK alone is not proof that the displayed pixels use the new coordinates.
@@ -503,7 +536,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       }
     }, () => {
       if (!abort.signal.aborted) {
-        if (owns) failPrivate("Page resizing was not confirmed. Private control is paused; take control again before interacting.", 2);
+        if (owns) failPrivate("Page resizing was not confirmed. Control is returning to the agent.", 2);
         else {
           blockInput(false);
           setError("Browser sizing was not confirmed. The browser may be busy or the page changed. You can try Fit again.");
@@ -536,6 +569,10 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       sending.current = true;
       void (async () => {
         let dispatched = false;
+        let localRejection = "";
+        let dispatchStarted = 0;
+        let inputKind = "input";
+        let mediaMode = "screenshots";
         try {
           while (queue.current.length && epoch === inputEpoch.current) {
             dispatched = false;
@@ -544,45 +581,85 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
             if (
               !frame ||
               !inputMatchesFrame({ action: next, frame: original }, frame)
-            )
-              throw new Error("page changed");
+            ) {
+              localRejection = "viewer_page_changed";
+              throw new Error(localRejection);
+            }
             if (next.kind === "text" || next.kind === "key") {
-              if (!focus.current) throw new Error("select a field");
+              if (!focus.current) {
+                localRejection = "viewer_focus_required";
+                throw new Error(localRejection);
+              }
               next.focus_token = focus.current;
             }
             dispatched = true;
-            const result = await fetchJson<{ focus_token: string | null }>(
+            dispatchStarted = performance.now();
+            inputKind = ["scroll", "click", "text", "key", "back"].includes(String(next.kind)) ? String(next.kind) : "input";
+            mediaMode = frame.media_generation ? "screencast" : "screenshots";
+            const tap = tapGeneration.current;
+            const result = await fetchJson<{ focus_token: string | null; focus_editable?: boolean }>(
               `${base}/input`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   viewer_id: viewerId.current,
+                  override_id: overrideId.current,
                   target_id: frame.target_id,
                   document_id: frame.document_id,
-                  frame_token: frame.frame_token,
+                  // Keep the pixels the gesture was queued against. The daemon
+                  // validates their age/layout; only wheels rebase to latest.
+                  frame_token: next.kind === "scroll" ? frame.frame_token : original.frame_token,
                   input: next,
                 }),
               },
             );
+            if (mobile && next.kind === "click") console.debug("browser-keyboard", {
+              stage: "click_ack", editable: result.focus_editable === true,
+              hint_present: typeof result.focus_editable === "boolean", has_focus: !!result.focus_token,
+              current: epoch === inputEpoch.current, queued_input: !!queue.current.length,
+            });
             if (epoch === inputEpoch.current) {
               focus.current = result.focus_token;
+              if (mobile && next.kind === "click" && result.focus_editable === true && result.focus_token && !queue.current.length) {
+                const keyboardDeadline = performance.now() + 3000;
+                const show = () => {
+                  const admitted = performance.now() <= keyboardDeadline && mounted.current && activeRef.current && ownsRef.current && stateCurrent.current &&
+                      !resizeBlocked.current && epoch === inputEpoch.current && tap === tapGeneration.current &&
+                      focus.current === result.focus_token && media.current?.frame?.document_id === original.document_id &&
+                      media.current?.frame?.target_id === original.target_id;
+                  if (admitted) typing.current?.focus({ preventScroll: true });
+                  console.debug("browser-keyboard", { stage: "focus_attempt", admitted,
+                    disabled: typing.current?.disabled ?? true,
+                    dom_focused: typeof document !== "undefined" && !!typing.current && document.activeElement === typing.current });
+                };
+                if (onKeyboardRequest) onKeyboardRequest(show); else show();
+              }
               if (next.kind === "back") resetInput();
             }
           }
         } catch (failure) {
           resetInput();
           const code = isApiError(failure) ? failure.message : "";
-          if (dispatched && (!code || ["browser_input_uncertain", "browser_interrupted", "browser_control_expired", "browser_private_or_paused"].includes(code)))
-            failPrivate("Browser input was not confirmed. Private control is paused; the input has not been retried.", 2);
-          else if (mounted.current && !failurePriority.current)
-            setError(code === "browser_no_previous_page" ? "No previous page in this tab." : "Input was rejected. Select the field again; text has not been retried.");
+          if (dispatched && (!code || ["browser_input_uncertain", "browser_interrupted", "browser_control_expired", "browser_private_or_paused"].includes(code))) {
+            // This branch contains only allowlisted codes or a local transport category.
+            const reason = code || "network_or_response_error";
+            const elapsed = Math.max(0, Math.round(performance.now() - dispatchStarted));
+            failPrivate(`Browser input was not confirmed. Control is returning to the agent; the input has not been retried. (${reason}; ${inputKind}; ${mediaMode}; ${elapsed} ms)`, 2);
+          }
+          else if (mounted.current && !failurePriority.current) {
+            const diagnostic = localRejection || code;
+            const message = Object.hasOwn(inputErrors, diagnostic) ? inputErrors[diagnostic] : null;
+            setError(code === "browser_no_previous_page" ? "No previous page in this tab."
+              : message ? `${message} Input has not been retried. (${diagnostic})`
+              : "Input was rejected. Select the field again; text has not been retried.");
+          }
         } finally {
           sending.current = false;
         }
       })();
     },
-    [owns, working, connected, base, resetInput, failPrivate, fetchJson, stateFeed],
+    [owns, working, connected, base, resetInput, failPrivate, fetchJson, stateFeed, mobile, onKeyboardRequest],
   );
   const touchSend = useRef(send);
   touchSend.current = send;
@@ -592,9 +669,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     // Software keyboards may emit beforeinput without a meaningful keydown.
     const beforeInput = (event: InputEvent) => {
       if (event.isComposing) return;
-      const key = event.inputType === "deleteContentBackward" ? "Backspace"
-        : event.inputType === "deleteContentForward" ? "Delete"
-        : ["insertLineBreak", "insertParagraph"].includes(event.inputType) ? "Enter" : null;
+      // Let deletion update WebKit's local editing context. onChange forwards
+      // the completed deletion once and restores the transport buffer.
+      const key = ["insertLineBreak", "insertParagraph"].includes(event.inputType) ? "Enter" : null;
       if (key) { event.preventDefault(); send({ kind: "key", key }); }
     };
     element.addEventListener("beforeinput", beforeInput);
@@ -666,17 +743,13 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         {empty && <div role="status" className="absolute inset-0 flex items-center justify-center p-6 text-sm text-muted-foreground">
           {owns ? "No page is open. Return to agent to open a page." : "No page is open. Ask Bud to open a page."}
         </div>}
-        {!connected && !empty && (
+        {!connected && !empty && !(savedOnly && savedFrame) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-sm">
           <p>
-            {ensuring ? "Restoring browser…" : recovering ? "Reconnecting your private browser view…" : owns
+            {ensuring ? "Restoring browser…" : owns
               ? "Connecting to browser…"
-              : session?.can_view ? "Reconnecting to browser…" : "Browser control is paused. Take control to reconnect."}
+              : session?.can_view ? "Reconnecting to browser…" : loadingSaved ? "Loading last agent view…" : "No saved agent view is available. Waiting for live agent view."}
           </p>
-          {!ensuring && !owns && !recovering && session?.runtime_status !== "disconnected" && session && !session.can_view && (
-            <button type="button" className={button} disabled={working}
-              onClick={() => void control("acquire")}>Take control</button>
-          )}
           </div>
         )}
         <canvas
@@ -686,12 +759,23 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           onClick={(event) => {
             const p = point(event);
             if (activeRef.current && p && owns && connected && !working && !resizeBlocked.current) {
+              tapGeneration.current++;
               send({ kind: "click", ...p });
               setMenuOpen(false);
-              typing.current?.focus({ preventScroll: true });
+              // A canvas tap gives no evidence that the remote target is editable.
+              // On mobile, focusing this bridge summons the software keyboard.
+              if (mobile) typing.current?.blur();
+              else typing.current?.focus({ preventScroll: true });
             }
           }}
         />
+        {savedOnly && savedFrame && <>
+          <img alt="Last shared agent view" className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full object-contain"
+            src={`data:${savedFrame.mime_type};base64,${savedFrame.image}`} />
+          <p role="status" className="pointer-events-none absolute left-3 top-3 z-[5] max-w-[70%] rounded bg-background/95 px-3 py-2 text-xs shadow">
+            Last agent view · {new Date(savedFrame.captured_at).toLocaleTimeString()} · Waiting for live agent view
+          </p>
+        </>}
       </div>
       {!owns && connected && session?.can_view && (
         <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center bg-black/15 opacity-0 transition-opacity duration-150 [@media(hover:hover)]:group-hover/browser-pane:opacity-100 focus-within:opacity-100 motion-reduce:transition-none">
@@ -708,28 +792,35 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         <textarea
           ref={typing}
           rows={1}
+          defaultValue={mobile ? keyboardSentinel : ""}
           aria-label="Remote browser keyboard input"
           tabIndex={-1}
           autoComplete="off"
+          // This cleared transport buffer has no sentence context for iOS.
+          autoCapitalize="none"
+          autoCorrect="off"
           spellCheck={false}
           disabled={!stateCurrent.current || !active || !owns || !connected || working || resizing || blocked}
           className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none overflow-hidden opacity-0"
           onChange={(event) => {
-            if (
-              !(event.nativeEvent as InputEvent).isComposing &&
-              event.target.value
-            ) {
-              send({ kind: "text", text: event.target.value });
-              event.target.value = "";
-            }
+            const input = event.nativeEvent as InputEvent;
+            if (input.isComposing) return;
+            const deletion = mobile && (input.inputType === "deleteContentBackward" ? "Backspace"
+              : input.inputType === "deleteContentForward" ? "Delete" : null);
+            const text = committedText(event.target.value);
+            if (deletion) send({ kind: "key", key: deletion });
+            else if (text) send({ kind: "text", text });
+            resetTyping(event.target);
           }}
           onCompositionEnd={(event) => {
-            if (event.currentTarget.value) {
-              send({ kind: "text", text: event.currentTarget.value });
-              event.currentTarget.value = "";
-            }
+            const text = committedText(event.currentTarget.value);
+            if (text) send({ kind: "text", text });
+            resetTyping(event.currentTarget);
           }}
           onKeyDown={(event) => {
+            // Mobile deletion is forwarded from the actual input event, including
+            // keyboards that omit beforeinput. Do not dispatch twice.
+            if (mobile && event.key === "Backspace") return;
             if (
               [
                 "Tab",
@@ -748,6 +839,17 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
             }
           }}
         />
+      {mobile && owns && <button type="button" aria-label="Show keyboard"
+        className={`${button} absolute bottom-3 left-16 z-10 bg-background/95 shadow-md`}
+        disabled={!stateCurrent.current || !active || !connected || working || resizing || blocked}
+        onClick={() => {
+          if (!focus.current) {
+            setError("Select a text field on the page before opening the keyboard.");
+            return;
+          }
+          setMenuOpen(false);
+          typing.current?.focus({ preventScroll: true });
+        }}>Keyboard</button>}
       {owns && session?.can_navigate_history && (
         <div className="group absolute bottom-0 left-0 z-10 p-3">
           <button type="button" aria-label="Go back" title="Go back"
@@ -791,21 +893,14 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           {working
             ? "Updating control…"
             : owns
-              ? "Private control"
+              ? "You have control"
               : session?.control_state === "agent"
                 ? "View only"
-                : "Paused"}
+                : "Another viewer has control"}
         </span>
         <div className="ml-auto flex gap-2">
           {owns ? (
             <>
-              <button
-                className={button}
-                disabled={working || resizing}
-                onClick={() => void control("release")}
-              >
-                Pause
-              </button>
               <button
                 className={button}
                 disabled={working || resizing}
@@ -841,7 +936,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       <p className="mb-3 text-sm text-muted-foreground">
         {owns
           ? "Browser work in every thread on this Bud is paused. Only this viewer receives private content. Return to agent resumes browser work across threads."
-          : "Take control to interact and pause browser work across this Bud. Closing the viewer leaves private work paused."}
+          : "Take control to interact and pause browser work across this Bud. Closing or leaving this view returns control to the agent."}
       </p>
       {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
       {(error || statusError) && (

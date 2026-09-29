@@ -309,6 +309,34 @@
       "when": 1790292950688,
       "tag": "0043_tired_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790636160868,
+      "tag": "0044_conscious_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790636657185,
+      "tag": "0045_lucky_makkari",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1790636956634,
+      "tag": "0046_browser_override_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790637311740,
+      "tag": "0047_yielding_sabretooth",
+      "breakpoints": true
     }
   ]
 }

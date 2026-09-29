@@ -7,11 +7,15 @@ use std::time::{Duration, Instant};
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlCommand {
     Pause,
-    Acquire { controller_id: String },
-    Renew { controller_id: String },
-    Release { controller_id: String },
-    PrepareReturn { controller_id: String },
-    FinishReturn,
+    Acquire {
+        controller_id: String,
+        lease_expires_at_ms: u64,
+    },
+    Renew {
+        controller_id: String,
+        lease_expires_at_ms: u64,
+    },
+    End,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -20,7 +24,6 @@ pub enum Mode {
     Agent,
     Paused,
     HumanPrivate,
-    ResumePending,
 }
 
 #[derive(Clone)]
@@ -28,13 +31,13 @@ pub struct Authority {
     pub epoch: u64,
     pub mode: Mode,
     controller: Option<String>,
-    paused_controller: Option<String>,
     expires: Option<Instant>,
     private: bool,
     workspace: Option<String>,
     // Remembers privacy transitions even if media misses takeover and return.
     // Advancing only the agent command epoch does not invalidate passive media.
     media_fence: u64,
+    pub end_pending: bool,
 }
 
 impl Default for Authority {
@@ -43,11 +46,11 @@ impl Default for Authority {
             epoch: 0,
             mode: Mode::Agent,
             controller: None,
-            paused_controller: None,
             expires: None,
             private: false,
             workspace: None,
             media_fence: 0,
+            end_pending: false,
         }
     }
 }
@@ -60,7 +63,7 @@ impl Authority {
     pub fn restore(&mut self, private: bool, paused: bool) {
         self.private = private;
         if private || paused {
-            self.pause();
+            self.request_end();
         }
     }
 
@@ -69,10 +72,10 @@ impl Authority {
         self.private = false;
         self.epoch = epoch;
         self.controller = None;
-        self.paused_controller = None;
         self.workspace = None;
         self.expires = None;
         self.media_fence += 1;
+        self.end_pending = false;
     }
 
     pub fn set_workspace(&mut self, workspace: String) {
@@ -84,15 +87,21 @@ impl Authority {
 
     pub fn expire(&mut self) {
         if self.expires.is_some_and(|time| time <= Instant::now()) {
-            self.pause();
+            self.request_end();
         }
+    }
+
+    pub fn request_end(&mut self) {
+        self.pause();
+        self.end_pending = true;
     }
 
     pub fn pause(&mut self) {
         self.media_fence += 1;
         self.mode = Mode::Paused;
         if self.controller.is_some() {
-            self.paused_controller = self.controller.take();
+            self.end_pending = true;
+            self.controller = None;
         }
         self.expires = None;
     }
@@ -153,48 +162,40 @@ impl Authority {
                     return Err("browser_stale_control");
                 }
                 self.pause();
+                self.end_pending = false;
             }
-            ControlCommand::Acquire { controller_id } => {
+            ControlCommand::Acquire {
+                controller_id,
+                lease_expires_at_ms,
+            } => {
                 if controller_id.is_empty() || controller_id.len() > 128 {
                     return Err("browser_invalid_controller");
                 }
                 if epoch <= self.epoch || self.mode != Mode::Paused {
                     return Err("browser_control_conflict");
                 }
+                let deadline = lease_deadline(*lease_expires_at_ms)?;
+                self.end_pending = false;
                 self.controller = Some(controller_id.clone());
-                self.paused_controller = None;
-                self.expires = Some(Instant::now() + Duration::from_secs(15));
+                self.expires = Some(deadline);
                 self.mode = Mode::HumanPrivate;
                 self.private = true;
             }
-            ControlCommand::Renew { controller_id } => {
+            ControlCommand::Renew {
+                controller_id,
+                lease_expires_at_ms,
+            } => {
                 if !self.human_allowed(epoch, controller_id) {
                     return Err("browser_control_expired");
                 }
-                self.expires = Some(Instant::now() + Duration::from_secs(15));
+                let deadline = lease_deadline(*lease_expires_at_ms)?;
+                self.expires = Some(self.expires.map_or(deadline, |old| old.max(deadline)));
             }
-            ControlCommand::Release { controller_id }
-            | ControlCommand::PrepareReturn { controller_id } => {
-                let active = self.mode == Mode::HumanPrivate
-                    && self.controller.as_deref() == Some(controller_id);
-                let media_lost = matches!(command, ControlCommand::PrepareReturn { .. })
-                    && self.mode == Mode::Paused
-                    && self.paused_controller.as_deref() == Some(controller_id);
-                if epoch <= self.epoch || !(active || media_lost) {
-                    return Err("browser_control_conflict");
+            ControlCommand::End => {
+                if epoch <= self.epoch {
+                    return Err("browser_stale_control");
                 }
-                self.pause();
-                if matches!(command, ControlCommand::PrepareReturn { .. }) {
-                    self.mode = Mode::ResumePending;
-                }
-            }
-            ControlCommand::FinishReturn => {
-                if epoch <= self.epoch || self.mode != Mode::ResumePending {
-                    return Err("browser_control_conflict");
-                }
-                self.mode = Mode::Agent;
-                self.private = false;
-                self.paused_controller = None;
+                self.request_end();
             }
         }
         if !matches!(command, ControlCommand::Renew { .. }) {
@@ -205,164 +206,92 @@ impl Authority {
     }
 }
 
+fn lease_deadline(expires: u64) -> Result<Instant, &'static str> {
+    let now = crate::util::now_millis();
+    if expires <= now || expires > now + 6000 {
+        return Err("browser_control_expired");
+    }
+    Ok(Instant::now() + Duration::from_millis(expires - now))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn passive_continuity_survives_only_agent_epoch_changes() {
+    fn acquired() -> Authority {
         let mut state = Authority::default();
-        let fence = state.media_fence();
-        state.epoch = 2;
-        assert!(state.media_allowed(0, None, Some(fence)));
-        assert!(!state.agent_allowed(1));
-        state.transition(3, &ControlCommand::Pause).unwrap();
-        assert!(!state.media_allowed(0, None, Some(fence)));
-        let paused_fence = state.media_fence();
+        state.transition(1, &ControlCommand::Pause).unwrap();
         state
             .transition(
-                4,
+                2,
                 &ControlCommand::Acquire {
                     controller_id: "one".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                 },
             )
             .unwrap();
-        assert!(!state.media_allowed(4, None, Some(paused_fence)));
-        assert!(state.media_allowed(4, Some("one"), None));
         state
+    }
+    #[test]
+    fn expiry_retires_human_input_before_drain_and_cannot_be_renewed() {
+        let mut state = acquired();
+        state.expires = Some(Instant::now());
+        assert!(!state.human_allowed(2, "one"));
+        assert!(state.end_pending);
+        assert!(!state.agent_allowed(2));
+        assert!(state
             .transition(
-                4,
+                2,
                 &ControlCommand::Renew {
                     controller_id: "one".into(),
-                },
+                    lease_expires_at_ms: crate::util::now_millis() + 6000
+                }
             )
-            .unwrap();
-        assert!(state.media_allowed(4, Some("one"), None));
+            .is_err());
+        state.resume_after_stop(2);
+        assert!(state.agent_allowed(2));
+        assert!(!state.human_allowed(2, "one"));
+        assert!(!state.end_pending);
+    }
+    #[test]
+    fn end_fences_old_media_and_rejects_late_control() {
+        let mut state = acquired();
+        let old = state.media_fence();
+        state.transition(3, &ControlCommand::End).unwrap();
+        assert!(!state.human_allowed(2, "one"));
+        assert!(!state.agent_allowed(3));
+        state.resume_after_stop(3);
+        assert!(!state.media_allowed(2, None, Some(old)));
+        assert!(state.media_allowed(3, None, Some(state.media_fence())));
+        state.transition(4, &ControlCommand::Pause).unwrap();
         state
             .transition(
                 5,
-                &ControlCommand::PrepareReturn {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        state.transition(6, &ControlCommand::FinishReturn).unwrap();
-        // Even a viewer that missed the entire private interval stays revoked.
-        assert!(!state.media_allowed(0, None, Some(fence)));
-        assert!(!state.media_allowed(3, None, Some(paused_fence)));
-        assert!(state.media_allowed(6, None, Some(state.media_fence())));
-        assert!(!state.media_allowed(4, Some("one"), None));
-        let returned_fence = state.media_fence();
-        state.pause();
-        assert!(!state.media_allowed(6, None, Some(returned_fence)));
-    }
-
-    #[test]
-    fn private_control_fences_reads_and_requires_explicit_return() {
-        let mut state = Authority::default();
-        assert!(state.agent_allowed(1));
-        state.transition(2, &ControlCommand::Pause).unwrap();
-        assert!(!state.agent_allowed(999));
-        state
-            .transition(
-                3,
-                &ControlCommand::Acquire {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        assert!(!state.human_allowed(3, "two"));
-        assert!(state.human_allowed(3, "one"));
-        assert!(state
-            .transition(
-                4,
-                &ControlCommand::Acquire {
-                    controller_id: "two".into()
-                }
-            )
-            .is_err());
-        state
-            .transition(
-                4,
-                &ControlCommand::PrepareReturn {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        assert!(!state.human_allowed(3, "one"));
-        assert!(!state.agent_allowed(4));
-        state.transition(5, &ControlCommand::FinishReturn).unwrap();
-        assert!(state.agent_allowed(5));
-        assert!(!state.agent_allowed(1));
-    }
-    #[test]
-    fn lease_expiry_and_disconnect_leave_automation_paused() {
-        let mut state = Authority::default();
-        state.transition(1, &ControlCommand::Pause).unwrap();
-        state
-            .transition(
-                2,
-                &ControlCommand::Acquire {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        state.expires = Some(Instant::now());
-        assert!(!state.human_allowed(2, "one"));
-        assert!(!state.agent_allowed(3));
-        assert!(state
-            .transition(
-                2,
-                &ControlCommand::Renew {
-                    controller_id: "one".into()
-                }
-            )
-            .is_err());
-        state
-            .transition(
-                3,
                 &ControlCommand::Acquire {
                     controller_id: "two".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                 },
             )
             .unwrap();
-        state.pause();
-        assert!(!state.agent_allowed(100));
-        assert!(!state.viewer_allowed(3, None));
+        assert!(state.transition(3, &ControlCommand::End).is_err());
+        assert!(state.human_allowed(5, "two"));
     }
-
     #[test]
-    fn private_media_loss_retains_only_explicit_return_authority() {
+    fn restored_and_disconnected_private_authority_schedules_automatic_end() {
         let mut state = Authority::default();
-        state.transition(1, &ControlCommand::Pause).unwrap();
-        assert!(state.viewer_allowed(1, None));
-        state
-            .transition(
-                2,
-                &ControlCommand::Acquire {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        state.pause();
-        assert!(!state.viewer_allowed(2, None));
+        state.restore(true, true);
+        assert!(state.end_pending);
+        state.resume_after_stop(1);
+        assert!(state.agent_allowed(1));
+        let mut state = acquired();
+        state.request_end();
+        assert!(state.end_pending);
         assert!(!state.human_allowed(2, "one"));
-        assert!(state
-            .transition(
-                3,
-                &ControlCommand::PrepareReturn {
-                    controller_id: "other".into()
-                }
-            )
-            .is_err());
-        state
-            .transition(
-                3,
-                &ControlCommand::PrepareReturn {
-                    controller_id: "one".into(),
-                },
-            )
-            .unwrap();
-        state.transition(4, &ControlCommand::FinishReturn).unwrap();
-        assert!(state.viewer_allowed(4, None));
+    }
+    #[test]
+    fn delayed_deadlines_never_gain_a_fresh_six_seconds() {
+        assert!(lease_deadline(crate::util::now_millis() - 1).is_err());
+        assert!(lease_deadline(crate::util::now_millis() + 7000).is_err());
+        let deadline = lease_deadline(crate::util::now_millis() + 1000).unwrap();
+        assert!(deadline.duration_since(Instant::now()) <= Duration::from_millis(1000));
     }
 }

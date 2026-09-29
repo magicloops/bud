@@ -1,7 +1,10 @@
+import { StreamCanvas } from "./stream-canvas.ts";
+
 export type BrowserFrame = {
   target_id: string;
   document_id: string;
   frame_token: string;
+  media_generation?: string;
   viewport_id?: string;
   width: number;
   height: number;
@@ -26,6 +29,7 @@ export class BrowserCanvas {
       ...details,
     }));
   }
+  private stream?: StreamCanvas;
   private observer?: ResizeObserver;
   private disposed = false;
   private decoding = false;
@@ -54,6 +58,7 @@ export class BrowserCanvas {
       this.observer.observe(canvas.parentElement);
     }
     this.socket = new WebSocket(url);
+    this.socket.binaryType = "arraybuffer";
     this.diagnostic("created");
     this.socket.onopen = () => {
       this.diagnostic("opened");
@@ -75,6 +80,7 @@ export class BrowserCanvas {
       if (!this.disposed) {
         this.disposed = true;
         this.observer?.disconnect();
+        this.stream?.dispose();
         this.clear();
         this.status("unavailable");
       }
@@ -96,6 +102,31 @@ export class BrowserCanvas {
   }
   private async draw(raw: unknown) {
     if (this.disposed) return;
+    if (raw instanceof ArrayBuffer) {
+      if (!this.stream) throw new Error("stream_without_reset");
+      this.stream.receive(raw);
+      return;
+    }
+    if (typeof raw === "string" && raw.length <= 40 * 1024) {
+      const control = JSON.parse(raw);
+      if (control.type === "reset") {
+        if (this.decoding) throw new Error("mixed_media_modes");
+        this.stream ??= new StreamCanvas((bitmap, frame) => {
+          this.canvas.width = bitmap.width; this.canvas.height = bitmap.height;
+          const context = this.canvas.getContext("2d");
+          if (!context) throw new Error("canvas_unavailable");
+          context.drawImage(bitmap, 0, 0);
+          this.frame = frame; this.scale();
+          this.frames++; this.lastFrameAt = Date.now();
+          if (this.frames === 1) this.diagnostic("first_frame");
+          this.status("connected", frame.targets);
+        }, () => this.clear(), message => this.socket.send(message), () => this.close("stream_processing_failed"));
+        this.stream.reset(control);
+        return;
+      }
+      if (control.type === "revoked") { this.close("server_revoked"); return; }
+    }
+    if (this.stream) throw new Error("mixed_media_modes");
     this.processingStage = this.decoding ? "overlapping_frame" : "message_validation";
     if (typeof raw !== "string" || raw.length > 1_420_000 || this.decoding)
       throw new Error("invalid frame");
@@ -174,7 +205,8 @@ export class BrowserCanvas {
     }
   }
   selectTarget(id: string) {
-    this.frame = null;
+    this.stream?.fence();
+    this.clear();
     this.socket.send(JSON.stringify({ type: "target", target_id: id }));
   }
   close(reason = "viewer_cleanup") {
@@ -183,6 +215,7 @@ export class BrowserCanvas {
     this.diagnostic("closing", { reason });
     this.disposed = true;
     this.observer?.disconnect();
+    this.stream?.dispose();
     this.clear();
     this.socket.close();
     this.status("unavailable");

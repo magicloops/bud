@@ -706,3 +706,121 @@ A local fake-WebSocket regression verifies cancellation after receipt, redacted
 logging and refusal to reuse the interrupted channel. Rebuild/restart the daemon
 to diagnose human-input five-second timeouts; see
 [scroll investigation](../../../debug/mobile-browser-scroll-distance.md).
+
+## Experimental private screencast integration
+
+`media.rs` accepts private-only `screencast_v1` demand on the existing dedicated
+media socket. Default and passive screenshot behavior is unchanged. Matching
+service/shared-web builds and the service-only local experiment flag are required;
+see [wire contract](../../../docs/proto.md#experimental-private-screencast-media-version-1).
+
+- `screencast.rs`: dedicated bounded CDP event reader, immediate local frame ACKs,
+  latest-image watch, target-scoped focus-emulation lifetime and confirmed cleanup.
+  Navigation/geometry/crash events retire its immutable generation. Idle refresh
+  after one second uses a guarded screenshot on this connection to preserve input
+  freshness, without taking the command page lock. No viewport overrides here.
+- `stream_guard.rs`: up to 96 generation-bound displayed-frame receipts for three
+  seconds; exact pixel-sensitive evidence and stable wheel context. Retirement
+  atomically rejects all input from the generation.
+- `stream_media.rs`: private authority watcher, bounded binary JPEG delivery,
+  generation resets and exact sequence/byte credit. Three packets/2 MiB, 1 MiB
+  image, 4 KiB header, 150 ms unsent age and one-second stalled-credit deadline.
+  Closed selected targets fail explicitly; no retargeting or mutation replay.
+- `stream_tests.rs`: opt-in disposable real-Chrome test covering retained older
+  displayed evidence, focus/text, static refresh, navigation fencing, resized
+  geometry and Return waiting for source cleanup.
+
+`adapter.rs` registers frame evidence under its short state lock; input keeps
+current document/layout/focus checks. `hide_before_return` awaits confirmed source
+stop/focus cleanup even for headless runtimes. A failed cleanup prevents Return.
+Source admission/delivery remains exact-controller/epoch/carrier-bound. Continuous
+capture is experimental private-only; REPL and passive refresh are unchanged.
+
+The nonactivating macOS launcher is still a spike, not a production launcher
+change. Integrated hidden/native-window and physical-device acceptance remains
+open. Media end diagnostics identify `private_stream`; the separate `stream_ended`
+event counts sent/unacknowledged packets (the outer screenshot frame counter does
+not count streaming packets). No page contents, URLs or credentials are logged.
+
+The private streaming Chrome fixture also chains repeated typing across fresh
+frames, asserts the actual input value, and verifies continued typing after a
+wheel scroll. This covers standard inputs, not real viewer keyboard focus or
+custom/shadow-DOM editors; see `debug/browser-streaming-text-entry.md`.
+
+Private/REPL guarded focus capture descends through open shadow roots; text and
+editing keys validate the complete active chain in the same JS task as mutation.
+Composed input events reach component handlers outside the root. The streaming
+fixture covers nested-shadow search typing/Backspace and rejects read-only or
+changed focus without mutation. Closed roots and iframe editors remain unsupported; no input replay or automatic focus.
+
+Private capture retirement diagnostics identify document/page events and geometry
+mismatches using target IDs and numeric dimensions only. Stream and helper failure
+logs allowlist internal codes; raw errors, URLs and page contents remain excluded.
+The ignored `private_stream_after_passive_capture` test uses disposable headed
+Chrome to verify mobile sizing, passive-to-stream capture, cleanup and the return
+snapshot path. See [reconnect investigation](../../../debug/browser-streaming-reconnect-storm.md).
+
+Private streaming uses normalized `cssVisualViewport` dimensions and fractional
+scroll offsets consistently for admission, idle screenshots and current input
+validation. `cssLayoutViewport` can round a fractional scroll inward by one CSS
+pixel on HiDPI displays and must not be compared to screencast device geometry.
+Sizes remain exact; private-stream scroll offsets allow at most 0.5 CSS pixel
+of subpixel disagreement between frame metadata and current visual metrics. Non-unit scale/
+zoom and nonzero visual offsets reject as unsupported coordinate transforms.
+Passive screenshot evidence remains layout-based. The headed streaming regression
+covers fractional wheel input, idle refresh and rejection after a real one-pixel
+resize; see the reconnect investigation above.
+
+The headed fixture additionally verifies actual page-side button activation with
+both live screencast evidence after fractional scrolling and idle-refresh
+evidence after wheel input. It does not replace physical mobile link acceptance;
+see [tap investigation](../../../debug/browser-streaming-mobile-taps.md).
+
+Private input rejection diagnostics distinguish stream receipt retirement,
+generation mismatch, expiry/missing receipt, passive evidence failure, numeric
+geometry mismatch and out-of-bounds input. `browser_input` INFO events contain
+fixed action/reason names, internal resource IDs, receipt ages/counts and numeric
+geometry only; no frame/focus tokens, text, URLs or page content. They do not
+relax guards, replay input or change the public error contract.
+
+
+Input acknowledgements include `focus_editable` for the guarded active writable text input/textarea or supported contenteditable host, including open shadow roots. It exposes no value and does not authorize subsequent input; focus/document checks remain mandatory.
+
+`human_edit.js` is embedded by the adapter for focus hints and guarded edits.
+Contenteditable hosts support committed text, Backspace/Delete and Enter using
+Chrome editing commands, preserving rich structure and undo. The active-node and
+selection checks run in the same JS task as mutation. Selection endpoints must
+stay within the remembered host; ranges crossing explicit nested editable or
+noneditable islands reject. ARIA readonly/disabled hosts reject. Rich navigation
+keys, iframe/closed-root editors and IME composition remain unsupported.
+Disposable real-Chrome fixtures cover ordinary and nested-shadow rich hosts,
+actual text/deletion, input events, read-only/stale focus and outside selections.
+The private typing fixtures also replace a selected range, delete the last
+remaining character to empty, and type again for ordinary and rich hosts.
+Rich Backspace first emits cancellable `beforeinput` deletion intent so editors
+with their own document model can handle it. A cancelled intent is not followed
+by another native deletion; otherwise the adapter revalidates focus and exact
+selection before its Chrome fallback. The model-backed regression verifies final
+character removal, no duplicate deletion and handler-driven focus/selection fences.
+
+## Current authority contract — agent default (2026-09-28)
+
+This section supersedes earlier sticky-pause/prepare-return/recovery descriptions.
+`control.rs` admits only explicit Acquire, bounded Renew and internal Pause/End.
+Acquire/Renew carry `controller_id` and `lease_expires_at_ms`, at most six seconds
+in the future; wall-clock remaining time converts to a local monotonic deadline.
+Expired IDs cannot renew. The idle worker checks authority every 100ms independently
+of the page mutex; expiry/carrier loss/restart retires input and media authority
+before attempting cleanup. `end_pending` is execution readiness, not human ownership.
+
+`idle.rs` retries cleanup without waiting on a busy page lock. `manager.rs` handles
+End even for missing/closed workspaces, repairs an interrupted owned command
+channel, hides any revealed native window, invalidates private frame/focus evidence,
+and resumes only under the same epoch. It does not require a semantic snapshot,
+reacquisition or a human Return. Unknown human effects are never replayed. Existing
+media epoch guards stop both screenshot and screencast paths and release scoped
+focus emulation. Checkpoints never restore a renewable human controller.
+
+The daemon advertises `browser.agent_default_control: true`; new service takeover
+requires it. Old control variants and paused-controller recovery are removed.
+The 24-hour workspace idle expiry remains separate from the six-second override.
