@@ -9,6 +9,8 @@ import type { BrowserCarrier, BrowserCommand } from "./transport.js";
 import type { BrowserBackendResult } from "../agent/browser-tool-executor.js";
 import { BrowserError } from "./repository.js";
 
+const settle = () => new Promise<void>(resolve => setImmediate(resolve));
+
 function fixture() {
   let session: BrowserSession = {
     id: "browser",
@@ -29,6 +31,7 @@ function fixture() {
     revision: 1,
     control_request_id: null,
     private_content: false,
+    override_id:null,override_viewer_id:null,override_carrier_id:null,override_expires_at:null,ended_override_id:null,override_end_reason:null,
   };
   let returned = 0;
   let running = false;
@@ -41,6 +44,25 @@ function fixture() {
   let inputReply: Promise<BrowserBackendResult> | undefined;
   let renewalReply: Promise<BrowserBackendResult> | undefined;
   const repository = {
+    async grantOverride(_owner:string,_id:string,_revision:number,id:string,viewer:string,carrier:string,expires:number) {
+      Object.assign(session,{override_id:id,override_viewer_id:viewer,override_carrier_id:carrier,override_expires_at:new Date(expires)});
+    },
+    async renewOverride(_owner:string,_id:string,id:string,_viewer:string,_carrier:string,expires:number) {
+      if(session.override_id!==id) throw new BrowserError("browser_control_expired");
+      session.override_expires_at=new Date(expires);
+    },
+    async endOverride(_owner:string,_id:string,id:string,reason:string) {
+      if(session.override_id!==id) return false;
+      Object.assign(session,{ended_override_id:id,override_id:null,override_viewer_id:null,override_carrier_id:null,override_expires_at:null,override_end_reason:reason,revision:session.revision+1});
+      return true;
+    },
+    async reconciliationCandidates() { return session.control_state!=="agent" && !session.override_id ? [{...session}] : []; },
+    async prepareEnd(candidate:BrowserSession,boot:string) {
+      const prepared=await repository.prepare(candidate.created_by_user_id,candidate.id,boot,session.revision,"end",{action:"control",operation:"end"},"resume_pending");
+      return {...prepared,resource:prepared.session};
+    },
+    async acknowledgeEnd() { returned++; session = {...session,control_state:"agent",private_content:false,revision:session.revision+1}; },
+    async failEnd() { return repository.pauseAfterFailure("alice","browser",session.revision); },
     command(value: BrowserSession, command: Record<string, unknown>) {
       return { session_id: value.id, generation: value.generation, control_epoch: value.control_epoch, sequence: value.sequence, command };
     },
@@ -77,6 +99,7 @@ function fixture() {
       session = {
         ...session,
         control_state: state,
+        control_session_id: advance ? session.id : session.control_session_id,
         private_content: session.private_content || state === "human_private",
         revision: session.revision + Number(advance),
         sequence: session.sequence + 1,
@@ -107,17 +130,10 @@ function fixture() {
         revision: session.revision + 1,
       };
     },
-    async returned() {
-      returned++;
-      session = {
-        ...session,
-        control_state: "agent",
-        private_content: false,
-        revision: session.revision + 1,
-      };
-    },
+
   } as unknown as BrowserControlRepository;
   const carrier = {
+    tracker: {sessionId:"carrier"},
     bootId: "boot",
     handoff: true,
     viewportResize: true,
@@ -187,23 +203,21 @@ test("one private controller; renew preserves revision; explicit return acknowle
     /controller_exists/,
   );
   const revision = f.session.revision;
-  await f.control.renew("alice", "browser", "viewer");
+  await f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old");
   assert.equal(f.session.revision, revision);
   await assert.rejects(
-    f.control.returnToAgent("alice", "browser", "other", revision),
+    f.control.returnToAgent("alice", "browser", "other", revision, f.session.override_id ?? "old"),
     /expired/,
   );
-  await f.control.returnToAgent("alice", "browser", "viewer", revision);
+  await f.control.returnToAgent("alice", "browser", "viewer", revision, f.session.override_id ?? "old");
+  await settle();
   assert.equal(f.session.control_state, "agent");
   assert.equal(f.returned, 1);
   assert.deepEqual(
-    f.requests.slice(-2).map((r) => r.command.operation),
-    ["prepare_return", "finish_return"],
+    f.requests.slice(-1).map((r) => r.command.operation),
+    ["end"],
   );
-  await assert.rejects(
-    f.control.returnToAgent("alice", "browser", "viewer", revision),
-    /expired/,
-  );
+  await f.control.returnToAgent("alice", "browser", "viewer", revision, "retired-id");
   assert.equal(f.returned, 1);
 });
 
@@ -213,39 +227,32 @@ test("renewal preserves known rejection codes but never exposes arbitrary daemon
     await f.control.acquire("alice", "browser", "viewer", 1);
     f.fail = "renew";
     f.rejection = code;
-    await assert.rejects(f.control.renew("alice", "browser", "viewer"),
+    await assert.rejects(f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old"),
       (error: unknown) => error instanceof BrowserError &&
         error.code === (code === "private page details" ? "browser_control_uncertain" : code));
-    assert.equal(f.session.control_state, "paused");
+    assert.equal(f.session.override_id, null);
     assert.equal(f.returned, 0);
   }
 });
 
-test("release and lost return acknowledgement never make an invocation runnable", async () => {
-  for (const operation of ["release", "prepare_return", "finish_return"]) {
-    const f = fixture();
-    await f.control.acquire("alice", "browser", "viewer", 1);
-    if (operation === "release")
-      await f.control.release("alice", "browser", "viewer");
-    else {
-      f.fail = operation;
-      await assert.rejects(
-        f.control.returnToAgent(
-          "alice",
-          "browser",
-          "viewer",
-          f.session.revision,
-        ),
-        /uncertain/,
-      );
-    }
-    assert.equal(f.session.control_state, "paused");
-    assert.equal(f.returned, 0);
-    await assert.rejects(
-      f.control.renew("alice", "browser", "viewer"),
-      /expired/,
-    );
-  }
+test("release retires immediately; unknown end acknowledgement retries without human intervention", async () => {
+  const f = fixture();
+  await f.control.acquire("alice","browser","viewer",1);
+  const old = f.session.override_id!;
+  f.fail = "end";
+  await f.control.release("alice","browser","viewer",old);
+  assert.equal(f.session.override_id,null);
+  await settle();
+  assert.equal(f.returned,0);
+  await assert.rejects(f.control.renew("alice","browser","viewer",old),/expired/);
+  f.fail = undefined;
+  await f.control.reconcile();
+  assert.equal(f.returned,1);
+  await f.control.acquire("alice","browser","viewer",f.session.revision);
+  const current = f.session.override_id;
+  await f.control.release("alice","browser","viewer",old);
+  assert.equal(f.session.override_id,current);
+  await assert.rejects(f.control.input("alice","browser","viewer",{override_id:old}),/expired/);
 });
 
 test("takeover fences browser work without waiting for unrelated invocation work", async () => {
@@ -262,24 +269,25 @@ test("takeover fences browser work without waiting for unrelated invocation work
 test("viewport fits only for the current private controller and capable daemon", async () => {
   const f = fixture();
   const size = { target_id: "page", document_id: "document", width: 700, height: 500 };
-  await assert.rejects(f.control.resizeViewport("bob", "browser", "viewer", size), /not_found/);
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /expired/);
+  await assert.rejects(f.control.resizeViewport("bob", "browser", "viewer", size, f.session.override_id ?? undefined), /not_found/);
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /expired/);
   await f.control.acquire("alice", "browser", "viewer", 1);
   const revision = f.session.revision;
   const epoch = f.session.control_epoch;
   await assert.rejects(f.control.resizeViewport("alice", "browser", "other", size), /expired/);
   const count = f.requests.length;
   f.carrier.viewportResize = false;
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /unsupported/);
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /unsupported/);
   assert.equal(f.requests.length, count);
   f.carrier.viewportResize = true;
-  assert.deepEqual(await f.control.resizeViewport("alice", "browser", "viewer", size), { viewport_applied: true, viewport_id: "viewport" });
+  assert.deepEqual(await f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), { viewport_applied: true, viewport_id: "viewport" });
   assert.equal(f.requests.at(-1)?.command.action, "resize_viewport");
   assert.equal(f.session.revision, revision);
   assert.equal(f.session.control_epoch, epoch);
-  await f.control.renew("alice", "browser", "viewer");
-  await f.control.release("alice", "browser", "viewer");
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /expired/);
+  await f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old");
+  await f.control.release("alice", "browser", "viewer", f.session.override_id ?? "old");
+  await settle();
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /expired|unsupported/);
 });
 
 
@@ -289,10 +297,10 @@ test("independent renewal completes during pending input; unknown input fences a
   await f.control.acquire("alice", "browser", "viewer", 1);
   let finish!: (result: BrowserBackendResult) => void;
   f.inputReply = new Promise(resolve => { finish = resolve; });
-  const pending = f.control.input("alice", "browser", "viewer", {});
+  const pending = f.control.input("alice", "browser", "viewer", {override_id:f.session.override_id});
   await new Promise(resolve => setImmediate(resolve));
   const revision = f.session.revision;
-  const renewed = await f.control.renew("alice", "browser", "viewer");
+  const renewed = await f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old");
   assert.equal(renewed.revision, revision);
   assert.equal(f.requests.at(-1)?.command.operation, "renew");
   let fences = 0;
@@ -300,8 +308,8 @@ test("independent renewal completes during pending input; unknown input fences a
   finish({ ok: false, outcome: "unknown", error: "browser_outcome_unknown" });
   await assert.rejects(pending, /browser_input_uncertain/);
   assert.equal(fences, 1);
-  assert.equal(f.session.control_state, "paused");
-  await assert.rejects(f.control.renew("alice", "browser", "viewer"), /expired/);
+  assert.equal(f.session.override_id, null);
+  await assert.rejects(f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old"), /expired/);
   assert.equal(f.returned, 0);
 });
 
@@ -312,14 +320,15 @@ test("late independent renewal cannot restore a released controller", async () =
   await f.control.acquire("alice", "browser", "viewer", 1);
   let finish!: (result: BrowserBackendResult) => void;
   f.renewalReply = new Promise(resolve => { finish = resolve; });
-  const pending = f.control.renew("alice", "browser", "viewer");
+  const pending = f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old");
   await new Promise(resolve => setImmediate(resolve));
-  await f.control.release("alice", "browser", "viewer");
+  await f.control.release("alice", "browser", "viewer", f.session.override_id ?? "old");
   finish({ ok: true, outcome: "completed", data: { control_acknowledged: true } });
   await assert.rejects(pending, /expired/);
-  await assert.rejects(f.control.renew("alice", "browser", "viewer"), /expired/);
-  assert.equal(f.session.control_state, "paused");
-  assert.equal(f.returned, 0);
+  await assert.rejects(f.control.renew("alice", "browser", "viewer", f.session.override_id ?? "old"), /expired/);
+  assert.equal(f.session.override_id, null);
+  await settle();
+  assert.equal(f.returned, 1);
 });
 
 
@@ -327,10 +336,10 @@ test("history input requires an advertising daemon", async () => {
   const f = fixture();
   await f.control.acquire("alice", "browser", "viewer", 1);
   const count = f.requests.length;
-  await assert.rejects(f.control.input("alice", "browser", "viewer", { input: { kind: "back" } }), /history_unsupported/);
+  await assert.rejects(f.control.input("alice", "browser", "viewer", { override_id:f.session.override_id, input: { kind: "back" } }), /history_unsupported/);
   assert.equal(f.requests.length, count);
   f.carrier.historyNavigation = true;
-  await f.control.input("alice", "browser", "viewer", { input: { kind: "back" } });
+  await f.control.input("alice", "browser", "viewer", { override_id:f.session.override_id, input: { kind: "back" } });
   assert.deepEqual(f.requests.at(-1)?.command.input, { kind: "back" });
 });
 
@@ -340,20 +349,20 @@ test("passive fit preserves the invocation sequence and requires the elected liv
   f.session.control_state = "agent";
   f.running = true;
   const size = { target_id: "page", document_id: "document", width: 700, height: 500 };
-  await assert.rejects(f.control.resizeViewport("bob", "browser", "viewer", size), /not_found/);
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /unsupported/);
+  await assert.rejects(f.control.resizeViewport("bob", "browser", "viewer", size, f.session.override_id ?? undefined), /not_found/);
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /unsupported/);
   f.carrier.agentViewportResize = true;
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /other_viewer/);
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /other_viewer/);
   f.control.isSizingViewer = (owner, session, viewer) => owner === "alice" && session.id === "browser" && viewer === "viewer";
   const before = { ...f.session };
-  await f.control.resizeViewport("alice", "browser", "viewer", size);
+  await f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined);
   assert.deepEqual(f.session, before);
   assert.equal(f.requests.length, 1);
   assert.equal(f.requests[0].command.action, "fit_viewport");
   assert.equal(f.requests[0].command.controller_id, undefined);
   await assert.rejects(f.control.resizeViewport("alice", "browser", "other", size), /other_viewer/);
   f.session.private_content = true;
-  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size), /expired/);
+  await assert.rejects(f.control.resizeViewport("alice", "browser", "viewer", size, f.session.override_id ?? undefined), /expired/);
   assert.equal(f.requests.length, 1);
 });
 
@@ -402,42 +411,11 @@ test('persisted private state does not imply live control after service restart'
   const restarted = new BrowserControl(f.control.repository);
   assert.equal(f.session.control_state, 'human_private');
   assert.equal(restarted.ownsControl('alice', 'browser', 'auth-session:viewer'), false);
-  await assert.rejects(restarted.returnToAgent('alice', 'browser', 'auth-session:viewer', f.session.revision), /expired/);
+  await restarted.returnToAgent('alice', 'browser', 'auth-session:viewer', f.session.revision, f.session.override_id!);
+  assert.equal(f.session.override_id,null);
   assert.equal(f.returned, 0);
   f.carrier.current = () => false;
   assert.equal(f.control.ownsControl('alice', 'browser', 'auth-session:viewer'), false);
-});
-
-test('signed viewer recovery survives coordinator restart, fences old tickets and never returns the agent', async () => {
-  const f = fixture();
-  const acquired = await f.control.acquire('alice', 'browser', 'auth:viewer', 1);
-  const ticket = f.control.recoveryTicket(acquired, 'auth:viewer')!;
-  assert.ok(ticket);
-  assert.equal(f.control.recoveryTicket(acquired, 'auth:other'), undefined);
-  const restarted = f.restart();
-  await assert.rejects(restarted.recoverViewer('bob', 'browser', 'auth:viewer', ticket), /not_found/);
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'other-auth:viewer', ticket), /recovery_invalid/);
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:other', ticket), /recovery_invalid/);
-  const recovered = await restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket);
-  assert.equal(recovered.private_content, true);
-  assert.equal(recovered.control_state, 'human_private');
-  assert.ok(recovered.control_epoch > acquired.control_epoch);
-  assert.equal(f.returned, 0);
-  const requests = f.requests.length;
-  // The first response can be lost; retry returns the existing lease only.
-  await restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket);
-  assert.equal(f.requests.length, requests);
-  const freshTicket = restarted.recoveryTicket(recovered, 'auth:viewer')!;
-  assert.notEqual(freshTicket, ticket);
-  await restarted.release('alice', 'browser', 'auth:viewer');
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', ticket), /recovery_invalid/);
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', freshTicket), /recovery_invalid/);
-  const another = await restarted.acquire('alice', 'browser', 'auth:other', f.session.revision);
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:viewer', freshTicket), /controller_exists/);
-  const anotherTicket = restarted.recoveryTicket(another, 'auth:other')!;
-  await restarted.returnToAgent('alice', 'browser', 'auth:other', another.revision);
-  await assert.rejects(restarted.recoverViewer('alice', 'browser', 'auth:other', anotherTicket), /recovery_invalid/);
-  assert.equal(f.returned, 1);
 });
 
 
@@ -471,25 +449,25 @@ test("native reveal takes private authority first; hide preserves it and return 
   await assert.rejects(f.control.nativeWindow("alice","browser","other",f.session.revision,true), /controller_exists/);
   await assert.rejects(f.control.nativeWindow("alice","browser","other",f.session.revision,false), /expired/);
   await assert.rejects(f.control.nativeWindow("alice","browser","viewer",1,true), /revision_conflict/);
-  await f.control.nativeWindow("alice","browser","viewer",f.session.revision,false);
+  await f.control.nativeWindow("alice","browser","viewer",f.session.revision,false,undefined,f.session.override_id ?? undefined);
   assert.equal(f.returned,0);
   assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
-  await f.control.returnToAgent("alice","browser","viewer",f.session.revision);
-  assert.deepEqual(f.requests.slice(-3).map(r=>r.command.operation ?? r.command.action),["native_window","prepare_return","finish_return"]);
-  assert.equal(f.requests.at(-3)?.command.show,false);
+  await f.control.returnToAgent("alice","browser","viewer",f.session.revision, f.session.override_id ?? "old");
+  await settle();
+  assert.deepEqual(f.requests.slice(-2).map(r=>r.command.operation ?? r.command.action),["native_window","end"]);
+  assert.equal(f.requests.at(-2)?.command.show,false);
   assert.equal(f.returned,1);
 });
 
-test("failed native hide retains private lease and cannot resume waiting work", async () => {
-  const f = fixture(); f.carrier.nativeWindow = true;
+test("failed end retires human ownership while execution remains fenced", async () => {
+  const f=fixture();
   await f.control.acquire("alice","browser","viewer",1);
-  f.windowReply = {ok:false,outcome:"unknown"};
-  await assert.rejects(f.control.returnToAgent("alice","browser","viewer",f.session.revision), /window_unconfirmed/);
-  assert.equal(f.control.ownsControl("alice","browser","viewer"),true);
-  assert.equal(f.session.control_state,"human_private");
+  f.fail="end";
+  await f.control.returnToAgent("alice","browser","viewer",f.session.revision,f.session.override_id!);
+  await settle();
+  assert.equal(f.session.override_id,null);
+  assert.equal(f.control.ownsControl("alice","browser","viewer"),false);
   assert.equal(f.returned,0);
-  assert.ok(!f.requests.some(r=>r.command.operation === "prepare_return"));
-  await f.control.renew("alice","browser","viewer");
 });
 
 test("unsupported native windows cannot acquire control or dispatch", async () => {
@@ -515,10 +493,10 @@ test("renew resolves ownership before consulting controller state", async () => 
   for (const independent of [false, true]) {
     const f = fixture();
     f.carrier.independentRenewal = independent;
-    await assert.rejects(f.control.renew("bob", "browser", "viewer"), /not_found/);
+    await assert.rejects(f.control.renew("bob", "browser", "viewer", f.session.override_id ?? "old"), /not_found/);
     await f.control.acquire("alice", "browser", "viewer", 1);
     const count = f.requests.length;
-    await assert.rejects(f.control.renew("bob", "browser", "viewer"), /not_found/);
+    await assert.rejects(f.control.renew("bob", "browser", "viewer", f.session.override_id ?? "old"), /not_found/);
     assert.equal(f.requests.length, count);
     assert.equal(f.control.ownsControl("alice", "browser", "viewer"), true);
   }
@@ -541,33 +519,58 @@ test("concurrent ensures share a single recovery; uncertain acknowledgements kee
 });
 
 
-test("chat return works after dismissal and restart without a viewer lease", async () => {
-  for (const restart of [false, true]) {
-    const f = fixture();
-    await f.control.acquire("alice", "browser", "viewer", 1);
-    await f.control.release("alice", "browser", "viewer");
-    const control = restart ? f.restart() : f.control;
-    await assert.rejects(control.returnFromChat("bob", "browser", "handoff", f.session.revision), /not_found/);
-    await assert.rejects(control.returnFromChat("alice", "browser", "old", f.session.revision), /handoff_unavailable/);
-    await assert.rejects(control.returnFromChat("alice", "browser", "handoff", 1), /revision_conflict/);
-    await control.returnFromChat("alice", "browser", "handoff", f.session.revision);
-    assert.equal(f.returned, 1);
-    assert.equal(f.session.control_state, "agent");
-    assert.deepEqual(f.requests.slice(-4).map(r => r.command.operation), ["pause", "acquire", "prepare_return", "finish_return"]);
-    assert.equal(control.ownsControl("alice", "browser", "viewer"), false);
-    await assert.rejects(control.returnFromChat("alice", "browser", "handoff", f.session.revision), /handoff_unavailable/);
-    assert.equal(f.returned, 1);
+test("chat return never acquires a controller to return it", async () => {
+  const f=fixture();
+  await assert.rejects(f.control.returnFromChat("alice","browser","handoff",f.session.revision),/expired/);
+  assert.equal(f.requests.length,0);
+  await f.control.acquire("alice","browser","viewer",1);
+  await f.control.returnFromChat("alice","browser","handoff",f.session.revision);
+  await settle();
+  assert.deepEqual(f.requests.map(r=>r.command.operation),["pause","acquire","end"]);
+  assert.equal(f.returned,1);
+});
+
+test('editable focus hint is boolean-only and scoped to the private controller', async () => {
+  const f = fixture();
+  await f.control.acquire('alice', 'browser', 'viewer', 1);
+  for (const data of [{focus_token:'token',focus_editable:true}, {focus_token:'token',focus_editable:'true'}, {focus_token:null,focus_editable:true}]) {
+    f.inputReply = Promise.resolve({ok:true,outcome:'completed',data});
+    await assert.rejects(f.control.input('bob','browser','viewer',{override_id:f.session.override_id}), /not_found/);
+    await assert.rejects(f.control.input('alice','browser','other',{}), /expired/);
+    const result = await f.control.input('alice','browser','viewer',{override_id:f.session.override_id});
+    assert.equal(result.focus_editable, data.focus_token !== null && data.focus_editable === true);
   }
 });
 
-test("chat return fences active viewers and never completes an uncertain return", async () => {
-  for (const stage of ["pause", "acquire", "prepare_return", "finish_return"]) {
-    const f = fixture();
-    await f.control.acquire("alice", "browser", "viewer", 1);
-    f.fail = stage;
-    await assert.rejects(f.control.returnFromChat("alice", "browser", "handoff", f.session.revision), /uncertain/);
-    assert.equal(f.returned, 0);
-    assert.equal(f.session.private_content, true);
-    assert.equal(f.control.ownsControl("alice", "browser", "viewer"), false);
+test('click focus diagnostics omit private payloads and distinguish missing hints', async () => {
+  const f = fixture();
+  await f.control.acquire('alice', 'browser', 'viewer', 1);
+  const diagnostics: Record<string, string | number | boolean>[] = [];
+  f.control.onDiagnostic = fields => diagnostics.push(fields);
+  for (const data of [{focus_token:'secret-token'}, {focus_token:'secret-token', focus_editable:false}, {focus_token:'secret-token', focus_editable:true}]) {
+    f.inputReply = Promise.resolve({ok:true,outcome:'completed',data});
+    await f.control.input('alice','browser','viewer',{override_id:f.session.override_id,input:{kind:'click',x:123,y:456}});
+    assert.deepEqual(diagnostics.pop(), {session_id:'browser',event:'input_focus',input_kind:'click',
+      hint_present:typeof data.focus_editable === 'boolean',has_focus_token:true,focus_editable:data.focus_editable === true});
   }
+  await f.control.input('alice','browser','viewer',{override_id:f.session.override_id,input:{kind:'text',text:'private text'}});
+  await f.control.input('alice','browser','viewer',{override_id:f.session.override_id,input:{kind:'scroll',delta_y:200}});
+  assert.deepEqual(diagnostics, []);
+});
+
+
+test("revoking a mobile visit ends only its own override", async () => {
+  const f = fixture();
+  await f.control.acquire("alice", "browser", "mobile_visit-a:viewer", 1);
+  const first = f.session.override_id;
+  await f.control.releaseVisit("alice", "browser", "visit-b");
+  await f.control.releaseVisit("bob", "browser", "visit-a");
+  assert.equal(f.session.override_id, first);
+  await f.control.releaseVisit("alice", "browser", "visit-a");
+  await settle();
+  assert.equal(f.session.control_state, "agent");
+  await f.control.acquire("alice", "browser", "mobile_visit-b:viewer", f.session.revision);
+  const second = f.session.override_id;
+  await f.control.releaseVisit("alice", "browser", "visit-a");
+  assert.equal(f.session.override_id, second);
 });

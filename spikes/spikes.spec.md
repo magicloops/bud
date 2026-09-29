@@ -8,6 +8,8 @@ This folder keeps risky or comparison-oriented work isolated from production pac
 
 ## Subfolders
 
+- [browser-streaming/](./browser-streaming/browser-streaming.spec.md) - Proposal A local CDP screencast feasibility probe: disposable Chrome, synthetic targets, bounded event/ACK reader, minimized/inactive matrix and screenshot RPC comparison. See the [capture findings](../plan/browser-streaming/phase-1-findings.md) before relay work.
+
 - `bud-browser/` (removed) - Phase-0 managed Chromium host, private handoff, relay and canvas/input harness. Phase 0 closed and the production implementation lives in `bud/src/browser`, `bud/browser-helper`, `service/src/browser` and `web/src/features/browser`. The spike was deleted once nothing but one env-gated service test depended on it; its measured results remain in [phase-0-findings.md](../plan/bud-owned-browser/phase-0-findings.md) and the code is in git history before the removal.
 - [grpc-interop/](./grpc-interop/grpc-interop.spec.md) - Phase 1.5 network-upgrade harness for validating Rust `tonic` interoperability against Node Connect native gRPC over HTTP/2 and a `@grpc/grpc-js` comparison server.
 - [holder-survival/](./holder-survival/holder-survival.spec.md) - Phase 0 harness for the `stem` tmux replacement: detached PTY-holder process (double-fork/setsid, UDS line protocol, ring log), launchd/systemd template variants, and operator-run survival matrix scripts. Concluded 2026-08-15: GO on both platforms — macOS unconditional, Linux requires `KillMode=process` (see `findings.md` for the binding supervision recipe).

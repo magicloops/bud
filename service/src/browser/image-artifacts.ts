@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { ulid } from 'ulid';
+import { monotonicFactory } from 'ulid';
 import { pool } from '../db/client.js';
 import type { CanonicalContentBlock, CanonicalMessage } from '../llm/types.js';
 import type { ProviderInvocationContext } from '../llm/provider.js';
@@ -15,6 +15,7 @@ export type ImageArtifact = {
   expires_at: number; image: string; mime_type: 'image/png' | 'image/jpeg';
 };
 export class ImageArtifacts {
+  private nextId = monotonicFactory();
   private writing: Promise<unknown> = Promise.resolve();
   constructor(private readonly path = directory) {}
   put(value: Omit<ImageArtifact, 'id' | 'expires_at'>) {
@@ -35,10 +36,20 @@ export class ImageArtifacts {
     }
     if (kept >= 128) throw Error('browser_image_capacity');
     const expires_at = Date.now() + TTL;
-    const id = `${expires_at}-${ulid()}`;
+    const id = `${expires_at}-${this.nextId()}`;
     const artifact = { ...value, id, expires_at };
     await writeFile(join(this.path, `${id}.json`), JSON.stringify(artifact), { flag: 'wx', mode: 0o600 });
     return { id, mime_type: value.mime_type, expires_at: new Date(expires_at).toISOString() };
+  }
+  async latest(owner: string, thread: string, session: string, generation: string) {
+    const names = await readdir(this.path).catch(() => [] as string[]);
+    for (const name of names.sort().reverse()) {
+      if (!name.endsWith('.json')) continue;
+      const value = await this.get(name.slice(0, -5), owner, thread);
+      if (value?.session === session && value.generation === generation)
+        return { image: value.image, mime_type: value.mime_type, captured_at: value.expires_at - TTL };
+    }
+    return null;
   }
   async get(id: string, owner: string, thread: string, call?: string): Promise<ImageArtifact | null> {
     if (!/^\d+-[0-9A-HJKMNP-TV-Z]{26}$/.test(id) || Number(id.split('-')[0]) <= Date.now()) return null;

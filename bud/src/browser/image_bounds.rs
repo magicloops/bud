@@ -26,7 +26,7 @@ pub(super) fn dimensions(image: &str, png: bool) -> Result<(u32, u32)> {
     Ok(size)
 }
 
-fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+pub(super) fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     if bytes.get(..2)? != [0xff, 0xd8] {
         return None;
     }

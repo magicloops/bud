@@ -1,3 +1,5 @@
+import { browserImages } from "./image-artifacts.js";
+import { PrivateStreamRelay, streamErrorCode } from "./stream-media.js";
 import { randomBytes } from "node:crypto";
 import { WebSocket } from "ws";
 import { z } from "zod";
@@ -38,6 +40,8 @@ type Group = {
   started: number;
   operationDriven: boolean;
   dirty: boolean;
+  streaming: boolean;
+  stream?: PrivateStreamRelay;
   retries: number;
   nextHeartbeat: number;
   daemonAliveUntil: number;
@@ -69,6 +73,22 @@ const groupKey = (id: string, generation: string, epoch: number, controller?: st
 /** Latest-only fan-out: slow viewers lose frames, never delay another viewer. */
 export class BrowserMedia {
   onDiagnostic: (fields: Record<string, string | number | boolean>) => void = () => {};
+  private sharedFrames = new Map<string, { owner: string; generation: string; captured_at: number;
+    image?: string; mime_type: "image/png" | "image/jpeg" }>();
+  async sharedFrame(owner: string, sessionId: string) {
+    // Historical public pixels need ownership, never a private controller lease.
+    const session = await this.control.repository.get(owner, sessionId);
+    if (session.desired_state !== "open") return null;
+    const cached = this.sharedFrames.get(sessionId);
+    const saved = cached?.owner === owner && cached.generation === session.generation &&
+      cached.captured_at > Date.now() - 24 * 60 * 60 * 1000 ? cached : null;
+    const artifact = await browserImages.latest(owner, session.thread_id, sessionId, session.generation);
+    const current = await this.control.repository.get(owner, sessionId);
+    if (current.generation !== session.generation || current.desired_state !== "open") return null;
+    if (saved && (!artifact || saved.captured_at >= artifact.captured_at))
+      return saved.image ? { image: saved.image, mime_type: saved.mime_type, captured_at: saved.captured_at } : null;
+    return artifact;
+  }
   private groups = new Map<string, Group>();
   private tickets = new Map<string, { group: Group; expires: number }>();
   private handshakes = new Set<WebSocket>();
@@ -94,6 +114,7 @@ export class BrowserMedia {
     if (group.closed) return;
     this.onDiagnostic({ session_id: group.sessionId, event: "media_closed", reason, frames: group.frames, age_ms: Date.now() - group.started, viewers: group.viewers.size, awaiting: group.awaiting });
     group.closed = true;
+    group.stream?.dispose();
     this.groups.delete(group.key);
     for (const [ticket, entry] of this.tickets)
       if (entry.group === group) this.tickets.delete(ticket);
@@ -111,11 +132,14 @@ export class BrowserMedia {
   }
   stop() {
     clearInterval(this.timer);
+    this.sharedFrames.clear();
     for (const socket of this.handshakes) socket.terminate();
     for (const group of this.groups.values()) this.close(group, "service_stop");
   }
   private sweep() {
     this.control.expireControllers();
+    for (const [id, frame] of this.sharedFrames)
+      if (frame.captured_at <= Date.now() - 24 * 60 * 60 * 1000) this.sharedFrames.delete(id);
     for (const [ticket, entry] of this.tickets)
       if (entry.expires < Date.now()) {
         this.tickets.delete(ticket);
@@ -127,11 +151,11 @@ export class BrowserMedia {
         continue;
       }
       const now = Date.now();
-      if (group.operationDriven && group.daemon && group.daemonAliveUntil < now) {
+      if ((group.operationDriven || group.streaming) && group.daemon && group.daemonAliveUntil < now) {
         this.close(group, "daemon_heartbeat_timeout");
         continue;
       }
-      if (group.operationDriven && group.nextHeartbeat <= now) {
+      if ((group.operationDriven || group.streaming) && group.nextHeartbeat <= now) {
         group.nextHeartbeat = now + 3000;
         if (group.daemon?.readyState === WebSocket.OPEN) group.daemon.ping();
         for (const viewer of group.viewers) {
@@ -148,7 +172,7 @@ export class BrowserMedia {
       }
       for (const viewer of group.viewers)
         if ((!viewer.ready && viewer.deadline < now) ||
-            (group.operationDriven ? viewer.aliveUntil < now || viewer.authorizationUntil < now : viewer.deadline < now)) {
+            ((group.operationDriven || group.streaming) ? viewer.aliveUntil < now || viewer.authorizationUntil < now : viewer.deadline < now)) {
           this.onDiagnostic({ session_id: group.sessionId, event: "viewer_timeout", frames: group.frames });
           viewer.socket.terminate();
         }
@@ -172,6 +196,14 @@ export class BrowserMedia {
       ![...group.viewers].some((v) => v.ready)
     )
       return;
+    if (group.streaming) {
+      const viewer = [...group.viewers][0];
+      if (!viewer || group.stream) return;
+      group.stream = new PrivateStreamRelay(group.daemon, viewer.socket,
+        () => this.checkViewer(group, viewer), () => this.close(group, "private_stream_failed"));
+      group.daemon.send(JSON.stringify({ mode: "screencast_v1", target_id: group.target }));
+      return;
+    }
     group.awaiting = true;
     group.dirty = false;
     const viewers = [...group.viewers];
@@ -213,13 +245,14 @@ export class BrowserMedia {
         started: Date.now(),
         operationDriven: carrier.operationDrivenMedia === true && !controllerId,
         dirty: true,
+        streaming: !!controllerId && process.env.BUD_BROWSER_STREAMING_EXPERIMENT === "1",
         retries: 0,
         nextHeartbeat: Date.now() + 3000,
         daemonAliveUntil: Date.now() + 60_000,
       };
       this.groups.set(key, group);
     }
-    if (group.viewers.size >= 3) throw new BrowserError("browser_viewer_limit");
+    if (group.viewers.size >= (group.streaming ? 1 : 3)) throw new BrowserError("browser_viewer_limit");
     const active = group;
     const viewer: Viewer = {
       socket,
@@ -243,6 +276,15 @@ export class BrowserMedia {
         return;
       }
       try {
+        if (active.streaming) {
+          const value = JSON.parse(raw.toString());
+          if (value.type === "frame_ack") { if (!active.stream) throw new Error("stream_not_started"); active.stream.feedback(raw.toString()); return; }
+          if (value.type === "target") {
+            const target = z.object({ type:z.literal("target"), target_id:z.string().min(1).max(128) }).strict().parse(value);
+            active.daemon?.send(JSON.stringify(target)); return;
+          }
+          throw new Error("stream_protocol_mismatch");
+        }
         const message = z
           .object({
             type: z.enum(["ack", "target"]),
@@ -332,7 +374,23 @@ export class BrowserMedia {
         if (group.daemon) throw new Error("duplicate");
         group.daemon = socket;
         socket.on("pong", () => { group.daemonAliveUntil = Date.now() + 60_000; });
-        socket.on("message", (raw) => {
+        socket.on("message", (raw, binary) => {
+          if (group.streaming) {
+            try {
+              if (!group.stream) throw new Error("stream_not_started");
+              if (binary) {
+                group.stream.frame(Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer));
+                group.frames++;
+              } else void group.stream.reset(raw.toString()).catch(error => {
+                this.onDiagnostic({ session_id: group.sessionId, event: "stream_rejected", packet: "reset", error_code: streamErrorCode(error) });
+                this.close(group, "stream_reset_failed");
+              });
+            } catch (error) {
+              this.onDiagnostic({ session_id: group.sessionId, event: "stream_rejected", packet: binary ? "binary" : "reset", error_code: streamErrorCode(error) });
+              this.close(group, "invalid_stream_packet");
+            }
+            return;
+          }
           void this.frame(group, raw.toString()).catch((error) => this.close(group,
             error instanceof z.ZodError ? "invalid_frame" :
             error instanceof BrowserError ? "media_authority_rejected" : "frame_processing_failed"));
@@ -395,6 +453,15 @@ export class BrowserMedia {
       if (viewer.socket.bufferedAmount > 1_410_000) {
         viewer.socket.terminate();
         continue;
+      }
+      if (group.controllerId === undefined) {
+        // No await between authorization/fence checks and retention. Keep only
+        // public pixels, with no frame/focus token or target navigation metadata.
+        this.sharedFrames.delete(group.sessionId);
+        this.sharedFrames.set(group.sessionId, { owner: group.owner, generation: group.generation,
+          captured_at: Date.now(), mime_type: "image_format" in frame && frame.image_format === "png" ? "image/png" : "image/jpeg",
+          ...("image" in frame ? { image: frame.image } : {}) });
+        if (this.sharedFrames.size > 32) this.sharedFrames.delete(this.sharedFrames.keys().next().value!);
       }
       viewer.ready = false;
       viewer.lastFrame = group.frames;

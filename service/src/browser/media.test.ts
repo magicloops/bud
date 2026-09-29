@@ -163,16 +163,20 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   assert.ok(address && typeof address === 'object');
   const endpoint = `ws://127.0.0.1:${address.port}`;
   const sockets = new Set<WebSocket>();
-  const session = { id: 'browser', browser_id: 'shared', generation: 'gen', control_epoch: 1, browser_epoch: 1 } as BrowserSession;
+  const session = { id: 'browser', thread_id: 'shared-frame-test-thread', desired_state: 'open', browser_id: 'shared', generation: 'gen', control_epoch: 1, browser_epoch: 1 } as BrowserSession;
   const carrier = { operationDrivenMedia: true, current: () => true } as BrowserCarrier;
   let daemon!: WebSocket, attachments = 0, frames = 0, pending = false, empty = false;
   let unblock: (() => void) | undefined;
+  let privateController: string | undefined;
   const control = {
     expireControllers() {}, onFence() {},
-    repository: { command: (_session: unknown, command: unknown) => ({ command }) },
+    repository: {
+      get: async (owner: string, id: string) => { assert.equal(id, 'browser'); if(owner !== 'alice') throw Error('browser_not_found'); return {...session}; },
+      command: (_session: unknown, command: unknown) => ({ command }),
+    },
     mediaAuthority: async () => {
       if (pending) await new Promise<void>(resolve => { unblock = resolve });
-      return { session: { ...session }, carrier };
+      return { session: { ...session }, carrier, controllerId: privateController };
     },
   } as unknown as BrowserControl;
   const media = new BrowserMedia(control, `${endpoint}/daemon`, async (_, request) => {
@@ -202,13 +206,18 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
     const socket = new WebSocket(`${endpoint}/${name}`);
     sockets.add(socket);
     socket.on('message', raw => {
-      if (['frame', 'empty'].includes(JSON.parse(raw.toString()).type)) { frames++; socket.send('{"type":"ack"}'); }
+      if (['frame', 'empty'].includes(JSON.parse(raw.toString()).type)) { frames++; if (!privateController) socket.send('{"type":"ack"}'); }
     });
     await once(socket, 'open');
     return socket;
   };
   const first = await connect('first');
   await until(() => frames === 1);
+  assert.equal((await media.sharedFrame('alice','browser'))?.image, 'fixture');
+  session.generation='replacement';
+  assert.equal(await media.sharedFrame('alice','browser'),null,'old generation stays hidden');
+  session.generation='gen';
+  await assert.rejects(media.sharedFrame('bob','browser'), /browser_not_found/);
   session.control_epoch = 2;
   daemon.send('{"refresh":true}');
   await until(() => frames === 2);
@@ -224,6 +233,8 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   daemon.send('{"refresh":true}');
   await until(() => frames >= beforeEmpty + 2);
   assert.equal(first.readyState, WebSocket.OPEN, 'empty inventory retains the authorized stream');
+  assert.equal(await media.sharedFrame('alice','browser'),null,'empty supersedes earlier pixels');
+  empty = false;
   pending = true;
   daemon.send('{"refresh":true}');
   await until(() => Boolean(unblock));
@@ -233,6 +244,12 @@ test(`agent epoch continuity and pending-delivery revocation`, async t => {
   unblock!();
   await until(() => first.readyState === WebSocket.CLOSED && second.readyState === WebSocket.CLOSED);
   assert.equal(frames, before, 'delayed authorization cannot deliver after the fence');
+  assert.equal(await media.sharedFrame('alice','browser'),null,'fenced frame must not enter saved view');
+  privateController = 'private';
+  const privateViewer = await connect('private');
+  await until(() => frames > before);
+  assert.equal(await media.sharedFrame('alice','browser'),null,'private frames never enter saved view');
+  privateViewer.close();
 });
 
 test("a message sent right behind the viewer hello reaches the media listener", async t => {

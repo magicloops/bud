@@ -181,6 +181,9 @@ test("old daemon capability is omitted; captured carrier cannot move to a replac
   assert.equal(carrier.hidpiCapture, false);
   assert.equal(carrier.operationDrivenMedia, false);
   tracker.browserCapability = { ...capability, handoff: true, viewport_resize: true, independent_renewal: true, hidpi_capture: true, operation_driven_media: true };
+  assert.equal(browserCarrier(id)?.handoff, false, "old daemon cannot grant a persistent override");
+  tracker.browserCapability = {...capability,handoff:true,viewport_resize:true,independent_renewal:true,hidpi_capture:true,operation_driven_media:true,agent_default_control:true};
+  assert.equal(browserCarrier(id)?.handoff, true);
   assert.equal(browserCarrier(id)?.viewportResize, true);
   assert.equal(browserCarrier(id)?.independentRenewal, true);
   assert.equal(browserCarrier(id)?.hidpiCapture, true);

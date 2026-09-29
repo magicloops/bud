@@ -9,8 +9,8 @@ import { BrowserResourceRepository } from "./resource-repository.js";
 import { BrowserMobileAuth, scopedBrowserOperation } from "./mobile-auth.js";
 
 test("mobile control scope excludes destructive and host-window operations", () => {
-  for (const op of ["acquire", "renew", "release", "return", "recover"]) assert.ok(scopedBrowserOperation(op));
-  for (const op of ["reopen", "close", "reset", "stop", "show_window", "hide_window", "unknown"]) assert.equal(scopedBrowserOperation(op), false);
+  for (const op of ["acquire", "renew", "release", "return"]) assert.ok(scopedBrowserOperation(op));
+  for (const op of ["recover", "reopen", "close", "reset", "stop", "show_window", "hide_window", "unknown"]) assert.equal(scopedBrowserOperation(op), false);
 });
 
 test("mobile visit: one-use grant, persistent identity, owner/secret checks, expiry and revocation", {
@@ -25,7 +25,7 @@ test("mobile visit: one-use grant, persistent identity, owner/secret checks, exp
     create table thread(thread_id uuid primary key,bud_id text,created_by_user_id text,deleted_at timestamptz,unique(thread_id,bud_id,created_by_user_id));
     create table agent_invocation(id text primary key,thread_id uuid,bud_id text,created_by_user_id text,status text,cancel_requested_at timestamptz,unique(id,thread_id,bud_id,created_by_user_id));
     insert into bud values('bud','alice','tenant','secret');`);
-  for (const file of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql", "0041_demonic_stephen_strange.sql"]) {
+  for (const file of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql", "0041_demonic_stephen_strange.sql", "0044_conscious_skaar.sql", "0045_lucky_makkari.sql", "0047_yielding_sabretooth.sql"]) {
     const migration = await readFile(new URL(`../../drizzle/migrations/${file}`, import.meta.url), "utf8");
     await database.query(migration.replaceAll('"public".', `"${schema}".`));
   }

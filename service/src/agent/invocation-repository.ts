@@ -178,6 +178,20 @@ export class InvocationRepository {
         (input.clientId && message.clientId !== input.clientId)) throw new InvocationError("admission_conflict");
       return { invocation: existing, message, duplicate: true };
     }
+    if (input.origin === "human") {
+      // A new instruction supersedes this thread's unanswered browser task, not
+      // the resource's ownership. The new turn carries the user's actual words.
+      const waits = await tx.select({id:inv.id}).from(inv).innerJoin(browserHandoff,
+        and(eq(browserHandoff.invocationId,inv.id),eq(browserHandoff.createdByUserId,input.owner)))
+        .where(and(eq(inv.threadId,input.threadId),eq(inv.createdByUserId,input.owner),
+          eq(inv.status,"waiting_for_user"),eq(browserHandoff.kind,"agent"),eq(browserHandoff.status,"pending")));
+      for (const wait of waits) {
+        await this.requestCancelInTransaction(tx,input.owner,wait.id);
+        await tx.update(inv).set({outcomeCode:"superseded_by_user_message"}).where(eq(inv.id,wait.id));
+        await tx.update(browserHandoff).set({resolutionReason:"user_redirected"})
+          .where(and(eq(browserHandoff.invocationId,wait.id),eq(browserHandoff.createdByUserId,input.owner)));
+      }
+    }
     const id = ulid();
     const [message] = await tx.insert(messageTable).values({
       clientId: input.clientId ?? generateMessageClientId(), threadId: thread.threadId,
@@ -473,7 +487,7 @@ export class InvocationRepository {
         .innerJoin(browserResource, eq(browserResource.id,browserSession.browserId))
         .where(and(eq(browserHandoff.id,handoffId),eq(browserHandoff.invocationId,row.id),
           eq(browserHandoff.callId,callId),eq(browserHandoff.createdByUserId,row.createdByUserId),
-          eq(browserHandoff.status,"pending"),eq(browserResource.controlState,"paused"))).limit(1);
+          inArray(browserHandoff.status,["pending","returned"]),isNull(browserResource.retiredAt))).limit(1);
       if (!handoff) throw new InvocationError("browser_handoff_not_available");
       const [intent] = await tx.update(action).set({status:"waiting_for_user",fence:lease.fence+1,
         evidence:{browser_handoff_id:handoffId}}).where(and(eq(action.invocationId,row.id),
@@ -640,10 +654,10 @@ export class InvocationRepository {
             eq(browserHandoff.id,pending.evidence.browser_handoff_id),eq(browserHandoff.invocationId,current.id),
             eq(browserHandoff.createdByUserId,current.createdByUserId),eq(browserHandoff.status,"returned")));
           if (!handoff || !handoff.clientId || !handoff.resolvedAt) throw new InvocationError("browser_handoff_return_missing");
-          const restarted = handoff.returnedByUserId === null;
+          const restarted = handoff.resolutionReason === "runtime_replaced";
           const browserSummary = restarted
             ? "The browser runtime was lost and replaced. Private work was interrupted, not completed by the user. Observe the recovered shared page without old target IDs before acting; do not repeat completed actions."
-            : "The user returned browser control. Observe the current page before acting; do not repeat completed actions.";
+            : `Human browser control ended (${handoff.resolutionReason ?? "returned"}). This does not confirm completion of the requested task. Observe the current page before acting; do not repeat completed actions.`;
           if(pending.kind==="browser_user_handoff") {
             // No provider tool was pending at this boundary. Do not invent a
             // tool result in provider history just to represent user control.
@@ -663,7 +677,7 @@ export class InvocationRepository {
           answer = {clientId:handoff.clientId,createdAt:handoff.createdAt,answeredAt:handoff.resolvedAt,
             evidence:{browser_handoff_id:handoff.id,continuation_restored:true},
             payload:{tool:"browser_request_handoff",call_id:pending.callId,kind:"browser",ok:!restarted,
-              runtime_replaced:restarted, ...(restarted ? {error:"browser_handoff_interrupted"} : {}),
+              resolution_reason:handoff.resolutionReason, task_completion_confirmed:false, runtime_replaced:restarted, ...(restarted ? {error:"browser_handoff_interrupted"} : {}),
               handoff_id:handoff.id,summary:browserSummary}};
         } else if (pending.kind === BOOTSTRAP_PROPOSAL_TOOL) {
           const proposalId = pending.evidence?.bootstrap_proposal_id;

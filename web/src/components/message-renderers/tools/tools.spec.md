@@ -10,7 +10,7 @@ Provides components for rendering tool-specific UI within chat messages. When th
 
 ### `browser-handoff.tsx`
 
-Inline `browser_request_handoff` reason and Open browser link. Only a strict
+Inline `browser_request_handoff` reason and Take control link. Only a strict
 first-party `/browser/browser_<ULID>` path is accepted; no arbitrary external
 viewer URL or secret input is rendered. Pending handoffs stay visible outside
 collapsed work. Normal clicks use the workbench Browser pane context; modifier
@@ -148,11 +148,8 @@ Potential tool renderers to add:
 
 ## Pending browser actions
 
-`browser-handoff.tsx` also renders original browser operations carrying pending
-`wait_kind=return_control`. Return uses the matching mounted viewer action; Stop
-targets only the invocation. Without ownership, Open browser provides recovery.
-Historical rows expose no return/stop actions. `browser-handoff.test.tsx` covers
-matching-session authority, targeted stop and inert history.
-
-
-Pending browser handoffs use a compact row of shared Button components: Return to agent and Cancel (invocation stop). Open browser appears only when that session’s pane is not visible. Ordinary helper copy is omitted; actual errors remain visible. Return stays disabled without the matching controller, preserving private authority.
+Help requests offer Take control (opens the viewer for explicit takeover) and
+Cancel; they never own the browser by themselves. Return appears only for an
+actual return_control wait with a matching mounted controller. Historical results
+remain inert. Normal chat can redirect the task without a human completion receipt.
+`browser-handoff.test.tsx` covers action eligibility, targeted stop and inert history.

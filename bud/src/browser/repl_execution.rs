@@ -942,11 +942,10 @@ mod tests {
             ControlCommand::Pause,
             ControlCommand::Acquire {
                 controller_id: controller.clone(),
+                lease_expires_at_ms: crate::util::now_millis() + 6000,
             },
-            ControlCommand::PrepareReturn {
-                controller_id: controller,
-            },
-            ControlCommand::FinishReturn,
+            ControlCommand::End,
+            ControlCommand::End,
         ]
         .into_iter()
         .enumerate()

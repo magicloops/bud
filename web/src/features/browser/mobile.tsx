@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { BrowserViewer } from "./viewer";
 
-type HostCommand = { version:1; visit_id:string; request_id:string; command:"suspend"|"resume" };
+type HostCommand = { version:1; visit_id:string; request_id:string; command:"suspend"|"resume"|"keyboard" };
 declare global {
   interface Window {
     webkit?: {messageHandlers?: {budBrowser?: {postMessage:(message:unknown)=>void}}};
@@ -24,6 +24,13 @@ export function MobileBrowserEntry() {
   const publish=useCallback((event:string, fields:Record<string,unknown>={})=>{
     window.webkit?.messageHandlers?.budBrowser?.postMessage({version:1,visit_id:visitId,event,...fields});
   },[visitId]);
+  const keyboard = useRef<{id:string; focus:()=>void} | null>(null);
+  const requestKeyboard = useCallback((focus:()=>void) => {
+    const id = crypto.randomUUID();
+    keyboard.current = {id, focus};
+    console.debug("browser-keyboard", {stage:"native_request", bridge_present:!!window.webkit?.messageHandlers?.budBrowser});
+    publish("keyboard", {request_id:id});
+  }, [publish]);
   const authorizationLost=useCallback(()=>publish("authorization_lost"),[publish]);
   useEffect(()=>{
     if(!valid)return;
@@ -32,6 +39,13 @@ export function MobileBrowserEntry() {
     window.budBrowserCommand=command=>{
       if(command?.version!==1||command.visit_id!==visitId||typeof command.request_id!=="string"||!command.request_id.length||command.request_id.length>64||seen.has(command.request_id))return;
       seen.add(command.request_id);if(seen.size>64)seen.delete(seen.values().next().value!);
+      if(command.command==="keyboard") {
+        const pending = keyboard.current;
+        console.debug("browser-keyboard", {stage:"native_reply", matched:pending?.id === command.request_id});
+        if(pending?.id === command.request_id) { keyboard.current=null; pending.focus(); }
+        return;
+      }
+      keyboard.current=null;
       if(command.command==="suspend")setActive(false);
       else if(command.command==="resume")setActive(true);
       else {publish("result",{request_id:command.request_id,accepted:false});return;}
@@ -45,12 +59,12 @@ export function MobileBrowserEntry() {
     const visibility=()=>{if(document.hidden){generation++;setActive(false);}};
     document.addEventListener("visibilitychange",visibility);
     publish("ready");
-    return ()=>{live=false;delete window.budBrowserCommand;document.removeEventListener("visibilitychange",visibility);};
+    return ()=>{live=false;keyboard.current=null;delete window.budBrowserCommand;document.removeEventListener("visibilitychange",visibility);};
   },[publish,visitId,valid]);
   if(!valid)return <p>Invalid browser visit.</p>;
   return <ThemeProvider><div className="h-full" style={{height:"100svh"}}>
     <BrowserViewer sessionId={sessionId} hostViewerId={viewerId} mobile embedded active={active}
-      onAuthorizationLost={authorizationLost} onDismiss={()=>publish("dismiss")}/>
+      onKeyboardRequest={requestKeyboard} onAuthorizationLost={authorizationLost} onDismiss={()=>publish("dismiss")}/>
     {!active&&<div className="fixed inset-0 z-50 bg-background" role="status">Browser paused</div>}
   </div></ThemeProvider>;
 }

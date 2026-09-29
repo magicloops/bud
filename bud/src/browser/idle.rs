@@ -1,5 +1,5 @@
 //! Daemon-local resource expiry. Durable session identity and public recovery
-//! hints survive; expiration never returns private authority or replays a cell.
+//! hints survive. Human overrides expire independently without replaying input.
 use super::*;
 
 pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
@@ -21,14 +21,60 @@ impl BrowserManager {
         let page = self.page_lock.clone();
         let authority = self.authority.clone();
         *task = Some(runtime.spawn(async move {
+            let mut last_sweep = Instant::now();
             loop {
-                tokio::time::sleep(SWEEP_INTERVAL).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 let Some(entries) = entries.upgrade() else {
                     break;
                 };
-                expire(&entries, &page, &authority, Instant::now()).await;
+                end_override(&entries, &page, &authority).await;
+                if last_sweep.elapsed() >= SWEEP_INTERVAL {
+                    last_sweep = Instant::now();
+                    expire(&entries, &page, &authority, last_sweep).await;
+                }
             }
         }));
+    }
+}
+
+async fn end_override(
+    entries: &Mutex<HashMap<String, Arc<Slot>>>,
+    page: &AsyncMutex<()>,
+    authority: &Mutex<Authority>,
+) {
+    let fence = {
+        let mut state = authority.lock().unwrap();
+        state.expire();
+        if !state.end_pending {
+            return;
+        }
+        state.media_fence()
+    };
+    // Expiry fences admission even when an input currently owns the page lock.
+    let Ok(_page) = page.try_lock() else {
+        return;
+    };
+    let slots: Vec<_> = entries.lock().unwrap().values().cloned().collect();
+    for slot in slots {
+        let Ok(mut entry) = slot.state.try_lock() else {
+            return;
+        };
+        if let Some(browser) = entry.browser.as_mut() {
+            let result = tokio::time::timeout(Duration::from_secs(2), async {
+                browser.recover_channel().await?;
+                browser.hide_before_return().await
+            })
+            .await;
+            if !matches!(result, Ok(Ok(()))) {
+                return;
+            }
+            browser.invalidate_references();
+        }
+    }
+    let mut state = authority.lock().unwrap();
+    if state.end_pending && state.media_fence() == fence {
+        let epoch = state.epoch;
+        state.resume_after_stop(epoch);
     }
 }
 
@@ -79,11 +125,7 @@ pub(super) async fn expire(
             let mut authority = authority.lock().unwrap();
             authority.expire();
             if authority.workspace_allowed(&id)
-                && matches!(
-                    authority.mode,
-                    super::super::control::Mode::HumanPrivate
-                        | super::super::control::Mode::ResumePending
-                )
+                && matches!(authority.mode, super::super::control::Mode::HumanPrivate)
             {
                 *slot.last_used.lock().unwrap() = now;
                 continue;
@@ -110,5 +152,25 @@ pub(super) async fn expire(
         // Logical close is deliberately not set: this is automatically reusable.
         tracing::info!(component="browser_lifecycle", event="idle_expired", session_id=%id,
             "Browser workspace expired after 24 idle hours");
+    }
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+    #[tokio::test]
+    async fn automatic_end_waits_for_inflight_page_work_then_resumes_without_viewer() {
+        let entries = Mutex::new(HashMap::new());
+        let page = AsyncMutex::new(());
+        let authority = Mutex::new(Authority::default());
+        authority.lock().unwrap().restore(true, true);
+        let operation = page.lock().await;
+        end_override(&entries, &page, &authority).await;
+        assert!(authority.lock().unwrap().end_pending);
+        assert!(!authority.lock().unwrap().agent_allowed(0));
+        drop(operation);
+        end_override(&entries, &page, &authority).await;
+        assert!(authority.lock().unwrap().agent_allowed(0));
+        assert!(!authority.lock().unwrap().private_content());
     }
 }

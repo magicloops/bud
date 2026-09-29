@@ -39,7 +39,7 @@ test(
     alter table agent_invocation add constraint invocation_context unique(id,thread_id,bud_id,created_by_user_id);
     alter table agent_invocation_action add column kind text default 'browser_request_handoff';`);
     // Apply the exact deploy migrations against pre-change tables.
-    for (const name of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql"]) {
+    for (const name of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql", "0044_conscious_skaar.sql", "0045_lucky_makkari.sql", "0047_yielding_sabretooth.sql"]) {
       await pool.query((await readFile(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")).replaceAll('"public".', `"${schema}".`));
     }
     const thread = randomUUID();
@@ -219,30 +219,14 @@ test(
     const acquired = await controls.prepare("alice", r.session_id, "boot", paused.session.revision,
       "acquire", { action:"control", operation:"acquire" }, "human_private");
     assert.equal(acquired.request.browser_color, undefined);
-    const returning = await controls.prepare(
-      "alice",
-      r.session_id,
-      "boot",
-      acquired.session.revision,
-      "return",
-      { action: "control", operation: "prepare_return" },
-      "resume_pending",
-    );
-    const finished = await controls.prepare("alice", r.session_id, "boot", returning.session.revision,
-      "finish", { action:"control", operation:"finish_return" }, "resume_pending");
-    await controls.returned("alice", r.session_id, finished.session.revision);
-    assert.equal(
-      (
-        await pool.query("select status from browser_handoff where id=$1", [
-          handoff.id,
-        ])
-      ).rows[0].status,
-      "returned",
-    );
-    await assert.rejects(
-      controls.returned("alice", r.session_id, returning.session.revision),
-      /revision_conflict/,
-    );
+    await controls.grantOverride("alice", r.session_id, acquired.session.revision,
+      "override", "viewer", "carrier", Date.now() + 6000);
+    await controls.endOverride("alice", r.session_id, "override", "explicit_return");
+    const returning = await controls.prepareEnd(await controls.get("alice", r.session_id), "boot");
+    assert.ok(returning);
+    await controls.acknowledgeEnd(returning.resource);
+    assert.equal((await pool.query("select status from browser_handoff where id=$1", [handoff.id])).rows[0].status, "returned");
+    await assert.rejects(controls.acknowledgeEnd(returning.resource), /revision_conflict/);
     await pool.query("update agent_invocation set status='running'");
     // Service restart preserves live state; daemon restart retains recoverable inventory.
     const recovered = await new BrowserRepository(pool).prepare(
@@ -275,8 +259,8 @@ test(
     await repo.complete(recovered,{ok:true,outcome:"completed"});
     assert.equal((await controls.get("alice",r.session_id)).generation,recovering.session.generation);
     const replacement = recovering.request;
-    // Restart cannot release the browser-wide private latch. Only explicit
-    // takeover of the new process and acknowledged return can resume agents.
+    // Restart cannot bypass the execution fence. Automatic acknowledged end
+    // must reconcile the daemon before agents resume.
     const live = replacement;
     const liveBoot = "third-boot";
     for (const state of ["paused", "human_private", "resume_pending"]) {

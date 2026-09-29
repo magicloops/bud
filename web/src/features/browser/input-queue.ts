@@ -4,12 +4,14 @@ export type QueuedInput = { action: Record<string, unknown>; frame: BrowserFrame
 
 function sameViewport(a: BrowserFrame, b: BrowserFrame) {
   return a.target_id === b.target_id && a.document_id === b.document_id &&
-    a.width === b.width && a.height === b.height && a.viewport_id === b.viewport_id;
+    a.width === b.width && a.height === b.height && a.viewport_id === b.viewport_id &&
+    a.media_generation === b.media_generation;
 }
 
 export function inputMatchesFrame(input: QueuedInput, frame: BrowserFrame) {
   return sameViewport(input.frame, frame) &&
-    (input.action.kind === "scroll" || input.frame.frame_token === frame.frame_token);
+    (input.action.kind === "scroll" || input.frame.frame_token === frame.frame_token ||
+      !!input.frame.media_generation);
 }
 
 /** Merge only unsent adjacent wheels; clicks, typing and direction changes are barriers. */

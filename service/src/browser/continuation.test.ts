@@ -57,6 +57,7 @@ test(
       createdByUserId: "alice",
     });
     for (const provider of [
+      "redirect",
       "openai",
       "anthropic",
       "ds4",
@@ -172,15 +173,6 @@ test(
             },
             clientId,
           });
-      let paused = await controls.prepare(
-        "alice",
-        sessionId,
-        "boot",
-        (await controls.get("alice", sessionId)).revision,
-        "pause",
-        { action: "control", operation: "pause" },
-        "paused",
-      );
       if (returnControl) { /* Already atomically parked at admission. */ }
       else if (userTakeover)
         assert.ok(
@@ -195,6 +187,21 @@ test(
           callId,
           (handoff as { id: string }).id,
         );
+      if (!returnControl) assert.equal((await controls.get("alice",sessionId)).control_state,"agent","help must not reserve the browser");
+      if (provider === "redirect") {
+        const redirected=await repo.admit({owner:"alice",threadId:thread,origin:"human",idempotencyKey:thread+"-redirect",text:"Skip sign in; use the public page",model:"fixture",reasoningEffort:"none"});
+        assert.equal((await repo.findForThread("alice",thread,lease.id))?.status,"canceled");
+        assert.equal((await repo.findForThread("alice",thread,lease.id))?.outcomeCode,"superseded_by_user_message");
+        assert.equal((await pool.query("select resolution_reason from browser_handoff where invocation_id=$1",[lease.id])).rows[0].resolution_reason,"user_redirected");
+        assert.equal((await controls.get("alice",sessionId)).override_id,null);
+        const next=await repo.claim("redirect-worker","alice");
+        assert.equal(next?.id,redirected.invocation.id);
+        await repo.start(next!);
+        assert.deepEqual(await repo.prepareQuestionContinuation(next!),[],"redirect cannot fabricate completed human work");
+        await repo.finish(next!,"succeeded","done");
+        continue;
+      }
+      let paused=await controls.prepare("alice",sessionId,"boot",(await controls.get("alice",sessionId)).revision,"pause",{action:"control",operation:"pause"},"paused");
       const timingAtPark = (await pool.query("select work_duration_ms,work_started_at from agent_invocation where id=$1", [lease.id])).rows[0];
       assert.equal(timingAtPark.work_started_at, null);
       assert.ok(Number(timingAtPark.work_duration_ms) >= 2000);
@@ -226,9 +233,12 @@ test(
         await repo.requestCancel("alice",second.id);
         assert.equal((await repo.pendingBrowserWaitsForThread("alice",thread)).length,1);
       }
+      await controls.grantOverride("alice",sessionId,paused.session.revision,"override-"+provider,"viewer","carrier",Date.now()+6000);
       // Private browser work must not reserve the entire conversation. A newer
       // chat can execute, while the original handoff remains durably parked.
-      const followup = await repo.admit({ owner: "alice", threadId: thread,
+      const chattingThread = returnControl ? thread : randomUUID();
+      if (!returnControl) await database.insert(schema.threadTable).values({threadId:chattingThread,budId:"bud",createdByUserId:"alice"});
+      const followup = await repo.admit({ owner: "alice", threadId: chattingThread,
         origin: "human", idempotencyKey: `${thread}-followup`, text: "Explain this while I sign in",
         model: "fixture", reasoningEffort: "none" });
       const chatting = await repo.claim("chat-worker", "alice");
@@ -244,7 +254,7 @@ test(
         await resources.acknowledgeLifecycle(stopping);
         await repo.recoverExpired("alice");
         assert.equal((await repo.findForThread("alice", thread, lease.id))?.status, "canceled", "stop stranded a browser wait");
-        assert.equal((await repo.findForThread("alice", thread, chatting.id))?.status, "running", "stop canceled unrelated chat");
+        assert.equal((await repo.findForThread("alice", chattingThread, chatting.id))?.status, "running", "stop canceled unrelated chat");
         await repo.finish(chatting, "succeeded", "done");
         continue;
       }
@@ -254,38 +264,13 @@ test(
         assert.equal((await repo.findForThread("alice",thread,lease.id))?.status,"waiting_for_user");
         const candidate=await controls.prepareEnsure("alice",sessionId,"new-boot",false);
         await controls.acknowledgeRecovery(candidate.resource,candidate.session);
-      } else if (provider === "repl") {
-        // Native chat can return after the viewer/controller has disappeared.
-        // Return from the waiting thread must use the actual controlling workspace.
-        const controlling = (await pool.query("select id from browser_session where id<>$1 and boot_id='boot' and closed_at is null limit 1",[sessionId])).rows[0].id;
-        await pool.query("update browser_resource set control_session_id=$1 where id=$2",[controlling,resource.id]);
-        const dispatches: string[] = [];
-        const control = new BrowserControl(controls,
-          () => ({bootId:"boot",handoff:true,current:()=>true}) as BrowserCarrier,
-          async (_carrier, request) => {
-            assert.equal(request.session_id, controlling);
-            dispatches.push(String((request.command.control as {operation:string}).operation));
-            return {ok:true,outcome:"completed",data:{control_acknowledged:true}};
-          });
-        const pending = await controls.pending("alice", sessionId);
-        await control.returnFromChat("alice", sessionId, pending.id, (await controls.get("alice",sessionId)).revision);
-        assert.deepEqual(dispatches,["pause","acquire","prepare_return","finish_return"]);
       } else {
-      let returning = await controls.prepare(
-        "alice",
-        sessionId,
-        "boot",
-        paused.session.revision,
-        "return",
-        { action: "control", operation: "prepare_return" },
-        "resume_pending",
-      );
-      returning = await controls.prepare("alice", sessionId, "boot", returning.session.revision,
-        "finish", { action: "control", operation: "finish_return" }, "resume_pending");
-      await controls.returned("alice", sessionId, returning.session.revision);
+        await controls.endOverride("alice",sessionId,"override-"+provider,"closed");
+        const ending=await controls.prepareEnd(await controls.get("alice",sessionId),"boot");
+        await controls.acknowledgeEnd(ending.resource);
       }
       // Return does not run two model loops in the same conversation.
-      assert.equal(await repo.claim("while-chatting", "alice"), null);
+      if (returnControl) assert.equal(await repo.claim("while-chatting", "alice"), null);
       await repo.finish(chatting, "succeeded", "done");
       if (canceling) {
         assert.equal(await repo.claim("after-cancel", "alice"), null);

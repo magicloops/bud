@@ -97,6 +97,13 @@ impl Semantic {
                 event = "semantic_failure",
                 helper_pid = guard.child.id(),
                 operation,
+                error_code = match result["error"].as_str() {
+                    Some("browser_target_not_found") => "browser_target_not_found",
+                    Some("browser_interrupted") => "browser_interrupted",
+                    Some("browser_document_changed") => "browser_document_changed",
+                    Some("browser_outcome_unknown") => "browser_outcome_unknown",
+                    _ => "redacted",
+                },
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 stage = match d["stage"].as_u64() {
                     Some(0) => "resolve_page",

@@ -24,7 +24,7 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
       cancel_requested_at timestamptz,unique(id,thread_id,bud_id,created_by_user_id));
     insert into bud values('bud','alice','tenant','secret'),('other','bob',null,'secret');`);
   // Apply the exact deploy migrations against pre-change tables.
-  for (const file of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql"]) {
+  for (const file of ["0039_bud_browser.sql", "0040_browser_claim_retirement.sql", "0044_conscious_skaar.sql", "0045_lucky_makkari.sql", "0047_yielding_sabretooth.sql"]) {
     const migration = await readFile(new URL(`../../drizzle/migrations/${file}`, import.meta.url), "utf8");
     await database.query(migration.replaceAll('"public".', `"${schema}".`));
   }
@@ -46,7 +46,7 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   await assert.rejects(database.query("update browser_session set browser_id=$1 where id='foreign'", [resource.id]), /foreign key/);
   const control = new BrowserControlRepository(database);
   const prepare = async (owner: string, bud: string, session: string, revision: number,
-    operation: "pause" | "acquire" | "prepare_return" | "finish_return") => {
+    operation: "pause" | "acquire") => {
     await control.prepare(owner, session, "boot", revision, randomUUID(), {action:"control",operation},
       operation === "pause" ? "paused" : operation === "acquire" ? "human_private" : "resume_pending");
     return (await repo.get(owner,bud))!;
@@ -62,6 +62,10 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   assert.equal(resource.control_state, "human_private");
   assert.equal(resource.private_content, true);
   const controller = resource.control_session_id!;
+  await control.grantOverride("alice",controller,resource.revision,"override","viewer","carrier",Date.now()+6000);
+  await assert.rejects(control.renewOverride("bob",controller,"override","viewer","carrier",Date.now()+6000),/not_found/);
+  await assert.rejects(control.renewOverride("alice",controller,"old","viewer","carrier",Date.now()+6000),/expired/);
+  await control.renewOverride("alice",controller,"override","viewer","carrier",Date.now()+6000);
   const beforeRestart = resource;
   await new BrowserResourceRepository(database).recover();
   resource = (await repo.ensure("alice", "bud"));
@@ -70,29 +74,31 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   assert.equal(resource.private_content, true, "restart cleared private intent");
   assert.equal(await repo.failControl(beforeRestart), false, "late failure changed recovered authority");
   assert.ok(resource.control_epoch > beforeRestart.control_epoch);
-  await assert.rejects(prepare("alice", "bud", controller === "a" ? "b" : "a", resource.revision, "prepare_return"), /control_conflict/);
-  resource = await prepare("alice", "bud", controller, resource.revision, "prepare_return");
-  await assert.rejects(repo.acknowledgeReturn(resource), /control_conflict/, "prepare acknowledgement unlocked browser");
-  resource = await prepare("alice", "bud", controller, resource.revision, "finish_return");
+  await assert.rejects(repo.acknowledgeReturn(resource), /control_conflict/, "pause acknowledgement unlocked browser");
+  const endingAfterRestart = await control.prepareEnd(await control.get("alice", controller), "boot");
+  resource = endingAfterRestart.resource;
   await database.query(`insert into agent_invocation(id,thread_id,bud_id,created_by_user_id,status,cancel_requested_at) values
     ('ia',$1,'bud','alice','waiting_for_user',null),('ib',$2,'bud','alice','waiting_for_user',null),
     ('cancel',$2,'bud','alice','waiting_for_user',now()),('done',$1,'bud','alice','succeeded',null)`, [threadA,threadB]);
   await database.query(`insert into browser_handoff(id,session_id,thread_id,bud_id,invocation_id,reason,kind,created_by_user_id) values
     ('ha','a',$1,'bud','ia','wait','agent','alice'),('hb','b',$2,'bud','ib','wait','agent','alice'),
     ('hc','b',$2,'bud','cancel','wait','agent','alice'),('hd','a',$1,'bud','done','wait','agent','alice')`, [threadA,threadB]);
+  // Associate only the help the human actually accepted. Untaken prompts remain pending.
+  await database.query("update browser_handoff set override_id='override' where id<>'hb'");
   const returnReceipt = resource;
   resource = await repo.acknowledgeReturn(resource);
   assert.equal(resource.private_content, false);
   assert.equal(resource.control_state, "agent");
   const waits = (await database.query("select id,status,returned_by_user_id from browser_handoff order by id")).rows;
-  assert.deepEqual(waits.map(r => [r.id,r.status]), [["ha","returned"],["hb","returned"],["hc","canceled"],["hd","canceled"]]);
-  assert.ok(waits.every(r => r.returned_by_user_id === "alice"));
+  assert.deepEqual(waits.map(r => [r.id,r.status]), [["ha","returned"],["hb","pending"],["hc","canceled"],["hd","canceled"]]);
+  assert.ok(waits.every(r => r.returned_by_user_id === null));
   await assert.rejects(repo.acknowledgeReturn(returnReceipt), /revision_conflict/);
 
   // Confirmed runtime replacement uses the existing continuation rows, but
   // cannot impersonate a human return or revive canceled/completed work.
   resource=await prepare("alice","bud","a",resource.revision,"pause");
   resource=await prepare("alice","bud","a",resource.revision,"acquire");
+  await control.grantOverride("alice","a",resource.revision,"override","viewer","carrier",Date.now()+6000);
   await database.query("update browser_handoff set status='pending',returned_by_user_id=null,resolved_at=null");
   await database.query("update browser_session set state='interrupted' where id='a'");
   await database.query("update browser_session set invocation_id='ia',invocation_fence=7 where id='a'");
@@ -109,9 +115,29 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   assert.equal(resource.control_epoch,recovery.resource.control_epoch+1);
   assert.equal((await control.get("alice","a")).state,"ready");
   const resumed=(await database.query("select id,status,returned_by_user_id from browser_handoff order by id")).rows;
-  assert.deepEqual(resumed.map(r=>[r.id,r.status]),[["ha","returned"],["hb","returned"],["hc","canceled"],["hd","canceled"]]);
+  assert.deepEqual(resumed.map(r=>[r.id,r.status]),[["ha","returned"],["hb","pending"],["hc","canceled"],["hd","canceled"]]);
   assert.ok(resumed.every(r=>r.returned_by_user_id===null));
   await assert.rejects(repo.acknowledgeRecovery(recovery.resource,recovery.session),/revision_conflict/);
+
+  resource=await prepare("alice","bud","a",resource.revision,"pause");
+  resource=await prepare("alice","bud","a",resource.revision,"acquire");
+  await control.grantOverride("alice","a",resource.revision,"new-override","viewer","carrier",Date.now()+6000);
+  assert.equal(await control.endOverride("alice","a","override","closed"),false);
+  assert.equal((await repo.get("alice","bud"))!.override_id,"new-override");
+  await control.endOverride("alice","a","new-override","closed");
+  await database.query("update thread set deleted_at=now() where thread_id=$1",[threadA]);
+  await database.query("update browser_session set closed_at=now(),desired_state='closed' where id='a'");
+  const candidate=(await control.reconciliationCandidates())[0];
+  assert.ok(candidate);
+  const ending=await control.prepareEnd(candidate,"new-boot");
+  const retry=await control.prepareEnd(candidate,"new-boot");
+  assert.ok(retry.request.sequence>ending.request.sequence,"retries advance ordering");
+  await assert.rejects(control.acknowledgeEnd(ending.resource),/revision_conflict/);
+  await control.acknowledgeEnd(retry.resource);
+  resource=(await repo.get("alice","bud"))!;
+  assert.equal(resource.control_state,"agent");
+  await database.query("update thread set deleted_at=null where thread_id=$1",[threadA]);
+  await database.query("update browser_session set closed_at=null,desired_state='open' where id='a'");
 
   await assert.rejects(async () => repo.requestLifecycle("alice", "bud", resource.revision, "reset"), /confirmation_required/);
   const reset = await repo.requestLifecycle("alice", "bud", resource.revision, "reset", true);

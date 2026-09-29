@@ -10,6 +10,18 @@ Related: [mobile roadmap](../../../bud-mobile/plan/browser-sessions-current-scop
 [scroll investigation](../../debug/mobile-browser-scroll-distance.md),
 [joint acceptance](mobile-viewer-acceptance.md).
 
+Architecture comparison: [interactive streaming with outbound connectivity](../../design/browser-interactive-streaming-options.md)
+reviews the current separate media socket and four proposals: CDP screencast over
+WSS, encoded video over WSS, direct/TURN WebRTC, and WSS upload to an RTC gateway.
+It recommends a bounded capture experiment first, then a measured WSS-video versus
+WebRTC comparison. No production transport is selected.
+
+Next scoped work: [Proposal A experiment](../browser-streaming/README.md), split
+into capture/baseline, bounded private WSS integration, and device measurement.
+It implements a bounded portion of 5a and its required authority checks, keeping
+HTTP input fixed. The broader input-transport comparison and any video/RTC work
+remain conditional on those findings.
+
 ## Decision and objective
 
 Separate passive observation from responsive private interaction. Keep the agent's
@@ -19,8 +31,8 @@ This expands the earlier media-only phase: input dispatch and capture contention
 must be evaluated too. Existing controls remain in place; this plan does not
 remove them or represent them as production-ready.
 
-WebRTC with direct connectivity and TURN relay support is the leading candidate,
-not a selected production implementation. TURN relays traffic when peers cannot
+WebRTC with direct connectivity and TURN relay support is one candidate alongside
+encoded video over WSS. TURN relays traffic when peers cannot
 connect directly; it does not capture or encode Chrome frames. See the official
 [WebRTC TURN guide](https://webrtc.org/getting-started/turn-server).
 Our inference from the current logs is that transport replacement alone cannot
@@ -49,12 +61,16 @@ resolve input blocked in Chrome or behind capture locks.
   remote-browser streaming stack against the current screenshot baseline. Assess
   integration complexity, browser dependencies, licensing and tab isolation.
   No desktop-wide capture or personal Chrome attachment.
+- [ ] Run the bounded CDP-screencast/WSS baseline from the architecture comparison;
+  separate capture/encoding, delivery credit, input locking and network costs.
+  Compare encoded WSS with WebRTC only after capture passes; evaluate the hybrid
+  gateway only for a demonstrated egress/decoder constraint.
 - [ ] Prove target capture on macOS including background/minimized behavior and
   multiple workspaces. Record Linux/headless-display feasibility separately;
   do not claim Linux support from the Mac experiment.
 - [ ] Demonstrate decoding/text readability on physical iPhone in the hosted WK
   viewer early. Only scope a native decoder if measured WK limitations require it.
-- [ ] Compare existing HTTP input with a WebRTC data-channel input prototype:
+- [ ] Compare existing HTTP input with persistent WSS and/or data-channel input:
   input-to-Chrome dispatch, ACK and visible-result timing; queue bounds; gesture
   cancellation. Changing transport must not inherit long capture critical sections.
 - [ ] Reproduce the uncertain-input failure with method/stage diagnostics, or
@@ -70,6 +86,9 @@ interaction without compromising text readability or authority.
 - [ ] Test direct ICE and forced TURN, including UDP-blocked and cellular networks.
   Evaluate managed versus self-hosted relay, credential lifetime, costs, bandwidth,
   firewall requirements and failure behavior. Hosting selection remains open.
+- [ ] Include HTTPS/WSS-only policy and explicit proxy tests. Outbound TURN/TLS
+  does not require customer inbound ports, but does not guarantee the same network
+  reachability as HTTPS/WSS. Record actual paths and failure categories.
 - [ ] Define service-authorized signaling for the owning Bud/thread/workspace and
   acting web viewer or scoped mobile visit. Authorize before media attachment;
   foreign resources remain 404. TURN credentials do not grant browser control.

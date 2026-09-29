@@ -20,19 +20,19 @@ export function BrowserHandoffContent({ payload }: ToolContentRendererProps) {
     <div className="space-y-2 text-sm">
       {!pending && <p>{typeof payload.summary === "string" ? payload.summary : "Browser handoff completed."}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        {pending && (control || browserVisible) && <Button type="button" size="sm" variant="outline"
+        {pending && control && <Button type="button" size="sm" variant="outline"
           className="border-2 border-green-600 bg-background font-mono font-semibold text-foreground shadow-[2px_2px_0_var(--color-green-600)] transition-transform hover:-translate-y-0.5 hover:bg-green-50 active:translate-x-0.5 active:translate-y-0.5 active:shadow-none dark:border-green-400 dark:bg-background dark:shadow-[2px_2px_0_var(--color-green-400)] dark:hover:bg-green-950 motion-reduce:transform-none"
           disabled={!control || control.disabled || stopping} onClick={control?.run}
           title={!control ? "Take control in the browser pane before returning it to the agent." : undefined}>
           {control?.returning ? "Returning…" : "Return to agent"}
         </Button>}
-        {path && !browserVisible && <Button variant="outline" size="sm" asChild>
+        {path && (!browserVisible || (pending && !control)) && <Button variant="outline" size="sm" asChild>
           <a href={path} target="_blank" rel="noopener noreferrer" onClick={event => {
             if (open && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
               event.preventDefault();
               open(path.slice(9));
             }
-          }}>Open browser</a>
+          }}>{pending && !control ? "Take control" : "Open browser"}</a>
         </Button>}
         {pending && actions && typeof payload.invocation_id === "string" && <Button type="button"
           variant="ghost" size="sm" disabled={stopping || control?.returning} onClick={async () => {

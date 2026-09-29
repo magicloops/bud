@@ -34,8 +34,8 @@ export type BrowserBackendResult = {
 
 /** Explicit composition dependency; never supplied by model args or env URLs.
  * All host reads/actions must enforce epochs, including before returning data.
- * park persists the exact call plus trailing-call disposition and fences the
- * host before resolving. A failure leaves the host paused; no automatic retry.
+ * park persists the exact call plus trailing-call disposition without granting
+ * human authority. Only explicit takeover fences agent browser execution.
  */
 export interface BrowserAgentBackend {
   available(context: BrowserAgentContext): Promise<boolean>;
@@ -97,7 +97,7 @@ export class BrowserToolExecutor {
     const summary = result.ok ? "Browser operation completed." : result.outcome === "unknown"
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"
-        ? "Browser actions are paused while the user has private control. Ask the user to choose Return to agent in the browser controls. You can continue chatting and using non-browser tools; do not bypass the pause through terminal or another browser."
+        ? "Browser execution is temporarily unavailable during human control or its cleanup. Control returns automatically when the user leaves or the override expires. Continue chatting or using non-browser tools; do not bypass the execution fence through terminal or another browser."
         : "Browser operation was rejected.";
     const payload = { tool: directive.tool, call_id: directive.callId, args, kind: "browser", ...result, summary };
     return { directive, args, summary: payload.summary, outputTruncationReason: null,

@@ -354,7 +354,7 @@ impl BrowserManager {
     pub fn capability(&self) -> Value {
         json!({"version":1, "available":self.runtime.is_some(), "boot_id":self.boot_id, "runtime":self.runtime_info,
             "native_window":cfg!(target_os = "macos") && std::env::var("BUD_BROWSER_HEADED").as_deref() == Ok("1"),
-            "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
+            "managed":true, "profile_mode":"persistent", "handoff":true, "viewport_resize":true, "agent_viewport_resize":true, "agent_default_control":true, "independent_renewal":true, "hidpi_capture":true, "history_navigation":true,
             "repl":self.runtime.as_ref().is_some_and(super::repl::prepared), "semantic_observations":true, "agent_capture":true, "operation_driven_media":true, "workspace_idle_timeout_sec":idle::IDLE_TIMEOUT.as_secs()})
     }
 
@@ -367,7 +367,7 @@ impl BrowserManager {
         for slot in self.entries.lock().unwrap().values() {
             let mut authority = slot.authority.lock().unwrap();
             if authority.mode != super::control::Mode::Agent {
-                authority.pause();
+                authority.request_end();
             }
         }
         self.connection.send_replace(None);
@@ -512,12 +512,12 @@ impl BrowserManager {
                         | Action::Ensure { .. }
                         | Action::Close
                         | Action::Control {
-                            control: ControlCommand::Pause
+                            control: ControlCommand::Pause | ControlCommand::End
                         }
                 ) {
                     return Reply::error(&request, "browser_interrupted", false);
                 }
-                if !matches!(request.command, Action::Close)
+                if !matches!(request.command, Action::Close | Action::Control { control: ControlCommand::End })
                     && entries.values().any(|entry| {
                         entry.thread == request.thread_id
                             && entry
@@ -577,9 +577,6 @@ impl BrowserManager {
                     | Action::ResizeViewport { .. }
                     | Action::Control {
                         control: ControlCommand::Renew { .. }
-                            | ControlCommand::PrepareReturn { .. }
-                            | ControlCommand::Release { .. }
-                            | ControlCommand::FinishReturn
                     }
             )
         {
@@ -662,7 +659,7 @@ impl BrowserManager {
             Action::Control { control } => Some(control),
             _ => None,
         };
-        if let Some(ControlCommand::Pause) = control {
+        if let Some(ControlCommand::Pause | ControlCommand::End) = control {
             let mut authority = entry.authority.lock().unwrap();
             if let Err(code) = authority.transition(request.browser_epoch, control.unwrap()) {
                 return Reply::error(&request, code, false);
@@ -787,7 +784,7 @@ impl BrowserManager {
         {
             return Reply::error(&request, "browser_stale_request", false);
         }
-        if entry.closed_at.is_some() {
+        if entry.closed_at.is_some() && !matches!(request.command, Action::Control { control: ControlCommand::End }) {
             return Reply::error(&request, "browser_closed", false);
         }
         if entry.connection != request.device_session_id
@@ -801,23 +798,21 @@ impl BrowserManager {
         }
         if matches!(
             control,
-            Some(ControlCommand::Acquire { .. } | ControlCommand::FinishReturn)
+            Some(ControlCommand::Acquire { .. })
         ) {
-            // Validate before reading or persisting private inventory. A rejected
-            // FinishReturn is not a disclosure decision.
+            // Validate before persisting the pre-takeover shared inventory.
             let mut candidate = self.authority.lock().unwrap().clone();
             if let Err(code) = candidate.transition(request.browser_epoch, control.unwrap()) {
                 return Reply::error(&request, code, false);
             }
             // Acquiring an already-private browser must not overwrite the frozen checkpoint.
-            let disclose = matches!(control, Some(ControlCommand::FinishReturn))
-                || !self.authority.lock().unwrap().private_content();
+            let disclose = !self.authority.lock().unwrap().private_content();
             if disclose
                 && self
                     .flush_checkpoints(
                         &request.session_id,
                         &mut entry,
-                        matches!(control, Some(ControlCommand::FinishReturn)),
+                        false,
                     )
                     .await
                     .is_err()
@@ -826,7 +821,7 @@ impl BrowserManager {
             }
         }
         if let Some(command) = control {
-            if !matches!(command, ControlCommand::Pause) {
+            if !matches!(command, ControlCommand::Pause | ControlCommand::End) {
                 if let Err(code) = slot
                     .authority
                     .lock()
@@ -1310,6 +1305,20 @@ impl BrowserManager {
                 self.start_checkpoints(root.as_ref().unwrap().checkpoint_endpoint().to_owned());
             }
         }
+        if let Action::Control { control: ControlCommand::End } = action {
+            // Ending an absent workspace is still valid: no input can remain there.
+            if let Some(browser) = entry.browser.as_mut() {
+                browser.recover_channel().await?;
+                browser.hide_before_return().await?;
+                browser.invalidate_references();
+            }
+            let mut authority = self.authority.lock().unwrap();
+            if authority.epoch != request.browser_epoch {
+                anyhow::bail!("browser_stale_control");
+            }
+            authority.resume_after_stop(request.browser_epoch);
+            return Ok(json!({"control_acknowledged":true}));
+        }
         if let Action::Control { control } = action {
             let browser = entry
                 .browser
@@ -1326,25 +1335,6 @@ impl BrowserManager {
             }
             if !matches!(control, ControlCommand::Renew { .. }) {
                 browser.invalidate_references();
-            }
-            if matches!(control, ControlCommand::PrepareReturn { .. }) {
-                browser.hide_before_return().await?;
-                let targets = browser.targets().await?;
-                let target = entry
-                    .target
-                    .as_ref()
-                    .filter(|id| targets.iter().any(|t| &t.target_id == *id))
-                    .or_else(|| targets.first().map(|t| &t.target_id));
-                // Empty inventory can be returned too; no DOM is required to
-                // release private authority. Contents never enter the ack.
-                if let Some(target) = target {
-                    // Refresh the structured snapshot before authority returns.
-                    browser
-                        .inspect(target, json!({"operation":"snapshot","compact":true}))
-                        .await?;
-                } else {
-                    entry.target = None;
-                }
             }
             return Ok(json!({"control_acknowledged":true}));
         }
@@ -1769,7 +1759,7 @@ mod tests {
         )
         .is_ok());
         assert!(serde_json::from_value::<Action>(
-            json!({"action":"control","control":{"operation":"acquire","controller_id":"one"}})
+            json!({"action":"control","control":{"operation":"acquire","controller_id":"one","lease_expires_at_ms":6000}})
         )
         .is_ok());
         assert!(serde_json::from_value::<Action>(json!({"action":"control","control":{"operation":"acquire","controller_id":"one","script":"bad"}})).is_err());
@@ -2098,7 +2088,8 @@ mod tests {
                     3,
                     3,
                     ControlCommand::Acquire {
-                        controller_id: "viewer".into()
+                        controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     }
                 ))
                 .await
@@ -2121,6 +2112,7 @@ mod tests {
                     3,
                     ControlCommand::Renew {
                         controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     },
                 )),
             )
@@ -2133,6 +2125,7 @@ mod tests {
                     3,
                     ControlCommand::Renew {
                         controller_id: "other".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     },
                 ))
                 .await;
@@ -2226,6 +2219,7 @@ mod tests {
                         3,
                         ControlCommand::Renew {
                             controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                         },
                     ))
                     .await;
@@ -2242,16 +2236,14 @@ mod tests {
                 .execute(command(
                     8,
                     4,
-                    ControlCommand::PrepareReturn {
-                        controller_id: "viewer".into()
-                    }
+                    ControlCommand::End
                 ))
                 .await
                 .ok
         );
         assert!(
             manager
-                .execute(command(9, 5, ControlCommand::FinishReturn))
+                .execute(command(9, 5, ControlCommand::End))
                 .await
                 .ok
         );
@@ -2425,6 +2417,7 @@ mod tests {
             Action::Control {
                 control: ControlCommand::Acquire {
                     controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                 },
             },
         );
@@ -2528,7 +2521,8 @@ mod tests {
                     5,
                     3,
                     ControlCommand::Acquire {
-                        controller_id: "viewer".into()
+                        controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     }
                 ))
                 .await
@@ -2555,16 +2549,14 @@ mod tests {
                 .execute(control(
                     6,
                     4,
-                    ControlCommand::PrepareReturn {
-                        controller_id: "viewer".into()
-                    }
+                    ControlCommand::End
                 ))
                 .await
                 .ok
         );
         assert!(
             manager
-                .execute(control(7, 5, ControlCommand::FinishReturn))
+                .execute(control(7, 5, ControlCommand::End))
                 .await
                 .ok
         );
@@ -2672,7 +2664,8 @@ mod tests {
                     3,
                     3,
                     ControlCommand::Acquire {
-                        controller_id: "viewer".into()
+                        controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     }
                 ))
                 .await
@@ -2707,7 +2700,7 @@ mod tests {
             vec![expected.clone()]
         );
         let invalid_return = manager
-            .execute(control(4, 4, ControlCommand::FinishReturn))
+            .execute(control(4, 4, ControlCommand::End))
             .await;
         assert_eq!(invalid_return.error, Some("browser_control_conflict"));
         assert_eq!(
@@ -2836,7 +2829,8 @@ mod tests {
                 .execute(control(
                     3,
                     ControlCommand::Acquire {
-                        controller_id: "viewer".into()
+                        controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                     }
                 ))
                 .await
@@ -2867,14 +2861,12 @@ mod tests {
         let prepared = manager
             .execute(control(
                 4,
-                ControlCommand::PrepareReturn {
-                    controller_id: "viewer".into(),
-                },
+                ControlCommand::End,
             ))
             .await;
         assert!(prepared.ok, "{prepared:?}");
         let returned = manager
-            .execute(control(5, ControlCommand::FinishReturn))
+            .execute(control(5, ControlCommand::End))
             .await;
         assert!(returned.ok, "{returned:?}");
         assert!(!manager.authority.lock().unwrap().private_content());
@@ -2939,7 +2931,8 @@ mod tests {
                     3,
                     Action::Control {
                         control: ControlCommand::Acquire {
-                            controller_id: "viewer".into()
+                            controller_id: "viewer".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 6000,
                         }
                     }
                 ))

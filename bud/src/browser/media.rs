@@ -16,6 +16,7 @@ use tokio_tungstenite::{
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capture {
+    mode: Option<String>,
     target_id: Option<String>,
     pixel_ratio: Option<f64>,
 }
@@ -132,6 +133,22 @@ pub(super) fn start(args: MediaStart) {
                     .is_some_and(|ratio| !ratio.is_finite() || !(1.0..=2.0).contains(&ratio))
                 {
                     anyhow::bail!("browser_invalid_capture_scale");
+                }
+                if let Some(mode) = request.mode.as_deref() {
+                    if mode != "screencast_v1" || controller.is_none() {
+                        anyhow::bail!("browser_invalid_media_mode");
+                    }
+                    phase = "private_stream";
+                    return super::stream_media::run(
+                        &mut socket,
+                        &slot,
+                        &current_connection,
+                        &device,
+                        epoch,
+                        controller.as_deref().unwrap(),
+                        request.target_id,
+                    )
+                    .await;
                 }
                 phase = "pace_capture";
                 tokio::time::sleep_until(next_capture).await;
@@ -344,6 +361,20 @@ fn media_error_code(error: &anyhow::Error) -> &'static str {
         "browser_interrupted" => "browser_interrupted",
         "browser_target_not_found" => "browser_target_not_found",
         "browser_media_revoked" => "browser_media_revoked",
+        "browser_stream_stalled" => "browser_stream_stalled",
+        "browser_stream_invalid_ack" => "browser_stream_invalid_ack",
+        "browser_stream_transition_limit" => "browser_stream_transition_limit",
+        "browser_stream_start_failed" => "browser_stream_start_failed",
+        "browser_stream_cleanup_unconfirmed" => "browser_stream_cleanup_unconfirmed",
+        "browser_stream_unsupported_viewport" => "browser_stream_unsupported_viewport",
+        "browser_stream_closed" => "browser_stream_closed",
+        "browser_stream_command_rejected" => "browser_stream_command_rejected",
+        "browser_stream_generation_changed" => "browser_stream_generation_changed",
+        "browser_stream_ack_capacity" => "browser_stream_ack_capacity",
+        "browser_stream_invalid_frame" => "browser_stream_invalid_frame",
+        "browser_stream_frame_bounds" => "browser_stream_frame_bounds",
+        "browser_stream_attach_failed" => "browser_stream_attach_failed",
+        "browser_invalid_media_mode" => "browser_invalid_media_mode",
         _ => "redacted",
     }
 }

@@ -210,8 +210,8 @@ test("private browser rejection returns to the model so chat can finish", async 
   }) }), async () => true);
   const fixture = await loopFixture(t, executor, [[{ name: "browser_exec", input: {code:"await browser.tabs.list()"} }], []]);
   assert.equal((await fixture.run()).status, "succeeded");
-  assert.match(JSON.stringify(fixture.requests[1]), /Return to agent/);
-  assert.match(JSON.stringify(fixture.requests[1]), /continue chatting/);
+  assert.match(JSON.stringify(fixture.requests[1]), /returns automatically/);
+  assert.match(JSON.stringify(fixture.requests[1]), /Continue chatting/);
   assert.equal(fixture.runtime.getSnapshot("thread").phase, "idle");
 });
 

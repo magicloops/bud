@@ -1,0 +1,2495 @@
+{
+  "runs": [
+    {
+      "started_at": "2026-09-28T07:11:05.692Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": true,
+      "seconds": 3,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "selected_restored",
+          "kind": "screencast",
+          "duration_ms": 3061.61,
+          "before": {
+            "label": "A",
+            "ticks": 21,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 206,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 95,
+          "distinct_jpegs": 95,
+          "fps": 31.03,
+          "first_frame_ms": 135.99,
+          "last_frame_ms": 2982.24,
+          "intervals_ms": {
+            "n": 94,
+            "p50": 16.79,
+            "p95": 117.17,
+            "max": 118.65
+          },
+          "command_ack_ms": {
+            "n": 23,
+            "p50": 32.24,
+            "p95": 33.05,
+            "max": 33.25
+          },
+          "source_ack_ms": {
+            "n": 95,
+            "p50": 0.27,
+            "p95": 0.44,
+            "max": 0.57
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 1960616,
+          "failure": null
+        },
+        {
+          "name": "selected_restored_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 49.87,
+            "p95": 64.73,
+            "max": 64.73
+          }
+        },
+        {
+          "name": "selected_minimized",
+          "kind": "screencast",
+          "duration_ms": 5102.47,
+          "before": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 1,
+          "distinct_jpegs": 1,
+          "fps": 0.2,
+          "first_frame_ms": 6.03,
+          "last_frame_ms": 6.03,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 1,
+            "p50": 0.33,
+            "p95": 0.33,
+            "max": 0.33
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 15299,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        },
+        {
+          "name": "idle_selected_restored_A",
+          "kind": "screencast",
+          "duration_ms": 5102.77,
+          "before": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 0,
+          "distinct_jpegs": 0,
+          "fps": 0,
+          "first_frame_ms": null,
+          "last_frame_ms": null,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 0
+          },
+          "max_pending_source_acks": 0,
+          "bytes": 0,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        },
+        {
+          "name": "idle_selected_minimized_A",
+          "kind": "screencast",
+          "duration_ms": 5101.9,
+          "before": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 222,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 0,
+          "distinct_jpegs": 0,
+          "fps": 0,
+          "first_frame_ms": null,
+          "last_frame_ms": null,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 0
+          },
+          "max_pending_source_acks": 0,
+          "bytes": 0,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        },
+        {
+          "name": "idle_selected_minimized_B",
+          "kind": "screencast",
+          "duration_ms": 5102.17,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 0,
+          "distinct_jpegs": 0,
+          "fps": 0,
+          "first_frame_ms": null,
+          "last_frame_ms": null,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 0
+          },
+          "max_pending_source_acks": 0,
+          "bytes": 0,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        },
+        {
+          "name": "idle_selected_minimized_A_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 55.94,
+            "p95": 58.06,
+            "max": 58.06
+          }
+        },
+        {
+          "name": "selected_restored_again",
+          "kind": "screencast",
+          "duration_ms": 3044.26,
+          "before": {
+            "label": "A",
+            "ticks": 260,
+            "wheels": 23,
+            "distance": 805,
+            "y": 805,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 448,
+            "wheels": 46,
+            "distance": 1610,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 93,
+          "distinct_jpegs": 93,
+          "fps": 30.55,
+          "first_frame_ms": 17.76,
+          "last_frame_ms": 2982.45,
+          "intervals_ms": {
+            "n": 92,
+            "p50": 17.03,
+            "p95": 116.66,
+            "max": 122.84
+          },
+          "command_ack_ms": {
+            "n": 23,
+            "p50": 32.29,
+            "p95": 33.47,
+            "max": 33.48
+          },
+          "source_ack_ms": {
+            "n": 93,
+            "p50": 0.28,
+            "p95": 0.48,
+            "max": 0.54
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 1333636,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "finished_at": "2026-09-28T07:11:35.412Z",
+      "outcome": "capture_gate_failed",
+      "artifact_directory": "bud-screencast-results-1FTkCr"
+    },
+    {
+      "started_at": "2026-09-28T07:11:57.935Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": true,
+      "seconds": 3,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "selected_restored",
+          "kind": "screencast",
+          "duration_ms": 3017.63,
+          "before": {
+            "label": "A",
+            "ticks": 43,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 418,
+            "wheels": 26,
+            "distance": 1820,
+            "y": 910,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 418,
+            "wheels": 26,
+            "distance": 1820,
+            "y": 910,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 139,
+          "distinct_jpegs": 139,
+          "fps": 46.06,
+          "first_frame_ms": 13.33,
+          "last_frame_ms": 2928.57,
+          "intervals_ms": {
+            "n": 138,
+            "p50": 9.09,
+            "p95": 108.94,
+            "max": 112.13
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.73,
+            "p95": 16.81,
+            "max": 17.34
+          },
+          "source_ack_ms": {
+            "n": 139,
+            "p50": 0.29,
+            "p95": 0.48,
+            "max": 0.78
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 2675926,
+          "failure": null
+        },
+        {
+          "name": "selected_restored_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 32.95,
+            "p95": 35.75,
+            "max": 35.75
+          }
+        },
+        {
+          "name": "selected_minimized",
+          "kind": "screencast",
+          "duration_ms": 3041.58,
+          "before": {
+            "label": "A",
+            "ticks": 508,
+            "wheels": 26,
+            "distance": 1820,
+            "y": 910,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 514,
+            "wheels": 28,
+            "distance": 1960,
+            "y": 980,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 514,
+            "wheels": 28,
+            "distance": 1960,
+            "y": 980,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 1,
+          "distinct_jpegs": 1,
+          "fps": 0.33,
+          "first_frame_ms": 3.52,
+          "last_frame_ms": 3.52,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 3,
+            "p50": 909.59,
+            "p95": 920.64,
+            "max": 920.64
+          },
+          "source_ack_ms": {
+            "n": 1,
+            "p50": 0.22,
+            "p95": 0.22,
+            "max": 0.22
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 5598,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_restored_A",
+          "kind": "screencast",
+          "duration_ms": 3015.95,
+          "before": {
+            "label": "A",
+            "ticks": 515,
+            "wheels": 28,
+            "distance": 1960,
+            "y": 1015,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 886,
+            "wheels": 54,
+            "distance": 3780,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 887,
+            "wheels": 54,
+            "distance": 3780,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 210,
+          "distinct_jpegs": 210,
+          "fps": 69.63,
+          "first_frame_ms": 14.5,
+          "last_frame_ms": 3012.26,
+          "intervals_ms": {
+            "n": 209,
+            "p50": 9.05,
+            "p95": 19.59,
+            "max": 110.17
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.82,
+            "p95": 17.31,
+            "max": 17.59
+          },
+          "source_ack_ms": {
+            "n": 210,
+            "p50": 0.24,
+            "p95": 0.37,
+            "max": 0.73
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 2730533,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_A",
+          "kind": "screencast",
+          "duration_ms": 3023.27,
+          "before": {
+            "label": "A",
+            "ticks": 887,
+            "wheels": 54,
+            "distance": 3780,
+            "y": 1317.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1260,
+            "wheels": 80,
+            "distance": 5600,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1260,
+            "wheels": 80,
+            "distance": 5600,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 280,
+          "distinct_jpegs": 280,
+          "fps": 92.61,
+          "first_frame_ms": 16.38,
+          "last_frame_ms": 3015.77,
+          "intervals_ms": {
+            "n": 279,
+            "p50": 8.64,
+            "p95": 17.65,
+            "max": 29.15
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.84,
+            "p95": 18.23,
+            "max": 19.21
+          },
+          "source_ack_ms": {
+            "n": 280,
+            "p50": 0.2,
+            "p95": 0.29,
+            "max": 1.3
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 3593186,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_B",
+          "kind": "screencast",
+          "duration_ms": 3028.88,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 374,
+            "wheels": 26,
+            "distance": 1820,
+            "y": 910,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 374,
+            "wheels": 26,
+            "distance": 1820,
+            "y": 910,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 129,
+          "distinct_jpegs": 129,
+          "fps": 42.59,
+          "first_frame_ms": 13.77,
+          "last_frame_ms": 2936.42,
+          "intervals_ms": {
+            "n": 128,
+            "p50": 9.39,
+            "p95": 108.84,
+            "max": 116.34
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 16.01,
+            "p95": 18.52,
+            "max": 25.66
+          },
+          "source_ack_ms": {
+            "n": 129,
+            "p50": 0.22,
+            "p95": 0.34,
+            "max": 0.44
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 2503365,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_A_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 31.64,
+            "p95": 33.41,
+            "max": 33.41
+          }
+        },
+        {
+          "name": "selected_restored_again",
+          "kind": "screencast",
+          "duration_ms": 3115.53,
+          "before": {
+            "label": "A",
+            "ticks": 1316,
+            "wheels": 80,
+            "distance": 5600,
+            "y": 1317.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1702,
+            "wheels": 107,
+            "distance": 7490,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1702,
+            "wheels": 107,
+            "distance": 7490,
+            "y": 1547,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 289,
+          "distinct_jpegs": 289,
+          "fps": 92.76,
+          "first_frame_ms": 9.98,
+          "last_frame_ms": 3111.06,
+          "intervals_ms": {
+            "n": 288,
+            "p50": 8.75,
+            "p95": 17.34,
+            "max": 19.77
+          },
+          "command_ack_ms": {
+            "n": 27,
+            "p50": 15.97,
+            "p95": 17.07,
+            "max": 17.07
+          },
+          "source_ack_ms": {
+            "n": 289,
+            "p50": 0.23,
+            "p95": 0.3,
+            "max": 0.4
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 3717141,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:12:21.424Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-YP0fFE"
+    },
+    {
+      "started_at": "2026-09-28T07:12:58.858Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": true,
+      "background_flags": true,
+      "hidden_only": false,
+      "seconds": 3,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "selected_restored",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:12:59.511Z",
+          "duration_ms": 3016.24,
+          "before": {
+            "label": "A",
+            "ticks": 45,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 419,
+            "wheels": 26,
+            "distance": 420,
+            "y": 241.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 419,
+            "wheels": 26,
+            "distance": 420,
+            "y": 241.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 156,
+          "distinct_jpegs": 156,
+          "fps": 51.72,
+          "first_frame_ms": 17.78,
+          "last_frame_ms": 2920.97,
+          "intervals_ms": {
+            "n": 155,
+            "p50": 8.52,
+            "p95": 109.09,
+            "max": 114.22
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.79,
+            "p95": 17.12,
+            "max": 17.2
+          },
+          "source_ack_ms": {
+            "n": 156,
+            "p50": 0.22,
+            "p95": 0.39,
+            "max": 0.48
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 3323458,
+          "failure": null
+        },
+        {
+          "name": "selected_restored_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 33.26,
+            "p95": 36.4,
+            "max": 36.4
+          }
+        },
+        {
+          "name": "selected_minimized",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:03.686Z",
+          "duration_ms": 4040.88,
+          "before": {
+            "label": "A",
+            "ticks": 509,
+            "wheels": 26,
+            "distance": 420,
+            "y": 241.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 517,
+            "wheels": 27,
+            "distance": 490,
+            "y": 276.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 517,
+            "wheels": 27,
+            "distance": 490,
+            "y": 276.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 1,
+          "distinct_jpegs": 1,
+          "fps": 0.25,
+          "first_frame_ms": 8.73,
+          "last_frame_ms": 8.73,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 2,
+            "p50": 1906.22,
+            "p95": 1932.03,
+            "max": 1932.03
+          },
+          "source_ack_ms": {
+            "n": 1,
+            "p50": 0.47,
+            "p95": 0.47,
+            "max": 0.47
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 8476,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_restored_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:08.708Z",
+          "duration_ms": 3019.19,
+          "before": {
+            "label": "A",
+            "ticks": 518,
+            "wheels": 27,
+            "distance": 490,
+            "y": 311.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 889,
+            "wheels": 53,
+            "distance": 910,
+            "y": 521.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 889,
+            "wheels": 53,
+            "distance": 910,
+            "y": 521.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 130,
+          "distinct_jpegs": 130,
+          "fps": 43.06,
+          "first_frame_ms": 15.56,
+          "last_frame_ms": 2926.29,
+          "intervals_ms": {
+            "n": 129,
+            "p50": 9.62,
+            "p95": 108.54,
+            "max": 114.35
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.78,
+            "p95": 16.56,
+            "max": 16.74
+          },
+          "source_ack_ms": {
+            "n": 130,
+            "p50": 0.23,
+            "p95": 0.4,
+            "max": 0.52
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 1917083,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:12.714Z",
+          "duration_ms": 3022.07,
+          "before": {
+            "label": "A",
+            "ticks": 890,
+            "wheels": 53,
+            "distance": 910,
+            "y": 521.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1261,
+            "wheels": 79,
+            "distance": 1330,
+            "y": 731.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1262,
+            "wheels": 79,
+            "distance": 1330,
+            "y": 731.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 130,
+          "distinct_jpegs": 130,
+          "fps": 43.02,
+          "first_frame_ms": 7.74,
+          "last_frame_ms": 2925.81,
+          "intervals_ms": {
+            "n": 129,
+            "p50": 9.53,
+            "p95": 108.72,
+            "max": 111.21
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.34,
+            "p95": 16.81,
+            "max": 22.02
+          },
+          "source_ack_ms": {
+            "n": 130,
+            "p50": 0.2,
+            "p95": 0.42,
+            "max": 0.67
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 1808745,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:15.848Z",
+          "duration_ms": 3014.63,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 374,
+            "wheels": 26,
+            "distance": 560,
+            "y": 311.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 374,
+            "wheels": 26,
+            "distance": 560,
+            "y": 311.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 148,
+          "distinct_jpegs": 148,
+          "fps": 49.09,
+          "first_frame_ms": 11.71,
+          "last_frame_ms": 2911.81,
+          "intervals_ms": {
+            "n": 147,
+            "p50": 8.83,
+            "p95": 109.24,
+            "max": 112.01
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.43,
+            "p95": 17.7,
+            "max": 21.14
+          },
+          "source_ack_ms": {
+            "n": 148,
+            "p50": 0.24,
+            "p95": 0.38,
+            "max": 0.56
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 3162930,
+          "failure": null
+        },
+        {
+          "name": "idle_selected_minimized_A_screenshot",
+          "kind": "screenshot_rpc_only",
+          "timings_ms": {
+            "n": 5,
+            "p50": 31.62,
+            "p95": 34.27,
+            "max": 34.27
+          }
+        },
+        {
+          "name": "selected_restored_again",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:19.994Z",
+          "duration_ms": 3024.15,
+          "before": {
+            "label": "A",
+            "ticks": 1318,
+            "wheels": 79,
+            "distance": 1330,
+            "y": 731.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1693,
+            "wheels": 105,
+            "distance": 1750,
+            "y": 941.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "normal"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1693,
+            "wheels": 105,
+            "distance": 1750,
+            "y": 941.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "width": 440,
+            "height": 816
+          },
+          "frames": 130,
+          "distinct_jpegs": 130,
+          "fps": 42.99,
+          "first_frame_ms": 13.54,
+          "last_frame_ms": 2929.04,
+          "intervals_ms": {
+            "n": 129,
+            "p50": 9.2,
+            "p95": 108.73,
+            "max": 110.99
+          },
+          "command_ack_ms": {
+            "n": 26,
+            "p50": 15.83,
+            "p95": 16.5,
+            "max": 17.36
+          },
+          "source_ack_ms": {
+            "n": 130,
+            "p50": 0.24,
+            "p95": 0.45,
+            "max": 0.62
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 1750691,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:13:23.226Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-LfcAAM"
+    },
+    {
+      "started_at": "2026-09-28T07:13:33.883Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": true,
+      "background_flags": false,
+      "hidden_only": true,
+      "seconds": 10,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "cold_hidden_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:35.137Z",
+          "duration_ms": 10002.86,
+          "before": {
+            "label": "A",
+            "ticks": 6,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1214,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2977.5,
+            "y": 101.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1214,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2977.5,
+            "y": 101.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 267,
+          "distinct_jpegs": 267,
+          "fps": 26.69,
+          "first_frame_ms": 17.56,
+          "last_frame_ms": 9917.45,
+          "intervals_ms": {
+            "n": 266,
+            "p50": 9.41,
+            "p95": 110.37,
+            "max": 116.72
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.65,
+            "p95": 16.98,
+            "max": 17.52
+          },
+          "source_ack_ms": {
+            "n": 267,
+            "p50": 0.28,
+            "p95": 0.49,
+            "max": 0.76
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 5470976,
+          "failure": null
+        },
+        {
+          "name": "cold_hidden_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:13:45.253Z",
+          "duration_ms": 10027.97,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 1213,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2941.5,
+            "y": 136.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 1213,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2941.5,
+            "y": 136.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 283,
+          "distinct_jpegs": 283,
+          "fps": 28.22,
+          "first_frame_ms": 19.47,
+          "last_frame_ms": 9932.42,
+          "intervals_ms": {
+            "n": 282,
+            "p50": 9.37,
+            "p95": 110.46,
+            "max": 121.79
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.68,
+            "p95": 17.01,
+            "max": 31.89
+          },
+          "source_ack_ms": {
+            "n": 283,
+            "p50": 0.26,
+            "p95": 0.46,
+            "max": 0.83
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 5928016,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:13:55.488Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-D9yXC6"
+    },
+    {
+      "started_at": "2026-09-28T07:14:34.294Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": true,
+      "background_flags": false,
+      "background_launch": true,
+      "hidden_only": true,
+      "seconds": 10,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "cold_hidden_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:14:35.849Z",
+          "duration_ms": 10027.09,
+          "before": {
+            "label": "A",
+            "ticks": 6,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1215,
+            "wheels": 86,
+            "distance": 0,
+            "scroll_travel": 2905.5,
+            "y": 101.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1215,
+            "wheels": 86,
+            "distance": 0,
+            "scroll_travel": 2905.5,
+            "y": 101.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 519,
+          "distinct_jpegs": 312,
+          "fps": 51.76,
+          "first_frame_ms": 19.14,
+          "last_frame_ms": 9941.45,
+          "intervals_ms": {
+            "n": 518,
+            "p50": 6.72,
+            "p95": 106.45,
+            "max": 121.23
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.42,
+            "p95": 20.07,
+            "max": 21.7
+          },
+          "source_ack_ms": {
+            "n": 519,
+            "p50": 0.33,
+            "p95": 0.85,
+            "max": 2.11
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 11036856,
+          "failure": null
+        },
+        {
+          "name": "cold_hidden_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:14:45.988Z",
+          "duration_ms": 10091.02,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 1194,
+            "wheels": 86,
+            "distance": -140,
+            "scroll_travel": 2905.5,
+            "y": 31.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 1194,
+            "wheels": 86,
+            "distance": -140,
+            "scroll_travel": 2905.5,
+            "y": 31.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 297,
+          "distinct_jpegs": 297,
+          "fps": 29.43,
+          "first_frame_ms": 18.48,
+          "last_frame_ms": 10088.13,
+          "intervals_ms": {
+            "n": 296,
+            "p50": 9.5,
+            "p95": 111.1,
+            "max": 167.45
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.67,
+            "p95": 20.1,
+            "max": 75.57
+          },
+          "source_ack_ms": {
+            "n": 297,
+            "p50": 0.38,
+            "p95": 0.78,
+            "max": 3.39
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 6352368,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "browser_pid": 38174,
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:14:57.228Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-4DkXcT"
+    },
+    {
+      "started_at": "2026-09-28T07:15:13.553Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": true,
+      "focus_emulation": true,
+      "background_flags": false,
+      "background_launch": false,
+      "hidden_only": true,
+      "seconds": 5,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "cold_hidden_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:15:14.191Z",
+          "duration_ms": 5018.97,
+          "before": {
+            "label": "A",
+            "ticks": 3,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 310,
+            "wheels": 38,
+            "distance": 210,
+            "scroll_travel": 1260,
+            "y": 280,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 22,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 22,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 310,
+            "wheels": 38,
+            "distance": 210,
+            "scroll_travel": 1260,
+            "y": 280,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 191,
+          "distinct_jpegs": 134,
+          "fps": 38.06,
+          "first_frame_ms": 10.78,
+          "last_frame_ms": 4927.64,
+          "intervals_ms": {
+            "n": 190,
+            "p50": 14.7,
+            "p95": 112.58,
+            "max": 117.52
+          },
+          "command_ack_ms": {
+            "n": 38,
+            "p50": 32.22,
+            "p95": 35.87,
+            "max": 36.65
+          },
+          "source_ack_ms": {
+            "n": 191,
+            "p50": 0.27,
+            "p95": 0.43,
+            "max": 1.03
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 4487938,
+          "failure": null
+        },
+        {
+          "name": "cold_hidden_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:15:19.325Z",
+          "duration_ms": 5032.97,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 309,
+            "wheels": 38,
+            "distance": 140,
+            "scroll_travel": 1260,
+            "y": 210,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 22,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 22,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 309,
+            "wheels": 38,
+            "distance": 140,
+            "scroll_travel": 1260,
+            "y": 210,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "frames": 133,
+          "distinct_jpegs": 133,
+          "fps": 26.43,
+          "first_frame_ms": 25.07,
+          "last_frame_ms": 4936.85,
+          "intervals_ms": {
+            "n": 132,
+            "p50": 17.08,
+            "p95": 118.58,
+            "max": 124.9
+          },
+          "command_ack_ms": {
+            "n": 38,
+            "p50": 32.22,
+            "p95": 34.79,
+            "max": 36.24
+          },
+          "source_ack_ms": {
+            "n": 133,
+            "p50": 0.32,
+            "p95": 0.54,
+            "max": 0.69
+          },
+          "max_pending_source_acks": 1,
+          "bytes": 3110141,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "browser_pid": 38291,
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:15:24.544Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-QMK1ho"
+    },
+    {
+      "started_at": "2026-09-28T07:15:34.700Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": true,
+      "background_flags": false,
+      "background_launch": true,
+      "hidden_only": true,
+      "seconds": 10,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "cold_hidden_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:15:36.131Z",
+          "duration_ms": 10024.89,
+          "before": {
+            "label": "A",
+            "ticks": 6,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 1215,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2941.5,
+            "y": 136.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 1215,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2941.5,
+            "y": 136.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after_detach": {
+            "label": "A",
+            "ticks": 1215,
+            "wheels": 86,
+            "distance": 140,
+            "scroll_travel": 2941.5,
+            "y": 136.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 1024,
+            "height": 681
+          },
+          "frames": 477,
+          "distinct_jpegs": 290,
+          "fps": 47.58,
+          "first_frame_ms": 16.33,
+          "last_frame_ms": 9936.04,
+          "intervals_ms": {
+            "n": 476,
+            "p50": 5.6,
+            "p95": 110.21,
+            "max": 144.96
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.54,
+            "p95": 18.55,
+            "max": 22.84
+          },
+          "source_ack_ms": {
+            "n": 477,
+            "p50": 0.32,
+            "p95": 0.87,
+            "max": 3.43
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 9967331,
+          "failure": null
+        },
+        {
+          "name": "cold_hidden_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:15:46.481Z",
+          "duration_ms": 10002.83,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 1201,
+            "wheels": 86,
+            "distance": 0,
+            "scroll_travel": 2941.5,
+            "y": 66.5,
+            "nested_y": 0,
+            "visibility": "visible",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 1201,
+            "wheels": 86,
+            "distance": 0,
+            "scroll_travel": 2941.5,
+            "y": 66.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 440,
+            "height": 816
+          },
+          "after_detach": {
+            "label": "B",
+            "ticks": 1201,
+            "wheels": 86,
+            "distance": 0,
+            "scroll_travel": 2941.5,
+            "y": 66.5,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": true,
+            "width": 1024,
+            "height": 681
+          },
+          "frames": 284,
+          "distinct_jpegs": 284,
+          "fps": 28.39,
+          "first_frame_ms": 24.89,
+          "last_frame_ms": 9910.41,
+          "intervals_ms": {
+            "n": 283,
+            "p50": 9.27,
+            "p95": 111.35,
+            "max": 122.58
+          },
+          "command_ack_ms": {
+            "n": 86,
+            "p50": 15.31,
+            "p95": 18.26,
+            "max": 21.67
+          },
+          "source_ack_ms": {
+            "n": 284,
+            "p50": 0.37,
+            "p95": 0.98,
+            "max": 11.7
+          },
+          "max_pending_source_acks": 2,
+          "bytes": 5943311,
+          "failure": null
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "browser_pid": 38414,
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:15:57.840Z",
+      "outcome": "capture_gate_requires_further_validation",
+      "artifact_directory": "bud-screencast-results-ruUmcb"
+    },
+    {
+      "started_at": "2026-09-28T07:16:28.992Z",
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v22.14.0",
+      "headless": false,
+      "focus_emulation": false,
+      "background_flags": false,
+      "background_launch": true,
+      "hidden_only": true,
+      "seconds": 3,
+      "input_mode": "wheel",
+      "source": "isolated_cdp_probe",
+      "cases": [
+        {
+          "name": "cold_hidden_A",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:16:30.472Z",
+          "duration_ms": 5103.44,
+          "before": {
+            "label": "A",
+            "ticks": 5,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "A",
+            "ticks": 5,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "A",
+            "ticks": 5,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "after_detach": {
+            "label": "A",
+            "ticks": 5,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 1024,
+            "height": 681
+          },
+          "frames": 0,
+          "distinct_jpegs": 0,
+          "fps": 0,
+          "first_frame_ms": null,
+          "last_frame_ms": null,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 0
+          },
+          "max_pending_source_acks": 0,
+          "bytes": 0,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        },
+        {
+          "name": "cold_hidden_B",
+          "kind": "screencast",
+          "started_at": "2026-09-28T07:16:35.896Z",
+          "duration_ms": 5102.29,
+          "before": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "after": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "window_before": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "window_after": {
+            "left": 22,
+            "top": 60,
+            "width": 1024,
+            "height": 768,
+            "windowState": "minimized"
+          },
+          "after_disable": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 440,
+            "height": 816
+          },
+          "after_detach": {
+            "label": "B",
+            "ticks": 0,
+            "wheels": 0,
+            "distance": 0,
+            "scroll_travel": 0,
+            "y": 0,
+            "nested_y": 0,
+            "visibility": "hidden",
+            "focused": false,
+            "width": 1024,
+            "height": 681
+          },
+          "frames": 0,
+          "distinct_jpegs": 0,
+          "fps": 0,
+          "first_frame_ms": null,
+          "last_frame_ms": null,
+          "intervals_ms": {
+            "n": 0
+          },
+          "command_ack_ms": {
+            "n": 0
+          },
+          "source_ack_ms": {
+            "n": 0
+          },
+          "max_pending_source_acks": 0,
+          "bytes": 0,
+          "failure": "cdp_timeout:Input.dispatchMouseEvent"
+        }
+      ],
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/154.0.8037.57",
+        "revision": "@73c14f6228d7cd537c855007e8f88678969cc0eb",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+        "jsVersion": "15.4.80.11"
+      },
+      "browser_pid": 38537,
+      "screencast_parameters": [
+        "format",
+        "quality",
+        "maxWidth",
+        "maxHeight",
+        "everyNthFrame",
+        "maxFramesInFlight",
+        "sendLastFrame"
+      ],
+      "focus_emulation_supported": true,
+      "finished_at": "2026-09-28T07:16:42.335Z",
+      "outcome": "capture_gate_failed",
+      "artifact_directory": "bud-screencast-results-RRAryA"
+    }
+  ],
+  "foreground_monitor": [
+    {
+      "variant": "direct-launch",
+      "sample_interval_ms": 100,
+      "changes": [
+        {
+          "at": "2026-09-28T07:13:32Z",
+          "frontmost_pid": 42505
+        },
+        {
+          "at": "2026-09-28T07:13:34Z",
+          "frontmost_pid": 37969
+        },
+        {
+          "at": "2026-09-28T07:13:55Z",
+          "frontmost_pid": 42505
+        }
+      ]
+    },
+    {
+      "variant": "background-launch",
+      "sample_interval_ms": 100,
+      "changes": [
+        {
+          "at": "2026-09-28T07:14:33Z",
+          "frontmost_pid": 42505
+        }
+      ]
+    },
+    {
+      "variant": "background-launch-repeat",
+      "sample_interval_ms": 100,
+      "changes": [
+        {
+          "at": "2026-09-28T07:15:33Z",
+          "frontmost_pid": 42505
+        },
+        {
+          "at": "2026-09-28T07:15:54Z",
+          "frontmost_pid": 22643
+        }
+      ]
+    }
+  ]
+}

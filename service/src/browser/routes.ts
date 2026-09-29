@@ -34,6 +34,7 @@ const point = {
 const input = z
   .object({
     ...bodyBase,
+    override_id: id,
     target_id: id,
     document_id: id,
     frame_token: id,
@@ -84,7 +85,8 @@ const publicSession = (s: BrowserSession, canResize = false, canCapture = false,
   bud_id: s.bud_id,
   generation: s.generation,
   state: s.desired_state === "closed" ? "closing" : s.state,
-  control_state: s.control_state,
+  control_state: s.override_id && s.override_expires_at && new Date(s.override_expires_at).getTime() > Date.now() ? "human_private" : "agent",
+  execution_ready: s.control_state === "agent",
   control_epoch: s.browser_epoch,
   browser_id: s.browser_id,
   control_session_id: s.control_session_id,
@@ -95,6 +97,8 @@ const publicSession = (s: BrowserSession, canResize = false, canCapture = false,
     !s.private_content &&
     ["agent", "paused"].includes(s.control_state),
 });
+
+const resultOverride = (s: BrowserSession, viewer: string) => s.override_viewer_id === viewer ? s.override_id : null;
 
 type BrowserActor = Viewer & { mobile?: MobileVisit; mobileToken?: string };
 const mobileAuth = new BrowserMobileAuth();
@@ -353,7 +357,10 @@ export async function registerBrowserRoutes(
         z.object({operation:z.literal("revoke")}).strict(),
         z.object({operation:z.literal("refresh"),grant:z.string().regex(/^[\w-]{43}$/)}).strict(),
       ]).parse(request.body);
-      if (body.operation === "revoke") await mobileAuth.revoke(actor.userId,visit);
+      if (body.operation === "revoke") {
+        const revoked = await mobileAuth.revoke(actor.userId,visit);
+        if (revoked) await control.releaseVisit(actor.userId,revoked.session_id,revoked.id);
+      }
       else if (!await mobileAuth.refresh(actor.userId,visit,body.grant)) return reply.code(410).send({error:"browser_visit_expired"});
       return {ok:true};
     });
@@ -365,7 +372,7 @@ export async function registerBrowserRoutes(
       if (!(await getAuthorizedBud(actor, bud_id))) throw new BrowserError("browser_not_found");
       const resource = await new BrowserResourceRepository().get(actor.userId, bud_id);
       return { browser: resource && { browser_id: resource.id, revision: resource.revision,
-        desired_state: resource.desired_state, control_state: resource.control_state } };
+        desired_state: resource.desired_state, control_state: resource.override_id && resource.override_expires_at && new Date(resource.override_expires_at).getTime()>Date.now() ? "human_private" : "agent", execution_ready: resource.control_state === "agent" } };
     });
     routes.post("/api/buds/:bud_id/browser/lifecycle", { bodyLimit: 1024 }, async (request, reply) => {
       const actor = await viewer(request, reply);
@@ -399,6 +406,15 @@ export async function registerBrowserRoutes(
         };
       },
     );
+    routes.get("/api/browser/sessions/:session_id/shared-frame", async (request, reply) => {
+      const actor = await viewer(request, reply);
+      if (!actor) return;
+      const snapshot = await media.sharedFrame(actor.userId, sessionId(request));
+      // Revalidate the visit/login after artifact I/O as for live frame delivery.
+      if (!await alive(actor)) return reply.code(401).send({error:"unauthorized"});
+      await control.repository.get(actor.userId, sessionId(request));
+      return {snapshot};
+    });
     routes.get("/api/browser/sessions/:session_id", async (request, reply) => {
       const actor = await viewer(request, reply);
       if (!actor) return;
@@ -409,7 +425,8 @@ export async function registerBrowserRoutes(
         can_show_window: control.windowAvailable(session),
         ...publicSession(session, control.viewportAvailable(session), control.captureAvailable(session),
           control.historyAvailable(session), control.agentViewportAvailable(session), control.runtimeStatus(session)),
-        ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)) } : {}),
+        ...(viewer_id ? { owns_control: control.ownsControl(actor.userId, id, identity(actor, viewer_id)),
+          override_id: resultOverride(session, identity(actor, viewer_id)) } : {}),
         handoff: await control.repository.pending(actor.userId, id),
         can_take_control: control.canTakeControl(session),
       };
@@ -437,14 +454,13 @@ export async function registerBrowserRoutes(
             ...bodyBase,
             revision: z.number().int().nonnegative(),
             target_id: id.optional(),
-            recovery_ticket: z.string().min(1).max(2048).optional(),
+            override_id: id.optional(),
             operation: z.enum([
               "acquire",
               "renew",
               "release",
               "return",
               "close",
-              "recover",
               "show_window",
               "hide_window",
             ]),
@@ -459,9 +475,7 @@ export async function registerBrowserRoutes(
         ] as const;
         const result =
           body.operation === "show_window" || body.operation === "hide_window"
-            ? await control.nativeWindow(...args, body.revision, body.operation === "show_window", body.target_id)
-            : body.operation === "recover"
-            ? await control.recoverViewer(...args, body.recovery_ticket ?? "")
+            ? await control.nativeWindow(...args, body.revision, body.operation === "show_window", body.target_id, body.override_id)
             : body.operation === "close"
             ? await control.close(
                 actor.userId,
@@ -471,25 +485,25 @@ export async function registerBrowserRoutes(
             : body.operation === "acquire"
               ? await control.acquire(...args, body.revision)
               : body.operation === "renew"
-                ? await control.renew(...args)
+                ? await control.renew(...args, body.override_id ?? "")
                 : body.operation === "release"
-                  ? await control.release(...args)
-                  : await control.returnToAgent(...args, body.revision);
+                  ? await control.release(...args, body.override_id ?? "")
+                  : await control.returnToAgent(...args, body.revision, body.override_id ?? "");
         return {
           can_show_window: control.windowAvailable(result),
           ...publicSession(result, control.viewportAvailable(result), control.captureAvailable(result),
             control.historyAvailable(result), control.agentViewportAvailable(result), control.runtimeStatus(result)),
-          recovery_ticket: control.recoveryTicket(result, identity(actor, body.viewer_id)),
+          override_id: result.override_viewer_id === identity(actor, body.viewer_id) ? result.override_id : null,
         };
       },
     );
     routes.post("/api/browser/sessions/:session_id/viewport", { bodyLimit: 2048 }, async (request, reply) => {
       const actor = await viewer(request, reply);
       if (!actor) return;
-      const { viewer_id, ...viewport } = z.object({ ...bodyBase, target_id: id, document_id: id,
+      const { viewer_id, override_id, ...viewport } = z.object({ ...bodyBase, override_id: id.optional(), target_id: id, document_id: id,
         width: z.number().int().min(240).max(2560), height: z.number().int().min(160).max(2560),
       }).strict().parse(request.body);
-      return control.resizeViewport(actor.userId, sessionId(request), identity(actor, viewer_id), viewport);
+      return control.resizeViewport(actor.userId, sessionId(request), identity(actor, viewer_id), viewport, override_id);
     });
     routes.post(
       "/api/browser/sessions/:session_id/input",

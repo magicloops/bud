@@ -427,3 +427,54 @@ duplicate taps and ignores late results after selection/account changes.
 Deploy service first, then rebuild mobile. Existing daemon commands suffice; no
 migration or native bridge extension. Runtime-replaced/offline cases remain
 explicit failures for this action and use existing recovery, not fabricated return.
+
+## Proposal A private streaming experiment
+
+The shared hosted canvas now has an experimental binary JPEG screencast decoder.
+The service selects it only for admitted private control with
+`BUD_BROWSER_STREAMING_EXPERIMENT=1` (off by default). Existing scoped visit,
+viewer/controller, suspension, privacy cover and explicit Return remain unchanged.
+Native receives no frames, CDP access, extra authority or new bridge message.
+Passive agent viewing remains operation-driven screenshots.
+
+Use matching daemon/service/hosted-web builds. Older viewers/daemons reject the
+experimental protocol instead of silently falling back. Stage matching builds
+with the flag off, then enable on a controlled test service. No migration or new
+native build is required by this protocol. Physical iPhone/WK decode, foreground
+lifecycle, competing controllers, ngrok and scrolling/latency acceptance remains
+pending in [the experiment](../browser-streaming/input-and-wss-integration.md).
+
+
+## Confirmed editable keyboard (2026-09-28)
+
+Shell event `{version:1,visit_id,event:"keyboard",request_id:UUID}` requests keyboard focus after an authorized editable click. Native accepts only the trusted main frame and active, ready, uncovered matching visit, and echoes `{version:1,visit_id,command:"keyboard",request_id}` using app-initiated JavaScript. The shell consumes only its latest matching one-shot callback, with input/tap/lifecycle fences and a three-second deadline. No page content, script, selector or focus token crosses native. Upgrade daemon and service/web, then rebuild/reinstall mobile; no migration. Existing Keyboard button remains usable while upgrading.
+
+## Saved agent view on reopen (2026-09-28)
+
+Scoped visits also permit GET `/api/browser/sessions/:session_id/shared-frame`.
+It returns `{snapshot:null}` or `{snapshot:{image,mime_type,captured_at}}`, with
+base64 PNG/JPEG and Unix milliseconds. It exposes only previously authorized
+agent/public pixels in the current workspace generation, never private frames or
+input tokens. Live auth and owner/thread/Bud checks precede retrieval; no-store.
+
+After private dismissal the hosted viewer shows this timestamped saved view
+without acquiring control or returning the agent. No saved image means a truthful
+unavailable message. Control remains explicit through the menu. Active agent
+viewing still uses live media. Resume/reopen fetches once; no polling. Service and
+hosted web update together; no native rebuild, daemon update or migration.
+
+## Superseding authority contract — 2026-09-28
+
+Agent-default control replaces the earlier release-to-pause and proof recovery
+policy. Native dismissal/background/lock/disposal stops hosted input immediately;
+visit revocation ends only that visit's override. Hosted lifecycle release is
+best effort and a six-second lease bounds missed delivery. Foreground and visit
+replacement are passive. Authentication refresh does not renew browser authority.
+
+The hosted viewer renews an explicit override every two seconds and supplies its
+exact override_id on input/renew/release/return. No native controller state is added.
+Help prompts show Take control and permit alternative chat replies without locking
+Chrome. Close returns authority to the agent; execution may wait for daemon cleanup
+or connectivity. Match migrations 0044–0047, new service/web, agent_default_control
+capable daemon and rebuilt mobile before device validation. See
+[plan](../browser-agent-default/README.md).

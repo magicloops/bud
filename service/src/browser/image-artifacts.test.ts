@@ -61,3 +61,18 @@ test('REPL image emissions hydrate separately with vision and call authorization
   const wrongCall = structuredClone(messages); (wrongCall[0].content as any[])[0].tool_use_id = 'other';
   assert.equal(count(await hydrateBrowserImages(wrongCall,context,true,store,async()=>true)),0);
 });
+
+test('latest saved agent image is scoped to owner, thread, session and generation', async t => {
+  const path = await mkdtemp(join(tmpdir(), 'bud-shared-images-'));
+  t.after(() => rm(path, {recursive:true,force:true}));
+  const store = new ImageArtifacts(path);
+  const image = {owner:'alice',thread:'thread',bud:'bud',call:'cell',session:'session',generation:'gen',epoch:1,target:'target',document:'doc',image:'first',mime_type:'image/png' as const};
+  await store.put(image);
+  await store.put({...image,image:'latest'});
+  await store.put({...image,session:'other',image:'other session'});
+  await store.put({...image,generation:'old',image:'other generation'});
+  assert.equal((await store.latest('alice','thread','session','gen'))?.image,'latest');
+  assert.equal(await store.latest('bob','thread','session','gen'),null);
+  assert.equal(await store.latest('alice','other','session','gen'),null);
+  assert.equal(await store.latest('alice','thread','missing','gen'),null);
+});

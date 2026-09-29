@@ -26,8 +26,15 @@ export type BrowserSession = {
   revision: number;
   control_request_id: string | null;
   private_content: boolean;
+  override_id: string | null;
+  override_viewer_id: string | null;
+  override_carrier_id: string | null;
+  override_expires_at: Date | null;
+  ended_override_id: string | null;
+  override_end_reason: string | null;
 };
 const owned = `select s.*,r.control_state,r.private_content,r.revision,r.control_request_id,
+  r.override_id,r.override_viewer_id,r.override_carrier_id,r.override_expires_at,r.ended_override_id,r.override_end_reason,
   r.control_epoch as browser_epoch,r.control_session_id from browser_session s
   join browser_resource r on r.id=s.browser_id and r.retired_at is null and r.desired_state='open'
   join thread t on t.thread_id=s.thread_id
@@ -37,6 +44,88 @@ const owned = `select s.*,r.control_state,r.private_content,r.revision,r.control
 /** Viewer inventory is always SQL-scoped; transitions use short row locks, not network transactions. */
 export class BrowserControlRepository {
   constructor(private readonly database: Pool = pool) {}
+
+  /** Install the exact override after the acknowledged acquisition fence. */
+  async grantOverride(owner: string, id: string, revision: number, override: string, viewer: string, carrier: string, expires: number) {
+    const initial = await this.get(owner, id);
+    return new BrowserResourceRepository(this.database).withLocked(owner, initial.bud_id, async (client, resource) => {
+      if (resource.revision !== revision || resource.control_session_id !== id || resource.control_state !== "human_private")
+        throw new BrowserError("browser_revision_conflict");
+      if (expires <= Date.now()) throw new BrowserError("browser_control_expired");
+      await client.query(`update browser_resource set override_id=$2,override_viewer_id=$3,
+        override_carrier_id=$4,override_expires_at=$5,ended_override_id=null,override_end_reason=null
+        where id=$1`, [resource.id,override,viewer,carrier,new Date(expires)]);
+      // A help prompt becomes associated only when the user actually takes over.
+      await client.query(`update browser_handoff set override_id=$3 where session_id=$1
+        and created_by_user_id=$2 and status='pending' and kind='agent' and override_id is null`, [id,owner,override]);
+    });
+  }
+
+  async renewOverride(owner: string, id: string, override: string, viewer: string, carrier: string, expires: number) {
+    await this.get(owner,id);
+    const result = await this.database.query(`update browser_resource r set override_expires_at=greatest(override_expires_at,$6)
+      from browser_session s,bud b where s.id=$1 and s.browser_id=r.id and b.bud_id=r.bud_id
+      and s.created_by_user_id=$2 and r.created_by_user_id=$2 and b.created_by_user_id=$2
+      and r.control_session_id=s.id and r.override_id=$3 and r.override_viewer_id=$4
+      and r.override_carrier_id=$5 and r.override_expires_at>now() and $6>now() and $6<=now()+interval '6 seconds'
+      and r.retired_at is null and r.desired_state='open' and s.closed_at is null
+      returning r.id`, [id,owner,override,viewer,carrier,new Date(expires)]);
+    if (!result.rowCount) throw new BrowserError("browser_control_expired");
+  }
+
+  /** Retire first, before waiting for page work. A late end cannot clear a new override. */
+  async endOverride(owner: string, id: string, override: string, reason: string, candidate?: BrowserSession) {
+    const initial = candidate ?? await this.get(owner,id);
+    return new BrowserResourceRepository(this.database).withLocked(owner,initial.bud_id,async (client,resource) => {
+      const result = await client.query(`update browser_resource set ended_override_id=override_id,
+        override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,
+        override_end_reason=$3,revision=revision+1,updated_at=now() where id=$1 and override_id=$2 returning id`,
+        [resource.id,override,reason]);
+      return Boolean(result.rowCount);
+    });
+  }
+
+  /** Internal recovery scan, never a browser-facing inventory. */
+  async reconciliationCandidates() {
+    return (await this.database.query<BrowserSession>(`select s.*,r.control_state,r.private_content,
+      r.control_epoch as browser_epoch,r.revision,r.control_session_id,r.control_request_id,
+      r.override_id,r.override_viewer_id,r.override_carrier_id,r.override_expires_at,r.ended_override_id,r.override_end_reason
+      from browser_resource r join lateral (select candidate.* from browser_session candidate
+        where candidate.browser_id=r.id and candidate.created_by_user_id=r.created_by_user_id
+        order by (candidate.id=r.control_session_id) desc nulls last,candidate.created_at desc limit 1) s on true
+      join bud b on b.bud_id=r.bud_id and b.created_by_user_id=r.created_by_user_id
+      join thread t on t.thread_id=s.thread_id and t.created_by_user_id=r.created_by_user_id
+      where r.retired_at is null and r.desired_state='open'
+      and r.control_state<>'agent' and (r.override_id is null or r.override_expires_at<=now())
+      order by r.updated_at limit 32`)).rows;
+  }
+  /** Internal cleanup accepts an archived workspace, but still locks the current owned resource. */
+  async prepareEnd(candidate: BrowserSession, boot: string) {
+    return new BrowserResourceRepository(this.database).withLocked(candidate.created_by_user_id,candidate.bud_id,async (client,resource) => {
+      if (resource.id !== candidate.browser_id || resource.desired_state !== "open" || resource.override_id)
+        throw new BrowserError("browser_control_conflict");
+      const requestId=ulid();
+      const next=(await client.query<BrowserResource>(`update browser_resource set control_state='resume_pending',
+        control_operation='end',control_request_id=$2,control_epoch=control_epoch+1,revision=revision+1,updated_at=now()
+        where id=$1 returning *`,[resource.id,requestId])).rows[0];
+      const workspace=(await client.query<BrowserSession>(`update browser_session set sequence=sequence+1,
+        control_epoch=control_epoch+1,boot_id=$2 where id=$1 and browser_id=$3 and created_by_user_id=$4 returning *`,
+        [candidate.id,boot,resource.id,candidate.created_by_user_id])).rows[0];
+      if (!workspace) throw new BrowserError("browser_not_found");
+      const session={...candidate,...workspace,browser_epoch:next.control_epoch,revision:next.revision,
+        control_state:next.control_state};
+      return {resource:next,session,request:this.command(session,{action:"control",operation:"end"},requestId)};
+    });
+  }
+
+  async acknowledgeEnd(resource: BrowserResource) {
+    return new BrowserResourceRepository(this.database).acknowledgeReturn(resource);
+  }
+
+  async failEnd(resource: BrowserResource) {
+    return new BrowserResourceRepository(this.database).failControl(resource);
+  }
+
   async get(owner: string, id: string): Promise<BrowserSession> {
     const row = (
       await this.database.query<BrowserSession>(`${owned} and s.id=$2`, [
@@ -197,21 +286,19 @@ export class BrowserControlRepository {
       await client.query("select thread_id from thread where thread_id=$1 and created_by_user_id=$2 for update", [initial.thread_id,owner]);
       const current = (await client.query<BrowserSession>(`${owned} and s.id=$2 for update of s`, [owner,id])).rows[0];
       if (!current) throw new BrowserError("browser_not_found");
-      if ((current.boot_id !== boot && !(command.action === "control" && command.operation === "pause")) || current.desired_state !== "open") throw new BrowserError("browser_interrupted");
+      if ((current.boot_id !== boot && !(command.action === "control" && ["pause","end"].includes(String(command.operation)))) || current.desired_state !== "open") throw new BrowserError("browser_interrupted");
       if (resource.revision !== expectedRevision) throw new BrowserError("browser_revision_conflict");
       const advance = command.action === "control" && command.operation !== "renew";
       if (advance) {
         const operation = command.operation;
-        if ((operation === "acquire" && resource.control_state !== "paused") ||
-            (operation === "prepare_return" && !["paused", "human_private"].includes(resource.control_state)) ||
-            (operation === "finish_return" && resource.control_state !== "resume_pending") ||
-            (["prepare_return", "finish_return", "release"].includes(String(operation)) && resource.control_session_id !== id))
+        if (!["pause", "acquire"].includes(String(operation)) ||
+            (operation === "acquire" && resource.control_state !== "paused"))
           throw new BrowserError("browser_control_conflict");
         await client.query(`update browser_resource set control_state=$2,
           private_content=private_content or $2='human_private',
-          control_session_id=case when $2='human_private' then $3 else control_session_id end,
+          control_session_id=$3,
           control_epoch=control_epoch+1,revision=revision+1,control_request_id=$4,control_operation=$5,updated_at=now()
-          where id=$1`, [resource.id,nextState,id,requestId,command.operation === "release" ? "pause" : command.operation]);
+          where id=$1`, [resource.id,nextState,id,requestId,command.operation]);
       }
       // Viewer commands get an independent workspace ordering fence. Passive
       // media/fitting and renewal use command() and do not advance it.
@@ -259,14 +346,6 @@ export class BrowserControlRepository {
     const resource = await repository.get(owner,session.bud_id);
     if (resource && resource.revision === revision) await repository.failControl(resource);
   }
-  async returned(owner: string, session: string, revision: number) {
-    const row = await this.get(owner,session);
-    const repository = new BrowserResourceRepository(this.database);
-    const resource = await repository.get(owner,row.bud_id);
-    if (!resource || resource.revision !== revision || resource.control_session_id !== session)
-      throw new BrowserError("browser_revision_conflict");
-    await repository.acknowledgeReturn(resource);
-  }
   async recover() {
     await new BrowserResourceRepository(this.database).recover();
   }
@@ -288,6 +367,10 @@ export class BrowserControlRepository {
       if (!row) throw new BrowserError("browser_not_found");
       if (row.revision !== revision || row.desired_state !== "open")
         throw new BrowserError("browser_revision_conflict");
+      await client.query(`update browser_resource set ended_override_id=override_id,
+        override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,
+        override_end_reason='workspace_closed',revision=revision+1,updated_at=now()
+        where id=$1 and control_session_id=$2`,[row.browser_id,id]);
       await client.query<BrowserSession>(
         `update browser_session set desired_state='closed',updated_at=now() where id=$1 returning *`,
         [id],

@@ -525,6 +525,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
+| [plan/browser-streaming/browser-streaming.spec.md](./plan/browser-streaming/browser-streaming.spec.md) | Folder spec for the Proposal A CDP screencast/WSS experiment: capture feasibility, bounded private media integration, physical-device measurement and go/no-go; no production transport selected |
+| [plan/browser-streaming/README.md](./plan/browser-streaming/README.md) | Bounded streaming experiment plan linked to browser Phase 5, preserving outbound connectivity, existing input authority and passive observation |
 | [design/personal-data-ingestion-and-agent-triggers.md](./design/personal-data-ingestion-and-agent-triggers.md) | Proposed cross-repo integration of mobile location, HealthKit and contacts ingestion, scoped agent/app queries, and durable automation execution; includes source findings, deployment choices and a decision register |
 | [plan/personal-data-ingestion-and-agent-triggers.md](./plan/personal-data-ingestion-and-agent-triggers.md) | Completed design-review plan and validation scope for personal data ingestion and agent triggers; runtime implementation remains proposed |
 | [plan/personal-data-ingestion-and-agent-triggers/implementation-spec.md](./plan/personal-data-ingestion-and-agent-triggers/implementation-spec.md) | Phased implementation scope and acceptance gates for integrated ingestion, mobile recovery/Contacts, scoped queries, durable invocations, contact automations and approved app keys |
@@ -910,3 +912,15 @@ installed Google Chrome/Chromium and installing the pinned Chrome for Testing
 only as plan B, with a managed Node runtime and the daemon-embedded helper under
 `<base_dir>/browser/`. See [design](./design/browser-addon.md) and
 [Phase 3r](./plan/bud-owned-browser/phase-3r-browser-addon.md).
+
+## Agent-default browser control — 2026-09-28
+
+The [agent-default implementation](plan/browser-agent-default/README.md) supersedes
+sticky private pause and proof-based recovery. Explicit takeover creates one
+owner/viewer/carrier-bound six-second override per Bud, renewed every two seconds.
+Closing/backgrounding or losing the viewer ends it; reconnecting is passive.
+Service DB identity and daemon monotonic deadlines fence stale human input.
+Internal drain/cleanup blocks execution until acknowledged, without retaining
+human authority or requiring manual Return. Help requests park only their task;
+users can take control or redirect the agent through chat. Deploy migrations
+0044–0047 and matching service/web/daemon/mobile as one coordinated change.

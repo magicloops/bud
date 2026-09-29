@@ -34,3 +34,11 @@ test("only scroll can rebase to fresh pixels of the same document and viewport",
     { ...fresh, width: 800 }, { ...fresh, viewport_id: "resized" },
   ]) assert(!inputMatchesFrame(wheel(), changed));
 });
+
+test("streaming queues retain displayed evidence only within the same generation", () => {
+  const original = { ...frame, media_generation: "g1" };
+  const next = { ...original, frame_token: "newer" };
+  assert(inputMatchesFrame({ frame: original, action: { kind: "text" } }, next));
+  assert(!inputMatchesFrame({ frame: original, action: { kind: "click" } }, { ...next, media_generation: "g2" }));
+  assert(!inputMatchesFrame({ frame: original, action: { kind: "scroll" } }, { ...next, media_generation: "g2" }));
+});
