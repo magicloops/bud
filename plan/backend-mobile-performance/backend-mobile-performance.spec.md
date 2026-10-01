@@ -37,6 +37,8 @@ No runtime dependencies or implementation debt are introduced by these documents
 
 ## Handoff artifacts
 
+- `mobile-browser-summary-handoff.md`: browser exec intent fields, pending/result
+  locations, suggested display, outcome semantics and historical-row tolerance.
 - `mobile-api-handoff.md`: coordinated-release contracts, client algorithms,
   rollout order, mutable implementation choices and explicit unverified evidence.
 - `mobile-api-fixtures.json`: synthetic request/response/event examples.
