@@ -3,6 +3,13 @@ import test from 'node:test'
 import { resolveToolPayload } from './tool-payload.ts'
 import { parseAskUserQuestionsToolResultPayload, displayAskUserQuestionsResponse } from '../message-renderers/tools/ask-user-questions-format.ts'
 
+test('compact wire payload is used directly without parsing display content', () => {
+  const payload = { tool: 'terminal.send', output: 'exact output', duration_ms: 42 }
+  assert.deepEqual(resolveToolPayload({ content: '{not JSON', tool_payload: payload,
+    metadata: { duration_ms: 300, duration_source: 'service_wall_clock' } }),
+    { ...payload, duration_source: 'service_wall_clock' })
+})
+
 test('answered continuation resolves its actual question and answer despite timing-only metadata', () => {
   const payload = resolveToolPayload({
     metadata: { continuation: true, call_id: 'call_fixture', duration_ms: 3594 },

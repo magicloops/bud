@@ -515,3 +515,6 @@ Help prompts offer Take control without a prior lock; normal chat can redirect t
 waiting task. This supersedes historical private-pause/recovery descriptions above.
 Mounted tests cover hidden release, passive closure, reconnect, native suspension,
 input and handoff behavior. Physical phone/network acceptance remains in the plan.
+
+Transcript browser reveal reads structured `tool_payload` before historical JSON
+content, preserving reveal identity with compact tool rows.

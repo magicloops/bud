@@ -17,11 +17,7 @@ import { toLoginRedirect } from '@/lib/route-auth'
 export const Route = createFileRoute('/$budId/')({
   loader: async ({ params, location }) => {
     try {
-      const threads = await apiFetchJson<Array<{
-        thread_id: string
-        created_at: string
-        last_conversation_at?: string | null
-      }>>(`/api/threads?bud_id=${params.budId}`, { redirectOnUnauthorized: false })
+      const { threads } = await apiFetchJson<{ threads: Array<{ thread_id: string; created_at: string; last_conversation_at?: string | null }> }>(`/api/threads?bud_id=${encodeURIComponent(params.budId)}&limit=1`, { redirectOnUnauthorized: false })
 
       // No threads - redirect to new thread view
       if (threads.length === 0) {

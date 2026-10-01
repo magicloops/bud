@@ -137,3 +137,14 @@ revocation alone does not revoke an already issued access token before expiry;
 no new introspection/revocation list is introduced. Other browser state scopes,
 control and media retain web-session/scoped-visit authentication. See mobile M1
 in the browser spec for Origin policy and coordinated deployment.
+
+## Discovery freshness
+
+OAuth issuer and OpenID discovery override the installed provider default via
+its metadata-header options. Protected-resource metadata uses the same policy:
+`public, max-age=3600, stale-while-revalidate=15, stale-if-error=86400`. Tests inject
+the actual routes and verify headers, issuer, token endpoint and JWKS URI. This
+changes metadata freshness only; token responses, JWT lifetimes and JWKS caching
+retain their independent policies. Mobile caches per issuer/environment and may
+refetch metadata once on a relevant endpoint/configuration failure, never in a
+credential-rejection loop. Proxy/header behavior in production remains unmeasured.

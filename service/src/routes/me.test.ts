@@ -127,49 +127,10 @@ test("GET /api/me/notifications/summary returns unseen thread count", async (t) 
   const handler = server.routes.get("GET /api/me/notifications/summary");
   assert.ok(handler, "expected notifications summary route to register");
 
-  const rows = [
-    {
-      lastAttentionMessageId: "00000000-0000-0000-0000-000000000002",
-      lastAttentionMessageCreatedAt: new Date("2026-04-21T20:15:00.000Z"),
-      lastSeenMessageId: "00000000-0000-0000-0000-000000000001",
-      lastSeenMessageCreatedAt: new Date("2026-04-21T20:10:00.000Z"),
-    },
-    {
-      lastAttentionMessageId: "00000000-0000-0000-0000-000000000003",
-      lastAttentionMessageCreatedAt: new Date("2026-04-21T20:05:00.000Z"),
-      lastSeenMessageId: "00000000-0000-0000-0000-000000000004",
-      lastSeenMessageCreatedAt: new Date("2026-04-21T20:06:00.000Z"),
-    },
-  ];
-
   mock.method(auth.api, "getSession", async () => SESSION as never);
   mock.method(db.query.userProfileTable, "findFirst", async () => CURRENT_USER.profile as never);
-
-  let selectCallCount = 0;
-  mock.method(db, "select", () => {
-    selectCallCount += 1;
-    const linkedProvidersChain = {
-      from() {
-        return linkedProvidersChain;
-      },
-      where() {
-        return Promise.resolve([{ providerId: "github" }]);
-      },
-    };
-    const summaryChain = {
-      from() {
-        return summaryChain;
-      },
-      leftJoin() {
-        return summaryChain;
-      },
-      where() {
-        return Promise.resolve(rows);
-      },
-    };
-
-    return (selectCallCount === 1 ? linkedProvidersChain : summaryChain) as never;
-  });
+  mock.method(db, "select", () => ({ from: () => ({ where: async () => [{ providerId: "github" }] }) }) as never);
+  mock.method(db, "execute", async () => ({ rows: [{ unseen_thread_count: 1, updated_at: new Date() }] }) as never);
 
   const response = await invokeRoute(handler, { headers: {} });
 

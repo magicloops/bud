@@ -452,3 +452,7 @@ Shared thread comparator uses persisted `last_conversation_at`, creation and ID
 creation. `latestConversationAt` preserves newer timestamps across stale snapshots
 and partial patches. Tests cover activity noise, completion, ties and stale merges.
 `ApiThread` carries the ordering timestamp through canonical API responses.
+
+`ApiMessage` accepts structured `tool_payload` and `presentation`. Tool-name lookup
+prefers the structured payload. Historical/synthetic local rows may still use
+metadata/content; service wire serialization has a single compact shape.

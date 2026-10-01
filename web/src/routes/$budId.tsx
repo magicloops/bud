@@ -1,3 +1,5 @@
+import { useThreadList } from '@/features/threads/use-thread-list'
+import { compareThreads } from '@/lib/thread-order'
 import { latestConversationAt } from '@/lib/thread-order'
 import { createFileRoute, Outlet, useNavigate, useMatches, useRouter } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -8,7 +10,6 @@ import { BudSettingsModal, type BudSettingsTab } from '@/components/bud-settings
 import { deriveBudPalette, withFallbackAccentColors } from '@/lib/theme-colors'
 import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
-  createAuthEventSource,
   apiFetchJson,
   isApiError,
 } from '@/lib/transport'
@@ -71,17 +72,14 @@ const mergeThreadSummary = (
 export const Route = createFileRoute('/$budId')({
   loader: async ({ params, location }) => {
     try {
-      const [buds, threads] = await Promise.all([
-        apiFetchJson<ApiBud[]>('/api/buds', { redirectOnUnauthorized: false }),
-        apiFetchJson<ApiThread[]>(`/api/threads?bud_id=${params.budId}`, { redirectOnUnauthorized: false }),
-      ])
+      const buds = await apiFetchJson<ApiBud[]>('/api/buds', { redirectOnUnauthorized: false })
 
       const bud = buds.find(b => b.bud_id === params.budId)
       if (!bud) {
         throw new Error('Bud not found')
       }
 
-      return { buds, bud, threads }
+      return { buds, bud }
     } catch (error) {
       if (isApiError(error, 401)) {
         throw toLoginRedirect(location.href)
@@ -93,7 +91,7 @@ export const Route = createFileRoute('/$budId')({
 })
 
 function BudLayout() {
-  const { buds: rawBuds, threads: initialThreads } = Route.useLoaderData()
+  const { buds: rawBuds } = Route.useLoaderData()
   const { budId } = Route.useParams()
   const navigate = useNavigate()
   const router = useRouter()
@@ -131,7 +129,7 @@ function BudLayout() {
     [rawBuds, budOverrides],
   )
   const [threadPanelStatus, setThreadPanelStatus] = useState<{ tone: MutationStatusTone; message: string } | null>(null)
-  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads.map(toThreadSummary))
+  const { threads, setThreads, canLoadMore, loadMore, showLatest, error: listError } = useThreadList(budId)
 
   // Get threadId from child route match (if we're on /$budId/$threadId)
   const matches = useMatches()
@@ -154,36 +152,6 @@ function BudLayout() {
     })
   }, [apiBuds])
 
-  useEffect(() => {
-    setThreads(prev => initialThreads.map(thread => mergeThreadSummary(prev.find(old => old.thread_id === thread.thread_id), thread)))
-  }, [initialThreads])
-
-  // One list-level stream covers inactive conversations; hints trigger owned reads.
-  useEffect(() => {
-    let disposed = false, running = false, dirty = false
-    let retry: ReturnType<typeof setTimeout> | undefined
-    const controller = new AbortController()
-    const { source, checkUnauthorized } = createAuthEventSource(`/api/buds/${budId}/thread-list/stream`)
-    const refresh = async () => {
-      dirty = true
-      if (running || disposed) return
-      running = true
-      try {
-        do {
-          dirty = false
-          const rows = await apiFetchJson<ApiThread[]>(`/api/threads?bud_id=${budId}`, { signal: controller.signal })
-          if (!disposed) setThreads(prev => rows.map(thread => mergeThreadSummary(prev.find(old => old.thread_id === thread.thread_id), thread)))
-        } while (dirty && !disposed)
-      } catch {
-        if (!disposed) retry = setTimeout(() => void refresh(), 3000)
-      } finally { running = false }
-    }
-    const changed = () => { clearTimeout(retry); void refresh() }
-    source.addEventListener('ready', changed)
-    source.addEventListener('changed', changed)
-    source.onerror = () => { void checkUnauthorized() }
-    return () => { disposed = true; controller.abort(); clearTimeout(retry); source.close() }
-  }, [budId])
 
   const activeBudProfile = useMemo(() => {
     return buds.find((b) => b.id === budId)
@@ -228,7 +196,7 @@ function BudLayout() {
     setThreads((prev) => {
       const index = prev.findIndex((entry) => entry.thread_id === thread.thread_id)
       if (index === -1) {
-        return [mergeThreadSummary(undefined, thread), ...prev]
+        return [mergeThreadSummary(undefined, thread), ...prev].sort(compareThreads).slice(0, 200)
       }
 
       const next = [...prev]
@@ -268,6 +236,9 @@ function BudLayout() {
   const threadPanel = activeBudProfile ? (
     <ThreadPanel
       threads={threads}
+      onLoadMore={canLoadMore ? loadMore : undefined}
+      onShowLatest={showLatest}
+      loadError={listError}
       activeThreadId={activeThreadId}
       onSelectThread={(threadId) => {
         handleSelectThread(threadId)

@@ -1571,3 +1571,46 @@ InvocationRepository supersedes pending help on a new user message, preserving
 cancellation and message idempotency rather than claiming a successful human task.
 Browser-private rejections explain automatic return on leaving/expiry and allow
 chat/non-browser work; terminal bypass of the execution fence remains forbidden.
+
+## Immediate durable scheduling (mobile performance Phase 1)
+
+`invocation-worker.ts` now coalesces local wake hints into a serialized claim pump,
+fills all available slots, and refills on completion. Maintenance runs once per
+one-second fallback cycle. Existing claim authority, heartbeat fencing, per-Bud
+limits and shutdown generations remain authoritative. No new listener connection.
+
+`invocation-timing.ts` also collects invocation change IDs/wake hints inside an
+outer transaction and publishes only after commit; rollback and heartbeat-only
+transactions are silent. Human/automation/bootstrap admission, status mutations,
+question answers, decisions and expiry use this boundary. Raw-pg browser parking
+and return publish after their own commit, scoped to the registered pool.
+
+- `invocation-events.ts`: serialized current-state reload and public
+  `agent.invocation_changed` publication; ownership joins exclude unavailable
+  threads. Coalesced events represent current state, not an audit log of every
+  intermediate transition. Failed publication invalidates runtime replay.
+- `invocation-events.test.ts`: delayed callbacks, ordered reload, replay
+  invalidation and recovery after publication failure.
+
+Worker tests cover immediate capacity fill, coalescing and completion refill.
+Timing tests additionally verify nested commit-only wakeups and empty-claim
+silence. SQL integration retains cancellation, reservation and recovery coverage.
+
+## Compact client transcript
+
+`message-view.ts` is the shared REST/live client serializer; `message-view.test.ts`
+covers tool families, historical content-only/metadata-only rows, malformed data,
+unchanged model evidence and encoded/gzip byte comparison. Tool rows carry one
+`tool_payload`, display `content`, retained timing/path/model metadata and
+`presentation: {kind,id,status}`. Unknown status remains null. Storage and provider
+replay remain unchanged. Tool-result events carry the canonical message plus
+identity/summary/timing; redundant top-level result bodies are removed.
+
+## Compact client transcript and commit publication
+
+`message-view.ts` / `.test.ts` project shared compact tool payload/presentation
+without modifying stored model evidence. `transcript-events.ts` / `.test.ts`
+coalesce bounded database hints, reload authorized inserts, invalidate mutations
+and fence in-flight loads on continuity loss. Thread route composition owns its
+shared database listener. `invocation-events.ts` / `.test.ts` serialize committed
+invocation reload/publication; failure explicitly invalidates replay.

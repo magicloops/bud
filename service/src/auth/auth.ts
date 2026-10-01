@@ -14,6 +14,7 @@ export const AUTH_BASE_PATH = config.betterAuthBasePath;
 export const OAUTH_PROVIDER_SCOPES = ["openid", "profile", "email", "offline_access", "api"] as const;
 export const MOBILE_API_SCOPE = "api";
 export const AUTH_ISSUER = new URL(AUTH_BASE_PATH, `${config.betterAuthUrl}/`).toString();
+const DISCOVERY_CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=15, stale-if-error=86400";
 
 export const authHandlerPoolOptions = {
   connectionString: config.databaseUrl,
@@ -120,8 +121,9 @@ const authWithOAuthMetadataApi = auth as typeof auth & {
     getOpenIdConfig: (...args: unknown[]) => Promise<unknown>;
   };
 };
-const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(authWithOAuthMetadataApi);
-const openIdConfigMetadataHandler = oauthProviderOpenIdConfigMetadata(authWithOAuthMetadataApi);
+const discoveryHeaders = { "Cache-Control": DISCOVERY_CACHE_CONTROL };
+const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(authWithOAuthMetadataApi, { headers: discoveryHeaders });
+const openIdConfigMetadataHandler = oauthProviderOpenIdConfigMetadata(authWithOAuthMetadataApi, { headers: discoveryHeaders });
 
 export async function verifyOAuthAccessToken(
   token: string | undefined,
@@ -342,7 +344,7 @@ export async function registerAuthRoutes(server: FastifyInstance): Promise<void>
     );
 
     reply
-      .header("Cache-Control", "public, max-age=15, stale-while-revalidate=15, stale-if-error=86400")
+      .header("Cache-Control", DISCOVERY_CACHE_CONTROL)
       .header("Content-Type", "application/json")
       .send(metadata);
   });

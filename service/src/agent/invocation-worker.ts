@@ -25,6 +25,9 @@ export class InvocationWorker {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
   private generation = 0;
+  private pump: Promise<void> | null = null;
+  private wakePending = false;
+  private maintenanceDue = false;
 
   constructor(
     private readonly executor: InvocationExecutor,
@@ -39,18 +42,52 @@ export class InvocationWorker {
   start() {
     if (!this.stopped) return;
     this.stopped = false;
-    this.schedule(0);
+    this.maintenanceDue = true;
+    this.wake();
+    this.schedule(1000);
+  }
+
+  /** A hint only. The database claim remains the execution authority. */
+  wake() {
+    if (this.stopped) return;
+    this.wakePending = true;
+    if (this.pump) return;
+    this.pump = this.drain().catch(() => {
+      this.wakePending = false;
+      this.reportError("invocation_worker_failed");
+    }).finally(() => {
+      this.pump = null;
+      if (this.wakePending && !this.stopped) this.wake();
+    });
+  }
+
+  private async drain() {
+    const generation = this.generation;
+    while (!this.stopped && generation === this.generation && this.wakePending) {
+      this.wakePending = false;
+      if (this.maintenanceDue) {
+        this.maintenanceDue = false;
+        await this.repository.recoverExpired();
+        await this.repository.expireQueued();
+      }
+      while (!this.stopped && generation === this.generation && this.active.size < this.concurrency) {
+        const invocation = await this.repository.claim(this.workerId);
+        if (!invocation || this.stopped || generation !== this.generation) break;
+        const task = this.executeClaimed(invocation, generation).catch(() => {
+          this.reportError("invocation_worker_failed"); return false;
+        });
+        this.active.add(task);
+        void task.finally(() => { this.active.delete(task); this.wake(); });
+      }
+    }
   }
 
   private schedule(delay: number) {
     if (this.stopped || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      if (this.active.size < this.concurrency) {
-        const task = this.runOnce().catch(() => { this.reportError("invocation_worker_failed"); return false; });
-        this.active.add(task);
-        void task.finally(() => { this.active.delete(task); });
-      }
+      this.maintenanceDue = true;
+      this.wake();
       this.schedule(1000);
     }, delay);
     this.timer.unref();
@@ -61,7 +98,9 @@ export class InvocationWorker {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.wakePending = false;
     for (const controller of this.controllers) controller.abort(new Error("worker_stopping"));
+    await this.pump;
     await Promise.allSettled([...this.active]);
   }
 
@@ -71,6 +110,10 @@ export class InvocationWorker {
     await this.repository.expireQueued();
     const invocation = await this.repository.claim(this.workerId);
     if (!invocation) return false;
+    return this.executeClaimed(invocation, generation);
+  }
+
+  private async executeClaimed(invocation: Invocation, generation: number): Promise<boolean> {
     // Stop may have raced with DB claim. Leave unstarted work for preflight
     // lease recovery instead of launching it after shutdown began.
     if (generation !== this.generation) return true;

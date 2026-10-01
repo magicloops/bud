@@ -225,11 +225,11 @@ Ownership-focused thread submodules:
 - `agent.tool_call` now includes service-side `started_at`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - `agent.tool_result` now also exposes `started_at`, `finished_at`, `duration_ms`, and `duration_source`
-- web-view tool results expose a `web_view` result payload instead of terminal `output` / `readiness` fields
-- user-question tool results expose a `user_questions` result payload with the completed `ask_user_questions_tool_result_v1` Q/A summary
+- web-view details are in `message.tool_payload` rather than duplicated outer result fields
+- user-question results expose `message.tool_payload.result` with the completed `ask_user_questions_tool_result_v1` Q/A summary
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
-- embedded canonical tool, reasoning, and assistant rows now expose the same work metadata shape under `message.metadata` (`turn_id`, `started_at`, `finished_at`, `duration_ms`, `duration_source`), while `message.content` remains the replay or display payload without timing-only fields
+- embedded canonical tool, reasoning, and assistant rows now expose the same work metadata shape under `message.metadata` (`turn_id`, `started_at`, `finished_at`, `duration_ms`, `duration_source`), while tool `message.content` is human summary text and `message.tool_payload` carries the structured result
 - terminal tool rows may include `message.metadata.path_context_before` and `message.metadata.path_context_after`; assistant/user rows may include `message.metadata.path_context`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`
@@ -731,3 +731,16 @@ zod failures to `400 browser_invalid_request`, and other broker errors to `409`.
 ## Proxy hostname resolution
 
 `GET /api/proxied-sites/resolve?endpoint_host=...` requires a viewer and returns serialized site metadata after an exact hostname + owner SQL lookup. Missing/foreign sites return 404, unauthenticated requests 401. The resolver neither fetches the hostname nor attaches/renews/mutates a site. Existing viewer-grant checks still enforce enabled/expiry state. Reads return Cache-Control: no-store.
+
+## Mobile performance read paths
+
+`GET /api/threads/:thread_id/open` combines the canonical summary, bounded
+transcript and early runtime state with an attachment cursor. See the thread spec.
+Mark-read and notification summary share the SQL aggregate in
+`db/thread-read-state.ts`; mark-read returns an additive `summary` after its
+conditional watermark upsert, including on stale requests.
+
+Thread list GET is now bounded `{threads,page,feed_checkpoint}` and owner SSE is
+`/api/me/thread-list/stream`. The per-Bud list route is removed. Thread messages
+include a bounded read-only POST `/messages/reconcile` for mutation recovery.
+See the thread folder spec and mobile handoff for ordering and release constraints.

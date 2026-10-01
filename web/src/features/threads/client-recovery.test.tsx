@@ -11,6 +11,7 @@ register(`data:text/javascript,${encodeURIComponent(`export async function load(
 }`)}`, import.meta.url)
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const { useTerminalSession } = await import('./use-terminal-session')
+const { useThreadList } = await import('./use-thread-list')
 const { useAgentStream } = await import('./use-agent-stream')
 const { useBrowserPane } = await import('../browser/pane')
 const { ApiError } = await import('@/lib/transport')
@@ -71,6 +72,8 @@ function setup() {
   let view: ReactTestRenderer | null = null
   let terminal!: ReturnType<typeof useTerminalSession>
   let pane!: ReturnType<typeof useBrowserPane>
+  let list!: ReturnType<typeof useThreadList>
+  function List({ thread }: { thread: string | null }) { list = useThreadList(thread ?? ""); return null }
   let reveals = 0
   const reveal = () => { reveals++ }
   const onError = (message: string | null) => errors.push(message)
@@ -96,16 +99,16 @@ function setup() {
   }
   return {
     requests, logs, errors, timers,
-    get terminal() { return terminal }, get pane() { return pane }, get reveals() { return reveals },
+    get list() { return list }, get terminal() { return terminal }, get pane() { return pane }, get reveals() { return reveals },
     setResponse(fn: typeof response) { response = fn }, setBootstrap(fn: typeof bootstrap) { bootstrap = fn },
     async mount(kind = 'terminal', thread: string | null = 'A', strict = false) {
       await act(async () => {
-        const node = createElement(kind === 'agent' ? Agent : kind === 'pane' ? Pane : Terminal, { thread })
+        const node = createElement(kind === 'list' ? List : kind === 'agent' ? Agent : kind === 'pane' ? Pane : Terminal, { thread })
         view = create(strict ? createElement(StrictMode, null, node) : node)
       })
     },
     async switch(thread: string | null, kind = 'terminal') {
-      await act(async () => view!.update(createElement(kind === 'agent' ? Agent : Terminal, { thread })))
+      await act(async () => view!.update(createElement(kind === 'list' ? List : kind === 'agent' ? Agent : Terminal, { thread })))
     },
     async advance(ms: number) {
       const end = now + ms
@@ -339,4 +342,32 @@ test('agent definitive bootstrap loss stops retries and late bootstrap cannot at
   await f.advance(60_000)
   assert.equal(Source.all.length, 2)
   assert.equal(Source.all.filter(s => s.readyState !== 2).length, 0)
+}))
+
+
+test('list buffers changes during a read, applies healthy patches without refetch, and fences navigation', async () => fixture(async f => {
+  const pending: Array<(response: Response) => void> = []
+  f.setResponse(() => new Promise(resolve => pending.push(resolve)))
+  const row = (title: string, bud = 'A') => ({ thread_id: 'thread', bud_id: bud, title,
+    created_at: '2026-09-30T00:00:00Z', last_conversation_at: '2026-09-30T00:00:00Z' })
+  const page = (title: string, epoch = 'epoch', bud = 'A') => Response.json({ threads: [row(title, bud)],
+    page: { has_more: false, next_cursor: null }, feed_checkpoint: { epoch, sequence: 1 } })
+  await f.mount('list')
+  const source = Source.all.at(-1)!
+  await act(async () => source.emit('ready', { epoch: 'epoch', sequence: 0 }))
+  await act(async () => source.emit('upsert', { epoch: 'epoch', sequence: 1, thread: row('older') }))
+  await act(async () => pending.shift()!(page('snapshot')))
+  assert.equal(f.list.threads[0].title, 'snapshot')
+  await act(async () => source.emit('upsert', { epoch: 'epoch', sequence: 2, thread: row('live') }))
+  assert.equal(f.list.threads[0].title, 'live')
+  assert.equal(f.requests.length, 1)
+  await act(async () => f.list.refresh())
+  await f.switch('B', 'list')
+  const next = Source.all.at(-1)!
+  await act(async () => next.emit('ready', { epoch: 'new', sequence: 0 }))
+  await act(async () => pending.shift()!(page('late')))
+  assert.equal(f.list.threads.length, 0)
+  await act(async () => pending.shift()!(page('B snapshot', 'new', 'B')))
+  assert.equal(f.list.threads[0].title, 'B snapshot')
+  assert.equal(Source.all.filter(source => source.readyState !== 2).length, 1)
 }))

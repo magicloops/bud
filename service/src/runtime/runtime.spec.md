@@ -297,3 +297,19 @@ commit, through the normal thread runtime buffer/authorized SSE attachment. Data
 is `{turn_id,work_duration_ms}` (nonnegative safe integer or null). This event may
 follow `final`; it changes neither execution status nor output activity. Durable
 page/state reads recover timing after a replay miss. No timer or runtime ledger.
+
+## Publication failure recovery
+
+`AgentRuntimeStateManager.invalidateReplay()` discards prior replay continuity and
+notifies live thread listeners with `agent.resync_required` /
+`reason: publication_failed`. Old cursors then require canonical bootstrap. The
+invocation lifecycle publisher uses this when a committed state cannot be emitted;
+execution truth remains in PostgreSQL.
+
+Tool-call events and pending-tool snapshots add the shared client presentation
+projection from `agent/message-view.ts`; call args remain distinct from results.
+
+Thread open uses `getSnapshot(threadId, true)` to insert a fresh checkpoint before
+canonical queries while preserving the same synchronous overlay. Ordinary state
+reads retain their existing cursor behavior. This prevents repaired transcript
+invalidations replaying forever. Runtime regression tests cover the boundary.

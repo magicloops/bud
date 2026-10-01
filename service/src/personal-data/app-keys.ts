@@ -1,3 +1,4 @@
+import { invocationTimingTransaction, recordInvocationChange } from "../agent/invocation-timing.js";
 import { and, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
@@ -142,9 +143,10 @@ export class AppKeys {
 
   async decide(owner: string, id: string, input: unknown) {
     const value = parseAppKeyInput(appKeyDecisionSchema, input);
-    await this.database.transaction(async tx => {
+    await invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       const prior = await this.load(tx, owner, id);
+      recordInvocationChange(tx, prior.invocationId);
       if (prior.decisionIdempotencyKey === value.idempotency_key) {
         if (hash(prior.decisionRequest) !== hash(value)) throw conflict();
         return;
@@ -266,7 +268,7 @@ export class AppKeys {
       .orderBy(keys.setupExpiresAt).limit(1);
     const target = candidate ?? keyCandidate;
     if (!target) return false;
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, target.owner);
       const pending = await tx.select({ id: requests.id }).from(requests).where(and(eq(requests.createdByUserId, target.owner),
         eq(requests.status, "pending"), lt(requests.expiresAt, now))).orderBy(requests.expiresAt).limit(100);
@@ -276,6 +278,7 @@ export class AppKeys {
         .where(inArray(requests.id, pending.map(row => row.id)));
       if (uninstalled.length) await tx.update(keys).set({ status: "setup_failed", encryptedEnvelope: null, revokedAt: now,
         version: sql`${keys.version} + 1`, outcomeCode: "setup_expired", updatedAt: now }).where(inArray(keys.id, uninstalled.map(row => row.id)));
+      if (pending.length) recordInvocationChange(tx);
       return pending.length + uninstalled.length > 0;
     });
   }

@@ -342,3 +342,11 @@ Automation pause/delete and bootstrap cancellation use the invocation-specific
 transaction wrapper when calling nested invocation cancellation. Timing and status
 commit together; terminal timing SSE publishes only after the outer transaction
 commits. Running cancellation still waits for executor acknowledgement.
+
+## Commit-only invocation wakeups
+
+Live/bootstrap admission now uses the shared invocation transaction boundary.
+App-key and automation/bootstrap proposal decisions, reconciliation and expiry
+register continuation hints in the outer transaction. Successful commit wakes the
+existing worker; rollback emits nothing. No new queue, polling worker or connection
+is added, and all existing owner locks, decision evidence and row stamps remain.

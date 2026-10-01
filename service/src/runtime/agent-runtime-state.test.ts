@@ -528,3 +528,32 @@ test("runtime snapshots expose waiting_for_terminal for a pending terminal.wait"
   runtime.finishTurn("thread-1");
   assert.equal(runtime.getSnapshot("thread-1").phase, "idle");
 });
+
+
+test("fresh open boundary acknowledges old invalidations and replays changes during canonical reads", () => {
+  const runtime = new AgentRuntimeStateManager();
+  const old = runtime.getSnapshot("thread");
+  runtime.emit("thread", { event: "transcript.invalidated", data: { message_ids: ["old"] } });
+  const boundary = runtime.getSnapshot("thread", true);
+  assert.notEqual(boundary.stream_cursor, old.stream_cursor);
+  runtime.emit("thread", { event: "transcript.invalidated", data: { message_ids: ["during-read"] } });
+  const events: unknown[] = [];
+  const attachment = runtime.attachCallback("thread", event => events.push(event.data), { afterCursor: boundary.stream_cursor });
+  assert.deepEqual(events, [{ message_ids: ["during-read"] }]);
+  attachment.detach();
+  const recovered = runtime.getSnapshot("thread", true);
+  const next: unknown[] = [];
+  runtime.attachCallback("thread", event => next.push(event), { afterCursor: recovered.stream_cursor }).detach();
+  assert.deepEqual(next, [], "a recovered mutation must not trigger an endless open/resync cycle");
+});
+
+
+test("continuity loss ends HTTP streams after an explicit resync frame", () => {
+  const runtime = new AgentRuntimeStateManager();
+  const events: string[] = []; let ended = 0;
+  const attachment = runtime.attach("thread", { log: { info() {} },
+    sse: (event: { event: string }) => events.push(event.event), raw: { end: () => ended++ } } as never);
+  runtime.invalidateReplay();
+  assert.equal(events.at(-1), "agent.resync_required"); assert.equal(ended, 1);
+  attachment.detach();
+});

@@ -19,6 +19,8 @@ class TestReply {
   payload: unknown = undefined;
   sent = false;
 
+  header(): this { return this; }
+
   status(code: number): this {
     this.statusCode = code;
     return this;
@@ -133,6 +135,7 @@ test("POST /api/threads/:threadId/read upserts the watermark when the message is
 
   mock.method(auth.api, "getSession", async () => SESSION as never);
   mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(db, "execute", async () => ({ rows: [{ unseen_thread_count: 0, updated_at: new Date("2026-09-30T00:00:00.000Z") }] }) as never);
 
   mock.method(db, "select", () => ({
     from() {
@@ -169,7 +172,7 @@ test("POST /api/threads/:threadId/read upserts the watermark when the message is
       return {
         onConflictDoUpdate(config: Record<string, unknown>) {
           conflictConfig = config;
-          return Promise.resolve(undefined);
+          return { returning: async () => [{ lastSeenMessageId: values.lastSeenMessageId }] };
         },
       };
     },
@@ -186,6 +189,7 @@ test("POST /api/threads/:threadId/read upserts the watermark when the message is
     ok: true,
     updated: true,
     last_seen_message_id: "22222222-2222-4222-8222-222222222222",
+    summary: { unseen_thread_count: 0, updated_at: "2026-09-30T00:00:00.000Z" },
   });
   const capturedInsert = insertedValues as InsertedReadState | null;
   assert.equal(capturedInsert?.threadId, ACCESS.thread.threadId);
@@ -211,6 +215,7 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
 
   mock.method(auth.api, "getSession", async () => SESSION as never);
   mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(db, "execute", async () => ({ rows: [{ unseen_thread_count: 0, updated_at: new Date("2026-09-30T00:00:00.000Z") }] }) as never);
 
   mock.method(db, "select", () => ({
     from() {
@@ -241,7 +246,7 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
   let insertCalled = false;
   mock.method(db, "insert", () => {
     insertCalled = true;
-    throw new Error("insert should not be called for stale watermark");
+    return { values: () => ({ onConflictDoUpdate: () => ({ returning: async () => [] }) }) } as never;
   });
 
   const response = await invokeRoute(handler, {
@@ -255,8 +260,9 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
     ok: true,
     updated: false,
     last_seen_message_id: "44444444-4444-4444-8444-444444444444",
+    summary: { unseen_thread_count: 0, updated_at: "2026-09-30T00:00:00.000Z" },
   });
-  assert.equal(insertCalled, false);
+  assert.equal(insertCalled, true);
 });
 
 test("GET /api/threads/:threadId/messages returns intermediate assistant phase metadata", async (t) => {
@@ -549,4 +555,26 @@ test("message viewport rejects malformed geometry at admission", async () => {
     assert.equal(CreateMessageSchema.safeParse({text:"hello",browser_viewport}).success,false);
   }
   assert.equal(CreateMessageSchema.safeParse({text:"hello"}).success,true);
+});
+
+
+test("message reconciliation authorizes before reading and bounds identifiers", async t => {
+  t.after(() => mock.restoreAll());
+  const server = createServer();
+  await registerThreadMessageRoutes(server, {} as never, {} as never);
+  const handler = server.routes.get("POST /api/threads/:threadId/messages/reconcile")!;
+  const session = mock.method(auth.api, "getSession", async () => null as never);
+  const thread = mock.method(db.query.threadTable, "findFirst", async () => null as never);
+  const read = mock.method(db, "select", () => { throw new Error("unexpected read"); });
+  const request = { headers: {}, params: { threadId: ACCESS.thread.threadId }, body: { message_ids: [ACCESS.thread.threadId] } };
+  assert.equal((await invokeRoute(handler, request)).statusCode, 401);
+  session.mock.mockImplementation(async () => SESSION as never);
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+  thread.mock.mockImplementation(async () => ACCESS.thread as never);
+  assert.equal((await invokeRoute(handler, { ...request, body: { message_ids: Array(201).fill(ACCESS.thread.threadId) } })).statusCode, 400);
+  assert.equal(read.mock.callCount(), 0);
+  read.mock.mockImplementation(() => ({ from: () => ({ where: () => ({ limit: async (limit: number) => {
+    assert.equal(limit, 200); return [];
+  } }) }) }) as never);
+  assert.deepEqual((await invokeRoute(handler, request)).payload, { messages: [], missing_message_ids: [ACCESS.thread.threadId] });
 });

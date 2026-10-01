@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, eq, ne, or } from "drizzle-orm";
 import { fromNodeHeaders } from "better-auth/node";
 import { z } from "zod";
 import { config } from "../config.js";
@@ -15,14 +15,12 @@ import {
   UserProfileUpdateError,
   updateUserProfileUsername,
 } from "../auth/session.js";
-import { countUnseenThreads } from "../notifications/index.js";
+import { loadNotificationSummary } from "../db/thread-read-state.js";
 import { db } from "../db/client.js";
 import {
   authAccountTable,
   authSessionTable,
   pushEndpointTable,
-  threadReadStateTable,
-  threadTable,
 } from "../db/schema.js";
 
 function serializeCurrentUser(currentUser: NormalizedCurrentUser) {
@@ -189,32 +187,7 @@ export async function registerMeRoutes(server: FastifyInstance): Promise<void> {
       });
     }
 
-    const rows = await db
-      .select({
-        lastAttentionMessageId: threadTable.lastAttentionMessageId,
-        lastAttentionMessageCreatedAt: threadTable.lastAttentionMessageCreatedAt,
-        lastSeenMessageId: threadReadStateTable.lastSeenMessageId,
-        lastSeenMessageCreatedAt: threadReadStateTable.lastSeenMessageCreatedAt,
-      })
-      .from(threadTable)
-      .leftJoin(
-        threadReadStateTable,
-        and(
-          eq(threadReadStateTable.threadId, threadTable.threadId),
-          eq(threadReadStateTable.userId, currentUser.user.id),
-        ),
-      )
-      .where(
-        and(
-          eq(threadTable.createdByUserId, currentUser.user.id),
-          isNull(threadTable.deletedAt),
-        ),
-      );
-
-    return {
-      unseen_thread_count: countUnseenThreads(rows),
-      updated_at: new Date().toISOString(),
-    };
+    return loadNotificationSummary(currentUser.user.id);
   });
 
   server.put("/api/me/push/endpoints/:installation_id", async (request, reply) => {

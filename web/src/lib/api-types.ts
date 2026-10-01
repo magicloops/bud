@@ -87,7 +87,15 @@ export type ApiThread = {
   model_selection_source?: 'thread' | 'service_default' | null
 }
 
+export type ApiToolPresentation = {
+  kind: 'questions' | 'app_permission' | 'automation_activation' | 'bootstrap' | 'browser_handoff' | 'terminal' | 'generic'
+  id: string | null
+  status: string | null
+}
+
 export type ApiMessage = {
+  tool_payload?: Record<string, unknown> | null
+  presentation?: ApiToolPresentation
   message_id: string
   client_id: string
   role: string
@@ -98,6 +106,11 @@ export type ApiMessage = {
 }
 
 export type ApiTurnTiming = { turn_id: string; work_duration_ms: number | null }
+export type ApiThreadListPage = {
+  threads: ApiThread[]
+  page: { has_more: boolean; next_cursor: string | null }
+  feed_checkpoint: { epoch: string; sequence: number }
+}
 
 export type ApiMessagePage = {
   turn_timings?: ApiTurnTiming[]
@@ -690,4 +703,13 @@ export type ApiModelContext = {
   messages: ApiModelContextMessage[]
   estimated_input_tokens: number
   context_budget: ApiContextBudget | null
+}
+
+/** Canonical thread-open boundary; optional workbench data loads separately. */
+export type ApiThreadOpen = {
+  thread: ApiThread
+  transcript: ApiMessagePage
+  agent_state: ApiAgentState
+  stream_cursor: string | null
+  included: { web_view: false; browser: false; context_budget: false }
 }

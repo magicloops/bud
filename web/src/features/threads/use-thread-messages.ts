@@ -5,6 +5,7 @@ import { generateMessageClientId } from '@/lib/messages'
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '@/lib/api-types'
 import {
   applyAgentStateOverlay,
+  insertStreamMessage,
   buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
@@ -188,6 +189,41 @@ export function useThreadMessages({
     publish(next.messages)
   }, [publish, applyTurnTimings])
 
+  const reconcileLoadedMessages = useCallback(async () => {
+    if (!threadId) return
+    const scope = selection.current
+    const loaded = messagesRef.current.filter(message => message.message_id !== message.client_id)
+    for (let offset = 0; offset < loaded.length; offset += 200) {
+      const batch = loaded.slice(offset, offset + 200)
+      const response = await apiFetch(`/api/threads/${threadId}/messages/reconcile`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_ids: batch.map(message => message.message_id) }),
+      })
+      if (selection.current !== scope) return
+      if (shouldAbortForUnauthorized(response)) return
+      if (!response.ok) throw new Error(`Message reconciliation failed: HTTP ${response.status}`)
+      const result = await response.json() as { messages: ApiMessage[]; missing_message_ids: string[] }
+      if (selection.current !== scope) return
+      const requested = new Map(batch.map(message => [message.message_id, message]))
+      const missing = new Set(result.missing_message_ids)
+      let next = messagesRef.current.filter(message => {
+        if (!missing.has(message.message_id) || requested.get(message.message_id) !== message) return true
+        removedIds.current.add(message.client_id)
+        protectedIds.current.delete(message.client_id)
+        return false
+      })
+      for (const message of result.messages) {
+        const current = next.find(row => row.message_id === message.message_id)
+        // A live update after this request owns the row until the next recovery.
+        if (current !== requested.get(message.message_id)) continue
+        protectedIds.current.delete(message.client_id)
+        removedIds.current.delete(message.client_id)
+        next = upsertMessage(next, message)
+      }
+      publish(next)
+    }
+  }, [threadId, publish, shouldAbortForUnauthorized])
+
   const loadOlderMessages = useCallback(async () => {
     if (
       !threadId ||
@@ -300,7 +336,7 @@ export function useThreadMessages({
   }, [setMessages])
 
   const applyToolResultMessage = useCallback((message: ApiMessage) => {
-    setMessages((prev) => upsertMessage(prev, message))
+    setMessages((prev) => insertStreamMessage(prev, message))
   }, [setMessages])
 
   const applyAssistantMessageStart = useCallback(({ turnId, clientId }: ApplyAssistantDraftArgs) => {
@@ -369,7 +405,7 @@ export function useThreadMessages({
     ({ turnId, clientId, messageId, text, message }: ApplyAssistantMessageArgs) => {
       if (message) {
         setMessages((prev) =>
-          upsertMessage(prev, message),
+          insertStreamMessage(prev, message),
         )
         return
       }
@@ -451,7 +487,7 @@ export function useThreadMessages({
   }: ApplyReasoningDoneArgs) => {
     if (message) {
       setMessages((prev) =>
-        upsertMessage(prev, message),
+        insertStreamMessage(prev, message),
       )
       return
     }
@@ -488,6 +524,7 @@ export function useThreadMessages({
     mergeLatestBootstrap,
     applyAgentState,
     loadOlderMessages,
+    reconcileLoadedMessages,
     addOptimisticUserMessage,
     removeMessage,
     reconcilePersistedUserMessage,

@@ -70,6 +70,8 @@ export const getToolName = (message: ApiMessage): string | null => {
   if (message.role !== 'tool') {
     return null
   }
+  const fromPayload = message.tool_payload?.tool
+  if (typeof fromPayload === 'string' && fromPayload.length > 0) return fromPayload
   const fromMetadata = metadataOf(message).tool
   if (typeof fromMetadata === 'string' && fromMetadata.length > 0) {
     return fromMetadata

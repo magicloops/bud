@@ -46,6 +46,8 @@ function NewThreadView() {
   const [optimisticMessage, setOptimisticMessage] = useState<ChatMessage | null>(null)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const creationAttemptRef = useRef<{ intent: string; body: string; clientId: string } | null>(null)
+  const submittingRef = useRef(false)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   // Until the user explicitly picks a level, follow the service default for
   // the selected model (e.g. Luna defaults to "high"); the pre-load 'low'
@@ -137,6 +139,7 @@ function NewThreadView() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (submittingRef.current) return
     if (!budId) {
       setError('No Bud selected')
       return
@@ -153,20 +156,30 @@ function NewThreadView() {
     setError(null)
     setStatus('dispatching')
     setMessageText('')
-    const clientId = generateMessageClientId()
+    const model = (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined
+    const reasoning = model ? reasoningEffort : undefined
+    const intent = JSON.stringify({ bud_id: budId, text: trimmedMessage, model, reasoning_effort: reasoning })
+    if (creationAttemptRef.current?.intent !== intent) {
+      const clientId = generateMessageClientId()
+      creationAttemptRef.current = { intent, clientId, body: JSON.stringify({ bud_id: budId,
+        creation_key: clientId, model, reasoning_effort: reasoning,
+        opening_message: { text: trimmedMessage, client_id: clientId, browser_viewport: browserViewport },
+      }) }
+    }
+    // Keep the exact geometry and IDs when retrying a lost response.
+    const attempt = creationAttemptRef.current
+    const clientId = attempt.clientId
+    submittingRef.current = true
     setOptimisticMessage({ message_id: clientId, client_id: clientId, role: 'user', display_role: 'User',
       content: trimmedMessage, created_at: new Date().toISOString(), metadata: { optimistic: true } })
 
     try {
-      // Create thread
+      // Create and admit atomically; the destination loader recovers any work
+      // completed before this response. No late stream cursor is assumed safe.
       const threadResp = await apiFetch('/api/threads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bud_id: budId,
-          model: (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined,
-          reasoning_effort: (modelTouchedRef.current || reasoningTouchedRef.current) && selectedModel ? reasoningEffort : undefined
-        })
+        body: attempt.body,
       })
       if (!threadResp.ok) {
         const body = await threadResp.json().catch(() => ({}))
@@ -174,30 +187,15 @@ function NewThreadView() {
       }
       const { thread_id } = (await threadResp.json()) as { thread_id: string }
 
-      // Post message
-      const messageResp = await apiFetch(`/api/threads/${thread_id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: trimmedMessage,
-          browser_viewport: browserViewport,
-          client_id: clientId,
-          model: (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined,
-          reasoning_effort: (modelTouchedRef.current || reasoningTouchedRef.current) && selectedModel ? reasoningEffort : undefined
-        })
-      })
-      if (!messageResp.ok) {
-        const body = await messageResp.json().catch(() => ({}))
-        throw new Error(body.error ?? `HTTP ${messageResp.status}`)
-      }
-
       // Navigate to the new thread
-      navigate({ to: '/$budId/$threadId', params: { budId, threadId: thread_id } })
+      await navigate({ to: '/$budId/$threadId', params: { budId, threadId: thread_id } })
     } catch (err) {
       setOptimisticMessage(null)
       setMessageText(trimmedMessage)
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to create thread')
+    } finally {
+      submittingRef.current = false
     }
   }
 

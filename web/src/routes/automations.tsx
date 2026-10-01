@@ -5,7 +5,7 @@ import { useAuthSession } from '@/contexts/auth-session-context'
 import { useRequireAuthenticatedUser } from '@/lib/route-auth'
 import { apiFetchJson, isApiError } from '@/lib/transport'
 import type { ModelInfo, ReasoningLevel } from '@/lib/models'
-import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-types'
+import type { ApiAutomationProposal, ApiBootstrapProposal, ApiThreadListPage } from '@/lib/api-types'
 import { AutomationProposalReview } from '@/components/automation-proposal-review'
 
 export const Route = createFileRoute('/automations')({
@@ -37,6 +37,31 @@ const empty = (): Definition => ({ name: '', instruction: '', event_type: 'conta
   bud_id: '', model_mode: 'inherit', model: '', reasoning_effort: 'none', target: { mode: 'new_thread' },
   data_access: { scopes: ['contacts.read'], history_days: 30 }, latest_start_seconds: 86400, max_invocations_per_day: 10 })
 
+function useThreadOptions(budId: string | undefined, selectedId?: string) {
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [page, setPage] = useState<ApiThreadListPage | null>(null)
+  const [selected, setSelected] = useState<Thread | null>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => { setCursor(null) }, [budId])
+  useEffect(() => {
+    const controller = new AbortController()
+    setPage(null); setSelected(null); setError(false)
+    if (budId) void Promise.all([
+      apiFetchJson<ApiThreadListPage>(`/api/threads?bud_id=${encodeURIComponent(budId)}&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal: controller.signal }),
+      selectedId ? apiFetchJson<Thread & { bud_id: string }>(`/api/threads/${encodeURIComponent(selectedId)}`, { signal: controller.signal }) : Promise.resolve(null),
+    ]).then(([result, selection]) => {
+      if (controller.signal.aborted) return
+      setPage(result); setSelected(selection?.bud_id === budId ? selection : null)
+    }).catch(() => { if (!controller.signal.aborted) setError(true) })
+    return () => controller.abort()
+  }, [budId, selectedId, cursor])
+  const rows: Thread[] = page?.threads ?? []
+  return { rows: selected && !rows.some(row => row.thread_id === selected.thread_id) ? [selected, ...rows] : rows,
+    controls: <>{error && <span role="alert">Could not load conversations.</span>}
+      {page?.page.next_cursor && <button type="button" className={button} onClick={() => setCursor(page.page.next_cursor)}>Older conversations</button>}
+      {cursor && <button type="button" className={button} onClick={() => setCursor(null)}>Latest conversations</button>}</> }
+}
+
 function AutomationsPage() {
   const { currentUser } = useAuthSession()
   const user = useRequireAuthenticatedUser(currentUser)
@@ -48,16 +73,13 @@ function AutomationList() {
   const search = Route.useSearch()
   const { rule: selected, proposal, bud_id, thread_id, state } = search
   const [buds, setBuds] = useState<Bud[]>([])
-  const [threads, setThreads] = useState<Thread[]>([])
+  const options = useThreadOptions(bud_id, thread_id)
+  const threads = options.rows
   useEffect(() => {
     const controller = new AbortController()
-    setThreads([])
-    Promise.all([
-      apiFetchJson<Bud[]>('/api/buds', { signal: controller.signal }),
-      bud_id ? apiFetchJson<Thread[]>(`/api/threads?bud_id=${encodeURIComponent(bud_id)}`, { signal: controller.signal }) : Promise.resolve([]),
-    ]).then(([availableBuds, availableThreads]) => {
-      if (!controller.signal.aborted) { setBuds(availableBuds); setThreads(availableThreads) }
-    }).catch(() => { if (!controller.signal.aborted) setError('Could not load context filters.') })
+    apiFetchJson<Bud[]>('/api/buds', { signal: controller.signal })
+      .then(available => { if (!controller.signal.aborted) setBuds(available) })
+      .catch(() => { if (!controller.signal.aborted) setError('Could not load context filters.') })
     return () => controller.abort()
   }, [bud_id])
   const navigate = useNavigate()
@@ -85,6 +107,7 @@ function AutomationList() {
     <div className="flex flex-wrap gap-3">
       <label>Bud<select className={field} value={bud_id ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, bud_id: e.target.value || undefined, thread_id: undefined } })}><option value="">All Buds</option>{buds.map(bud => <option key={bud.bud_id} value={bud.bud_id}>{bud.name}</option>)}</select></label>
       <label>Execution target<select className={field} disabled={!bud_id} value={thread_id ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, thread_id: e.target.value || undefined } })}><option value="">All conversations</option>{threads.map(thread => <option key={thread.thread_id} value={thread.thread_id}>{thread.title ?? 'Untitled conversation'}</option>)}</select></label>
+      {options.controls}
       <label>State<select className={field} value={state ?? ''} onChange={e => void navigate({ to: '/automations', search: { ...search, state: e.target.value || undefined } })}><option value="">All states</option><option value="enabled">Enabled</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label>
     </div>
     {thread_id && bud_id && <Link className="underline" to="/$budId/$threadId" params={{ budId: bud_id, threadId: thread_id }}>Back to conversation</Link>}
@@ -138,7 +161,8 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
   const [buds, setBuds] = useState<Bud[]>([])
   const [sources, setSources] = useState<Source[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [threads, setThreads] = useState<Thread[]>([])
+  const options = useThreadOptions(draft.bud_id, draft.target.mode === 'existing_thread' ? draft.target.thread_id : undefined)
+  const threads = options.rows
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -168,12 +192,11 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
   }, [id, reload])
   useEffect(() => {
     const controller = new AbortController()
-    setModels([]); setThreads([])
+    setModels([])
     if (!draft.bud_id) return () => controller.abort()
-    Promise.all([apiFetchJson<{ models: ModelInfo[] }>(`/api/models?bud_id=${encodeURIComponent(draft.bud_id)}`, { signal: controller.signal }),
-      apiFetchJson<Thread[]>(`/api/threads?bud_id=${encodeURIComponent(draft.bud_id)}`, { signal: controller.signal })])
-      .then(([catalog, available]) => { if (!controller.signal.aborted) { setModels(catalog.models); setThreads(available) } })
-      .catch(() => { if (!controller.signal.aborted) setMessage('Could not load models or threads. Select the Bud again or reload.') })
+    apiFetchJson<{ models: ModelInfo[] }>(`/api/models?bud_id=${encodeURIComponent(draft.bud_id)}`, { signal: controller.signal })
+      .then(catalog => { if (!controller.signal.aborted) setModels(catalog.models) })
+      .catch(() => { if (!controller.signal.aborted) setMessage('Could not load models. Select the Bud again or reload.') })
     return () => controller.abort()
   }, [draft.bud_id])
   const patch = (value: Partial<Definition>) => setDraft(current => ({ ...current, ...value }))
@@ -219,6 +242,7 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       {draft.model_mode === 'explicit' && <label className="block">Reasoning<select className={field} value={draft.reasoning_effort} onChange={event => patch({ reasoning_effort: event.target.value as ReasoningLevel })}>{!selectedModel?.reasoning.levels.some(level => level.value === draft.reasoning_effort) && <option value={draft.reasoning_effort}>{draft.reasoning_effort}</option>}{selectedModel?.reasoning.levels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select></label>}
       <label className="block">Conversation<select className={field} value={draft.target.mode} onChange={event => patch({ target: event.target.value === 'new_thread' ? { mode: 'new_thread' } : { mode: 'existing_thread', thread_id: '' } })}><option value="new_thread">New conversation for each invocation</option><option value="existing_thread">Use an existing conversation</option></select></label>
       {draft.target.mode === 'existing_thread' && <label className="block">Existing conversation<select className={field} required value={draft.target.thread_id} onChange={event => patch({ target: { mode: 'existing_thread', thread_id: event.target.value } })}><option value="">Choose a conversation</option>{threads.map(thread => <option key={thread.thread_id} value={thread.thread_id}>{thread.title || 'Untitled conversation'}</option>)}</select></label>}
+      {draft.target.mode === 'existing_thread' && options.controls}
       <details className="space-y-3 rounded border p-3"><summary className="cursor-pointer">Advanced settings</summary>
       <fieldset className="space-y-2"><legend>Contact sources</legend><p className="text-sm">Leave all unchecked to include every source.</p>{sources.map(source => <label className="flex gap-2" key={source.source_id}><input type="checkbox" disabled={source.revoked} checked={draft.sources.source_ids.includes(source.source_id)} onChange={event => patch({ sources: { source_ids: event.target.checked ? [...draft.sources.source_ids, source.source_id] : draft.sources.source_ids.filter(id => id !== source.source_id) } })} />Device {source.installation_id.slice(0, 8)} · Collection {source.collection_epoch.slice(0, 8)}{source.revoked ? ' (revoked)' : ''}</label>)}{sourceLimit && <p>Only the first 200 sources are shown.</p>}</fieldset>
       <fieldset className="space-y-2"><legend>Requested data access</legend><p>Contact names, organizations, phone numbers and emails.</p><label className="flex gap-2"><input type="checkbox" checked={draft.data_access.scopes.includes('location.read')} onChange={event => patch({ data_access: { ...draft.data_access, scopes: event.target.checked ? ['contacts.read', 'location.read'] : ['contacts.read'] } })} />Include location at collected precision</label><label className="block">History (days)<input className={field} type="number" required min={1} max={3650} value={draft.data_access.history_days} onChange={event => patch({ data_access: { ...draft.data_access, history_days: Number(event.target.value) } })} /></label></fieldset>

@@ -1,3 +1,4 @@
+import { invocationTimingTransaction, recordInvocationChange } from "../agent/invocation-timing.js";
 import { and, asc, desc, eq, isNull, lt, lte } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -55,6 +56,7 @@ export class AutomationBootstrapProposals {
   private async finish(tx: Transaction, row: Proposal, status: "expired" | "canceled" | "stale") {
     const [updated] = await tx.update(proposals).set({ status, version: row.version + 1, updatedAt: this.now() })
       .where(and(eq(proposals.id, row.id), eq(proposals.createdByUserId, row.createdByUserId))).returning();
+    recordInvocationChange(tx, row.invocationId);
     return updated;
   }
   private async reconcile(tx: Transaction, row: Proposal) {
@@ -78,7 +80,7 @@ export class AutomationBootstrapProposals {
   }
 
   async request(context: AutomationProposalContext, input: unknown) {
-    return this.database.transaction(tx => this.requestInTransaction(tx, context, input));
+    return invocationTimingTransaction(this.database, tx => this.requestInTransaction(tx, context, input));
   }
   /** Runner parks the matching intent and releases its lease in this same transaction. */
   async requestInTransaction(tx: Transaction, context: AutomationProposalContext, input: unknown) {
@@ -120,7 +122,7 @@ export class AutomationBootstrapProposals {
   }
 
   async get(owner: string, id: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       const result = serializeBootstrapProposal(await this.reconcile(tx, await this.load(tx, owner, id)));
       let model_resolution: AutomationModelResolution | null = null;
@@ -141,7 +143,7 @@ export class AutomationBootstrapProposals {
         before = cursor.before;
       } catch { throw conflict(); }
     }
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const [state] = await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update");
       if (!state) return { items: [], next_cursor: null };
       const pending = await tx.select().from(proposals).where(and(eq(proposals.createdByUserId, owner), eq(proposals.status, "pending")))
@@ -162,7 +164,7 @@ export class AutomationBootstrapProposals {
     return this.resolve(owner, id, { ...parseAutomationProposalInput(automationProposalCancelSchema, input), decision: "cancel" });
   }
   private async resolve(owner: string, id: string, value: { decision: "approve" | "decline" | "cancel"; expected_version: number; idempotency_key: string }) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       const prior = await this.load(tx, owner, id);
       if (prior.decisionIdempotencyKey === value.idempotency_key) {
@@ -196,6 +198,7 @@ export class AutomationBootstrapProposals {
         bootstrapId, version: prior.version + 1, decisionRequest: value, decisionIdempotencyKey: value.idempotency_key,
         decidedByUserId: owner, decidedAt: this.now(), updatedAt: this.now() })
         .where(and(eq(proposals.id, id), eq(proposals.createdByUserId, owner))).returning();
+      recordInvocationChange(tx, row.invocationId);
       return serializeBootstrapProposal(row);
     });
   }

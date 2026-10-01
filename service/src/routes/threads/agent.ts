@@ -1,8 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import {
-  AgentService,
-  getThreadContextBudgetSnapshot,
-} from "../../agent/index.js";
+import { AgentService } from "../../agent/index.js";
+import { loadThreadAgentState } from "./state-loader.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
@@ -146,29 +144,7 @@ export async function registerThreadAgentRoutes(
     }
 
     const runtimeSnapshot = agentRuntime.getSnapshot(params.threadId);
-    const browserHandoff = await agentService.durableInvocations?.pendingBrowserHandoffForThread?.(access.viewer.userId,params.threadId);
-    const environment = await agentService.getEnvironmentForBud(access.thread.budId);
-    const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget
-      ? runtimeSnapshot.context_budget
-      : await getThreadContextBudgetSnapshot({
-          thread: access.thread,
-          runtimeSnapshot, environment,
-          tools: await agentService.getContextTools(environment, params.threadId, access.viewer.userId),
-        });
-    reply.send({
-      ...runtimeSnapshot,
-      ...(!runtimeSnapshot.active && browserHandoff && (!runtimeSnapshot.turn_id || runtimeSnapshot.turn_id === browserHandoff.turn_id) ? browserHandoff :
-        ((runtimeSnapshot.pending_tool?.name === "browser_request_handoff" || runtimeSnapshot.pending_tool?.args?.wait_kind === "return_control") &&
-          runtimeSnapshot.turn_id !== browserHandoff?.turn_id ? {pending_tool:null} : {})),
-      ...(agentService.durableInvocations ? { invocations: (await agentService.durableInvocations.listForThread(access.viewer.userId, params.threadId)).map(serializeInvocation) } : {}),
-      ...(agentService.durableInvocations ? { pending_questions: await agentService.durableInvocations.pendingQuestionsForThread(access.viewer.userId, params.threadId) } : {}),
-      ...(agentService.durableInvocations ? { pending_data_requests: await agentService.durableInvocations.pendingDataRequestsForThread(access.viewer.userId, params.threadId) } : {}),
-      ...(agentService.durableInvocations ? { pending_automation_requests: await agentService.durableInvocations.pendingAutomationProposalsForThread(access.viewer.userId, params.threadId) } : {}),
-      ...(agentService.durableInvocations ? { pending_bootstrap_requests: await agentService.durableInvocations.pendingBootstrapProposalsForThread(access.viewer.userId, params.threadId) } : {}),
-      ...(agentService.durableInvocations?.pendingBrowserWaitsForThread ? { pending_browser_waits: await agentService.durableInvocations.pendingBrowserWaitsForThread(access.viewer.userId,params.threadId) } : {}),
-      environment,
-      context_budget: contextBudget,
-    });
+    reply.send(await loadThreadAgentState(access.viewer.userId, access.thread, agentService, runtimeSnapshot, true));
   });
 
   server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {

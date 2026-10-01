@@ -656,3 +656,10 @@ Pending browser waits render directly as an action row without the tool label, t
 memoized projector. Timing updates change the completed label only; grouping,
 streaming, disclosure and viewport policy are unchanged. Mounted parity tests
 cover merging and retention without requiring transcript rows to change.
+
+Compact canonical tool rows use `tool_payload` directly in the shared resolver,
+supplemented by timing metadata. No JSON display-content parse is needed.
+`ChatMessage` retains payload/presentation fields through timeline/work groups.
+
+`thread-panel.tsx` exposes loading, error, older and latest controls for bounded
+list windows; empty-state copy is withheld until the first snapshot settles.

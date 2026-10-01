@@ -37,10 +37,27 @@ test("protected resource metadata route advertises the mounted OAuth issuer", as
   });
 
   assert.equal(response.statusCode, 200);
+  assert.equal(response.headers["cache-control"], "public, max-age=3600, stale-while-revalidate=15, stale-if-error=86400");
   const metadata = response.json() as {
     resource: string;
     authorization_servers?: string[];
   };
   assert.equal(metadata.resource, config.apiAudience);
   assert.deepEqual(metadata.authorization_servers, [AUTH_ISSUER]);
+});
+
+test("issuer discovery overrides provider freshness at the HTTP boundary", async t => {
+  const server = Fastify({ logger: false });
+  t.after(() => server.close());
+  await registerAuthRoutes(server);
+  for (const url of [`/.well-known/oauth-authorization-server${config.betterAuthBasePath}`,
+    `${config.betterAuthBasePath}/.well-known/openid-configuration`]) {
+    const response = await server.inject(url);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers["cache-control"], "public, max-age=3600, stale-while-revalidate=15, stale-if-error=86400");
+    const metadata = response.json();
+    assert.equal(metadata.issuer, AUTH_ISSUER);
+    assert.equal(metadata.token_endpoint, `${AUTH_ISSUER}/oauth2/token`);
+    assert.equal(metadata.jwks_uri, `${AUTH_ISSUER}/jwks`);
+  }
 });

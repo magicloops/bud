@@ -1,4 +1,4 @@
-import { beginWorkTiming, settleWorkTiming, invalidateWorkTiming, settledTurnTiming, recordSettledTiming, invocationTimingTransaction } from "./invocation-timing.js";
+import { beginWorkTiming, settleWorkTiming, invalidateWorkTiming, settledTurnTiming, recordSettledTiming, recordInvocationChange, invocationTimingTransaction } from "./invocation-timing.js";
 import { browserHandoffTable as browserHandoff, browserSessionTable as browserSession, browserResourceTable as browserResource } from "../db/schema.js";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
@@ -155,7 +155,7 @@ export class InvocationRepository {
   }
 
   async admit(input: InvocationAdmission) {
-    return this.database.transaction(tx => this.admitInTransaction(tx, input));
+    return invocationTimingTransaction(this.database, tx => this.admitInTransaction(tx, input));
   }
 
   /** Caller owns the transaction so delivery, thread and input commit together. */
@@ -163,7 +163,7 @@ export class InvocationRepository {
     if (!input.owner || !input.idempotencyKey || input.idempotencyKey.length > 256 || !input.text || input.text.length > 100_000) {
       throw new InvocationError("invalid_admission");
     }
-    const [thread] = await tx.select({ threadId: threadTable.threadId, budId: threadTable.budId })
+    const [thread] = await tx.select({ threadId: threadTable.threadId, budId: threadTable.budId, tenantId: threadTable.tenantId })
       .from(threadTable).innerJoin(budTable, eq(budTable.budId, threadTable.budId))
       .where(and(eq(threadTable.threadId, input.threadId), eq(threadTable.createdByUserId, input.owner),
         eq(budTable.createdByUserId, input.owner), isNull(threadTable.deletedAt)))
@@ -197,7 +197,7 @@ export class InvocationRepository {
       clientId: input.clientId ?? generateMessageClientId(), threadId: thread.threadId,
       role: input.origin === "human" ? "user" : "system",
       displayRole: input.origin === "human" ? "User" : "Automation",
-      content: input.text, createdByUserId: input.owner,
+      content: input.text, createdByUserId: input.owner, tenantId: thread.tenantId,
       metadata: { ...input.metadata, invocation_id: id, origin: input.origin, model_context_at: null },
     }).returning();
     if (!message) throw new InvocationError("message_insert_failed");
@@ -205,13 +205,14 @@ export class InvocationRepository {
       id, turnId: ulid(), threadId: thread.threadId, budId: thread.budId, inputMessageId: message.messageId,
       origin: input.origin, idempotencyKey: input.idempotencyKey, model: input.model,
       workDurationMs: 0, reasoningEffort: input.reasoningEffort, latestStartAt: input.latestStartAt,
-      createdByUserId: input.owner,
+      createdByUserId: input.owner, tenantId: thread.tenantId,
     }).returning();
     if (!invocation) throw new InvocationError("invocation_insert_failed");
     await tx.update(threadTable).set({ lastActivityAt: sql`clock_timestamp()`,
       ...(input.persistModelSelection ? { modelId: input.model, reasoningEffort: input.reasoningEffort } : {}),
       messageCount: sql`${threadTable.messageCount} + 1`, lastMessagePreview: input.text.slice(0, 360) })
       .where(eq(threadTable.threadId, thread.threadId));
+    recordInvocationChange(tx, invocation.id);
     return { invocation, message, duplicate: false };
   }
 
@@ -310,6 +311,7 @@ export class InvocationRepository {
         leaseExpiresAt: sql`clock_timestamp() + interval '60 seconds'`, updatedAt: sql`clock_timestamp()` })
         .where(eq(inv.id, current.id)).returning();
       if (leased) {
+        recordInvocationChange(tx, leased.id);
         await tx.update(action).set({ fence: leased.fence }).where(and(eq(action.invocationId, current.id), eq(action.status, "waiting_for_user")));
       }
       return leased ?? null;
@@ -338,7 +340,8 @@ export class InvocationRepository {
   }
 
   async start(lease: InvocationLease) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       // Match rule/grant mutation lock order before locking the invocation.
       // A pause committed first must prevent the final start transition.
       await tx.select({ owner: dataOwnerStateTable.createdByUserId }).from(dataOwnerStateTable)
@@ -391,7 +394,8 @@ export class InvocationRepository {
 
   async defer(lease: InvocationLease, status: "waiting_for_bud" | "waiting_for_model" | "retry_wait", delaySeconds = 15) {
     if (!Number.isInteger(delaySeconds) || delaySeconds < 1 || delaySeconds > 300) throw new InvocationError("invalid_retry_delay");
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       await this.lockedLease(tx, lease, ["leased"]);
       const [continuation] = await tx.select({ id: action.id }).from(action)
         .where(and(eq(action.invocationId, lease.id), eq(action.status, "waiting_for_user"))).limit(1);
@@ -480,7 +484,8 @@ export class InvocationRepository {
   }
 
   async parkBrowserHandoff(lease: InvocationLease, callId: string, handoffId: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       const row = await this.lockedLease(tx, lease, ["running"]);
       const [handoff] = await tx.select().from(browserHandoff)
         .innerJoin(browserSession, eq(browserSession.id,browserHandoff.sessionId))
@@ -499,7 +504,7 @@ export class InvocationRepository {
   }
 
   async parkUserBrowserHandoff(lease:InvocationLease,nextCall?:{callId:string;tool:string}) {
-    return this.database.transaction(async tx=>{
+    return invocationTimingTransaction(this.database, async tx=>{
       const row=await this.lockedLease(tx,lease,["running"]);
       const [handoff]=await tx.select({handoff:browserHandoff}).from(browserHandoff)
         .innerJoin(browserSession,eq(browserSession.id,browserHandoff.sessionId))
@@ -508,6 +513,7 @@ export class InvocationRepository {
           eq(browserHandoff.kind,"user"),eq(browserHandoff.status,"pending"),isNull(browserHandoff.callId),
           sql`${browserResource.controlState}<>'agent'`)).limit(1);
       if(!handoff)return null;
+      recordInvocationChange(tx, lease.id);
       const callId=nextCall?.callId??`browser-user-${handoff.handoff.id}`;
       await tx.insert(action).values({id:ulid(),invocationId:row.id,callId,kind:nextCall?.tool??"browser_user_handoff",
         status:"waiting_for_user",fence:lease.fence+1,createdByUserId:row.createdByUserId,
@@ -521,7 +527,8 @@ export class InvocationRepository {
   }
 
   async parkQuestion(lease: InvocationLease, callId: string, questionRequestId: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       const row = await this.lockedLease(tx, lease, ["running"]);
       const [request] = await tx.select().from(question).where(and(
         eq(question.questionRequestId, questionRequestId), eq(question.threadId, row.threadId),
@@ -540,7 +547,8 @@ export class InvocationRepository {
   async parkAppDataRequest(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
       throw new InvocationError("invalid_tool_client_id");
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       // Request creation obtains owner then invocation locks, matching approval.
       // No request can commit without its durable parked action/reservation.
       const request = await new AppKeys(this.database).requestInTransaction(tx, {
@@ -562,7 +570,8 @@ export class InvocationRepository {
   async parkAutomationProposal(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
       throw new InvocationError("invalid_tool_client_id");
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
+      recordInvocationChange(tx, lease.id);
       const proposal = await new AutomationProposals(this.database).requestInTransaction(tx, {
         owner: lease.createdByUserId, invocationId: lease.id, workerId: lease.workerId ?? "", fence: lease.fence, callId,
       }, input);
@@ -581,11 +590,12 @@ export class InvocationRepository {
   async parkBootstrapProposal(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
       throw new InvocationError("invalid_tool_client_id");
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const result = await new AutomationBootstrapProposals(this.database).requestInTransaction(tx, {
         owner: lease.createdByUserId, invocationId: lease.id, workerId: lease.workerId ?? "", fence: lease.fence, callId,
       }, input);
       if (result.kind === "no_work") return result;
+      recordInvocationChange(tx, lease.id);
       const row = await this.lockedLease(tx, lease, ["running"]);
       const [intent] = await tx.update(action).set({ status: "waiting_for_user", fence: lease.fence + 1,
         evidence: { bootstrap_proposal_id: result.proposal.proposal_id, tool_client_id: clientId } })

@@ -8,6 +8,8 @@ import {
   mergeLatestBootstrapState,
   reconcileMessagePersistence,
   upsertDraftReasoningMessage,
+  upsertDraftAssistantMessage,
+  insertStreamMessage,
   upsertMessage,
 } from './thread-message-state.ts'
 
@@ -648,4 +650,18 @@ test('all durable browser waits survive later turns; canonical results and empty
   const reconciled = applyAgentStateOverlay([canonical,...pending.slice(1)],state)
   assert.equal(reconciled.find(m=>m.client_id==='one'),canonical)
   assert.deepEqual(applyAgentStateOverlay(pending,buildAgentState({pending_browser_waits:[]})),[])
+})
+
+
+test('canonical snapshot wins over replayed starts, deltas, pending calls and insert events', () => {
+  for (const role of ['assistant', 'reasoning', 'tool'] as const) {
+    const canonical = buildMessage({ client_id: 'stable', message_id: 'persisted', role, content: 'Current canonical' })
+    const rows = [canonical]
+    const draft = { ...canonical, message_id: 'stable', content: 'Old draft', metadata: { draft: true, pending: true } }
+    assert.equal(upsertMessage(rows, draft), rows)
+    assert.equal(upsertDraftAssistantMessage(rows, 'stable', () => draft), rows)
+    assert.equal(upsertDraftReasoningMessage(rows, 'stable', () => draft), rows)
+    assert.equal(insertStreamMessage(rows, { ...canonical, content: 'Old insert' }), rows)
+    assert.equal(upsertMessage(rows, { ...canonical, content: 'Explicit reconciliation' })[0].content, 'Explicit reconciliation')
+  }
 })

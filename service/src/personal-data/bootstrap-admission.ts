@@ -1,3 +1,4 @@
+import { invocationTimingTransaction } from "../agent/invocation-timing.js";
 import { DataRequestError } from "./contracts.js";
 import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -21,7 +22,7 @@ export class BootstrapAdmission {
         ownerFilter ? eq(groups.createdByUserId, ownerFilter) : undefined))
       .orderBy(asc(groups.nextAttemptAt), asc(groups.bootstrapId), asc(groups.groupIndex)).limit(1);
     if (!candidate) return false;
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       const owner = candidate.owner;
       const [locked] = await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update", { skipLocked: true });
       if (!locked) return false;

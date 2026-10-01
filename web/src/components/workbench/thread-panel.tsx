@@ -32,6 +32,10 @@ export type ThreadSummary = {
 }
 
 type ThreadPanelProps = {
+  onLoadMore?: () => void
+  onShowLatest?: () => void
+  loadError?: string | null
+  loading?: boolean
   threads: ThreadSummary[]
   activeThreadId: string | null
   onSelectThread: (threadId: string | null) => void
@@ -93,6 +97,7 @@ function getSessionStateLabel(state: string | null | undefined): string {
 }
 
 export function ThreadPanel({
+  onLoadMore, onShowLatest, loadError, loading,
   threads,
   activeThreadId,
   onSelectThread,
@@ -212,7 +217,10 @@ export function ThreadPanel({
           <Plus className="h-4 w-4" />
           New chat
         </button>
-        {orderedThreads.length === 0 && (
+        {loadError && <p role="alert">{loadError}</p>}
+        {onShowLatest && <button type="button" onClick={onShowLatest} className="text-sm underline">Latest conversations</button>}
+        {loading && orderedThreads.length === 0 && <p>Loading conversations…</p>}
+        {orderedThreads.length === 0 && !loadError && !loading && (
           <p className="text-sm italic text-muted-foreground">No threads yet. Create one to start chatting.</p>
         )}
         {orderedThreads.map((thread) => {
@@ -282,6 +290,7 @@ export function ThreadPanel({
             </div>
           )
         })}
+        {onLoadMore && <button type="button" onClick={onLoadMore} className="text-sm underline">Older conversations</button>}
       </div>
 
       {/* Delete Confirmation Dialog */}

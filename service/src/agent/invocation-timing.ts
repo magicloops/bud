@@ -36,16 +36,38 @@ export function subscribeTurnTimings(database: Database, publish: (threadId: str
   return () => { if (publishers.get(database) === publish) publishers.delete(database); };
 }
 const committedRows = new WeakMap<Transaction, TimedInvocation[]>();
+const changedInvocations = new WeakMap<Transaction, { ids: Set<string>; wake: boolean }>();
+const changeSubscribers = new WeakMap<object, (ids: string[]) => void>();
+export function subscribeInvocationChanges(database: object, publish: (ids: string[]) => void) {
+  changeSubscribers.set(database, publish);
+  return () => { if (changeSubscribers.get(database) === publish) changeSubscribers.delete(database); };
+}
+/** Raw-pg transaction owners call this only after COMMIT succeeds. */
+export function publishInvocationChanges(database: object, ids: string[] = []) {
+  changeSubscribers.get(database)?.(ids);
+}
+/** Register inside the outer transaction; rolled-back hints are discarded. */
+export function recordInvocationChange(tx: Transaction, id?: string) {
+  const changes = changedInvocations.get(tx);
+  if (changes) {
+    changes.wake = true;
+    if (id) changes.ids.add(id);
+  }
+}
 export function recordSettledTiming(tx: Transaction, row: TimedInvocation) {
   committedRows.get(tx)?.push(row);
+  if ('id' in row && typeof row.id === 'string') recordInvocationChange(tx, row.id);
 }
 /** Transaction owner publishes only after commit, including nested cancel helpers. */
 export async function invocationTimingTransaction<T>(database: Database, operation: (tx: Transaction) => Promise<T>): Promise<T> {
   const rows: TimedInvocation[] = [];
+  const changes = { ids: new Set<string>(), wake: false };
   const result = await database.transaction(async tx => {
     committedRows.set(tx, rows);
-    try { return await operation(tx); } finally { committedRows.delete(tx); }
+    changedInvocations.set(tx, changes);
+    try { return await operation(tx); } finally { committedRows.delete(tx); changedInvocations.delete(tx); }
   });
+  if (changes.wake) publishInvocationChanges(database, [...changes.ids]);
   for (const row of rows) {
     const timing = settledTurnTiming(row);
     if (timing) publishers.get(database)?.(row.threadId, timing);

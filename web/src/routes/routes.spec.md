@@ -382,8 +382,10 @@ authorization are unchanged. See [design](../../../design/assistant-output-activ
 
 ## Thread list invalidation
 
-The Bud layout subscribes once to its owned `/thread-list/stream`. Ready/change
-hints trigger serialized list refreshes (including inactive threads); heartbeat
-and normal agent progress do not poll. Requests abort on scope changes/unmount;
-failed refreshes retry. Loader, list, detail and patch merges preserve the newer
-conversation timestamp. The panel and default route share `compareThreads`.
+The Bud layout uses `useThreadList` and the single owner feed. Its loader fetches
+Bud inventory only. Ready/reconnect creates a bounded list snapshot; ordinary
+full-row patches update directly. Checkpoints discard covered patches; generations
+fence navigation and resync. The panel exposes loading/error and older/latest page
+controls. The default Bud route reads one latest row. Automation filter/editor
+selectors page 50 rows and separately resolve the selected owned thread, retaining
+selection outside the current page. No automatic full-inventory pagination loop.

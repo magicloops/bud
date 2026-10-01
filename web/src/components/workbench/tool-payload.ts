@@ -1,4 +1,4 @@
-type ToolMessage = { content: string; metadata?: Record<string, unknown> | null }
+type ToolMessage = { tool_payload?: Record<string, unknown> | null; content: string; metadata?: Record<string, unknown> | null }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -7,6 +7,7 @@ export function resolveToolPayload(message: ToolMessage): Record<string, unknown
   const metadata = isRecord(message.metadata) ? message.metadata : null
   // Pending forms are synthesized in metadata before a canonical result exists.
   if (metadata?.pending === true) return metadata
+  if (isRecord(message.tool_payload)) return { ...metadata, ...message.tool_payload }
   try {
     const content: unknown = JSON.parse(message.content)
     // Continuation receipts can have timing-only metadata. Their content is the

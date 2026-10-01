@@ -6,13 +6,63 @@ import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { providerRegistry } from "../../llm/index.js";
 import { registerThreadCoreRoutes } from "./core.js";
+import { ThreadCreationRepository } from "./creation-repository.js";
+import { InvocationError } from "../../agent/invocation-repository.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
+
+test("combined creation authorizes before admission and returns current retry state", async t => {
+  t.after(() => mock.restoreAll());
+  const server = createServer();
+  let admitted = 0;
+  let owner = "owner";
+  let budOwned = true;
+  let conflict = false;
+  mock.method(auth.api, "getSession", async () => owner ? { user: { id: owner }, session: { id: "session", expiresAt: new Date(Date.now() + 60000) } } as never : null);
+  mock.method(db.query.budTable, "findFirst", async () => budOwned ? { budId: "bud", createdByUserId: owner } as never : undefined);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "openai" }) as never);
+  mock.method(ThreadCreationRepository.prototype, "create", async (
+    input: Parameters<ThreadCreationRepository["create"]>[0],
+    prepare: Parameters<ThreadCreationRepository["create"]>[1],
+  ) => {
+    admitted++;
+    assert.equal(input.owner, "owner");
+    if (conflict) throw new InvocationError("creation_key_conflict");
+    const prepared = await prepare();
+    assert.equal(prepared!.admission.model, "gpt-5.6-sol");
+    assert.equal(prepared!.admission.metadata?.preferred_cwd, "/workspace");
+    assert.deepEqual(prepared!.admission.metadata?.browser_viewport, { width: 390, height: 700 });
+    return { duplicate: true, thread: { threadId: "thread", budId: "bud", modelId: "gpt-5.6-sol", reasoningEffort: "low" },
+      message: { messageId: "message", clientId: "client", role: "user", content: "Hello", createdAt: new Date() },
+      invocation: { id: "invocation", turnId: "turn", status: "succeeded", workStartedAt: null, workDurationMs: 1 },
+    } as never;
+  });
+  await registerThreadCoreRoutes(server, {} as never, {
+    durableInvocations: {}, getEnvironmentForBud: async () => ({ mode: "normal", bud_status: "online" }),
+  } as never);
+  const handler = server.routes.get("POST /api/threads")!;
+  const request = { headers: {}, body: { bud_id: "bud", creation_key: "key", model: "gpt-5.6-sol",
+    opening_message: { text: "Hello", cwd: "/workspace", browser_viewport: { width: 390, height: 700 } } } };
+  const response = await invokeRoute(handler, request);
+  assert.equal(response.statusCode, 200);
+  assert.equal((response.payload as { agent: { queued: boolean } }).agent.queued, false);
+  assert.equal((response.payload as { invocation: { status: string } }).invocation.status, "succeeded");
+  conflict = true;
+  assert.equal((await invokeRoute(handler, request)).statusCode, 409);
+  const before = admitted;
+  budOwned = false;
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+  owner = "";
+  assert.equal((await invokeRoute(handler, request)).statusCode, 401);
+  assert.equal(admitted, before);
+});
 
 class TestReply {
   statusCode = 200;
   payload: unknown = undefined;
   sent = false;
+
+  header(): this { return this; }
 
   status(code: number): this {
     this.statusCode = code;
@@ -137,13 +187,17 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       from() {
         return chain;
       },
+      innerJoin() {
+        return chain;
+      },
       leftJoin() {
         return chain;
       },
       where() {
         return chain;
       },
-      orderBy() {
+      orderBy() { return chain; },
+      limit() {
         return Promise.resolve(rows);
       },
     };
@@ -157,7 +211,7 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.payload, [
+  assert.deepEqual((response.payload as { threads: unknown[] }).threads, [
     {
       thread_id: "11111111-1111-4111-8111-111111111111",
       bud_id: "bud-1",

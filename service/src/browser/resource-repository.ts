@@ -1,3 +1,4 @@
+import { publishInvocationChanges } from "../agent/invocation-timing.js";
 import type { Pool, PoolClient } from "pg";
 import { ulid } from "ulid";
 import { pool } from "../db/client.js";
@@ -93,8 +94,8 @@ export class BrowserResourceRepository {
     return this.releaseAuthority(expected, false);
   }
 
-  private releaseAuthority(expected: BrowserResource, restarted: boolean, workspace?: {id:string; generation:string}): Promise<BrowserResource> {
-    return this.withLocked(expected.created_by_user_id, expected.bud_id, async (client, resource) => {
+  private async releaseAuthority(expected: BrowserResource, restarted: boolean, workspace?: {id:string; generation:string}): Promise<BrowserResource> {
+    const result = await this.withLocked(expected.created_by_user_id, expected.bud_id, async (client, resource) => {
       if (restarted) {
         this.revision(resource, expected.revision);
         if (resource.id !== expected.id || resource.control_epoch !== expected.control_epoch || resource.profile_generation !== expected.profile_generation || resource.desired_state !== "open")
@@ -132,6 +133,8 @@ export class BrowserResourceRepository {
       return (await client.query<BrowserResource>(`update browser_resource set control_state='agent',private_content=false,
         control_session_id=null,override_id=null,override_viewer_id=null,override_carrier_id=null,override_expires_at=null,control_epoch=control_epoch+$2,revision=revision+1,updated_at=now() where id=$1 returning *`, [resource.id, Number(restarted)])).rows[0];
     });
+    publishInvocationChanges(this.database);
+    return result;
   }
 
   /** A late failure must not pause a newer control decision. */

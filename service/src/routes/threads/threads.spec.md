@@ -14,6 +14,40 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 
 ## Files
 
+### Shared read loaders and `open.ts`
+
+`summary-loader.ts` owns the list/open summary projection (attention, model and
+terminal fields). `message-loader.ts` owns the bounded history query and settled
+timings. `state-loader.ts` shares the authorized durable/runtime projection;
+ordinary `/agent/state` retains context-budget reconstruction.
+
+`GET /api/threads/:threadId/open?limit=100` authorizes the thread, accepts limits
+1–200 and returns `thread`, `transcript`, `agent_state`, `stream_cursor`, and
+`included:{web_view:false,browser:false,context_budget:false}`. No optional resource
+or idle budget reconstruction runs. Both runtime overlays and attachment use the
+same snapshot captured synchronously before canonical reads; no later cursor can
+replace it. Required-load failures fail the response. This compound read is not
+an atomic DB snapshot. Client adoption awaits complete transcript publication and
+replay reconciliation tests.
+
+### `creation-repository.ts` and `creation-repository.test.ts`
+
+Atomic opening-message creation, owner/key fingerprint receipts, current-state
+retry recovery and post-commit invocation publication. PostgreSQL tests cover
+concurrent retries, rollback at each insert, owner/tenant inheritance, deletion
+tombstones and execution of the exact generated migration.
+
+`POST /api/threads` accepts `opening_message` using the message schema and requires
+`creation_key` (1–128 characters) on that path. Viewer and Bud authorization precede
+the transaction; a locked owner/Bud check repeats inside it. A fresh request returns
+201 with `thread_id`, `thread`, `message`, `invocation` and `agent`; equivalent
+retries return 200 with stable identities and current durable state. Conflicting
+semantic input returns 409 `creation_key_conflict`; a deleted result returns 404.
+Legacy mode returns 503 `durable_admission_required` without creating a thread.
+Empty thread creation retains its existing response. No stream cursor is supplied.
+The explicit initial thread model precedes an opening-message override. Retries
+do not re-resolve defaults, validate model availability or generate another title.
+
 ### `shared.ts`
 
 Shared Zod schemas, cursor helpers, model-selection serialization/metadata helpers, ownership-aware thread lookup, and Bud-local model availability validation helpers.
@@ -261,12 +295,9 @@ or message payload is rewritten; no additional endpoint or ownership authority.
 `thread_id`, all descending. `shared.ts` and list responses expose the canonical
 ordering timestamp independently of generic activity.
 
-`list-stream.ts` registers `GET /api/buds/:budId/thread-list/stream`: one shared
-PostgreSQL LISTEN connection per gateway, per-viewer owned Bud subscription,
-`ready`/`changed` invalidations and 15-second auth-checked heartbeats. Hints contain
-no thread data; clients re-read the owner-filtered list. Disconnect, revocation,
-backpressure and gateway shutdown clean up subscriptions. `list-stream.test.ts`
-covers anonymous/foreign rejection before LISTEN, scope filtering and revocation.
+`list-stream.ts` registers `GET /api/me/thread-list/stream`: shared owner-scoped
+full-row upsert/remove feed with bounded queues, checkpoint ordering, auth-checked
+delivery/heartbeats and explicit resync. The per-Bud changed→GET feed is retired.
 
 
 ## Browser request geometry — M4
@@ -277,3 +308,40 @@ in both durable admission and ordinary insertion, preserving existing owner and
 tenant inheritance. No browser allocation, prompt text or continuous device state.
 Browser dispatch uses the durable invocation's exact input message. Malformed
 sizes reject before persistence; route tests verify validation and admission data.
+
+### Open and read-watermark validation
+
+`open.test.ts` covers 401/404 before reads, bounded strict query validation,
+one runtime boundary before all canonical reads, omitted idle context work,
+no-store and required-load failure. The summary loader also joins the owned Bud.
+Mark-read delegates to `db/thread-read-state.ts`: conditional SQL upsert prevents
+concurrent rewinds and returns the stored watermark plus the shared owner-scoped
+notification `summary`, including for stale/idempotent requests.
+
+Message history/open and live transcript use `agent/message-view.ts` for compact
+tool results. Tool payload no longer repeats in wire content and metadata.
+
+
+## Performance route modules
+
+- `creation-repository.ts` / `.test.ts`: atomic owner-key receipt and first admission;
+  PostgreSQL retry/rollback/deletion and exact migration tests.
+- `summary-loader.ts`: shared owner/Bud SQL projection with bounded tuple pagination.
+- `message-loader.ts`: bounded transcript page and settled turn timings.
+- `state-loader.ts`: shared runtime/durable state; optional context reconstruction.
+- `open.ts` / `.test.ts`: one fresh checkpoint before authorized required reads.
+- `change-listener.ts` / `.test.ts`: one shared LISTEN connection; validates migration,
+  detects continuity loss; exact SQL commit/rollback/join/ownership fixtures.
+- `list-cursor.ts`: versioned opaque owner/filter-bound tuple cursor validation.
+- `list-feed.ts` / `.test.ts`: bounded per-owner materialization/read coordinator,
+  250 ms coalescing, checkpoint tests and continuity invalidation.
+- `messages.ts` also registers read-only POST `/messages/reconcile`, max 200 UUIDs,
+  owner/thread-filtered rows plus missing requested IDs; route auth/bounds fixtures.
+
+All these reads resolve the viewer first. List/open summaries repeat owned Bud and
+thread predicates; reconciliation resolves owned thread then owner-scopes message
+SQL. Read-only routes stamp no rows. No additional runtime dependencies.
+
+Thread/Bud ownership changes and thread deletion emit reset hints. Reset invalidates
+replay and ends HTTP agent attachments after a resync frame; clients must authorize
+again before opening/attaching. This does not change OAuth revocation policy.

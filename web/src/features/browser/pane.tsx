@@ -26,7 +26,7 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
     tracker.current = new BrowserRevealTracker()
     for (const message of initialMessages) {
       try {
-        const found = browserReveal(JSON.parse(message.content))
+        const found = browserReveal(message.tool_payload ?? JSON.parse(message.content))
         if (found) tracker.current.seed(found.key)
       } catch { /* Ordinary text is not browser state. */ }
     }

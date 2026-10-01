@@ -1,5 +1,13 @@
 # migrations
 
+### `0048_lush_timeslip.sql`
+
+Generated additive thread-creation receipt table, owner/key uniqueness, fingerprint
+and key bounds, and deletion-tolerant references. Applied locally transactionally
+after canceling db:push's unrelated invocation constraint recreation. Exact SQL
+executes in isolated PostgreSQL migration tests; metadata is generated and unedited.
+Deploy via db:migrate before enabling the combined-create service/web release.
+
 SQL migration files generated or maintained for schema evolution.
 
 ## Purpose
@@ -237,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0047` currently)
+- Snapshot files for each migration (`0000` through `0049` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -472,3 +480,11 @@ canceling unrelated db:push constraint churn. Isolated PostgreSQL fixtures cover
 schema transitions and the upgraded notification trigger. Quiesce old browser
 workers/controllers, migrate, install matching service/web/daemon/mobile, then
 resume. Do not roll back to sticky-pause binaries against this schema.
+
+### `0049_thread_change_publication.sql`
+
+Generated custom migration plus unchanged generated snapshot/journal. Adds five
+commit-delivered identity-only change triggers and helper functions; removes the
+old per-Bud list notification trigger/function. Conversation-order maintenance
+is retained. Exact SQL executes in isolated PostgreSQL tests and was applied
+locally. New service startup checks trigger installation; migrate before restart.

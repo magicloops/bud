@@ -767,3 +767,26 @@ state-feed fixture. Initial readiness and relevant changes trigger reads;
 transient failures retain bounded retry coverage. Thread-owned terminal/agent
 stream recovery remains unchanged by the browser polling removal. See the browser
 feature spec for feed ownership, hidden/resume behavior and idle-count tests.
+
+## Invocation lifecycle stream
+
+`use-agent-stream.ts` validates and forwards `agent.invocation_changed`, advancing
+the stream cursor and fencing in-flight snapshots without inferring model output.
+`invocation-state.ts` merges bounded canonical invocations by identity, retaining
+reservation priority and rejecting older attempts/lifecycle stages, including
+same-millisecond replay over a newer snapshot. Claim always advances attempt;
+waiting/retry to leased therefore remains valid. Unknown events are ignored.
+The route updates durable notices/cancellation/progress directly. Existing
+transcript recovery remains until the Phase 3 writer/replay gates are complete.
+
+## Bounded list and transcript recovery
+
+`thread-list-state.ts` / `.test.ts` own a capped sorted window, snapshot checkpoint,
+128 buffered patches, exact sequence checks and refill detection. `use-thread-list.ts`
+subscribes to the owner feed, serializes bounded snapshots, fences obsolete reads,
+recovers on reconnect/foreground/heartbeat loss, and exposes older/latest navigation.
+`client-recovery.test.tsx` additionally mounts this hook to exercise races and prove
+normal patches do not GET. `thread-message-state.ts` guards canonical rows from
+replayed drafts/calls/inserts. `use-thread-messages.ts` reconciles loaded canonical
+IDs in 200-row batches with scope/row-identity fencing; missing requested IDs remove
+only those rows. `use-agent-stream.ts` handles transcript inserts/invalidations.

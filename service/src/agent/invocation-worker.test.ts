@@ -7,6 +7,51 @@ import type { AgentExecutionHooks } from "./execution-lifecycle.js";
 
 const invocation = { id: "inv", threadId: "thread", createdByUserId: "owner", fence: 1, workerId: "worker" } as Invocation;
 const directive = { type: "tool_call", tool: "contacts_search", callId: "call", args: {} } as const;
+
+test("wake fills free slots and completion refills without another timer tick", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events: string[] = [];
+  const pending = Array.from({length: 6}, (_, i) => ({...invocation, id: `inv-${i}`, threadId: `thread-${i}`}));
+  const releases: (() => void)[] = [];
+  const repo = {...repository(events), claim: async () => { events.push('claim'); return pending.shift() ?? null; }};
+  const worker = new InvocationWorker({preflight: async () => 'ready', execute: async () => {
+    await new Promise<void>(resolve => releases.push(resolve));
+    return {status: 'succeeded'};
+  }}, repo);
+  worker.start();
+  for (let i = 0; i < 20; i++) worker.wake();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(releases.length, 4);
+  assert.equal(pending.length, 2);
+  assert.equal(events.filter(e => e === 'recover').length, 1);
+  releases[0]();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(releases.length, 5);
+  // Stop before releasing remaining tasks so no new execution can begin.
+  const stopping = worker.stop();
+  releases.slice(1).forEach(release => release());
+  await stopping;
+  assert.equal(pending.length, 1);
+});
+
+test("empty wakes do not spin and an admission hint claims before fallback", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events: string[] = [];
+  let eligible: Invocation | null = null;
+  let executions = 0;
+  const worker = new InvocationWorker({preflight: async () => 'ready', execute: async () => {
+    executions++; return {status:'succeeded'};
+  }}, {...repository(events), claim: async () => { events.push('claim'); const row = eligible; eligible = null; return row; }});
+  worker.start();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(events.filter(e => e === 'claim').length, 1);
+  eligible = invocation;
+  worker.wake();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(executions, 1);
+  assert.ok(events.filter(e => e === 'claim').length <= 4);
+  await worker.stop();
+});
 function repository(events: string[]) {
   return {
     recoverExpired: async () => { events.push("recover"); return 0; },

@@ -738,3 +738,12 @@ bounded lifecycle reasons and readiness duration, never tokens, text or pixels.
 Validation includes owned DB transitions, receipt/expiry races, archived workspace
 cleanup, native visit isolation and post-commit notification filtering. See
 [cutover](../../../plan/browser-agent-default/phase-5-validation-and-cutover.md).
+
+## Immediate invocation wakeups
+
+Raw-pg return-control parking publishes its invocation ID only after commit.
+Acknowledged browser return/recovery wakes the shared worker after the complete
+authority-release transaction commits. Hooks are scoped to the composition root's
+registered pool, so fixture/independent pools do not notify another worker. No
+new listener connection or browser protocol change. Periodic eligibility remains
+the fallback for lost local hints.
