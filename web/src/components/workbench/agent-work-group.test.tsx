@@ -14,8 +14,9 @@ const { AgentWorkGroup } = await import('./agent-work-group')
 import { projectTimeline, type TimelineWorkRow } from '@/features/threads/agent-work-projection'
 import type { ApiMessage } from '@/lib/api-types'
 
-const message = (id: string, role: ApiMessage['role'], content: string, extra = {}): ApiMessage => ({
+const message = (id: string, role: ApiMessage['role'], content: string, extra: Record<string, unknown> = {}): ApiMessage => ({
   message_id: id, client_id: id, role, display_role: role, content,
+  tool_payload: role === 'tool' && extra.tool ? { tool: extra.tool } : null,
   created_at: '2026-09-09T10:00:00Z', metadata: { turn_id: 'T', ...extra },
 })
 const tool = message('tool', 'tool', 'tool result', { tool: 'test_tool' })
@@ -61,7 +62,7 @@ test('completed activity summaries describe membership instead of the last actio
   const completed = render([...items, commentary], false, true)
   assert.match(completed, /2 reasoning steps and 3 tool calls/)
   assert.doesNotMatch(completed, /browser_observe|Last reasoning|5 activities/)
-  assert.match(render([...items, commentary]), /browser_observe/)
+  assert.match(render([...items, commentary]), /lucide-globe/)
   assert.match(render([reasoning, commentary], false, true), /1 reasoning step<\/span>/)
   assert.match(render([tool, commentary], false, true), /1 tool call<\/span>/)
 })
@@ -160,4 +161,85 @@ test('spinner reserves space, reveals on working or 500 ms, and cancels hidden f
     globalThis.window = previousWindow
     actGlobal.IS_REACT_ACT_ENVIRONMENT = previousAct
   }
+})
+
+
+test('compact tool rows show structured tool identity and command, including pending calls', () => {
+  const browser = { ...tool, display_role: 'Tool', content: 'Browser operation completed.',
+    tool_payload: { tool: 'browser_exec', result: 'private output' }, metadata: { turn_id: 'T' } }
+  assert.match(render([browser]), /lucide-globe/)
+  assert.doesNotMatch(render([browser]), /private output/)
+  const terminal = { ...browser, tool_payload: { tool: 'terminal.run', command: 'pwd' },
+    metadata: { turn_id: 'T', pending: true } }
+  assert.match(render([terminal]), /terminal.run · pwd/)
+  assert.match(render([terminal]), /1 running/)
+  const historical = { ...browser, tool_payload: null, content: 'Historical output' }
+  const html = render([historical], false, true, new Set(['item:tool']))
+  assert.match(html, /Historical output/)
+  assert.doesNotMatch(html, /Show payload/)
+})
+
+test('grouped generic and specialized tools disclose full payload only on request', async () => {
+  const { act, create } = await import('react-test-renderer')
+  const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const previousAct = actGlobal.IS_REACT_ACT_ENVIRONMENT
+  actGlobal.IS_REACT_ACT_ENVIRONMENT = true
+  try {
+    for (const toolName of ['browser_exec', 'terminal.run']) {
+      let formats = 0
+      const payload = { tool: toolName, command: 'pwd', output: 'terminal output',
+        result: { nested: 'full payload value' }, toJSON() { formats++; return { tool: toolName, result: this.result } } }
+      const item = { ...tool, content: 'Operation completed.', tool_payload: payload }
+      const row = projectTimeline({ messages: [item], liveTurnId: 'T' })[0] as TimelineWorkRow
+      let root: ReturnType<typeof create> | undefined
+      try {
+        await act(() => { root = create(createElement(AgentWorkGroup, {
+          row, expanded: true, expandedItems: new Set(['activity:tool', 'item:tool']),
+          onToggle: () => {}, onToggleItem: () => {},
+        })) })
+        assert.equal(formats, 0)
+        assert.doesNotMatch(JSON.stringify(root!.toJSON()), /full payload value/)
+        const toggle = () => root!.root.findAllByType('button').find(button => button.children.includes('Show payload') || button.children.includes('Hide payload'))!
+        await act(() => toggle().props.onClick())
+        assert.equal(toggle().props['aria-expanded'], true)
+        assert.match(JSON.stringify(root!.toJSON()), /full payload value/)
+        assert.ok(formats > 0)
+        await act(() => toggle().props.onClick())
+        assert.doesNotMatch(JSON.stringify(root!.toJSON()), /full payload value/)
+      } finally {
+        await act(() => root?.unmount())
+      }
+    }
+  } finally {
+    actGlobal.IS_REACT_ACT_ENVIRONMENT = previousAct
+  }
+})
+
+
+test('browser intent uses a globe with tool identity and fenced code in expanded details', () => {
+  const args = { summary: 'Find the pricing page', code: 'await browser.tabs.list()' }
+  for (const payload of [{ tool: 'browser_exec', ...args }, { tool: 'browser_exec', args, summary: 'Browser outcome is unknown.' }]) {
+    const item = { ...tool, tool_payload: payload }
+    assert.match(render([item]), /lucide-globe/)
+    assert.match(render([item]), /Find the pricing page/)
+    assert.doesNotMatch(render([item]), /browser_exec/)
+    const opened = render([item], false, true, new Set(['item:tool']))
+    assert.match(opened, /browser_exec/)
+    assert.match(opened, /Find the pricing page/)
+    assert.match(opened, /data-language="javascript"/)
+    assert.match(opened, /await browser.tabs.list/)
+    assert.match(opened, /Show payload/)
+    assert.doesNotMatch(render([item]), /await browser.tabs.list/)
+  }
+})
+
+
+test('browser code containing Markdown fences stays inside a code block', () => {
+  const item = { ...tool, tool_payload: { tool: 'browser_exec', args: {
+    summary: 'Inspect page text', code: '// ```\n// # Not a heading\nconsole.log("```")',
+  } } }
+  const html = render([item], false, true, new Set(['item:tool']))
+  assert.match(html, /Not a heading/)
+  assert.doesNotMatch(html, /<h1/)
+  assert.match(html, /data-language="javascript"/)
 })

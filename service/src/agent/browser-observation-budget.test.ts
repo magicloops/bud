@@ -8,7 +8,7 @@ test('uncertain clicks retain honest outcomes without retry or invented success'
   const executor=new BrowserToolExecutor({available:async()=>true,execute:async()=>{
     calls++; return {ok:false,outcome:'unknown',error:'browser_outcome_unknown'};
   }},async()=>true);
-  const result=await executor.execute(context,{type:'tool_call',tool:'browser_exec',callId:'click',args:{code:'await handle.click()'}});
+  const result=await executor.execute(context,{type:'tool_call',tool:'browser_exec',callId:'click',args:{summary: "Inspect the browser page", code:'await handle.click()'}});
   assert.equal(calls,1);assert.equal(result.result.retryable,false);
   assert.equal(result.payload.outcome,'unknown');assert.equal(result.payload.error,'browser_outcome_unknown');
   assert.match(result.summary,/Inspect state/);

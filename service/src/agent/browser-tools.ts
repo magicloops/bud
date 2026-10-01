@@ -10,7 +10,7 @@ export function isBrowserToolName(name: string): name is BrowserToolName {
 }
 
 const schemas = {
-  browser_exec: z.object({ code: z.string().min(1).refine(s => Buffer.byteLength(s) <= 64 * 1024) }).strict(),
+  browser_exec: z.object({ summary: z.string().trim().min(1).max(200), code: z.string().min(1).refine(s => Buffer.byteLength(s) <= 64 * 1024) }).strict(),
   browser_request_handoff: z.object({ reason: z.string().trim().min(1).max(500) }).strict(),
 };
 
@@ -32,7 +32,7 @@ export function validBrowserInput(name: BrowserToolName, input: unknown): boolea
   try { parseBrowserInput(name, input); return true; } catch { return false; }
 }
 export const BROWSER_ARGUMENT_GUIDANCE: Record<BrowserToolName, string> = {
-  browser_exec: "Use {code: JavaScript}; retain var s=await tab.snapshot(); display s.format() or selected evidence with console.log(value) or a final non-undefined expression or await repl.emitImage(await tab.screenshot()).",
+  browser_exec: "Use {summary: a short description of the intended operation, code: JavaScript}; retain var s=await tab.snapshot(); display s.format() or selected evidence with console.log(value) or a final non-undefined expression or await repl.emitImage(await tab.screenshot()).",
   browser_request_handoff: "Use {reason: a short nonempty explanation}; no credentials or other fields.",
 };
 export const BROWSER_REPL_TOOLS: CanonicalTool[] = [
@@ -43,6 +43,6 @@ Actions: after a fresh snapshot, tab.getByReference(reference) or tab.getByRole(
 Extraction: await tab.evaluate(fn,jsonArgument?) returns JSON from the main frame. await tab.frames() lists IDs; tab.frame(frame_id).evaluate(fn,arg) queries an owned frame. Functions have no Node closure: pass arguments explicitly. Evaluation may mutate and never retries. Use this facade for browser work; no raw CDP, unwrapped Playwright or terminal bypass of private control.
 Output: console.log accepts multiple arguments; a final selected value displays automatically, e.g. snapshot.format({nodes:snapshot.nodes.filter(n=>n.role==='heading')}). Objects use inspection previews (depth 5, arrays 100, nested strings 10000 characters), not JSON; getters/custom inspection are disabled. For exact serialized evidence use console.log(JSON.stringify(selected)). A final console call does not echo twice. Screenshot buffers display only a notice: await repl.emitImage(await tab.screenshot()) explicitly emits up to two images for image-capable models.
 Console and final values share 8 KiB UTF-8 per cell. Only when selected relevant evidence needs more, call repl.setOutputBudget(bytes) before any output (integer 1024..32768); it resets next cell. Overflow keeps preceding emissions plus a labeled incomplete text excerpt when space permits, and returns truncated:true plus output_artifact (up to 1 MiB, marked if incomplete). This is not an execution failure. Select from retained data first, or inspect a bounded relevant artifact excerpt; never reprint the entire oversized artifact or repeat completed actions. Excerpts are not complete JSON. Captures contain formatted text and are not necessarily JSON or complete. repl.files.write(textOrJson) returns {path,bytes,truncated}; repl.files.read(path) uses that exact opaque path. At most 16 files of 1 MiB; oldest evicted, reset removes them.
-Check runtime_generation/runtime_created/reset_reason for heap loss; reacquire handles after reset. Failed/interrupted cells may have partial effects: observe before reconsidering an action. Use browser_request_handoff for private sign-in when available; after Return observe afresh.`, { code: string }, ["code"]),
+Check runtime_generation/runtime_created/reset_reason for heap loss; reacquire handles after reset. Failed/interrupted cells may have partial effects: observe before reconsidering an action. Use browser_request_handoff for private sign-in when available; after Return observe afresh.`, { summary: { type: "string", minLength: 1, maxLength: 200, description: "Short user-facing description of what this cell attempts to accomplish (for example, Find the pricing page and compare plans). Describe intent, not a completed outcome. Use plain language; omit code, credentials and secrets." }, code: string }, ["summary", "code"]),
   tool("browser_request_handoff", "Ask the user for browser help, for example to sign in. This parks this task but does not grant human control or lock other browser work. The user may explicitly take control or reply with alternative instructions. After an associated takeover ends, inspect the page afresh; ending control does not prove the requested task was completed. Supply a short reason, never passwords or OTPs.", { reason: string }, ["reason"]),
 ];

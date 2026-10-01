@@ -1467,7 +1467,7 @@ cancellation and message owner stamping apply; no new scheduler/table/route.
 
 ## Browser REPL selective observations — Phase 2
 
-`browser-tools.ts` provides strict `browser_exec({code})` (64 KiB UTF-8), detailed
+`browser-tools.ts` provides strict `browser_exec({summary, code})` (64 KiB UTF-8), detailed
 facade/output guidance and BROWSER_REPL_TOOLS. Every environment exposes exec
 plus the independently defined handoff tool, with no mode switch.
 Snapshot guidance starts with an unscoped read; optional `scope` is a returned
@@ -1614,3 +1614,14 @@ coalesce bounded database hints, reload authorized inserts, invalidate mutations
 and fence in-flight loads on continuity loss. Thread route composition owns its
 shared database listener. `invocation-events.ts` / `.test.ts` serialize committed
 invocation reload/publication; failure explicitly invalidates replay.
+
+
+## Browser operation intent summaries
+
+`browser_exec` requires a model-authored `summary` (trimmed, 1–200 characters)
+explaining intended work. It is retained in args for pending calls and results;
+successful result summaries and compact content use it directly. Rejection and
+unknown-outcome summaries retain service guidance. Handoff keeps its existing
+reason. No additional model request, daemon change or migration is needed.
+Drain active old-schema turns before deploying; historical rows are unchanged.
+See [implementation and rollout](../../../plan/browser-operation-summaries.md).
