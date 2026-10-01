@@ -167,15 +167,13 @@ export const buildPendingToolMessageFromToolCall = ({
     client_id: clientId,
     role: 'tool',
     display_role: name,
-    content: JSON.stringify({ tool: name, call_id: callId, ...argsObj }),
+    content: name,
+    tool_payload: { ...argsObj, tool: name, call_id: callId },
     created_at: startedAt ?? createdAt ?? new Date().toISOString(),
     metadata: {
-      tool: name,
-      call_id: callId,
       turn_id: turnId,
       pending: true,
       ...(startedAt ? { started_at: startedAt } : {}),
-      ...argsObj,
     },
   }
 }

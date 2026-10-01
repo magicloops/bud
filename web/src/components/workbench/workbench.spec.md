@@ -71,10 +71,11 @@ Thread list sidebar for conversation navigation.
 ### `chat-timeline.tsx`
 
 Tool payload lookup is shared with work-group details through `tool-payload.ts`.
-Completed canonical JSON content takes precedence over metadata, so answered
-continuations with timing-only metadata render their question/answer correctly.
-Pending forms remain metadata-backed. `tool-payload.test.ts` covers continuation
-receipts, pending forms, legacy fallback, malformed content and precedence.
+Canonical results and locally synthesized pending forms both use `tool_payload`,
+supplemented by service timing and local pending metadata. Display content is never
+parsed as tool JSON. Null/missing payloads retain plain-text rendering without
+resurrecting a tool from metadata. `tool-payload.test.ts` covers continuations,
+pending forms, null payloads and structured-payload precedence.
 
 Message list with auto-scroll and full-height message rendering.
 

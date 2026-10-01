@@ -516,5 +516,6 @@ waiting task. This supersedes historical private-pause/recovery descriptions abo
 Mounted tests cover hidden release, passive closure, reconnect, native suspension,
 input and handoff behavior. Physical phone/network acceptance remains in the plan.
 
-Transcript browser reveal reads structured `tool_payload` before historical JSON
-content, preserving reveal identity with compact tool rows.
+Transcript browser reveal reads only structured `tool_payload` from tool rows.
+Historical JSON normalization belongs to the service; plain display content never
+triggers browser discovery or reveal. Existing reveal identities remain unchanged.

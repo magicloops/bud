@@ -15,7 +15,7 @@ agent stream, terminal, file-viewer, and web-view state.
 Message/transcript ownership for the existing-thread route.
 
 **Responsibilities**:
-- bootstrap transcript state from loader-provided `{ messages, page }` plus `/agent/state` overlays
+- bootstrap transcript state from loader-provided `/open.transcript` plus `/open.agent_state` overlays
 - notify the timeline viewport owner before older history is published; it preserves the visible anchor
 - fetch older transcript pages through `before=<cursor>`; `loadOlderMessages` is re-entrancy-safe (in-flight ref, since the timeline's scroll sentinel can fire again before state re-renders) and exposes `olderMessagesLoadFailed` so the timeline pauses auto-loading after a failure and shows a retry
 - create and reconcile optimistic user messages
@@ -347,7 +347,7 @@ Agent SSE ownership for the existing-thread route.
 - monitor heartbeats and reconnect stale/closed streams
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
-- detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/messages` + `/agent/state`, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
+- detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/open` and reconcile loaded older message IDs, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
 - apply refreshed `/agent/state.last_error` after bootstrap recovery so missed fast failure events remain visible in the composer error slot
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.reasoning_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status, and live `terminal.wait` tool calls to `waiting_for_terminal`, instead of the generic streaming state
@@ -790,3 +790,21 @@ normal patches do not GET. `thread-message-state.ts` guards canonical rows from
 replayed drafts/calls/inserts. `use-thread-messages.ts` reconciles loaded canonical
 IDs in 200-row batches with scope/row-identity fencing; missing requested IDs remove
 only those rows. `use-agent-stream.ts` handles transcript inserts/invalidations.
+
+## Compact tool and optional budget adoption
+
+`use-context-budget.ts` owns the optional meter inside the owner/thread-keyed
+workbench. It loads `/agent/state` after mount and on accepted open recovery,
+without applying that response's lifecycle, messages or stream cursor. Omitted
+budget values preserve the current meter; explicit null clears it. Newer budget
+snapshots abort superseded reads; unmount and request generations fence late
+results. Failure retains the last known meter until a subsequent refresh.
+`use-context-budget.test.tsx` covers delayed mount reads, omission/null, failure,
+compaction supersession, overlapping reads and owner/thread remounts.
+
+Pending tools from live calls and all durable inventories use `tool_payload` with
+human-readable content. Metadata holds local pending/turn/timing flags, not a
+second tool payload. Canonical replacement retains the existing client identity.
+Work grouping reads return-control evidence from the structured payload, keeping
+pending browser waits outside collapsed work. Conformance fixtures use the same
+compact wire shape; old history is normalized by the service before delivery.

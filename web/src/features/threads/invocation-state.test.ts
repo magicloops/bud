@@ -56,7 +56,7 @@ test('cold bootstrap restores a question once, then removes it after answer', ()
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, question.client_id)
   assert.equal(rows[0].created_at, question.created_at)
-  assert.equal(JSON.parse(rows[0].content).request_id, 'q-1')
+  assert.equal(rows[0].tool_payload?.request_id, 'q-1')
   assert.equal(applyAgentStateOverlay(rows, snapshot).length, 1)
   assert.deepEqual(applyAgentStateOverlay(rows, state({ pending_questions: [] })), [])
 })
@@ -101,7 +101,7 @@ test('automation reviews recover once and completed decisions beat stale pending
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, pending.client_id)
   assert.equal(rows[0].created_at, pending.created_at)
-  assert.equal(JSON.parse(rows[0].content).proposal_id, pending.proposal_id)
+  assert.equal(rows[0].tool_payload?.proposal_id, pending.proposal_id)
   assert.deepEqual(applyAgentStateOverlay(rows, snapshot), rows)
   const runtime = { client_id: 'review-client', call_id: pending.call_id,
     name: 'automations_request_activation', args: pending.proposal }
@@ -140,7 +140,7 @@ test('existing-contact reviews recover once and completed decisions beat stale p
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, pending.client_id)
   assert.equal(rows[0].created_at, pending.created_at)
-  assert.equal(JSON.parse(rows[0].content).proposal_id, pending.proposal_id)
+  assert.equal(rows[0].tool_payload?.proposal_id, pending.proposal_id)
   assert.deepEqual(applyAgentStateOverlay(rows, snapshot), rows)
   const runtime = { client_id: 'review-client', call_id: pending.call_id,
     name: 'automations_request_existing_contacts', args: pending.proposal }

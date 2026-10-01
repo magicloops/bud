@@ -62,9 +62,7 @@ export const getMessageTiming = (message: ApiMessage): AgentMessageTiming | null
 }
 
 /**
- * Tool name for a `role: "tool"` row: pending rows carry `metadata.tool`;
- * canonical rows carry it in the JSON content payload (and usually in the
- * spread payload metadata too).
+ * Canonical and locally synthesized pending tools share the structured payload.
  */
 export const getToolName = (message: ApiMessage): string | null => {
   if (message.role !== 'tool') {
@@ -72,14 +70,5 @@ export const getToolName = (message: ApiMessage): string | null => {
   }
   const fromPayload = message.tool_payload?.tool
   if (typeof fromPayload === 'string' && fromPayload.length > 0) return fromPayload
-  const fromMetadata = metadataOf(message).tool
-  if (typeof fromMetadata === 'string' && fromMetadata.length > 0) {
-    return fromMetadata
-  }
-  try {
-    const payload = JSON.parse(message.content) as { tool?: unknown }
-    return typeof payload.tool === 'string' && payload.tool.length > 0 ? payload.tool : null
-  } catch {
-    return null
-  }
+  return null
 }

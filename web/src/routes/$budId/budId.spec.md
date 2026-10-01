@@ -96,14 +96,9 @@ Main thread view with chat, terminal, and workspace composition behavior (~375 l
 
 **Loader**:
 ```typescript
-loader: async ({ params }) => {
-  const [messagePage, agentState, thread] = await Promise.all([
-    apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`),
-    apiFetchJson(`/api/threads/${params.threadId}/agent/state`),
-    apiFetchJson(`/api/threads/${params.threadId}`)
-  ])
-  return { messagePage, agentState, thread }
-}
+const { transcript: messagePage, agent_state: agentState, thread } =
+  await apiFetchJson(`/api/threads/${params.threadId}/open?limit=100`)
+return { messagePage, agentState, thread }
 ```
 
 **Major Features**:
@@ -441,7 +436,7 @@ The existing-thread route now merges canonical `agent.invocation_changed` events
 into its bounded durable state and maps selected-invocation progress immediately.
 A queued sibling does not replace a reserved invocation's status; a delayed
 running notification does not erase active streaming/terminal-wait presentation.
-The current bootstrap recovery remains pending Phase 3 transcript coverage.
+Bootstrap recovery uses `/open` and bounded loaded-history reconciliation.
 
 
 Thread open omits optional context-budget/browser/web-view work explicitly. Recovery
@@ -450,3 +445,15 @@ rows. `transcript.message` uses the canonical decoder and `transcript.invalidate
 starts recovery. Existing durable-state fallback remains for non-message pending
 inventories. New chat uses one atomic create/opening-message POST and retries the
 same mounted request/key; no cross-reload retry persistence is claimed.
+
+
+## Optional context budget and compact tools
+
+The owner/thread-keyed route mounts `useContextBudget` after the `/open` loader
+resolves. Initial optional budget loading does not block transcript paint or stream
+attachment. Accepted `/open` recovery preserves omitted budget values and starts
+an independent budget refresh. Explicit state/compaction budgets supersede older
+optional reads; those reads never apply agent lifecycle or stream cursors.
+Failures retain the last known meter. Existing state refreshes after send, model
+change, cancel and final continue to supply budgets; five-second pending-inventory
+recovery remains intact. Browser notices use structured tool payloads only.

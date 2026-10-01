@@ -28,6 +28,7 @@ import { ThreadTerminalGridPane } from '@/components/workbench/thread-terminal-g
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
+import { useContextBudget } from '@/features/threads/use-context-budget'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
 import { getAgentStateRuntimeErrorMessage } from '@/features/threads/agent-state-error'
 import { useFileViewer } from '@/features/threads/use-file-viewer'
@@ -64,7 +65,6 @@ import type {
   ApiAgentCompactionStartEvent,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
-  ApiContextBudget,
   ApiCreateMessageResponse,
   ApiThreadOpen,
   ApiThread,
@@ -142,9 +142,7 @@ function ThreadViewContent() {
   const [agentEnvironment, setAgentEnvironment] = useState<ApiAgentEnvironment | null>(
     initialAgentState.environment ?? null,
   )
-  const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
-    initialAgentState.context_budget ?? null,
-  )
+  const { contextBudget, applyContextBudget, refreshContextBudget } = useContextBudget(threadId, initialAgentState.context_budget)
   const [assistantActivityGate, setAssistantActivityGate] = useState(() =>
     createAssistantActivityGateFromAgentState(initialAgentState),
   )
@@ -320,11 +318,11 @@ function ThreadViewContent() {
     recoveredInvocationRevisionRef.current = invocationRevision(initialAgentState)
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
-    setContextBudget(initialAgentState.context_budget ?? null)
+    applyContextBudget(initialAgentState.context_budget)
     setLiveTurnId(invocationAllowsLiveActivity(initialAgentState) ? initialAgentState.turn_id : null)
     applyAgentStateError(initialAgentState)
     resetAssistantActivityGate(initialAgentState)
-  }, [applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
+  }, [applyContextBudget, applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
 
   useEffect(() => {
     setActiveCompaction(null)
@@ -405,11 +403,11 @@ function ThreadViewContent() {
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
-    setContextBudget(nextAgentState.context_budget ?? null)
+    applyContextBudget(nextAgentState.context_budget)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentState, applyAgentStateError, resetAssistantActivityGate])
+  }, [applyContextBudget, applyAgentState, applyAgentStateError, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
@@ -425,16 +423,17 @@ function ThreadViewContent() {
     mergeLatestBootstrap(nextPage, nextAgentState)
     await reconcileLoadedMessages()
     if (currentThreadRef.current !== scope) return nextAgentState
+    void refreshContextBudget()
     recoveredInvocationRevisionRef.current = invocationRevision(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
-    setContextBudget(nextAgentState.context_budget ?? null)
+    applyContextBudget(nextAgentState.context_budget)
     setLiveTurnId(invocationAllowsLiveActivity(nextAgentState) ? nextAgentState.turn_id : null)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentStateError, mergeLatestBootstrap, reconcileLoadedMessages, resetAssistantActivityGate])
+  }, [applyContextBudget, refreshContextBudget, applyAgentStateError, mergeLatestBootstrap, reconcileLoadedMessages, resetAssistantActivityGate])
 
   const durableEnabled = durableState.invocations !== undefined
   const abandonReviewedInvocation = async (event: FormEvent<HTMLFormElement>) => {
@@ -567,8 +566,8 @@ function ThreadViewContent() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
-    if (message.role === 'tool') {
-      try { browserNotice(message.tool_payload ?? JSON.parse(message.content)) } catch { /* Not a browser result. */ }
+    if (message.role === 'tool' && message.tool_payload) {
+      browserNotice(message.tool_payload)
     }
     if (getToolName(message) === 'ask_user_questions') {
       setQuestionSubmitError(null)
@@ -646,7 +645,7 @@ function ThreadViewContent() {
   const handleCompactionDone = useCallback((event: ApiAgentCompactionDoneEvent) => {
     setActiveCompaction(null)
     if (event.context_budget) {
-      setContextBudget(event.context_budget)
+      applyContextBudget(event.context_budget)
     }
     if (event.message) {
       // The durable `role: "compaction"` row: upsert it like any other
@@ -667,7 +666,7 @@ function ThreadViewContent() {
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after compaction event', error)
     })
-  }, [appendContextCompactionNotice, applyToolResultMessage, refreshAgentState, threadId])
+  }, [applyContextBudget, appendContextCompactionNotice, applyToolResultMessage, refreshAgentState, threadId])
 
   const handleCompactionFailed = useCallback((event: ApiAgentCompactionFailedEvent) => {
     setActiveCompaction(null)

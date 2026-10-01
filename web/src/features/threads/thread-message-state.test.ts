@@ -183,8 +183,8 @@ test('applyAgentStateOverlay builds pending ask_user_questions rows from agent s
 
   assert.equal(message?.client_id, 'question-client')
   assert.equal(message?.created_at, '2026-05-19T12:00:00.000Z')
-  assert.equal(message?.metadata?.tool, 'ask_user_questions')
-  assert.equal(message?.metadata?.request_id, 'qr_test')
+  assert.equal(message?.tool_payload?.tool, 'ask_user_questions')
+  assert.equal(message?.tool_payload?.request_id, 'qr_test')
 })
 
 test('applyAgentStateOverlay builds draft reasoning rows from agent state', () => {
@@ -242,9 +242,9 @@ test('buildPendingToolMessageFromToolCall builds pending ask_user_questions rows
 
   assert.equal(message.client_id, 'question-client-live')
   assert.equal(message.created_at, '2026-05-19T12:01:00.000Z')
-  assert.equal(message.metadata?.tool, 'ask_user_questions')
-  assert.equal(message.metadata?.request_id, 'qr_live')
-  assert.equal(JSON.parse(message.content).request_id, 'qr_live')
+  assert.equal(message.tool_payload?.tool, 'ask_user_questions')
+  assert.equal(message.tool_payload?.request_id, 'qr_live')
+  assert.equal(message.tool_payload?.request_id, 'qr_live')
 })
 
 test('mergeLatestBootstrapState preserves one pending ask_user_questions row after refresh', () => {
@@ -313,7 +313,7 @@ test('mergeLatestBootstrapState preserves one pending ask_user_questions row aft
     merged.messages.map((message) => message.client_id),
     ['user-1', 'question-client'],
   )
-  assert.equal(merged.messages.filter((message) => message.metadata?.request_id === 'qr_test').length, 1)
+  assert.equal(merged.messages.filter((message) => message.tool_payload?.request_id === 'qr_test').length, 1)
 })
 
 test('mergeLatestBootstrapState preserves older canonical history and earlier pagination cursors', () => {
@@ -589,8 +589,8 @@ test('durable app permissions recover once and canonical results win over older 
   const recovered = applyAgentStateOverlay([], state)
   assert.equal(recovered.length, 1)
   assert.equal(recovered[0].client_id, request.client_id)
-  assert.equal(recovered[0].metadata?.tool, 'data_request_api_key')
-  assert.equal(JSON.parse(recovered[0].content).request_id, request.request_id)
+  assert.equal(recovered[0].tool_payload?.tool, 'data_request_api_key')
+  assert.equal(recovered[0].tool_payload?.request_id, request.request_id)
   assert.equal(applyAgentStateOverlay(recovered, state).length, 1)
   const canonical = buildMessage({ client_id: request.client_id!, message_id: 'canonical', role: 'tool', content: '{"status":"approved"}' })
   assert.deepEqual(applyAgentStateOverlay([canonical], state), [canonical])
@@ -645,7 +645,7 @@ test('all durable browser waits survive later turns; canonical results and empty
   const state = buildAgentState({turn_id:'later',pending_browser_waits:waits})
   const pending = applyAgentStateOverlay([],state)
   assert.deepEqual(pending.map(m=>m.client_id),['one','two'])
-  assert.equal(pending[0].metadata?.tool,'browser_act')
+  assert.equal(pending[0].tool_payload?.tool,'browser_act')
   const canonical = buildMessage({client_id:'one',message_id:'stored',role:'tool',content:'not executed'})
   const reconciled = applyAgentStateOverlay([canonical,...pending.slice(1)],state)
   assert.equal(reconciled.find(m=>m.client_id==='one'),canonical)

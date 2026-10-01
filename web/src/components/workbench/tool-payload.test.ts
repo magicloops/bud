@@ -13,10 +13,11 @@ test('compact wire payload is used directly without parsing display content', ()
 test('answered continuation resolves its actual question and answer despite timing-only metadata', () => {
   const payload = resolveToolPayload({
     metadata: { continuation: true, call_id: 'call_fixture', duration_ms: 3594 },
-    content: JSON.stringify({ tool: 'ask_user_questions', call_id: 'call_fixture', kind: 'user_questions',
+    content: 'Questions answered',
+    tool_payload: { tool: 'ask_user_questions', call_id: 'call_fixture', kind: 'user_questions',
       result: { schema: 'ask_user_questions_tool_result_v1', request_id: 'qr_fixture',
         responses: [{ question_id: 'lookup', question: { label: 'Which lookup?' }, status: 'answered',
-          answer: { kind: 'single_choice', choice_id: 'public_web' }, display_answer: 'Search the public web' }] } }),
+          answer: { kind: 'single_choice', choice_id: 'public_web' }, display_answer: 'Search the public web' }] } },
   })
   assert.equal(payload?.tool, 'ask_user_questions')
   assert.equal(payload?.duration_ms, 3594)
@@ -25,20 +26,21 @@ test('answered continuation resolves its actual question and answer despite timi
   assert.equal(displayAskUserQuestionsResponse(result!.responses[0]), 'Search the public web')
 })
 
-test('pending forms use metadata and completed content wins over stale payload metadata', () => {
-  const pending = { pending: true, tool: 'ask_user_questions', request_id: 'qr_fixture', questions: [] }
-  assert.deepEqual(resolveToolPayload({ metadata: pending, content: 'Waiting for answers' }), pending)
-  const metadata = { tool: 'terminal.send', summary: 'Old summary', duration_ms: 10 }
-  assert.deepEqual(resolveToolPayload({ metadata, content: '{"tool":"terminal.send","summary":"Completed"}' }),
-    { ...metadata, summary: 'Completed' })
+test('pending rows use structured payload and canonical payload wins over stale metadata', () => {
+  const pending = { tool: 'ask_user_questions', request_id: 'qr_fixture', questions: [] }
+  assert.deepEqual(resolveToolPayload({ metadata: { pending: true }, tool_payload: pending, content: 'Waiting for answers' }),
+    { pending: true, ...pending })
+  const metadata = { tool: 'old', summary: 'Old summary', duration_ms: 10 }
+  const tool_payload = { tool: 'terminal.send', summary: 'Completed' }
+  assert.deepEqual(resolveToolPayload({ metadata, tool_payload, content: 'Completed' }),
+    { ...metadata, ...tool_payload })
   assert.equal(metadata.summary, 'Old summary')
 })
 
-test('legacy metadata fallback and malformed/non-object content remain safe', () => {
-  const metadata = { tool: 'terminal.wait', outcome: 'settled' }
-  for (const content of ['plain text', 'null', '[]', '1', '"text"']) {
-    assert.deepEqual(resolveToolPayload({ metadata, content }), metadata)
-    assert.equal(resolveToolPayload({ content }), null)
+test('null and absent payloads do not resurrect content or metadata tools', () => {
+  for (const content of ['plain text', '{broken', 'null', '[]', '{"tool":"web_search"}']) {
+    for (const tool_payload of [undefined, null]) {
+      assert.equal(resolveToolPayload({ content, tool_payload, metadata: { tool: 'web_search', pending: true } }), null)
+    }
   }
-  assert.deepEqual(resolveToolPayload({ content: '{"tool":"web_search"}' }), { tool: 'web_search' })
 })

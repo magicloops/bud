@@ -17,6 +17,7 @@ const buildMessage = (overrides: Partial<ApiMessage> & Pick<ApiMessage, 'client_
   content: overrides.content ?? '',
   created_at: overrides.created_at ?? '2026-08-30T10:00:00.000Z',
   metadata: overrides.metadata,
+  tool_payload: overrides.tool_payload,
 })
 
 test('getTurnId returns the stamped turn and null for legacy rows', () => {
@@ -90,17 +91,12 @@ test('timing derives duration from bounds when duration_ms is absent', () => {
   assert.equal(timing?.durationMs, 1000)
 })
 
-test('tool name comes from metadata, falling back to the content payload', () => {
-  assert.equal(
-    getToolName(buildMessage({ client_id: 'a', role: 'tool', metadata: { tool: 'terminal.send' } })),
-    'terminal.send',
-  )
-  assert.equal(
-    getToolName(
-      buildMessage({ client_id: 'b', role: 'tool', content: '{"tool":"ask_user_questions"}' }),
-    ),
-    'ask_user_questions',
-  )
-  assert.equal(getToolName(buildMessage({ client_id: 'c', role: 'tool', content: 'not json' })), null)
-  assert.equal(getToolName(buildMessage({ client_id: 'd', role: 'assistant' })), null)
+test('tool name uses only structured payload, never content or stale metadata', () => {
+  assert.equal(getToolName(buildMessage({ client_id: 'a', role: 'tool',
+    tool_payload: { tool: 'terminal.send' }, metadata: { tool: 'old' } })), 'terminal.send')
+  for (const tool_payload of [undefined, null, {}]) {
+    assert.equal(getToolName(buildMessage({ client_id: 'b', role: 'tool', tool_payload,
+      metadata: { tool: 'ask_user_questions' }, content: '{"tool":"ask_user_questions"}' })), null)
+  }
+  assert.equal(getToolName(buildMessage({ client_id: 'd', role: 'assistant', tool_payload: { tool: 'terminal.run' } })), null)
 })

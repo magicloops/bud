@@ -5,8 +5,8 @@ import type { ApiMessage } from '../../lib/api-types.ts'
 
 const row = (id: string, tool: string, pending: boolean): ApiMessage => ({
   message_id: id, client_id: id, role: 'tool', display_role: 'Tool',
-  content: JSON.stringify({ tool }), created_at: '2026-09-06T00:00:00Z',
-  metadata: { tool, turn_id: 'turn', pending },
+  content: tool, tool_payload: { tool }, created_at: '2026-09-06T00:00:00Z',
+  metadata: { turn_id: 'turn', pending },
 })
 
 const approvalTools = ['automations_request_activation', 'automations_request_existing_contacts', 'data_request_api_key', 'browser_request_handoff']
@@ -21,7 +21,7 @@ test('pending approval reviews stay visible between collapsed work groups', () =
   }
 })
 
-test('canonical approval results fold into work after a decision, including content-only tool identity', () => {
+test('canonical approval results fold into work after a decision, using structured tool identity', () => {
   for (const tool of approvalTools) for (const status of ['approved', 'declined', 'expired', 'canceled', 'stale']) {
     const project = createTimelineProjector()
     const draft = row('draft', 'automations_create_draft', false)
@@ -29,7 +29,7 @@ test('canonical approval results fold into work after a decision, including cont
     const before = project({ messages: [draft, pending], liveTurnId: null })
     assert.equal(before[1].kind, 'message')
     const resolved: ApiMessage = { ...pending, message_id: 'canonical-review',
-      content: JSON.stringify({ tool, proposal: { status } }),
+      content: 'Decision recorded', tool_payload: { tool, proposal: { status } },
       metadata: { turn_id: 'turn', continuation: true } }
     const final: ApiMessage = { ...row('final', '', false), role: 'assistant',
       content: 'The decision is saved.', metadata: { turn_id: 'turn', segment_kind: 'final' } }
@@ -46,4 +46,9 @@ test('failed approval calls are ordinary work rather than actionable reviews', (
     const failed = { ...row('failed', tool, false), content: JSON.stringify({ tool, ok: false, error: 'invalid_request' }) }
     assert.equal(projectTimeline({ messages: [failed], liveTurnId: null })[0].kind, 'work')
   }
+})
+
+test('return-control waits remain standalone with structured args', () => {
+  const pending = { ...row('wait', 'browser_act', true), tool_payload: { tool: 'browser_act', wait_kind: 'return_control' } }
+  assert.equal(projectTimeline({ messages: [pending], liveTurnId: 'turn' })[0].kind, 'message')
 })

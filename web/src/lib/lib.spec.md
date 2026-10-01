@@ -119,8 +119,7 @@ Typed accessors over `ApiMessage.metadata` for service-stamped agent fields
 `final`, the wire-compat default shared with mobile),
 `isIntermediateAssistantMessage`, `getMessageTiming` (non-null only for
 `duration_source: "service_wall_clock"` with parseable bounds — never
-estimates for legacy rows), `getToolName` (metadata `tool`, falling back to
-the content payload). Tested in `agent-message-metadata.test.ts`.
+estimates for legacy rows), `getToolName` (structured `tool_payload.tool` only). Tested in `agent-message-metadata.test.ts`.
 
 ### `agent-work-duration.ts`
 
@@ -454,5 +453,6 @@ and partial patches. Tests cover activity noise, completion, ties and stale merg
 `ApiThread` carries the ordering timestamp through canonical API responses.
 
 `ApiMessage` accepts structured `tool_payload` and `presentation`. Tool-name lookup
-prefers the structured payload. Historical/synthetic local rows may still use
-metadata/content; service wire serialization has a single compact shape.
+uses only the structured payload. Locally synthesized pending rows share that
+shape; historical normalization belongs to the service. Null payloads and missing
+names remain unknown without client-side JSON-content or metadata fallbacks.
