@@ -1,6 +1,6 @@
 # Validation: Backend Mobile Performance
 
-**Status:** Focused service/web and PostgreSQL checks in progress; live/mobile/performance gates pending. **Parent:** [Implementation spec](implementation-spec.md).
+**Status:** Focused service/web and PostgreSQL implementation checks completed as recorded below; live/mobile/performance gates pending. **Parent:** [Implementation spec](implementation-spec.md).
 
 ## Evidence record
 
@@ -30,6 +30,9 @@ latency and device decode remain unmeasured. Link debug notes for failures and d
 | Mark-read request count and SQL cost | Pending | Pending | Pending |
 
 ## Correctness gates
+
+These are end-to-end acceptance gates. Unchecked items do not negate the local
+test evidence below; they must not be marked passed solely from unit fixtures.
 
 - [ ] Authentication missing/expired and foreign-owner requests fail before reads,
   listeners or side effects; both cookie and bearer clients are covered.
@@ -144,3 +147,24 @@ Final checks: focused new service modules and new web list modules pass ESLint
 HTTP resync close, transcript publication and list coordinator suite: 22 passed.
 Service build was rerun after fixing test-only cursor/UUID type errors and passes.
 `git diff --check` passes. Whole-repository lint and live native tests are not claimed.
+
+## PR readiness update — 2026-10-01
+
+Implementation is in PR #139 (`cee62c3`), with startup fix `65a1be7`.
+The OAuth/access-log regressions reproduced `ERR_HTTP_HEADERS_SENT` before the
+fix; all nine focused tests pass after it. Service build passes. Focused lint
+reports no errors and two existing access-log return-type warnings. See
+[startup debug record](../../debug/oauth-discovery-double-send.md).
+Full ngrok/Caddy startup has not been rerun by this work.
+
+The [follow-up handoff](mobile-api-follow-up-handoff.md) and
+[expanded fixtures](mobile-api-follow-up-fixtures.json) cover a full open envelope,
+all seven presentation families, historical nulls, pending calls, and requested
+list/invocation/transcript events. Fixture structure and document links were checked;
+the examples use synthetic inputs, not production captures.
+
+Coordinated pre-launch client upgrades are confirmed; mobile implementation is
+underway externally. Record the matching mobile build and device checks before
+cutover. Migrations 0048/0049 must precede the new service, and merge auto-deploys
+the service. No compatibility bridge is required for the confirmed fleet.
+Live measurements and release/restart/rollback evidence remain outstanding.

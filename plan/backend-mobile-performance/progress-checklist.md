@@ -5,6 +5,10 @@ contracts below. Native adoption, deployed measurements and coordinated rollout
 are pending external validation, not claimed as passes.
 **Parent:** [Implementation spec](implementation-spec.md).
 **Delivery:** [Mobile API handoff](mobile-api-handoff.md) · [Fixtures](mobile-api-fixtures.json).
+**Follow-up:** [Mobile questions and cutover](mobile-api-follow-up-handoff.md) ·
+[Expanded fixtures](mobile-api-follow-up-fixtures.json).
+**PR:** [#139](https://github.com/magicloops/bud/pull/139), implementation `cee62c3`
+and OAuth startup regression fix `65a1be7`.
 
 | Phase | Implemented and checked locally | Still unverified |
 |---|---|---|
@@ -18,7 +22,20 @@ are pending external validation, not claimed as passes.
 Local migrations: generated/reviewed 0048 and custom 0049, exact SQL execution
 fixtures and local application. `db:push` was attempted but canceled when it
 proposed unrelated destructive constraint churn; reviewed plan SQL was applied
-locally instead. No deployment, commit, PR or production restart performed.
+locally instead. Implementation and startup fix are committed and pushed in PR
+#139. No deployment or production restart has been performed by this work.
+
+2026-10-01: Adam confirmed the product is pre-launch and all Buds/mobile clients
+can upgrade in sync. Mobile implementation is underway with its team; exact native
+build and device acceptance are still pending. Use a coordinated cutover, without
+a legacy compatibility bridge. Merge triggers service deployment, so migration
+and matching-client readiness must be confirmed before merge. This API change
+does not itself require a daemon update.
+
+Backend implementation readiness is distinct from full plan completion: Phase 0
+representative measurements and Phase 5 live release/restart/rollback acceptance
+remain open. The expanded handoff addresses all five mobile follow-up questions;
+its serializer-generated fixtures are synthetic, not captured production traffic.
 
 The web keeps its existing five-second durable-state fallback for non-message
 pending inventories. Message publication is complete through database triggers,

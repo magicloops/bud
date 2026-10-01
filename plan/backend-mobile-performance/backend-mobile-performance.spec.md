@@ -4,8 +4,8 @@
 
 Phased implementation plan for the accepted iOS backend performance requests.
 Tracks shared service/web/mobile API improvements, measurable outcomes, ownership,
-stream recovery and coordinated rollout. Implementation is in progress; see the
-progress checklist for tested foundations and outstanding phase gates.
+stream recovery and coordinated rollout. Service/web implementation is complete
+and locally validated; native adoption, rollout and measured acceptance remain.
 
 ## Files
 
@@ -40,3 +40,8 @@ No runtime dependencies or implementation debt are introduced by these documents
 - `mobile-api-handoff.md`: coordinated-release contracts, client algorithms,
   rollout order, mutable implementation choices and explicit unverified evidence.
 - `mobile-api-fixtures.json`: synthetic request/response/event examples.
+- `mobile-api-follow-up-handoff.md`: answers on complete examples, presentation
+  classification, historical conversion, optional reads and installed-build cutover.
+- `mobile-api-follow-up-fixtures.json`: serializer-generated synthetic examples
+  covering a full open, all seven presentation families, historical/pending cases
+  and list/invocation/transcript events.
