@@ -475,6 +475,9 @@ service/shared web deployment and client reload. No daemon/native bridge changes
 `access-log.ts` adds finite-response `Server-Timing: total` through `onSend`,
 serialized UTF-8 response bytes, returned row count, and raw SSE headers/first-frame
 timing. These exclude transfer/decode and do not expose payloads or query strings.
+Serialization/send measurements use synchronous callback hooks so instrumentation
+does not defer explicit replies from existing async handlers. Tests cover that
+lifecycle alongside timing, privacy, severity and SSE frame boundaries.
 `server.ts` exposes Server-Timing through allowed-origin CORS, connects committed
 invocation hints to the worker and ordered public lifecycle publisher, and drains
 publication before database shutdown. See the backend-mobile-performance plan.

@@ -40,6 +40,25 @@ test('server timing covers successful and failed finite responses', async () => 
   await server.close();
 });
 
+test('instrumentation does not defer explicit sends from async handlers', async t => {
+  const records: Record<string, unknown>[] = [];
+  const server = Fastify({disableRequestLogging: true, logger: {level: 'debug',
+    stream: new Writable({write(chunk, _encoding, done) { records.push(JSON.parse(String(chunk))); done(); }})}});
+  t.after(() => server.close());
+  registerAccessLog(server);
+  server.get('/explicit', async (_request, reply) => {
+    reply.send({messages: [{message_id: 'one'}]});
+  });
+  const response = await server.inject('/explicit');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {messages: [{message_id: 'one'}]});
+  assert.match(String(response.headers['server-timing']), /^total;dur=\d+\.\d+$/);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].msg, 'Request completed');
+  assert.equal(records[0].rows, 1);
+});
+
 test('SSE timing records one complete frame across split CRLF without contents', async () => {
   const records: Record<string, unknown>[] = [];
   const server = Fastify({disableRequestLogging: true, logger: {level: 'debug',

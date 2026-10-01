@@ -27,6 +27,8 @@ Initializes the Better Auth runtime.
 - Enables implicit same-email linking for trusted providers
 - Prefers the GitHub `login` field when mapping provider profiles to Bud users
 - Adapts Fastify requests/responses to Better Auth's Fetch-style handler
+- Awaits forwarded reply completion and returns explicit metadata/error replies,
+  preventing double sends when asynchronous response hooks are installed
 - Normalizes forwarded JSON and form bodies before dispatching to Better Auth, so downstream token-resource injection only reparses already-normalized form payloads
 - Defaults `/oauth2/token` `resource` to Bud's API audience for trusted first-party clients when they omit it, so mobile bearer access tokens are minted as JWTs usable against `/api/me`
 - Verifies mobile bearer JWTs against the mounted OAuth issuer (`BETTER_AUTH_URL + /api/auth`) instead of the bare Better Auth origin, so `/api/me` accepts locally minted tokens with `iss=http://localhost:5173/api/auth`
@@ -91,6 +93,8 @@ Focused regression coverage for auth metadata behavior.
 **Current Coverage**:
 - protected-resource metadata overrides advertise Bud's mounted OAuth issuer in
   `authorization_servers`
+- Discovery and forwarded auth responses complete once with access logging and
+  delayed send hooks, including the auth failure response
 
 ### `enrollment-token.ts`
 

@@ -43,16 +43,18 @@ export function registerAccessLog(server: FastifyInstance) {
       return result;
     } as typeof write;
   });
-  server.addHook('preSerialization', async (request, _reply, payload) => {
+  // These measurements are synchronous. Yielding here can leave reply.send()
+  // pending after an existing async route handler has already returned.
+  server.addHook('preSerialization', (request, _reply, payload, done) => {
     const metric = metrics.get(request);
     if (metric && payload && typeof payload === 'object') {
       const body = payload as Record<string, unknown>;
       const rows = Array.isArray(payload) ? payload : body.messages ?? body.threads;
       if (Array.isArray(rows)) metric.rows = rows.length;
     }
-    return payload;
+    done(null, payload);
   });
-  server.addHook('onSend', async (request, reply, payload) => {
+  server.addHook('onSend', (request, reply, payload, done) => {
     const metric = metrics.get(request);
     if (metric && !reply.raw.headersSent) {
       metric.handler_ms = performance.now() - metric.started;
@@ -61,7 +63,7 @@ export function registerAccessLog(server: FastifyInstance) {
         metric.response_bytes = Buffer.byteLength(payload);
       }
     }
-    return payload;
+    done(null, payload);
   });
   server.addHook('onResponse', async (request, reply) => {
     const route = request.routeOptions.url ?? '<unmatched>';

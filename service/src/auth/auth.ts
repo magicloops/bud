@@ -324,7 +324,7 @@ export async function sendAuthResponse(response: Response, reply: FastifyReply):
   applyAuthResponseHeaders(response, reply);
   const body = response.body ? Buffer.from(await response.arrayBuffer()) : null;
   reply.status(response.status);
-  reply.send(body);
+  await reply.send(body);
 }
 
 export async function registerAuthRoutes(server: FastifyInstance): Promise<void> {
@@ -343,7 +343,7 @@ export async function registerAuthRoutes(server: FastifyInstance): Promise<void>
       buildProtectedResourceMetadataOverrides(),
     );
 
-    reply
+    return reply
       .header("Cache-Control", DISCOVERY_CACHE_CONTROL)
       .header("Content-Type", "application/json")
       .send(metadata);
@@ -358,7 +358,7 @@ export async function registerAuthRoutes(server: FastifyInstance): Promise<void>
         await sendAuthResponse(response, reply);
       } catch (err) {
         server.log.error({ err }, "Failed to handle Better Auth request");
-        reply.status(500).send({
+        return reply.status(500).send({
           error: "internal_auth_error",
         });
       }
