@@ -245,7 +245,9 @@ export class BrowserMedia {
         started: Date.now(),
         operationDriven: carrier.operationDrivenMedia === true && !controllerId,
         dirty: true,
-        streaming: !!controllerId && process.env.BUD_BROWSER_STREAMING_EXPERIMENT === "1",
+        streaming: !!controllerId && !["0", "false"].includes(
+          (process.env.BUD_BROWSER_STREAMING_EXPERIMENT ?? "").trim().toLowerCase(),
+        ),
         retries: 0,
         nextHeartbeat: Date.now() + 3000,
         daemonAliveUntil: Date.now() + 60_000,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { WebSocket, WebSocketServer } from "ws";
 import { BrowserMedia } from "./media.js";
 import type { BrowserControl } from "./control.js";
@@ -157,6 +157,13 @@ test("media credit isolates slow viewers, revokes live auth, and consumes ticket
 });
 
 test(`agent epoch continuity and pending-delivery revocation`, async t => {
+  // Exercise private screenshot retention through the explicit diagnostic opt-out.
+  const oldStreaming = process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
+  process.env.BUD_BROWSER_STREAMING_EXPERIMENT = "0";
+  t.after(() => {
+    if (oldStreaming === undefined) delete process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
+    else process.env.BUD_BROWSER_STREAMING_EXPERIMENT = oldStreaming;
+  });
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await once(server, 'listening');
   const address = server.address();
@@ -316,3 +323,44 @@ test("a message sent right behind the viewer hello reaches the media listener", 
   assert.equal(ratios[0], 2, "the early ack was dropped before the media listener existed");
   assert.equal(viewer.readyState, WebSocket.OPEN);
 });
+
+for (const flag of [undefined, "1", "0", "false", " FALSE "]) {
+  for (const controllerId of [undefined, "controller"]) {
+    test(`media mode flag=${String(flag)} private=${Boolean(controllerId)}`, async t => {
+      const old = process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
+      if (flag === undefined) delete process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
+      else process.env.BUD_BROWSER_STREAMING_EXPERIMENT = flag;
+      t.after(() => {
+        if (old === undefined) delete process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
+        else process.env.BUD_BROWSER_STREAMING_EXPERIMENT = old;
+      });
+      const socket = () => Object.assign(new EventEmitter(), {
+        readyState: WebSocket.OPEN, send() {}, close() {}, terminate() {},
+      }) as unknown as WebSocket;
+      const carrier = { current: () => true, operationDrivenMedia: true } as BrowserCarrier;
+      const control = {
+        onFence() {}, expireControllers() {},
+        repository: { command: (_session: unknown, command: unknown) => ({ command }) },
+        mediaAuthority: async () => ({
+          session: { id: "workspace", browser_id: "browser", generation: "g", browser_epoch: 1 },
+          carrier, controllerId,
+        }),
+      } as unknown as BrowserControl;
+      const demands: unknown[] = [];
+      const media = new BrowserMedia(control, "wss://fixture/daemon", async (_, request) => {
+        assert.equal(request.command.operation_driven, controllerId ? undefined : true);
+        const daemon = socket();
+        daemon.send = data => { demands.push(JSON.parse(String(data))); };
+        media.attachDaemon(daemon);
+        daemon.emit("message", Buffer.from(JSON.stringify({ ticket: request.command.ticket })));
+        return { ok: true, outcome: "completed", data: {} };
+      });
+      t.after(() => media.stop());
+      await media.attachViewer(socket(), "owner", "workspace", "viewer", async () => true);
+      const streaming = Boolean(controllerId) && (flag === undefined || flag === "1");
+      assert.deepEqual(demands, [streaming
+        ? { mode: "screencast_v1", target_id: null }
+        : { target_id: null }]);
+    });
+  }
+}

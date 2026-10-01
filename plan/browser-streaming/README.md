@@ -1,5 +1,16 @@
 # Plan: Proposal A — CDP screencast over dedicated WSS
 
+> **October 1, 2026 update:** Private takeover streaming now defaults on at the
+> service, per the user's rollout decision. Set the service's
+> `BUD_BROWSER_STREAMING_EXPERIMENT=0` or `false` to opt out; the daemon requires
+> no flag. Restart the service and reattach viewers. Use the already integrated
+> streaming-capable daemon and shared web/mobile viewer; unsupported older peers
+> do not silently downgrade. Passive agent screenshots, ownership/input guards,
+> wire shapes and DB schema are unchanged. No native rebuild is needed for this
+> default change. Earlier default-off/enablement statements below are historical;
+> open measurement and acceptance items remain open.
+
+
 Status: **Phase 2 candidate implemented and in PR; qualitative web/mobile retests passed. Remaining lifecycle acceptance and Phase 3 measurements are open.** Updated September 28, 2026.
 
 See [measured findings](phase-1-findings.md) and the

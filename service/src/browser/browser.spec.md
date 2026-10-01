@@ -50,7 +50,8 @@ control connection. It launches no service-local Chrome and imports no spike cod
 - `continuation.test.ts`: isolated PostgreSQL durable parking, same-invocation
   return, multi-call pairing, user takeover and cancellation across provider labels.
 - `media.test.ts`: loopback sockets covering ticket replay, slow/fast viewers,
-  live revocation and zero-viewer shutdown.
+  live revocation and zero-viewer shutdown, plus default-on private streaming,
+  explicit screenshot opt-out and passive screenshot mode selection.
 
 ## Authority and storage
 `browser_resource` owns persistent profile identity and global private/control state.
@@ -650,8 +651,9 @@ than pretending private work was returned. Deploy service before mobile rebuild.
 
 ## Experimental private binary stream
 
-`media.ts` selects private-only screencast demand when the local service has
-`BUD_BROWSER_STREAMING_EXPERIMENT=1`; default is off. Existing route authorization,
+`media.ts` defaults to private-only screencast demand. The service may explicitly
+set `BUD_BROWSER_STREAMING_EXPERIMENT=0` or `false` (case-insensitive) to use
+private screenshots instead. The daemon needs no environment flag. Existing route authorization,
 owner/thread/Bud scope, mobile visit, Origin, one-use ticket, carrier and controller
 checks run before admission and again during delivery/idle sweeps. No route,
 credential, table or owner stamp is added. Passive screenshots stay unchanged.
