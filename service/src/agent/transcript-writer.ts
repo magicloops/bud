@@ -1,3 +1,4 @@
+import { serializeMessageView } from "./message-view.js";
 import { db } from "../db/client.js";
 import { recordThreadAttentionMetadata, recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { budTable, messageTable, pushNotificationOutboxTable, threadTable } from "../db/schema.js";
@@ -11,7 +12,6 @@ import {
   type AgentToolCallDirective,
   type ExecutedAgentTool,
   type ToolExecutionTiming,
-  serializeTerminalDelta,
   serializeAgentMessageTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
@@ -35,15 +35,7 @@ type PersistedAgentMessage = {
   createdAt: Date;
 };
 
-export type SerializedAgentMessage = {
-  message_id: string;
-  client_id: string | null;
-  role: string;
-  display_role: string;
-  content: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
+export type SerializedAgentMessage = ReturnType<typeof serializeMessageView>;
 
 type AgentMessageModelSelection = {
   model: string;
@@ -201,7 +193,6 @@ export class AgentTranscriptWriter {
         message_id: serializedMessage.message_id,
         name: execution.directive.tool,
         summary: execution.summary,
-        ...serializeRuntimeToolResultFields(execution),
         output_truncation_reason: execution.outputTruncationReason,
         ...serializedTiming,
         message: serializedMessage,
@@ -517,66 +508,8 @@ export class AgentTranscriptWriter {
   }
 
   private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {
-    return {
-      message_id: message.messageId,
-      client_id: message.clientId,
-      role: message.role,
-      display_role: message.displayRole ?? message.role,
-      content: message.content,
-      metadata: message.metadata ?? {},
-      created_at: message.createdAt.toISOString(),
-    };
+    return serializeMessageView(message);
   }
-}
-
-function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<string, unknown> {
-  if (execution.result.kind === "browser" || execution.result.kind === "web_retrieval" || execution.result.kind === "personal_data" || execution.result.kind === "automation") {
-    return { kind: execution.result.kind, ok: execution.result.ok, error: execution.result.error, retryable: execution.result.retryable };
-  }
-  if (execution.result.kind === "web_view") {
-    return {
-      web_view: execution.result,
-    };
-  }
-
-  if (execution.result.kind === "user_questions") {
-    return {
-      user_questions: execution.result,
-    };
-  }
-
-  // Terminal tool result (terminal.send / terminal.observe /
-  // terminal.wait). The command's own duration_ms stays inside the persisted
-  // tool payload; top-level duration_ms remains the service tool-execution
-  // timing.
-  return {
-    kind: execution.result.kind,
-    status: execution.result.status,
-    command_id: execution.result.commandId,
-    exit_code: execution.result.exitCode ?? execution.result.waitExitCode,
-    outcome: execution.result.waitOutcome,
-    waited_ms: execution.result.waitedMs,
-    output: execution.result.output,
-    output_bytes: execution.result.outputBytes,
-    truncated: execution.result.truncated,
-    dispatched: execution.result.dispatched,
-    text_sent: execution.result.textSent,
-    gated_ms: execution.result.gatedMs,
-    program_ready: execution.result.programReady,
-    key_sent: execution.result.keySent,
-    delta: serializeTerminalDelta(execution.result.delta),
-    changed: execution.result.changed,
-    view: execution.result.view,
-    lines_captured: execution.result.linesCaptured,
-    mode: execution.result.mode,
-    integration: execution.result.integration,
-    alt_screen: execution.result.altScreen,
-    cwd: execution.result.cwd,
-    note: execution.result.note,
-    error: execution.result.error,
-    code: execution.result.errorCode,
-    retryable: execution.result.retryable,
-  };
 }
 
 function serializeModelSelectionMetadata(

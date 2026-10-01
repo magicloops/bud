@@ -1,6 +1,6 @@
 import { resolveBrowserColor } from "./color.js";
 import { BrowserResourceRepository, type BrowserResource } from "./resource-repository.js";
-import { settledWorkDurationSql } from "../agent/invocation-timing.js";
+import { settledWorkDurationSql, publishInvocationChanges } from "../agent/invocation-timing.js";
 import { ulid } from "ulid";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
@@ -219,6 +219,7 @@ export class BrowserRepository {
           worker_id=null,lease_expires_at=null,fence=fence+1,updated_at=clock_timestamp() where id=$1`,[identity.id]);
         await client.query("commit");
         open = false;
+        publishInvocationChanges(this.database, [identity.id]);
         throw new BrowserToolWait({ handoff_id:handoffId,viewer_path:`/browser/${session.id}`,wait_kind:"return_control",invocation_id:identity.id,session_id:session.id });
       }
       const restarted = session.boot_id !== bootId;

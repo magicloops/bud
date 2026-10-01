@@ -1,3 +1,4 @@
+import { invocationTimingTransaction, recordInvocationChange } from "./invocation-timing.js";
 import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db } from "../db/client.js";
@@ -97,7 +98,7 @@ export async function acceptAgentQuestionResponse(args: {
   response: unknown;
   answeredByUserId: string;
 }): Promise<AcceptedQuestionResponse> {
-  return db.transaction(async (tx) => {
+  return invocationTimingTransaction(db, async (tx) => {
     const [row] = await tx
       .select()
       .from(agentQuestionRequestTable)
@@ -164,6 +165,7 @@ export async function acceptAgentQuestionResponse(args: {
       throw new AgentQuestionRequestError("question_request_not_pending", 409);
     }
 
+    recordInvocationChange(tx);
     return {
       questionRequest: updated,
       request,
@@ -178,7 +180,7 @@ export async function acceptPendingAgentQuestionRequestsAsSkipped(args: {
   threadId: string;
   answeredByUserId: string;
 }): Promise<AcceptedQuestionResponse[]> {
-  return db.transaction(async (tx) => {
+  return invocationTimingTransaction(db, async (tx) => {
     const rows = await tx
       .select()
       .from(agentQuestionRequestTable)
@@ -233,6 +235,7 @@ export async function acceptPendingAgentQuestionRequestsAsSkipped(args: {
         continue;
       }
 
+      recordInvocationChange(tx);
       accepted.push({
         questionRequest: updated,
         request,

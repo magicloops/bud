@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ApiAgentInvocation, ApiAgentState, ApiPendingQuestion } from '../../lib/api-types.ts'
-import { invocationAllowsLiveActivity, invocationRevision, invocationSummary } from './invocation-state.ts'
+import { invocationAllowsLiveActivity, invocationRevision, invocationSummary, isInvocationEvent, mergeInvocationEvent } from './invocation-state.ts'
 import { applyAgentStateOverlay } from './thread-message-state.ts'
 
 const invocation = (overrides: Partial<ApiAgentInvocation> = {}): ApiAgentInvocation => ({
@@ -56,7 +56,7 @@ test('cold bootstrap restores a question once, then removes it after answer', ()
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, question.client_id)
   assert.equal(rows[0].created_at, question.created_at)
-  assert.equal(JSON.parse(rows[0].content).request_id, 'q-1')
+  assert.equal(rows[0].tool_payload?.request_id, 'q-1')
   assert.equal(applyAgentStateOverlay(rows, snapshot).length, 1)
   assert.deepEqual(applyAgentStateOverlay(rows, state({ pending_questions: [] })), [])
 })
@@ -101,7 +101,7 @@ test('automation reviews recover once and completed decisions beat stale pending
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, pending.client_id)
   assert.equal(rows[0].created_at, pending.created_at)
-  assert.equal(JSON.parse(rows[0].content).proposal_id, pending.proposal_id)
+  assert.equal(rows[0].tool_payload?.proposal_id, pending.proposal_id)
   assert.deepEqual(applyAgentStateOverlay(rows, snapshot), rows)
   const runtime = { client_id: 'review-client', call_id: pending.call_id,
     name: 'automations_request_activation', args: pending.proposal }
@@ -140,7 +140,7 @@ test('existing-contact reviews recover once and completed decisions beat stale p
   assert.equal(rows.length, 1)
   assert.equal(rows[0].client_id, pending.client_id)
   assert.equal(rows[0].created_at, pending.created_at)
-  assert.equal(JSON.parse(rows[0].content).proposal_id, pending.proposal_id)
+  assert.equal(rows[0].tool_payload?.proposal_id, pending.proposal_id)
   assert.deepEqual(applyAgentStateOverlay(rows, snapshot), rows)
   const runtime = { client_id: 'review-client', call_id: pending.call_id,
     name: 'automations_request_existing_contacts', args: pending.proposal }
@@ -159,4 +159,26 @@ test('existing-contact reviews recover once and completed decisions beat stale p
 
 test('unavailable model failures explain how to recover', () => {
   assert.match(invocationSummary(state({ invocations: [invocation({ status: 'failed', outcome_code: 'invalid_model' })] }))!.label, /Select a supported model/)
+})
+
+test('lifecycle replay cannot rewind a newer snapshot even within one millisecond', () => {
+  const done = state({invocations: [invocation({status: 'succeeded', attempt: 1})]})
+  for (const status of ['pending', 'leased', 'running', 'waiting_for_user']) {
+    assert.equal(mergeInvocationEvent(done, invocation({status, attempt: 1})), done)
+  }
+  const waiting = state({invocations: [invocation({status: 'waiting_for_user', attempt: 1})]})
+  const resumed = mergeInvocationEvent(waiting, invocation({status: 'leased', attempt: 2, reserves_thread: true}))
+  assert.equal(resumed.invocations?.[0].status, 'leased')
+  assert.equal(mergeInvocationEvent(resumed, waiting.invocations![0]), resumed)
+})
+
+test('invocation events validate their public identity and preserve reservation priority', () => {
+  assert.equal(isInvocationEvent(invocation()), true)
+  for (const row of [null, {}, invocation({status: 'unknown'}), invocation({attempt: -1}), {...invocation(), reserves_thread: 'yes'}]) {
+    assert.equal(isInvocationEvent(row), false)
+  }
+  const running = invocation({status: 'running', attempt: 1, reserves_thread: true})
+  const next = mergeInvocationEvent(state({invocations: [running]}), invocation({invocation_id: 'queued'}))
+  assert.equal(invocationSummary(next)?.invocation.invocation_id, running.invocation_id)
+  assert.equal(invocationSummary(next)?.queuedBehind, 1)
 })

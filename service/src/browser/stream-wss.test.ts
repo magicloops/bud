@@ -16,7 +16,7 @@ test("private binary frames traverse dedicated authenticated WSS and retire on a
   skip: !existsSync(certPath) || !existsSync(keyPath) || !process.env.BUD_STREAM_TEST_CA,
 }, async t => {
   const old = process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
-  process.env.BUD_BROWSER_STREAMING_EXPERIMENT = "1";
+  delete process.env.BUD_BROWSER_STREAMING_EXPERIMENT;
   const cert = readFileSync(certPath);
   const https = createServer({ cert, key: readFileSync(keyPath) });
   const server = new WebSocketServer({ server: https, maxPayload: 1_420_000 });

@@ -220,17 +220,14 @@ Main bud layout with sidebar navigation.
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const [buds, threads] = await Promise.all([
-    apiFetchJson('/api/buds'),
-    apiFetchJson(`/api/threads?bud_id=${params.budId}`),
-  ])
-  return { buds, bud, threads }
+  const buds = await apiFetchJson('/api/buds')
+  return { buds } // Thread windows load through useThreadList after feed readiness.
 }
 ```
 
 **Features**:
 - Explicit loader-level auth redirect handling via `toLoginRedirect(...)`
-- Fetches all buds and threads for current bud in parallel
+- Fetches Bud inventory; `useThreadList` owns bounded thread snapshots and the owner feed
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`); rows pass through `withFallbackAccentColors` first, so a missing `accent_color` (older service) is assigned positionally by creation order — never by list index, since the list order follows `last_seen_at`
 - Owns mutable thread-summary state so child routes can upsert canonical thread detail, apply streamed `thread.title` updates, optimistically patch thread model preferences, and remove deleted rows without waiting for a parent-loader refresh
 - Applies bud accent color theming via CSS custom properties
@@ -243,7 +240,7 @@ loader: async ({ params }) => {
 **State**:
 - `budSettings` - `{ open, tab }` for the Bud settings modal
 - `budOverrides` - `bud_id → ApiBud` rows saved from the modal, merged over `rawBuds`
-- `threads` - Mutable thread summaries seeded from loader data
+- `threads` - Mutable thread summaries supplied by `useThreadList`
 - `threadPanelStatus` - Shared delete-thread success/error banner state
 - Derived: `activeThreadId` from child route match
 
@@ -276,7 +273,7 @@ useEffect(() => {
 Nested routes for thread views:
 - `/$budId/` (index) - Redirect to most recent thread or `/new`
 - `/$budId/new` - New thread creation view using shared `WorkspaceShell`, catalog-backed model/reasoning loading, initial thread preference persistence, and browser-generated UUIDv7 `client_id` on first send
-- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/messages` + `/agent/state` bootstrap, Bud environment status, context budget meter refresh, bounded-resume agent SSE, persisted selector changes, `client_id`-first message reconciliation, a user-clicked file viewer pane, and an owned proxied web-view pane
+- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/open` bootstrap with an independent optional context-budget read, Bud environment status, context budget meter refresh, bounded-resume agent SSE, persisted selector changes, `client_id`-first message reconciliation, a user-clicked file viewer pane, and an owned proxied web-view pane
 
 ## Route Tree
 
@@ -382,8 +379,10 @@ authorization are unchanged. See [design](../../../design/assistant-output-activ
 
 ## Thread list invalidation
 
-The Bud layout subscribes once to its owned `/thread-list/stream`. Ready/change
-hints trigger serialized list refreshes (including inactive threads); heartbeat
-and normal agent progress do not poll. Requests abort on scope changes/unmount;
-failed refreshes retry. Loader, list, detail and patch merges preserve the newer
-conversation timestamp. The panel and default route share `compareThreads`.
+The Bud layout uses `useThreadList` and the single owner feed. Its loader fetches
+Bud inventory only. Ready/reconnect creates a bounded list snapshot; ordinary
+full-row patches update directly. Checkpoints discard covered patches; generations
+fence navigation and resync. The panel exposes loading/error and older/latest page
+controls. The default Bud route reads one latest row. Automation filter/editor
+selectors page 50 rows and separately resolve the selected owned thread, retaining
+selection outside the current page. No automatic full-inventory pagination loop.

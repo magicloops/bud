@@ -254,11 +254,11 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.equal(events[1]?.data.finished_at, "2026-04-21T19:00:04.250Z");
   assert.equal(events[1]?.data.duration_ms, 3250);
   assert.equal(events[1]?.data.duration_source, "service_wall_clock");
-  assert.equal(events[1]?.data.exit_code, 0);
-  assert.equal(events[1]?.data.output, "/repo\n");
-  assert.equal(events[1]?.data.mode, "shell");
+  assert.equal(result.message.tool_payload?.exit_code, 0);
+  assert.equal(events[1]?.data.output, undefined);
+  assert.equal(result.message.tool_payload?.output, "/repo\n");
+  assert.equal(result.message.tool_payload?.mode, "shell");
   assert.deepEqual((events[1]?.data.message as Record<string, unknown>).metadata, {
-    ...execution.payload,
     turn_id: "turn-1",
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
@@ -274,7 +274,6 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
 
   assert.deepEqual(result.payload, execution.payload);
   assert.deepEqual(result.message.metadata, {
-    ...execution.payload,
     turn_id: "turn-1",
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
@@ -398,11 +397,8 @@ test("ask_user_questions tool calls use waiting prompt runtime state and complet
 
   assert.equal(events[0]?.event, "agent.tool_call");
   assert.equal(events[1]?.event, "agent.tool_result");
-  assert.deepEqual(events[1]?.data.user_questions, {
-    kind: "user_questions",
-    requestId: "qr_test",
-    responses: toolResult.responses,
-  });
+  assert.equal(events[1]?.data.user_questions, undefined);
+  assert.deepEqual(result.message.tool_payload?.result, toolResult);
   assert.equal((events[1]?.data.message as Record<string, unknown>).message_id, "message-question-1");
   assert.deepEqual(result.payload.result, toolResult);
 });
@@ -782,12 +778,13 @@ test("terminal.wait results carry outcome/waited_ms on the live tool_result even
   const toolResult = events.find((event) => event.event === "agent.tool_result");
   assert.ok(toolResult);
   assert.equal(toolResult.data.name, "terminal.wait");
-  assert.equal(toolResult.data.kind, "wait");
+  const payload = (toolResult.data.message as { tool_payload: Record<string, unknown> }).tool_payload;
+  assert.equal(payload.kind, "wait");
   assert.equal("until" in toolResult.data, false);
-  assert.equal(toolResult.data.outcome, "command_finished");
-  assert.equal(toolResult.data.waited_ms, 78017);
+  assert.equal(payload.outcome, "command_finished");
+  assert.equal(payload.waited_ms, 78017);
   // exit_code falls back to the wait's command exit code.
-  assert.equal(toolResult.data.exit_code, 0);
-  assert.equal(toolResult.data.output, "waited-ok\n");
-  assert.equal(toolResult.data.changed, true);
+  assert.equal(payload.exit_code, 0);
+  assert.equal(payload.output, "waited-ok\n");
+  assert.equal(payload.changed, true);
 });

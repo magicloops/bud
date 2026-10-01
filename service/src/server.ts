@@ -1,4 +1,5 @@
-import { subscribeTurnTimings } from "./agent/invocation-timing.js";
+import { subscribeTurnTimings, subscribeInvocationChanges } from "./agent/invocation-timing.js";
+import { invocationEvents } from "./agent/invocation-events.js";
 import { registerAccessLog } from "./access-log.js";
 import { retrievalAvailable } from "./web-retrieval/config.js";
 import { BrowserBroker } from "./browser/broker.js";
@@ -55,6 +56,7 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean
   const requestedHeaders = request.headers["access-control-request-headers"];
   reply.header("Access-Control-Allow-Origin", origin);
   reply.header("Access-Control-Allow-Credentials", "true");
+  reply.header("Access-Control-Expose-Headers", "Server-Timing");
   reply.header("Access-Control-Allow-Methods", CORS_METHODS);
   reply.header(
     "Access-Control-Allow-Headers",
@@ -175,6 +177,16 @@ export async function buildServer(): Promise<FastifyInstance> {
       threadId => terminalSessionManager.rejectPendingRequestsForThread(threadId, "invocation_interrupted")), invocations,
     code => server.log.error({ code, component: "invocation_worker" }, "Invocation worker error"),
   ) : undefined;
+  const invocationPublisher = invocationEvents(agentRuntime, () => {
+    agentRuntime.invalidateReplay();
+    server.log.warn({ code: "invocation_publication_failed" }, "Invocation state recovery required");
+  });
+  const committedInvocations = (ids: string[]) => {
+    invocationWorker?.wake();
+    invocationPublisher.changed(ids);
+  };
+  const unsubscribeInvocationChanges = subscribeInvocationChanges(db, committedInvocations);
+  const unsubscribeBrowserInvocations = subscribeInvocationChanges(pool, committedInvocations);
   const automationWorker = invocationSettings.automationsEnabled ? new AutomationWorker(undefined,
     code => server.log.error({ code, component: "automation_worker" }, "Automation worker error")) : undefined;
   let retrievalCleanupTimer: NodeJS.Timeout | undefined;
@@ -257,6 +269,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();
     unsubscribeTiming();
+    unsubscribeInvocationChanges();
+    unsubscribeBrowserInvocations();
+    await invocationPublisher.flush();
     await releaseInvocationMode?.();
     await authPool.end();
     await pool.end();

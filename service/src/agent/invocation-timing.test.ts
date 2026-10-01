@@ -11,7 +11,40 @@ import * as schema from "../db/schema.js";
 import { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import { InvocationRepository } from "./invocation-repository.js";
 import { serializeInvocation } from "./invocation-view.js";
-import { invocationTimingTransaction, settledTurnTiming, subscribeTurnTimings, type TurnTiming } from "./invocation-timing.js";
+import { invocationTimingTransaction, recordInvocationChange, settledTurnTiming, subscribeInvocationChanges, subscribeTurnTimings, type TurnTiming } from "./invocation-timing.js";
+import type { Database } from "../db/client.js";
+
+test("invocation hints coalesce at outer commit and rollback publishes nothing", async () => {
+  let committed = false;
+  const database = { transaction: async (operation: (tx: object) => Promise<unknown>) => {
+    committed = false;
+    const result = await operation({});
+    committed = true;
+    return result;
+  } } as unknown as Database;
+  const hints: string[][] = [];
+  const unsubscribe = subscribeInvocationChanges(database, ids => {
+    assert.equal(committed, true);
+    hints.push(ids);
+  });
+  const nested = (tx: Parameters<typeof recordInvocationChange>[0]) => recordInvocationChange(tx, 'one');
+  await assert.rejects(invocationTimingTransaction(database, async tx => {
+    nested(tx);
+    assert.deepEqual(hints, []);
+    throw new Error('rollback');
+  }), /rollback/);
+  assert.deepEqual(hints, []);
+  await invocationTimingTransaction(database, async tx => {
+    nested(tx); nested(tx); recordInvocationChange(tx, 'two');
+    assert.deepEqual(hints, []);
+  });
+  assert.deepEqual(hints, [['one', 'two']]);
+  await invocationTimingTransaction(database, async () => {});
+  assert.equal(hints.length, 1, 'empty claim/maintenance must not wake the pump');
+  await invocationTimingTransaction(database, async tx => recordInvocationChange(tx));
+  assert.deepEqual(hints[1], [], 'continuation decisions can wake without changing invocation status');
+  unsubscribe();
+});
 
 const inv = schema.agentInvocationTable;
 test("only settled, trustworthy totals are public", () => {

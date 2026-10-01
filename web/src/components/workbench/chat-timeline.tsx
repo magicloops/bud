@@ -46,7 +46,7 @@ type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
 export type ChatMessage = Pick<
   ApiMessage,
-  'message_id' | 'client_id' | 'role' | 'display_role' | 'content' | 'created_at' | 'metadata'
+  'message_id' | 'client_id' | 'role' | 'display_role' | 'content' | 'created_at' | 'metadata' | 'tool_payload' | 'presentation'
 >
 
 export type ChatTimelineNotice = {

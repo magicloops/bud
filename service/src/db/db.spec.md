@@ -1,5 +1,14 @@
 # db
 
+## Atomic opening-message receipt
+
+`thread_creation_receipt` reserves `(created_by_user_id, creation_key)` durably.
+It stores a SHA-256 semantic fingerprint, ULID, owner/tenant and nullable foreign
+keys to thread, message and invocation. Deletion nulls references without freeing
+the key; there is no TTL or stored request body. Retry queries recheck all owner
+and context associations. Creation and invocation admission share one transaction;
+new message/invocation rows inherit the thread tenant. Migration: `0048_lush_timeslip.sql`.
+
 Database layer using Drizzle ORM with PostgreSQL.
 
 ## Purpose
@@ -587,3 +596,19 @@ trigger, backfill old holds as automatic reconciliation candidates, and remove
 old return-operation receipts. Profile/sign-in data and unanswered tasks survive.
 Reviewed SQL was applied locally after db:push proposed unrelated constraint
 recreation; deployment uses the checked-in migrations with a quiesced matching stack.
+
+## Read state queries
+
+`thread-read-state.ts` performs a conditional PostgreSQL upsert that only advances
+the viewer watermark by `(millisecond created_at, message_id)`, returning the
+committed winner for stale requests. `loadNotificationSummary` counts unseen
+owned, undeleted threads in SQL, including current Bud ownership.
+`thread-read-state.test.ts` exercises concurrent equal-time requests, idempotency,
+two-user counts and deletion against local PostgreSQL.
+
+Migration 0049 owns post-commit summary/transcript triggers on thread, message,
+thread_read_state, terminal_session and Bud ownership. One identity-only channel
+serves list/transcript publication. Pure terminal heartbeat changes are ignored.
+The previous list hint trigger is removed; conversation-order maintenance stays.
+`thread-read-state.test.ts` also exercises 206-row bounded pagination with tied
+timestamps, archived rows and foreign Bud exclusion against PostgreSQL.

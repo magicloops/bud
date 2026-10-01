@@ -23,6 +23,15 @@ export const isSyntheticMessage = (message: ApiMessage) =>
 export const isAgentSyntheticMessage = (message: ApiMessage) =>
   isPendingToolMessage(message) || isDraftAssistantMessage(message) || isDraftReasoningMessage(message)
 
+// Persisted identity survives finalization, which may already clear draft flags.
+export const isCanonicalMessage = (message: ApiMessage) =>
+  message.message_id !== message.client_id && !isSyntheticMessage(message)
+
+/** Insert events can replay behind a canonical HTTP snapshot. Mutations use reconciliation. */
+export const insertStreamMessage = (existing: ApiMessage[], next: ApiMessage) =>
+  existing.some(message => message.client_id === next.client_id && isCanonicalMessage(message))
+    ? existing : upsertMessage(existing, next)
+
 export const sortMessagesChronologically = (messages: ApiMessage[]) =>
   [...messages].sort((left, right) => {
     const timeDelta = new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
@@ -40,6 +49,7 @@ export const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
     return sortMessagesChronologically([...existing, next])
   }
   const current = existing[index]
+  if (isCanonicalMessage(current) && isSyntheticMessage(next)) return existing
   if (current === next) {
     // Identical object: keep array identity so memoized consumers skip work.
     return existing
@@ -118,6 +128,7 @@ export const upsertDraftAssistantMessage = (
   updater: (current: ApiMessage | null) => ApiMessage,
 ) => {
   const current = existing.find((message) => getMessageIdentity(message) === clientId) ?? null
+  if (current && isCanonicalMessage(current)) return existing
   return upsertMessage(existing, updater(current))
 }
 
@@ -127,6 +138,7 @@ export const upsertDraftReasoningMessage = (
   updater: (current: ApiMessage | null) => ApiMessage,
 ) => {
   const current = existing.find((message) => getMessageIdentity(message) === clientId) ?? null
+  if (current && isCanonicalMessage(current)) return existing
   return upsertMessage(existing, updater(current))
 }
 
@@ -155,15 +167,13 @@ export const buildPendingToolMessageFromToolCall = ({
     client_id: clientId,
     role: 'tool',
     display_role: name,
-    content: JSON.stringify({ tool: name, call_id: callId, ...argsObj }),
+    content: name,
+    tool_payload: { ...argsObj, tool: name, call_id: callId },
     created_at: startedAt ?? createdAt ?? new Date().toISOString(),
     metadata: {
-      tool: name,
-      call_id: callId,
       turn_id: turnId,
       pending: true,
       ...(startedAt ? { started_at: startedAt } : {}),
-      ...argsObj,
     },
   }
 }

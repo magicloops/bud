@@ -3,6 +3,7 @@ import { monotonicFactory } from "ulid";
 import type { ContextBudgetSnapshot } from "../agent/context-budget-state.js";
 import type { AgentEnvironmentSnapshot } from "../agent/environment.js";
 import type { SseEvent } from "./event-bus.js";
+import { toolPresentation, type ToolPresentation } from "../agent/message-view.js";
 
 export type AgentOutputActivityState = "working" | "text" | "awaiting_completion";
 export type AgentOutputActivity = { llm_call_id: string; state: AgentOutputActivityState };
@@ -17,6 +18,7 @@ export type AgentRuntimePhase =
   | "streaming_message";
 
 export type AgentPendingTool = {
+  presentation?: ToolPresentation;
   client_id: string;
   call_id: string;
   name: string;
@@ -169,9 +171,10 @@ export class AgentRuntimeStateManager {
     }
   }
 
-  getSnapshot(threadId: string): AgentRuntimeSnapshot {
+  getSnapshot(threadId: string, freshBoundary = false): AgentRuntimeSnapshot {
     const snapshot = this.ensureSnapshot(threadId);
     this.ensureCursorAvailable(threadId, snapshot);
+    if (freshBoundary) snapshot.streamCursor = this.pushCheckpoint(threadId);
     return this.serializeSnapshot(snapshot);
   }
 
@@ -448,6 +451,10 @@ export class AgentRuntimeStateManager {
   }
 
   emit(threadId: string, event: Omit<SseEvent, "id">, beforePublish?: (cursor: string) => void): string {
+    if (event.event === "agent.tool_call" && typeof event.data.name === "string") {
+      event = { ...event, data: { ...event.data, presentation: toolPresentation(event.data.name,
+        (event.data.args ?? {}) as Record<string, unknown>, true) } };
+    }
     const emittedEvent: SseEvent = {
       ...event,
       id: this.nextCursor(),
@@ -476,6 +483,15 @@ export class AgentRuntimeStateManager {
     return emittedEvent.id!;
   }
 
+  /** A failed durable publication makes prior replay continuity unknowable. */
+  invalidateReplay(): void {
+    const threads = new Set([...this.buffers.keys(), ...this.listeners.keys()]);
+    this.buffers.clear();
+    for (const threadId of threads) {
+      this.emit(threadId, { event: "agent.resync_required", data: { reason: "publication_failed" } });
+    }
+  }
+
   attach(threadId: string, reply: FastifyReply, options?: AttachOptions): AgentStreamAttachment {
     const attachment = this.prepareAttachment(threadId, options);
     if (attachment.status === "resync_required") {
@@ -496,6 +512,7 @@ export class AgentRuntimeStateManager {
         "Agent SSE event emit",
       );
       reply.sse({ event: event.event, data: JSON.stringify(event.data), id: event.id });
+      if (event.event === "agent.resync_required") reply.raw.end();
     };
 
     const listeners = this.listeners.get(threadId) ?? new Set<Listener>();
@@ -722,7 +739,8 @@ export class AgentRuntimeStateManager {
       phase: snapshot.phase,
       can_cancel: snapshot.canCancel,
       stream_cursor: snapshot.streamCursor,
-      pending_tool: snapshot.pendingTool,
+      pending_tool: snapshot.pendingTool ? { ...snapshot.pendingTool,
+        presentation: toolPresentation(snapshot.pendingTool.name, snapshot.pendingTool.args, true) } : null,
       draft_assistant: snapshot.draftAssistant
         ? {
             client_id: snapshot.draftAssistant.clientId,

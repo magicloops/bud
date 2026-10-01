@@ -1,5 +1,16 @@
 # Input guards and bounded WSS integration
 
+> **October 1, 2026 update:** Private takeover streaming now defaults on at the
+> service, per the user's rollout decision. Set the service's
+> `BUD_BROWSER_STREAMING_EXPERIMENT=0` or `false` to opt out; the daemon requires
+> no flag. Restart the service and reattach viewers. Use the already integrated
+> streaming-capable daemon and shared web/mobile viewer; unsupported older peers
+> do not silently downgrade. Passive agent screenshots, ownership/input guards,
+> wire shapes and DB schema are unchanged. No native rebuild is needed for this
+> default change. Earlier default-off/enablement statements below are historical;
+> open measurement and acceptance items remain open.
+
+
 Status: guarded input/source, binary WSS relay and shared canvas candidate implemented. Full-stack acceptance and Phase 3 measurement remain open. Continues the pixel-provenance experiment.
 
 ## Current landing status (2026-09-28)
@@ -149,3 +160,17 @@ screenshot capture-lock waits; the local service's launch environment lacked the
 experiment flag. Repeat with the flag enabled before treating it as a screencast
 result. The shared error UI now reports safe input failure category, media mode
 and timing; see [investigation](../../debug/browser-streaming-mobile-input.md).
+
+## Default-on validation (2026-10-01)
+
+The service selects private screencast with no environment override, retains
+explicit `0`/`false` screenshot opt-out, and keeps passive viewing operation-driven.
+Mode-selection fixtures cover private/passive requests and normalized opt-out.
+Existing screenshot privacy, revocation and relay tests remain exercised.
+
+- `pnpm exec node --import tsx --test src/browser/media.test.ts src/browser/stream-media.test.ts src/browser/stream-wss.test.ts` (from service): 19 passed; TLS fixture initially skipped without its CA setting.
+- Re-ran `stream-wss.test.ts` with `BUD_STREAM_TEST_CA` set to the local mkcert public root: 1 passed, verifying default-on binary WSS and control-fence retirement without disabling certificate checks.
+- `pnpm --dir service build` and `git diff --check`: passed.
+- No running service was restarted or deployed. Reattach viewers after service restart to apply the new mode default.
+
+The initial sandboxed suite could not bind loopback (`listen EPERM: operation not permitted 127.0.0.1` in the three socket tests); rerunning with approved loopback access passed. This was an environment restriction, not a media failure.

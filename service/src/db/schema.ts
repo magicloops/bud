@@ -1545,6 +1545,24 @@ export const agentInvocationTable = pgTable("agent_invocation", {
   leaseCheck: check("agent_invocation_lease_check", sql`(${t.status} in ('leased','running')) = (${t.workerId} is not null and ${t.leaseExpiresAt} is not null)`),
 }));
 
+// Retry reservations survive thread/message deletion. Nullable references are
+// tombstones, never permission to reuse the owner's creation key.
+export const threadCreationReceiptTable = pgTable("thread_creation_receipt", {
+  id: text("id").primaryKey(),
+  creationKey: text("creation_key").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
+  messageId: uuid("message_id").references(() => messageTable.messageId, { onDelete: "set null" }),
+  invocationId: text("invocation_id").references(() => agentInvocationTable.id, { onDelete: "set null" }),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id),
+  tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  retryKey: unique("thread_creation_receipt_owner_key").on(t.createdByUserId, t.creationKey),
+  fingerprintCheck: check("thread_creation_receipt_fingerprint_check", sql`${t.fingerprint} ~ '^[a-f0-9]{64}$'`),
+  keyCheck: check("thread_creation_receipt_key_check", sql`length(${t.creationKey}) between 1 and 128`),
+}));
+
 export const agentInvocationActionTable = pgTable("agent_invocation_action", {
   id: text("id").primaryKey(), invocationId: text("invocation_id").notNull(),
   callId: text("call_id").notNull(), fence: integer("fence").notNull(),

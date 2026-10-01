@@ -94,7 +94,7 @@ export class BrowserToolExecutor {
       result = { ok: false, outcome: "unknown", error: "browser_outcome_unknown" };
     }
     await this.check(context);
-    const summary = result.ok ? "Browser operation completed." : result.outcome === "unknown"
+    const summary = result.ok ? String(args.summary) : result.outcome === "unknown"
       ? "Browser outcome is unknown. Inspect state before repeating an action."
       : result.error === "browser_private_or_paused"
         ? "Browser execution is temporarily unavailable during human control or its cleanup. Control returns automatically when the user leaves or the override expires. Continue chatting or using non-browser tools; do not bypass the execution fence through terminal or another browser."

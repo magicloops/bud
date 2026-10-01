@@ -1,4 +1,5 @@
 import { isTurnTiming } from './turn-timing'
+import { isInvocationEvent } from './invocation-state'
 import { useCallback, useEffect, useRef } from 'react'
 import { createAuthEventSource } from '@/lib/transport'
 import { isAuthRedirectPending } from '@/lib/auth-redirect'
@@ -7,6 +8,7 @@ import type {
   ApiAgentCompactionFailedEvent,
   ApiAgentCompactionStartEvent,
   ApiAgentState,
+  ApiAgentInvocation,
   ApiOutputActivity,
   ApiMessage,
   ApiTurnTiming,
@@ -115,6 +117,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onInvocationChanged?: (invocation: ApiAgentInvocation) => void
   onTurnTiming?: (timing: ApiTurnTiming) => void
   onStreamEvent: () => void
   onOutputActivity: (event: { turnId: string; llmCallId: string; state: ApiOutputActivity["state"] | null }) => void
@@ -200,6 +203,7 @@ export function useAgentStream({
   onThreadTitle,
   onFinalizeTurn,
   onTurnTiming,
+  onInvocationChanged,
   refreshBootstrap,
 }: UseAgentStreamArgs) {
   const diagnosticsRef = useRef<ReturnType<typeof createRecoveryDiagnostics> | null>(null)
@@ -233,6 +237,7 @@ export function useAgentStream({
     onThreadTitle,
     onFinalizeTurn,
     onTurnTiming,
+    onInvocationChanged,
     refreshBootstrap,
   })
 
@@ -257,6 +262,7 @@ export function useAgentStream({
       onThreadTitle,
       onFinalizeTurn,
       onTurnTiming,
+      onInvocationChanged,
       refreshBootstrap,
     }
   }, [
@@ -274,6 +280,7 @@ export function useAgentStream({
     onError,
     onFinalizeTurn,
     onTurnTiming,
+    onInvocationChanged,
     onStatusChange,
     onStreamEvent,
     onThreadTitle,
@@ -444,6 +451,19 @@ export function useAgentStream({
       lastEventTimeRef.current = Date.now()
     })
 
+    source.addEventListener('agent.invocation_changed', (evt) => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
+      try {
+        const data: unknown = JSON.parse(evt.data)
+        if (!isInvocationEvent(data)) return
+        callbacksRef.current.onStreamEvent()
+        lastEventTimeRef.current = Date.now()
+        cursorRef.current = evt.lastEventId || cursorRef.current
+        callbacksRef.current.onInvocationChanged?.(data)
+      } catch { console.warn('[agent-sse] invalid invocation event') }
+    })
+
     source.addEventListener('agent.turn_timing', (evt) => {
       if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
@@ -499,6 +519,22 @@ export function useAgentStream({
       } catch (error) {
         console.warn('[agent-sse] failed to parse tool_call', error)
       }
+    })
+
+    source.addEventListener('transcript.message', evt => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      try {
+        const { message } = JSON.parse(evt.data) as { message: ApiMessage }
+        if (!message || typeof message.client_id !== 'string' || typeof message.message_id !== 'string') return
+        callbacksRef.current.onStreamEvent()
+        lastEventTimeRef.current = Date.now()
+        cursorRef.current = evt.lastEventId || cursorRef.current
+        callbacksRef.current.onToolResultMessage(message)
+      } catch { recoverBootstrap('invalid_transcript_event') }
+    })
+    source.addEventListener('transcript.invalidated', () => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      recoverBootstrap('transcript_mutated')
     })
 
     source.addEventListener('agent.tool_result', (evt) => {

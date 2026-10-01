@@ -196,8 +196,8 @@ startup.
 | `GET` | `/api/file-sessions/:id` | Read one owned file session |
 | `DELETE` | `/api/file-sessions/:id` | Revoke one owned file session |
 | `GET/HEAD` | `/api/files/:id` | Authorize a file edge request; stream stat/read/range work through the daemon over the selected data-plane carrier |
-| `GET` | `/api/threads` | List threads |
-| `POST` | `/api/threads` | Create thread |
+| `GET` | `/api/threads` | Bounded owned `{threads,page,feed_checkpoint}` list |
+| `POST` | `/api/threads` | Create thread, optionally atomically admit its opening message with an owner-scoped creation key |
 | `PATCH` | `/api/threads/:id/model-preference` | Persist the owned thread's selected model/reasoning pair |
 | `GET` | `/api/threads/:id/messages` | Get messages |
 | `POST` | `/api/threads/:id/messages` | Send message (triggers agent) |
@@ -329,3 +329,19 @@ configurable (default 1). User approvals, ownership, schema checks and durable
 recovery remain enforced. Stop legacy service processes before cutover; admission
 mode guards reject conflicting processes or unresolved legacy questions.
 See [rollout plan](../plan/rolled-out-capability-defaults.md).
+
+
+## Backend/mobile performance contracts
+
+One fresh `/api/threads/:id/open` checkpoint precedes canonical transcript/state/
+summary reads. Compact tool DTOs are shared by REST and SSE; stored model evidence
+is unchanged. Read-only POST `/messages/reconcile` repairs up to 200 loaded IDs.
+One `/api/me/thread-list/stream` owner feed sends canonical patches and explicit
+resync. A single shared LISTEN connection feeds list and transcript publication;
+commit hints cover message mutations and all summary tables. Worker admission wakes
+and refills process-local capacity after commit while durable leases remain authoritative.
+
+Migrations 0048/0049 precede the matching service/web/mobile release. Current
+single-instance production was confirmed; this does not provide distributed replay
+or cross-instance wake guarantees. Native adoption and production measurements
+remain external validation. See [handoff](../plan/backend-mobile-performance/mobile-api-handoff.md).

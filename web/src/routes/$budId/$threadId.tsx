@@ -28,13 +28,14 @@ import { ThreadTerminalGridPane } from '@/components/workbench/thread-terminal-g
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
+import { useContextBudget } from '@/features/threads/use-context-budget'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
 import { getAgentStateRuntimeErrorMessage } from '@/features/threads/agent-state-error'
 import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
-import { invocationSummary, invocationAllowsLiveActivity, invocationRevision } from '@/features/threads/invocation-state'
+import { invocationSummary, invocationAllowsLiveActivity, invocationRevision, mergeInvocationEvent } from '@/features/threads/invocation-state'
 import { submitQuestionResponseFlow, type QuestionResponseContinuation } from '@/features/threads/question-response-submit'
 import {
   getStatusFromAgentState,
@@ -64,9 +65,8 @@ import type {
   ApiAgentCompactionStartEvent,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
-  ApiContextBudget,
   ApiCreateMessageResponse,
-  ApiMessagePage,
+  ApiThreadOpen,
   ApiThread,
 } from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
@@ -80,17 +80,10 @@ import 'xterm/css/xterm.css'
 export const Route = createFileRoute('/$budId/$threadId')({
   loader: async ({ params, location }) => {
     try {
-      const [messagePage, agentState, thread] = await Promise.all([
-        apiFetchJson<ApiMessagePage>(
-          `/api/threads/${params.threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
-          { redirectOnUnauthorized: false },
-        ),
-        apiFetchJson<ApiAgentState>(
-          `/api/threads/${params.threadId}/agent/state`,
-          { redirectOnUnauthorized: false },
-        ),
-        apiFetchJson<ApiThread>(`/api/threads/${params.threadId}`, { redirectOnUnauthorized: false }),
-      ])
+      const { transcript: messagePage, agent_state: agentState, thread } = await apiFetchJson<ApiThreadOpen>(
+        `/api/threads/${params.threadId}/open?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
+        { redirectOnUnauthorized: false },
+      )
       return { messagePage, agentState, thread }
     } catch (error) {
       if (isApiError(error, 401)) {
@@ -132,6 +125,9 @@ function ThreadViewContent() {
   const [durableState, setDurableState] = useState(initialAgentState)
   const durableStateRef = useRef(durableState)
   durableStateRef.current = durableState
+  // Lifecycle events update the badge immediately, but do not prove that every
+  // transcript writer has been recovered. Keep the polling baseline separate.
+  const recoveredInvocationRevisionRef = useRef(invocationRevision(initialAgentState))
   const durableSummary = invocationSummary(durableState)
   const reviewedInvocation = durableSummary?.invocation.status === 'needs_review' ? durableSummary.invocation : null
   const reviewKey = reviewedInvocation ? `${threadId}:${reviewedInvocation.invocation_id}:${reviewedInvocation.updated_at}` : null
@@ -146,9 +142,7 @@ function ThreadViewContent() {
   const [agentEnvironment, setAgentEnvironment] = useState<ApiAgentEnvironment | null>(
     initialAgentState.environment ?? null,
   )
-  const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
-    initialAgentState.context_budget ?? null,
-  )
+  const { contextBudget, applyContextBudget, refreshContextBudget } = useContextBudget(threadId, initialAgentState.context_budget)
   const [assistantActivityGate, setAssistantActivityGate] = useState(() =>
     createAssistantActivityGateFromAgentState(initialAgentState),
   )
@@ -242,6 +236,7 @@ function ThreadViewContent() {
     mergeLatestBootstrap,
     applyAgentState,
     loadOlderMessages,
+    reconcileLoadedMessages,
     addOptimisticUserMessage,
     removeMessage,
     reconcilePersistedUserMessage,
@@ -320,13 +315,14 @@ function ThreadViewContent() {
   useEffect(() => {
     if (outputActivityRevision.current > 0) return
     setDurableState(initialAgentState)
+    recoveredInvocationRevisionRef.current = invocationRevision(initialAgentState)
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
-    setContextBudget(initialAgentState.context_budget ?? null)
+    applyContextBudget(initialAgentState.context_budget)
     setLiveTurnId(invocationAllowsLiveActivity(initialAgentState) ? initialAgentState.turn_id : null)
     applyAgentStateError(initialAgentState)
     resetAssistantActivityGate(initialAgentState)
-  }, [applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
+  }, [applyContextBudget, applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
 
   useEffect(() => {
     setActiveCompaction(null)
@@ -407,36 +403,37 @@ function ThreadViewContent() {
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
-    setContextBudget(nextAgentState.context_budget ?? null)
+    applyContextBudget(nextAgentState.context_budget)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentState, applyAgentStateError, resetAssistantActivityGate])
+  }, [applyContextBudget, applyAgentState, applyAgentStateError, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
     const activityRevision = outputActivityRevision.current
     const sequence = ++refreshSequence.current
-    // Read the transcript after state: completion/answer rows committed before
-    // this snapshot must not be missed by an earlier parallel message query.
-    const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
-    const nextPage = await apiFetchJson<ApiMessagePage>(
-      `/api/threads/${targetThreadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
+    const { agent_state: nextAgentState, transcript: nextPage } = await apiFetchJson<ApiThreadOpen>(
+      `/api/threads/${targetThreadId}/open?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
     )
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
     if (activityRevision !== outputActivityRevision.current || sequence !== refreshSequence.current) return nextAgentState
     setDurableState(nextAgentState)
     mergeLatestBootstrap(nextPage, nextAgentState)
+    await reconcileLoadedMessages()
+    if (currentThreadRef.current !== scope) return nextAgentState
+    void refreshContextBudget()
+    recoveredInvocationRevisionRef.current = invocationRevision(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
-    setContextBudget(nextAgentState.context_budget ?? null)
+    applyContextBudget(nextAgentState.context_budget)
     setLiveTurnId(invocationAllowsLiveActivity(nextAgentState) ? nextAgentState.turn_id : null)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentStateError, mergeLatestBootstrap, resetAssistantActivityGate])
+  }, [applyContextBudget, refreshContextBudget, applyAgentStateError, mergeLatestBootstrap, reconcileLoadedMessages, resetAssistantActivityGate])
 
   const durableEnabled = durableState.invocations !== undefined
   const abandonReviewedInvocation = async (event: FormEvent<HTMLFormElement>) => {
@@ -479,7 +476,7 @@ function ThreadViewContent() {
       try {
         if (document.visibilityState === 'visible') {
           const snapshot = await apiFetchJson<ApiAgentState>(`/api/threads/${threadId}/agent/state`)
-          if (!disposed && invocationRevision(snapshot) !== invocationRevision(durableStateRef.current)) {
+          if (!disposed && invocationRevision(snapshot) !== recoveredInvocationRevisionRef.current) {
             await refreshAgentBootstrap(threadId)
           }
         }
@@ -569,14 +566,14 @@ function ThreadViewContent() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
-    if (message.role === 'tool') {
-      try { browserNotice(JSON.parse(message.content)) } catch { /* Not a browser result. */ }
+    if (message.role === 'tool' && message.tool_payload) {
+      browserNotice(message.tool_payload)
     }
-    if (message.metadata?.tool === 'ask_user_questions') {
+    if (getToolName(message) === 'ask_user_questions') {
       setQuestionSubmitError(null)
       setStatus((current) => (current === 'dispatching' ? current : 'streaming'))
     }
-    const tool = typeof message.metadata?.tool === 'string' ? message.metadata.tool : null
+    const tool = getToolName(message)
     if (tool?.startsWith('web_view.')) {
       setViewMode('web')
       void refreshThreadWebView()
@@ -648,7 +645,7 @@ function ThreadViewContent() {
   const handleCompactionDone = useCallback((event: ApiAgentCompactionDoneEvent) => {
     setActiveCompaction(null)
     if (event.context_budget) {
-      setContextBudget(event.context_budget)
+      applyContextBudget(event.context_budget)
     }
     if (event.message) {
       // The durable `role: "compaction"` row: upsert it like any other
@@ -669,7 +666,7 @@ function ThreadViewContent() {
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after compaction event', error)
     })
-  }, [appendContextCompactionNotice, applyToolResultMessage, refreshAgentState, threadId])
+  }, [applyContextBudget, appendContextCompactionNotice, applyToolResultMessage, refreshAgentState, threadId])
 
   const handleCompactionFailed = useCallback((event: ApiAgentCompactionFailedEvent) => {
     setActiveCompaction(null)
@@ -688,6 +685,17 @@ function ThreadViewContent() {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
   } = useAgentStream({
+    onInvocationChanged: (invocation) => {
+      const next = mergeInvocationEvent(durableStateRef.current, invocation)
+      if (next === durableStateRef.current) return
+      durableStateRef.current = next
+      setDurableState(next)
+      const selected = invocationSummary(next)?.invocation
+      if (selected?.invocation_id === invocation.invocation_id) {
+        setStatus(current => invocation.status === 'running' &&
+          (current === 'streaming' || current === 'waiting_for_terminal') ? current : getStatusFromAgentState(next))
+      }
+    },
     onStreamEvent: () => { outputActivityRevision.current += 1 },
     threadId,
     initialStreamCursor: initialAgentState.stream_cursor,

@@ -1,3 +1,4 @@
+import { serializeMessageView } from "../../agent/message-view.js";
 import { Buffer } from "node:buffer";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, gt, lt, or } from "drizzle-orm";
@@ -44,22 +45,6 @@ type SerializedThread = {
   model_warning: string | null;
 };
 
-type SerializedMessage = {
-  message_id: string;
-  client_id: string;
-  role: string;
-  display_role: string;
-  content: string;
-  metadata: Record<string, unknown>;
-  created_at: Date;
-};
-
-export const CreateThreadSchema = z.object({
-  bud_id: z.string().min(1),
-  title: z.string().optional(),
-  model: z.string().min(1).nullable().optional(),
-  reasoning_effort: z.string().min(1).nullable().optional(),
-});
 
 export const BrowserViewportSchema = z.object({
   width: z.number().int().min(240).max(2560),
@@ -73,6 +58,17 @@ export const CreateMessageSchema = z.object({
   cwd: z.string().optional(),
   model: z.string().min(1).nullable().optional(),
   reasoning_effort: z.string().min(1).nullable().optional(),
+});
+
+export const CreateThreadSchema = z.object({
+  bud_id: z.string().min(1),
+  title: z.string().optional(),
+  model: z.string().min(1).nullable().optional(),
+  reasoning_effort: z.string().min(1).nullable().optional(),
+  creation_key: z.string().min(1).max(128).optional(),
+  opening_message: CreateMessageSchema.optional(),
+}).refine(body => !body.opening_message || !!body.creation_key, {
+  message: "creation_key is required with opening_message", path: ["creation_key"],
 });
 
 export const UpdateThreadModelPreferenceSchema = z.object({
@@ -89,8 +85,10 @@ export const ThreadParamsSchema = z.object({
 });
 
 export const ThreadListQuerySchema = z.object({
-  bud_id: z.string().optional()
-});
+  bud_id: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().min(1).max(2048).optional(),
+}).strict();
 
 export const StreamResumeQuerySchema = z.object({
   after: z.string().min(1).optional(),
@@ -275,16 +273,8 @@ export async function sendLocalModelAvailabilityError(
   return true;
 }
 
-export function serializeMessage(row: typeof messageTable.$inferSelect): SerializedMessage {
-  return {
-    message_id: row.messageId,
-    client_id: row.clientId,
-    role: row.role,
-    display_role: row.displayRole ?? row.role,
-    content: row.content,
-    metadata: row.metadata ?? {},
-    created_at: row.createdAt
-  };
+export function serializeMessage(row: typeof messageTable.$inferSelect) {
+  return { ...serializeMessageView(row), client_id: row.clientId, created_at: row.createdAt };
 }
 
 const MessageCursorSchema = z.object({

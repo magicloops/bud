@@ -71,10 +71,11 @@ Thread list sidebar for conversation navigation.
 ### `chat-timeline.tsx`
 
 Tool payload lookup is shared with work-group details through `tool-payload.ts`.
-Completed canonical JSON content takes precedence over metadata, so answered
-continuations with timing-only metadata render their question/answer correctly.
-Pending forms remain metadata-backed. `tool-payload.test.ts` covers continuation
-receipts, pending forms, legacy fallback, malformed content and precedence.
+Canonical results and locally synthesized pending forms both use `tool_payload`,
+supplemented by service timing and local pending metadata. Display content is never
+parsed as tool JSON. Null/missing payloads retain plain-text rendering without
+resurrecting a tool from metadata. `tool-payload.test.ts` covers continuations,
+pending forms, null payloads and structured-payload precedence.
 
 Message list with auto-scroll and full-height message rendering.
 
@@ -158,11 +159,20 @@ One turn's presentation under [web/mobile parity](../../../../plan/web-mobile-st
   Cpu/Wrench icon, and running/failure counts. Reasoning item titles strip leading,
   trailing and paired inline Markdown decoration; expanded details keep Markdown.
   Opening shows compact item rows; full existing tool/Markdown details mount only
-  after opening an item. Hidden large payloads are not eagerly formatted.
+  after opening an item. Tool titles use `tool_payload.tool` alongside command/input
+  summaries. Browser rows use a globe and intent summary, with the tool name in expanded
+  details. Browser exec details extract summary and code from pending fields or
+  completed args, rendering JavaScript with the shared Markdown code-block renderer.
+  Fences inside code remain literal. Outcome guidance remains in details. Both generic and specialized tool details offer Show/Hide payload;
+  full JSON is formatted only while that disclosure is open. Null historical
+  payloads retain their original text without an empty payload control.
 - Commentary remains at the timeline root with stable message keys through
   streaming and intermediate classification. Explicit completed final folds prior
   work into a closed `AgentWorkGroup`; final Markdown retains its host identity.
 - Expanded Worked for bodies have 8px top padding below the disclosure button.
+- Expanded tool/reasoning details use a shared 20px left inset past the chevron
+  and gap, aligning browser content with the globe. Details have 8px top spacing
+  and bottom padding.
 - The full Worked for label, including duration, is italic when collapsed and
   normal when expanded.
 - The full-width Worked for section uses the message hover background (`secondary/40`)
@@ -179,7 +189,9 @@ One turn's presentation under [web/mobile parity](../../../../plan/web-mobile-st
 
 Server-render tests cover collapsed live sections, 50-call/zero-detail mounting,
 parallel active counts, completed disclosures, no/empty commentary, semantic
-boundaries and the timeline footer.
+boundaries and the timeline footer. Compact-contract regressions cover tool names,
+pending command summaries, null historical payloads, and mounted lazy payload
+disclosure for generic browser and specialized terminal tools.
 
 ### `streaming-parity.test.tsx`
 
@@ -656,3 +668,10 @@ Pending browser waits render directly as an action row without the tool label, t
 memoized projector. Timing updates change the completed label only; grouping,
 streaming, disclosure and viewport policy are unchanged. Mounted parity tests
 cover merging and retention without requiring transcript rows to change.
+
+Compact canonical tool rows use `tool_payload` directly in the shared resolver,
+supplemented by timing metadata. No JSON display-content parse is needed.
+`ChatMessage` retains payload/presentation fields through timeline/work groups.
+
+`thread-panel.tsx` exposes loading, error, older and latest controls for bounded
+list windows; empty-state copy is withheld until the first snapshot settles.

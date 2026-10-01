@@ -1,0 +1,27 @@
+{
+  "fixture_kind": "synthetic_contract_examples_not_captured_production_responses",
+  "create_request": {
+    "bud_id": "bud_example",
+    "creation_key": "create-20260930-example",
+    "opening_message": { "client_id": "11111111-1111-4111-8111-111111111111", "text": "Inspect the project" }
+  },
+  "tool_message": {
+    "message_id": "22222222-2222-4222-8222-222222222222",
+    "client_id": "33333333-3333-4333-8333-333333333333",
+    "role": "tool", "display_role": "terminal.run", "content": "Command completed",
+    "created_at": "2026-09-30T00:00:00.000Z",
+    "metadata": { "turn_id": "turn_example", "duration_ms": 300, "duration_source": "service_wall_clock" },
+    "tool_payload": { "tool": "terminal.run", "summary": "Command completed", "output": "hello\n", "exit_code": 0 },
+    "presentation": { "kind": "terminal", "id": null, "status": null }
+  },
+  "open_included": { "web_view": false, "browser": false, "context_budget": false },
+  "list_ready": { "epoch": "epoch-example", "sequence": 0 },
+  "empty_list": { "threads": [], "page": { "has_more": false, "next_cursor": null }, "feed_checkpoint": { "epoch": "epoch-example", "sequence": 0 } },
+  "list_remove": { "thread_id": "44444444-4444-4444-8444-444444444444", "epoch": "epoch-example", "sequence": 1 },
+  "list_resync": { "reason": "continuity_lost", "epoch": "new-epoch", "sequence": 0 },
+  "transcript_invalidated": { "message_ids": ["22222222-2222-4222-8222-222222222222"] },
+  "reconcile_request": { "message_ids": ["22222222-2222-4222-8222-222222222222"] },
+  "reconcile_deleted_response": { "messages": [], "missing_message_ids": ["22222222-2222-4222-8222-222222222222"] },
+  "read_response": { "ok": true, "updated": false, "last_seen_message_id": "22222222-2222-4222-8222-222222222222", "summary": { "unseen_thread_count": 0, "updated_at": "2026-09-30T00:00:00.000Z" } },
+  "errors": { "unauthenticated": { "error": "unauthorized" }, "foreign_thread": { "error": "thread_not_found" }, "list_cursor": { "error": "invalid_cursor" } }
+}

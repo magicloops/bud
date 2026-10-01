@@ -2,6 +2,35 @@ import type { ApiAgentInvocation, ApiAgentState } from '../../lib/api-types.ts'
 
 const finished = new Set(['succeeded', 'failed', 'canceled', 'expired'])
 
+const lifecycleOrder: Record<string, number> = {
+  pending: 0, leased: 1, running: 2, waiting_for_user: 3,
+  waiting_for_bud: 3, waiting_for_model: 3, retry_wait: 3,
+  succeeded: 4, failed: 4, expired: 4, needs_review: 4, canceled: 5,
+}
+
+export function isInvocationEvent(value: unknown): value is ApiAgentInvocation {
+  if (!value || typeof value !== 'object') return false
+  const row = value as Record<string, unknown>
+  return ['invocation_id', 'turn_id', 'input_message_id', 'model', 'reasoning_effort', 'created_at', 'updated_at', 'next_attempt_at']
+    .every(key => typeof row[key] === 'string') &&
+    typeof row.status === 'string' && Object.hasOwn(lifecycleOrder, row.status) &&
+    ['human', 'automation'].includes(String(row.origin)) && typeof row.reserves_thread === 'boolean' &&
+    Number.isSafeInteger(row.attempt) && Number(row.attempt) >= 0 &&
+    ['cancel_requested_at', 'latest_start_at', 'outcome_code'].every(key => row[key] === null || typeof row[key] === 'string')
+}
+
+/** Attempt increments on every claim; within an attempt lifecycle only advances. */
+export function mergeInvocationEvent(state: ApiAgentState, row: ApiAgentInvocation): ApiAgentState {
+  const previous = state.invocations?.find(item => item.invocation_id === row.invocation_id)
+  if (previous && (previous.attempt > row.attempt ||
+      (previous.attempt === row.attempt && lifecycleOrder[previous.status] > lifecycleOrder[row.status]) ||
+      previous.updated_at > row.updated_at)) return state
+  const invocations = [...(state.invocations ?? []).filter(item => item.invocation_id !== row.invocation_id), row]
+    .sort((a, b) => Number(b.reserves_thread) - Number(a.reserves_thread) ||
+      b.created_at.localeCompare(a.created_at) || b.invocation_id.localeCompare(a.invocation_id)).slice(0, 50)
+  return { ...state, invocations }
+}
+
 export function invocationRevision(state: Pick<ApiAgentState, 'invocations' | 'pending_questions' | 'pending_data_requests' | 'pending_automation_requests' | 'pending_bootstrap_requests'>): string {
   return JSON.stringify([
     state.invocations?.map((row) => [row.invocation_id, row.status, row.reserves_thread, row.attempt, row.cancel_requested_at, row.outcome_code]),

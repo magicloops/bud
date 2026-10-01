@@ -1,5 +1,64 @@
 # Bud Protocol
 
+## Mobile performance additions — 2026-09-30
+
+These additive service contracts supersede the older scheduling/create descriptions
+below. No daemon change is required. Actual mobile adoption and production latency
+measurements remain pending.
+
+### Committed invocation state
+
+The existing owner-authorized thread agent stream emits `agent.invocation_changed`.
+Its JSON data is exactly one public `/agent/state.invocations[]` row, including
+`invocation_id`, `turn_id`, `input_message_id`, `origin`, `status`, `model`,
+`reasoning_effort`, `reserves_thread`, `attempt`, `outcome_code`, scheduling/cancel
+timestamps, `created_at`, `updated_at` and optional settled `work_duration_ms`.
+Worker IDs, leases, fences and owner IDs remain private.
+
+Publication follows the outer commit and serially reloads current owned state;
+it is a current-state feed, not an audit log of every intermediate transition.
+Existing opaque SSE IDs and bounded replay apply. Clients merge by invocation ID,
+reject older attempts/state and recover from a fresh snapshot on replay loss.
+An invocation event updates execution status, not transcript completeness or
+model-output activity. Existing canonical transcript recovery remains required.
+Publication failure invalidates process-local replay and emits
+`agent.resync_required` with `{ "reason": "publication_failed" }`; clients must
+refresh messages/state even when no `provided_cursor` is present.
+
+### Atomic new conversation
+
+Authenticated `POST /api/threads` accepts optional `opening_message` with the same
+text/client ID/model/reasoning/cwd/viewport fields as the ordinary message write.
+It requires an owner-scoped `creation_key` (1–128 characters) on this path:
+
+```json
+{"bud_id":"owned-bud","creation_key":"019942ab-0000-7000-8000-000000000001","opening_message":{"text":"Hello","client_id":"019942ab-0000-7000-8000-000000000001","browser_viewport":{"width":390,"height":700}}}
+```
+
+First success is 201; equivalent retries are 200. Both return
+`{thread_id, thread, message, invocation, agent}` using existing canonical
+serializers. `agent` contains `started:false` (this request did not synchronously
+start execution), `queued`, `mode` and `bud_status`. On retry, `queued` reflects
+the recovered invocation status, and identities stay stable while current state
+may have advanced to completed. No stream cursor is returned: use the canonical
+bootstrap before attachment, including work completed before the HTTP response.
+
+Thread, opening message, invocation and retry receipt commit atomically. The
+receipt stores only a semantic fingerprint and references; reordered JSON object
+keys are equivalent, changed input returns 409 `creation_key_conflict`. Omitted
+and explicit model options retain their selection semantics. An explicit initial
+thread preference is the default for the opening message; its explicit override
+follows ordinary admission rules. Retries never resolve a new service default.
+Keys remain reserved through deletion; unavailable results return 404
+`thread_not_found`. Foreign Buds return 404; anonymous callers return 401.
+No opening message preserves the existing empty-thread response.
+
+Requires migration `0048_lush_timeslip.sql` and durable service mode; other modes
+return 503 `durable_admission_required` before writes. Deploy the additive schema
+and service before the updated web/mobile consumer. Do not remove receipts on
+rollback. Updated web replaces create-then-send and preserves exact retry bodies
+within the mounted composer; native adoption has not been validated.
+
 ## Scope
 
 This document specifies the active on-wire contracts used by Bud:
@@ -2187,12 +2246,10 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - web-view tool results include a `web_view` payload with owned proxied-site
     and thread-attachment state instead of terminal `output`/`readiness`
   - web-view transport unavailability is also exposed as a structured tool result with `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`
-  - `ask_user_questions` tool results include a compact live `user_questions`
-    payload with `kind: "user_questions"`, `requestId`, and per-question
-    answered/skipped responses. The persisted canonical tool row is still
-    carried in `message`; historical clients should parse `message.content` as
-    JSON and read `result.schema: "ask_user_questions_tool_result_v1"` for the
-    full Q/A result and `summary_markdown`.
+  - all tool details above are in `message.tool_payload`; duplicated outer fields are removed
+  - `ask_user_questions` results use `message.tool_payload.result` with
+    `schema: "ask_user_questions_tool_result_v1"` and `summary_markdown`.
+    Tool `message.content` is human-readable summary text, not JSON to parse.
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
@@ -2804,7 +2861,7 @@ and `browser_close` on a capable online Bud. The prototype fifth tool
 result without parking. Handoff below describes only retained Phase-0 fixtures.
 
 Ordinary results expose `kind: "browser"`, `ok`, optional `error`, and
-`retryable: false` on the live event. The canonical tool message JSON includes
+`retryable: false` in `message.tool_payload`. The canonical tool payload includes
 `tool`, `call_id`, validated `args`, `kind`, `ok`, `outcome`
 (`completed | rejected | unknown`), optional `error`/`data`, and `summary`.
 Unknown mutation outcomes require inspection; they are not safe-retry claims.
@@ -3985,18 +4042,29 @@ assistant responses, with creation fallback and monotonic updates. Consumers sor
 by this field, then `created_at`, then `thread_id`, all descending. Generic
 `last_activity_at` retains its existing activity meaning.
 
-`GET /api/buds/:budId/thread-list/stream` is authenticated SSE (cookie or bearer).
-Anonymous requests return 401; a signed-in non-owner receives 404 before attach.
-Events are `ready`, `changed`, and `heartbeat`, each with JSON data `{}`. There are
-no replay IDs: every ready/reconnect requires an owned thread-list snapshot.
-Changed is an invalidation, not a transcript or permission grant. Heartbeats do
-not require snapshot reads. Service revalidates auth/Bud ownership before hints
-and every 15 seconds; loss closes the stream. PostgreSQL notifications cover
-committed ordering, title, deletion and ownership changes across worker processes.
-Client merges must preserve the greater existing ordering timestamp.
+`GET /api/threads?bud_id=…&limit=50&cursor=…` returns
+`{threads,page:{has_more,next_cursor},feed_checkpoint:{epoch,sequence}}`. Limit
+is 1–200; archived rows remain included. Cursors bind owner/filter and the complete
+descending tuple with millisecond timestamp precision; malformed/mismatched
+cursors return 400. Timestamp columns are non-null. SQL scopes both thread and Bud
+ownership before limiting. No full count is performed.
 
-Migration `0043_tired_mauler.sql` must precede the updated service. Deploy service
-and web together, then rebuild mobile against this contract. No daemon upgrade.
+`GET /api/me/thread-list/stream` replaces the per-Bud stream. Authenticate, wait
+for `ready {epoch,sequence}`, then read a bounded snapshot while buffering patches.
+Discard patches through its checkpoint; apply later exact sequences. Events:
+`upsert {thread,epoch,sequence}`, `remove {thread_id,epoch,sequence}`,
+`resync_required {reason,epoch?,sequence?}`, `heartbeat {}`. Sequences cover all
+owned Buds, even when the client displays one. Epoch mismatch/gap, reconnect,
+notification loss and queue overflow require resubscription and a fresh snapshot.
+There is no durable list resume. Normal upserts need no GET; bounded window holes
+can trigger refill. Moving pages are not a frozen inventory.
+
+One shared PostgreSQL listener and owner coordinator materialize canonical rows.
+Delivery rechecks viewer and resource ownership; 15-second heartbeats recheck
+viewer auth. Queue/backpressure/authorization failure closes the stream. Migration
+0049 replaces the old list trigger and adds thread/read/terminal/owner/transcript
+publication. Migration 0043's conversation-order maintenance remains. Apply 0048
+and 0049 before the coordinated service/web/mobile release; no daemon upgrade.
 
 
 ## Request-driven browser geometry — Mobile M4
@@ -4189,3 +4257,67 @@ Apply migrations 0044–0047 with old controllers quiesced, then matching servic
 hosted web and daemon before reopening browser work; rebuild native mobile.
 No old/new sticky-pause compatibility path is supported. See
 [cutover plan](../plan/browser-agent-default/phase-5-validation-and-cutover.md).
+
+## Mobile performance: open, read summary and discovery
+
+`GET /api/threads/:thread_id/open?limit=100` (maximum 200) returns
+`{thread, transcript: {messages, turn_timings, page}, agent_state, stream_cursor,
+included: {web_view:false, browser:false, context_budget:false}}`. Authorization
+precedes data reads; replies are `Cache-Control: no-store`. Required read failure
+is an error. Omitted optional fields are not authoritative nulls. Runtime state
+and top-level cursor share one boundary captured before the canonical queries;
+attach with `agent/stream?after=<stream_cursor>`. This additive route has not yet
+passed the full mutation/replay gate for client cutover; retain current recovery.
+
+`POST /api/threads/:thread_id/read` adds
+`summary: {unseen_thread_count, updated_at}` to `{ok, updated, last_seen_message_id}`.
+The conditional upsert only advances the millisecond timestamp/UUID watermark;
+stale requests return the stored winner and a fresh summary too. `updated_at` is
+the summary statement time, not a revision or promise against later changes.
+
+Issuer/OpenID/protected-resource discovery responses use
+`public, max-age=3600, stale-while-revalidate=15, stale-if-error=86400`. Cache by
+issuer/environment. A relevant endpoint/configuration error permits one metadata
+refetch before surfacing failure; credential rejection must not cause a discovery
+retry loop. Signing-key/JWKS and token caching/lifetimes are independent.
+
+## Compact tool transcript wire contract (coordinated client upgrade)
+
+Tool messages now carry `tool_payload` (object or null) and
+`presentation: {kind,id,status}`. `kind` is one of `questions`, `app_permission`,
+`automation_activation`, `bootstrap`, `browser_handoff`, `terminal`, `generic`.
+`id` is the interactive request/proposal/handoff identifier or null; `status`
+retains an explicit stored status, or null if unknown. Pending calls expose the
+same vocabulary with status `pending`, while keeping their own `args` envelope.
+Tool `content` is human-readable summary (historical plain text is preserved);
+non-tool content is unchanged. Metadata retains turn/timing/path/model fields,
+without payload duplication. Historical content-only continuations normalize too;
+malformed payloads retain display content with generic presentation.
+
+REST messages/open and SSE canonical messages use this same projection.
+`agent.tool_result` retains identity, name, summary, truncation reason, service
+timing and `message`; result details live only in `message.tool_payload`, no longer
+in outer `output`, `delta`, `web_view`, `user_questions` or other result fields.
+Stored tool JSON and provider replay are unchanged. Updated web and native
+parsers must be ready before this breaking service change is deployed.
+
+
+### Transcript publication and loaded-history reconciliation
+
+All message INSERTs publish `transcript.message {message}` after commit, including
+continuations, compaction and old-timestamp backfills. UPDATE/DELETE publishes
+`transcript.invalidated {message_ids}`. Hints carry IDs only; inserts reload current
+owner-scoped rows. Publication failure or listener loss invalidates runtime replay.
+No durable event ledger is introduced.
+
+Open creates a fresh runtime checkpoint synchronously before required reads and
+uses it for both state overlay and attachment. Thus repaired old invalidations are
+covered, and later changes replay. Canonical persisted rows win over replayed
+drafts/calls/inserts by client identity. Mutations require canonical recovery.
+`POST /api/threads/:thread_id/messages/reconcile {message_ids:[UUID...]}` is a
+read-only authorized query, 1–200 IDs, returning `{messages,missing_message_ids}`
+with no-store. It repairs loaded older rows as well as the latest open window;
+foreign and deleted IDs are simply missing. Fence obsolete fetch generations.
+
+See [mobile handoff](../plan/backend-mobile-performance/mobile-api-handoff.md)
+for exact migration order, retry rules, inclusions and remaining validation limits.

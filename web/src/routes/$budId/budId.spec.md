@@ -1,5 +1,14 @@
 # $budId
 
+## Atomic new chat
+
+`new.tsx` submits one `POST /api/threads` with a creation key and opening message.
+Retries within the mounted composer preserve the exact body, client ID and viewport
+for unchanged user intent; duplicate submissions are guarded synchronously. The
+destination loader still performs canonical recovery, covering execution before
+the create response. Requires durable service mode and migration 0048; no fallback
+to two writes. Browser reload does not persist the in-memory pending request.
+
 Nested routes for bud-specific views (new thread and existing thread).
 
 ## Purpose
@@ -87,22 +96,16 @@ Main thread view with chat, terminal, and workspace composition behavior (~375 l
 
 **Loader**:
 ```typescript
-loader: async ({ params }) => {
-  const [messagePage, agentState, thread] = await Promise.all([
-    apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`),
-    apiFetchJson(`/api/threads/${params.threadId}/agent/state`),
-    apiFetchJson(`/api/threads/${params.threadId}`)
-  ])
-  return { messagePage, agentState, thread }
-}
+const { transcript: messagePage, agent_state: agentState, thread } =
+  await apiFetchJson(`/api/threads/${params.threadId}/open?limit=100`)
+return { messagePage, agentState, thread }
 ```
 
 **Major Features**:
 
 1. **Chat Timeline**
    - Loads the latest paged transcript window from loader data
-   - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
-   - Loads canonical thread detail in parallel so the Bud-level thread list can converge even if the title event was missed before attach
+   - Loads one `/open` response containing transcript, agent state and canonical thread summary
    - Delegates transcript/message-state ownership to `useThreadMessages(...)` in `web/src/features/threads/`
    - Passes the hook-owned chronological `ApiMessage[]` directly into `ChatTimeline` instead of creating an extra route-local mapped/sorted copy
    - Updates via SSE agent stream
@@ -120,7 +123,7 @@ loader: async ({ params }) => {
    - Delegates terminal overlays, the status bar, and terminal menu rendering to `ThreadTerminalPane` in `web/src/components/workbench/`
 
 3. **Agent Stream**
-   - Runtime bootstrap from `/api/threads/:id/agent/state`
+   - Runtime bootstrap from `/api/threads/:id/open`
    - Delegates SSE attach/resume/reconnect/resync ownership to `useAgentStream(...)` in `web/src/features/threads/`
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
@@ -131,7 +134,7 @@ loader: async ({ params }) => {
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
-   - Relies on `useAgentStream(...)` bootstrap recovery to close native EventSource stale-cursor loops, refetch `/messages` + `/agent/state`, and reconnect from the refreshed stream cursor
+   - Relies on `useAgentStream(...)` bootstrap recovery to close native EventSource stale-cursor loops, refetch `/open` and reconcile loaded older message IDs, and reconnect from the refreshed stream cursor
    - Tracks `/agent/state.environment` and message-send `agent.mode` so offline Bud sends remain successful UI submissions while the composer shows Bud-specific tools are unavailable
    - Tracks `/agent/state.last_error` on loader bootstrap, normal state refresh, and stream resync so non-cancel runtime failures render in the composer error slot even if the live failed final event was missed
    - Passes the route-owned cancel action into the shared composer so the send button becomes a context-budget-aware stop button during dispatching/streaming agent turns
@@ -426,3 +429,31 @@ body. This measures the intended browser peer/split surface even when it is not
 mounted. No browser is opened by sending a non-browser request; geometry remains
 metadata outside prompt text. Divider changes affect only the next send/explicit
 Fit, never a passive remote resize.
+
+## Invocation lifecycle stream
+
+The existing-thread route now merges canonical `agent.invocation_changed` events
+into its bounded durable state and maps selected-invocation progress immediately.
+A queued sibling does not replace a reserved invocation's status; a delayed
+running notification does not erase active streaming/terminal-wait presentation.
+Bootstrap recovery uses `/open` and bounded loaded-history reconciliation.
+
+
+Thread open omits optional context-budget/browser/web-view work explicitly. Recovery
+uses the shared early checkpoint; persisted rows beat replayed synthetic/insert
+rows. `transcript.message` uses the canonical decoder and `transcript.invalidated`
+starts recovery. Existing durable-state fallback remains for non-message pending
+inventories. New chat uses one atomic create/opening-message POST and retries the
+same mounted request/key; no cross-reload retry persistence is claimed.
+
+
+## Optional context budget and compact tools
+
+The owner/thread-keyed route mounts `useContextBudget` after the `/open` loader
+resolves. Initial optional budget loading does not block transcript paint or stream
+attachment. Accepted `/open` recovery preserves omitted budget values and starts
+an independent budget refresh. Explicit state/compaction budgets supersede older
+optional reads; those reads never apply agent lifecycle or stream cursors.
+Failures retain the last known meter. Existing state refreshes after send, model
+change, cancel and final continue to supply budgets; five-second pending-inventory
+recovery remains intact. Browser notices use structured tool payloads only.

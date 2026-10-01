@@ -1,5 +1,21 @@
 # Auth Validation Checklist
 
+## Backend mobile performance
+
+- [x] Atomic creation PostgreSQL fixtures: foreign Bud rejected before preparation,
+  owner/key isolation, matching thread/message/invocation owner and tenant stamps,
+  retry reauthorization and retained key after soft/physical deletion.
+- [ ] Real two-account cookie/bearer combined-create, lost-response retry and
+  account switch; foreign results must return 404 without a new admission.
+- [ ] Real invocation stream attachment/replay and idle ownership/auth revocation
+  with the new committed lifecycle events; no worker, lease or fence exposure.
+
+Creation resolves the authenticated viewer and owned Bud before the transaction,
+then repeats SQL ownership checks. The new receipt inherits owner/tenant. Streams
+retain existing thread authorization before attach. Agent-stream periodic
+reauthorization is not implemented by this change; revocation policy remains the
+separate R7 design, and live revocation validation above is still pending.
+
 Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 Use this as the running manual verification list while auth, device claim, ownership enforcement, and settings hardening land across Phases 2-5.
@@ -693,3 +709,13 @@ no new rows, row stamps or private media authority.
 - [x] Automatic continuation preserves cancellation/deletion fences and does not stamp a human completion actor.
 - [x] Notification renewals stay quiet; takeover identity changes invalidate metadata after commit.
 - [ ] Physical account-switch/logout during takeover and local/ngrok end/reconnect smoke checks.
+
+## Backend/mobile performance additions
+
+- [x] Open denies anonymous/foreign threads before required reads.
+- [x] Message reconciliation authorizes before SQL and bounds IDs to 200; missing
+  requested IDs reveal no foreign message content.
+- [x] List cursors bind owner/Bud filter; SQL excludes foreign Buds, including tied
+  pagination fixtures. Owner SSE authorizes before LISTEN/delivery and closes on loss.
+- [x] Atomic creation and monotonic read-watermark fixtures cover owner isolation.
+- [ ] Repeat with actual native bearer client and production proxy after rollout.

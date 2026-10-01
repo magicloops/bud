@@ -1,6 +1,7 @@
 import { resolveToolPayload } from './tool-payload'
-import { memo } from 'react'
-import { Cpu, ChevronRight, Wrench } from 'lucide-react'
+import { memo, useState } from 'react'
+import { Cpu, ChevronRight, Globe, Wrench } from 'lucide-react'
+import { MarkdownContent } from '@/components/message-renderers/roles/markdown-content'
 import { cn } from '@/lib/utils'
 import { getRoleContentRenderer, getToolContentRenderer } from '@/components/message-renderers'
 import { formatWorkDuration } from '@/lib/agent-work-duration'
@@ -32,7 +33,9 @@ export const ActivitySection = memo(function ActivitySection({ sections, live, e
     {!direct && <button type="button" aria-expanded={open} aria-controls={`${id}:body`}
       onClick={() => onToggleItem(id)} className="flex w-full min-w-0 items-center gap-2 py-1.5 text-left text-xs text-muted-foreground">
       <ChevronRight aria-hidden className={cn('h-3 w-3 shrink-0', open && 'rotate-90')} />
-      {(live ? latest.role === 'reasoning' : tools === 0) ? <Cpu aria-hidden className="h-3 w-3 shrink-0" /> : <Wrench aria-hidden className="h-3 w-3 shrink-0" />}
+      {(live ? latest.role === 'reasoning' : tools === 0) ? <Cpu aria-hidden className="h-3 w-3 shrink-0" />
+        : (live ? isBrowserMessage(latest) : sections.every(section => isBrowserMessage(section.message)))
+          ? <Globe aria-hidden className="h-3 w-3 shrink-0" /> : <Wrench aria-hidden className="h-3 w-3 shrink-0" />}
       <span className="min-w-0 flex-1 truncate">{live ? itemSummary(latest) || itemKindLabel(latest) : summary}</span>
       {live && <span className="shrink-0 tabular-nums" aria-label={`${sections.length} activities`}>{sections.length}</span>}
       {active > 0 && <span className="shrink-0">{active} running</span>}
@@ -60,10 +63,11 @@ const CompactWorkItem = memo(function CompactWorkItem({ message, live, expanded,
     <button type="button" aria-expanded={expanded} aria-controls={`${id}:body`} onClick={() => onToggleItem(id)}
       className="flex w-full min-w-0 items-center gap-2 py-1 text-left text-xs text-muted-foreground">
       <ChevronRight aria-hidden className={cn('h-3 w-3 shrink-0', expanded && 'rotate-90')} />
+      {isBrowserMessage(message) && <Globe aria-hidden className="h-3 w-3 shrink-0" />}
       <span className="min-w-0 flex-1 truncate">{itemSummary(message) || itemKindLabel(message)}</span>
       <ItemStatusChip message={message} live={live} isCurrent={active} />
     </button>
-    {expanded && <div id={`${id}:body`} className="mt-1 max-h-96 overflow-auto" data-work-detail>
+    {expanded && <div id={`${id}:body`} className="mt-2 max-h-96 overflow-auto pb-2 pl-5" data-work-detail>
       <WorkItemDetail message={message} isStreaming={active} />
     </div>}
   </div>
@@ -126,20 +130,32 @@ const ItemStatusChip = ({
 
 /** Full detail mounts only after explicit item expansion. */
 const WorkItemDetail = ({ message, isStreaming = false }: { message: ApiMessage; isStreaming?: boolean }) => {
+  const [showPayload, setShowPayload] = useState(false)
   if (message.role === 'tool') {
     const payload = resolveToolPayload(message)
     const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
-    if (ToolContentRenderer && payload) {
-      return (
-        <div className="text-xs">
-          <ToolContentRenderer payload={payload} />
-        </div>
-      )
-    }
+    const summary = payload ? browserSummary(payload) : null
+    const code = payload ? browserArgs(payload).code : null
     return (
-      <pre className="overflow-x-auto rounded-md bg-background/70 p-2 text-[11px] text-muted-foreground">
-        <code>{message.content}</code>
-      </pre>
+      <div className="space-y-2 text-xs">
+        {isBrowserMessage(message) && payload ? <>
+          <div className="font-mono text-muted-foreground">{getToolName(message)}</div>
+          <p>{summary ?? message.content}</p>
+          {typeof code === 'string' && <MarkdownContent content={fencedJavaScript(code)} />}
+          {summary && message.content && message.content !== summary && !isStreaming && <p className="text-muted-foreground">{message.content}</p>}
+          {ToolContentRenderer && <ToolContentRenderer payload={payload} />}
+        </> : ToolContentRenderer && payload ? <ToolContentRenderer payload={payload} /> :
+          <pre className="overflow-x-auto rounded-md bg-background/70 p-2 text-[11px] text-muted-foreground"><code>{message.content}</code></pre>}
+        {payload && <>
+          <button type="button" aria-expanded={showPayload} aria-controls={`payload:${message.client_id}`}
+            onClick={() => setShowPayload(value => !value)} className="text-xs text-muted-foreground hover:text-foreground">
+            {showPayload ? 'Hide payload' : 'Show payload'}
+          </button>
+          {showPayload && <pre id={`payload:${message.client_id}`} className="overflow-x-auto rounded-md bg-background/70 p-2 text-[11px] text-muted-foreground">
+            <code>{JSON.stringify(payload, null, 2)}</code>
+          </pre>}
+        </>}
+      </div>
     )
   }
   const RoleContentRenderer = getRoleContentRenderer(message.role)
@@ -156,6 +172,20 @@ const itemKindLabel = (message: ApiMessage): string => {
   return message.role === 'reasoning' ? 'reasoning' : message.role
 }
 
+const isBrowserMessage = (message: ApiMessage) => getToolName(message)?.startsWith('browser_') ?? false
+const browserArgs = (payload: Record<string, unknown>): Record<string, unknown> =>
+  payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
+    ? payload.args as Record<string, unknown> : payload
+const browserSummary = (payload: Record<string, unknown>): string | null => {
+  const args = browserArgs(payload)
+  return [args.summary, args.reason, payload.summary].find(value => typeof value === 'string' && value.trim()) as string | undefined ?? null
+}
+const fencedJavaScript = (code: string): string => {
+  // A cell may itself contain Markdown fences in a string or comment.
+  const fence = '`'.repeat(Math.max(3, ...Array.from(code.matchAll(/`+/g), match => match[0].length + 1)))
+  return `${fence}javascript\n${code}\n${fence}`
+}
+
 /** First meaningful line with light Markdown decoration stripped (mobile's reasoning-title rule). */
 const summaryCache = new WeakMap<ApiMessage, string>()
 const itemSummary = (message: ApiMessage): string => {
@@ -167,12 +197,15 @@ const itemSummary = (message: ApiMessage): string => {
 }
 const computeItemSummary = (message: ApiMessage): string => {
   if (message.role === 'tool') {
-    const payload = message.metadata ?? null
+    const payload = message.tool_payload ?? null
     const text = payload && typeof payload.text === 'string' ? payload.text : null
     const command = payload && typeof payload.command === 'string' ? payload.command : null
     const raw = payload && typeof payload.raw_text === 'string' ? payload.raw_text : null
     const key = payload && typeof payload.key === 'string' ? payload.key : null
-    return command ?? raw ?? (key ? `Press ${key}` : text) ?? (typeof payload?.tool === 'string' ? payload.tool : message.display_role) ?? 'Tool'
+    const name = getToolName(message) ?? message.display_role ?? 'Tool'
+    if (payload && isBrowserMessage(message)) return browserSummary(payload) ?? 'Browser operation'
+    const detail = command ?? raw ?? (key ? `Press ${key}` : text)
+    return detail && detail !== name ? `${name} · ${detail}` : name
   }
   const firstLine = message.content.split('\n').find((line) => line.trim().length > 0) ?? ''
   return firstLine

@@ -1,5 +1,7 @@
+import { loadMessagePage } from "./message-loader.js";
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { and, eq, inArray } from "drizzle-orm";
 import { AgentService, ThreadTitleService } from "../../agent/index.js";
 import { InvocationError } from "../../agent/invocation-repository.js";
 import { serializeInvocation } from "../../agent/invocation-view.js";
@@ -7,8 +9,8 @@ import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../../db/thread-metadata.js";
-import { messageTable, threadReadStateTable, threadTable } from "../../db/schema.js";
-import { isMessageNewerThanWatermark } from "../../notifications/index.js";
+import { messageTable, threadTable } from "../../db/schema.js";
+import { advanceThreadReadState, loadNotificationSummary } from "../../db/thread-read-state.js";
 import { resolveEffectiveModelSelection } from "../../llm/index.js";
 import {
   CreateMessageSchema,
@@ -16,11 +18,8 @@ import {
   MessagesQuerySchema,
   ThreadParamsSchema,
   decodeMessageCursor,
-  encodeMessageCursor,
   findOwnedUserMessageByClientId,
   isUniqueViolation,
-  newerThanMessageCursor,
-  olderThanMessageCursor,
   requireAuthorizedThreadAccess,
   sendLocalModelAvailabilityError,
   sendModelSelectionError,
@@ -33,6 +32,22 @@ export async function registerThreadMessageRoutes(
   agentService: AgentService,
   threadTitleService: ThreadTitleService,
 ): Promise<void> {
+  // Read-only reconciliation: ownership is resolved before the bounded SQL read.
+  server.post("/api/threads/:threadId/messages/reconcile", async (request, reply) => {
+    const { threadId } = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, threadId);
+    if (!access) return;
+    const body = z.object({ message_ids: z.array(z.string().uuid()).min(1).max(200) }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_message_ids" });
+    const ids = [...new Set(body.data.message_ids)];
+    const rows = await db.select().from(messageTable).where(and(
+      eq(messageTable.threadId, threadId), eq(messageTable.createdByUserId, access.viewer.userId),
+      inArray(messageTable.messageId, ids),
+    )).limit(200);
+    reply.header("Cache-Control", "no-store");
+    return { messages: rows.map(serializeMessage), missing_message_ids: ids.filter(id => !rows.some(row => row.messageId === id)) };
+  });
+
   server.post("/api/threads/:threadId/read", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const body = MarkThreadReadSchema.parse(request.body ?? {});
@@ -62,53 +77,8 @@ export async function registerThreadMessageRoutes(
       return;
     }
 
-    const existing = await db.query.threadReadStateTable.findFirst({
-      where: and(
-        eq(threadReadStateTable.threadId, thread.threadId),
-        eq(threadReadStateTable.userId, viewer.userId),
-      ),
-    });
-
-    if (
-      existing &&
-      !isMessageNewerThanWatermark(message.createdAt, message.messageId, {
-        createdAt: existing.lastSeenMessageCreatedAt,
-        messageId: existing.lastSeenMessageId,
-      })
-    ) {
-      reply.send({
-        ok: true,
-        updated: false,
-        last_seen_message_id: existing.lastSeenMessageId,
-      });
-      return;
-    }
-
-    await db
-      .insert(threadReadStateTable)
-      .values({
-        threadId: thread.threadId,
-        userId: viewer.userId,
-        lastSeenMessageId: message.messageId,
-        lastSeenMessageCreatedAt: message.createdAt,
-        lastSeenAt: new Date(),
-        createdByUserId: viewer.userId,
-      })
-      .onConflictDoUpdate({
-        target: [threadReadStateTable.threadId, threadReadStateTable.userId],
-        set: {
-          lastSeenMessageId: message.messageId,
-          lastSeenMessageCreatedAt: message.createdAt,
-          lastSeenAt: new Date(),
-          updatedAt: new Date(),
-        },
-      });
-
-    reply.send({
-      ok: true,
-      updated: true,
-      last_seen_message_id: message.messageId,
-    });
+    const result = await advanceThreadReadState(viewer.userId, thread.threadId, message);
+    reply.send({ ...result, summary: await loadNotificationSummary(viewer.userId) });
   });
 
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
@@ -133,44 +103,7 @@ export async function registerThreadMessageRoutes(
       return;
     }
 
-    const fetchNewerWindow = Boolean(afterCursor);
-    const rows = await db
-      .select()
-      .from(messageTable)
-      .where(
-        and(
-          eq(messageTable.threadId, thread.threadId),
-          eq(messageTable.createdByUserId, viewer.userId),
-          beforeCursor ? olderThanMessageCursor(beforeCursor) : undefined,
-          afterCursor ? newerThanMessageCursor(afterCursor) : undefined,
-        ),
-      )
-      .orderBy(
-        fetchNewerWindow ? asc(messageTable.createdAt) : desc(messageTable.createdAt),
-        fetchNewerWindow ? asc(messageTable.messageId) : desc(messageTable.messageId),
-      )
-      .limit(query.limit + 1);
-
-    const hasExtraRow = rows.length > query.limit;
-    const pageRows = rows.slice(0, query.limit);
-    const orderedRows = fetchNewerWindow ? pageRows : [...pageRows].reverse();
-    const hasMoreBefore = afterCursor ? true : hasExtraRow;
-    const hasMoreAfter = beforeCursor ? true : hasExtraRow && fetchNewerWindow;
-
-    reply.send({
-      messages: orderedRows.map(serializeMessage),
-      turn_timings: await agentService.durableInvocations?.timingsForTurns(viewer.userId, thread.threadId,
-        orderedRows.flatMap(row => typeof row.metadata.turn_id === "string" ? [row.metadata.turn_id] : [])) ?? [],
-      page: {
-        limit: query.limit,
-        returned: orderedRows.length,
-        has_more_before: hasMoreBefore,
-        has_more_after: hasMoreAfter,
-        before_cursor: orderedRows.length > 0 ? encodeMessageCursor(orderedRows[0]) : null,
-        after_cursor:
-          orderedRows.length > 0 ? encodeMessageCursor(orderedRows[orderedRows.length - 1]) : null,
-      },
-    });
+    reply.send(await loadMessagePage(viewer.userId, thread.threadId, agentService, query.limit, beforeCursor, afterCursor));
   });
 
   server.post("/api/threads/:threadId/messages", async (request, reply) => {

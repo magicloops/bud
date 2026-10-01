@@ -1,12 +1,12 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { loadThreadSummaries } from "./summary-loader.js";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
-import { terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
+import { threadTable } from "../../db/schema.js";
 import { getAuthorizedBud, requireViewer } from "../../auth/session.js";
 import { getActiveBudIds } from "../../ws/gateway.js";
 import type { TerminalSessionManager } from "../../runtime/terminal-session-manager.js";
-import { hasUnseenAttention } from "../../notifications/index.js";
 import {
   CreateThreadSchema,
   ThreadListQuerySchema,
@@ -15,14 +15,24 @@ import {
   requireAuthorizedThreadAccess,
   sendLocalModelAvailabilityError,
   sendModelSelectionError,
-  serializeThreadModelSelection,
   serializeThread,
 } from "./shared.js";
 import { resolveEffectiveModelSelection } from "../../llm/index.js";
+import type { AgentService, ThreadTitleService } from "../../agent/index.js";
+import { InvocationError } from "../../agent/invocation-repository.js";
+import { serializeInvocation } from "../../agent/invocation-view.js";
+import { ThreadCreationRepository, creationFingerprint } from "./creation-repository.js";
+import { serializeMessage, toModelSelectionMetadata, isUniqueViolation } from "./shared.js";
+import { decodeThreadListCursor, encodeThreadListCursor } from "./list-cursor.js";
+import { ThreadListFeed } from "./list-feed.js";
 
 export async function registerThreadCoreRoutes(
   server: FastifyInstance,
   terminalSessionManager: TerminalSessionManager,
+  agentService?: AgentService,
+  threadTitleService?: ThreadTitleService,
+  listFeed: ThreadListFeed = new ThreadListFeed(),
+  ready: () => Promise<void> = async () => {},
 ): Promise<void> {
   server.get("/api/threads", async (request, reply) => {
     const viewer = await requireViewer(request, reply);
@@ -30,7 +40,9 @@ export async function registerThreadCoreRoutes(
       return;
     }
 
-    const query = ThreadListQuerySchema.parse(request.query ?? {});
+    const parsed = ThreadListQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_query" });
+    const query = parsed.data;
     if (query.bud_id) {
       if (!(await getAuthorizedBud(viewer, query.bud_id))) {
         reply.code(404).send({ error: "bud_not_found" });
@@ -38,81 +50,17 @@ export async function registerThreadCoreRoutes(
       }
     }
 
-    const threads = await db
-      .select({
-        threadId: threadTable.threadId,
-        budId: threadTable.budId,
-        title: threadTable.title,
-        createdAt: threadTable.createdAt,
-        lastActivityAt: threadTable.lastActivityAt,
-        lastConversationAt: threadTable.lastConversationAt,
-        lastMessagePreview: threadTable.lastMessagePreview,
-        messageCount: threadTable.messageCount,
-        pinned: threadTable.pinned,
-        archived: threadTable.archived,
-        modelId: threadTable.modelId,
-        reasoningEffort: threadTable.reasoningEffort,
-        lastAttentionMessageId: threadTable.lastAttentionMessageId,
-        lastAttentionMessageCreatedAt: threadTable.lastAttentionMessageCreatedAt,
-        lastAttentionKind: threadTable.lastAttentionKind,
-        lastSeenMessageId: threadReadStateTable.lastSeenMessageId,
-        lastSeenMessageCreatedAt: threadReadStateTable.lastSeenMessageCreatedAt,
-        sessionId: terminalSessionTable.sessionId,
-        sessionState: terminalSessionTable.state
-      })
-      .from(threadTable)
-      .leftJoin(
-        threadReadStateTable,
-        and(
-          eq(threadReadStateTable.threadId, threadTable.threadId),
-          eq(threadReadStateTable.userId, viewer.userId),
-        ),
-      )
-      .leftJoin(
-        terminalSessionTable,
-        and(
-          eq(threadTable.threadId, terminalSessionTable.threadId),
-          eq(terminalSessionTable.createdByUserId, viewer.userId),
-          isNull(terminalSessionTable.closedAt),
-        ),
-      )
-      .where(
-        and(
-          eq(threadTable.createdByUserId, viewer.userId),
-          isNull(threadTable.deletedAt),
-          query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined,
-        ),
-      )
-      // JSON Date serialization has millisecond precision; use the same ties as clients.
-      .orderBy(
-        desc(sql`date_trunc('milliseconds', ${threadTable.lastConversationAt})`),
-        desc(sql`date_trunc('milliseconds', ${threadTable.createdAt})`),
-        desc(threadTable.threadId),
-      );
-
-    return threads.map((row) => ({
-      thread_id: row.threadId,
-      bud_id: row.budId,
-      title: row.title,
-      created_at: row.createdAt,
-      last_activity_at: row.lastActivityAt,
-      last_conversation_at: row.lastConversationAt,
-      last_message_preview: row.lastMessagePreview,
-      message_count: row.messageCount,
-      pinned: row.pinned,
-      archived: row.archived,
-      ...serializeThreadModelSelection(row),
-      has_unseen_attention: hasUnseenAttention({
-        lastAttentionMessageId: row.lastAttentionMessageId,
-        lastAttentionMessageCreatedAt: row.lastAttentionMessageCreatedAt,
-        lastSeenMessageId: row.lastSeenMessageId,
-        lastSeenMessageCreatedAt: row.lastSeenMessageCreatedAt,
-      }),
-      last_attention_kind: row.lastAttentionKind,
-      has_terminal_session: row.sessionId !== null,
-      session_state: row.sessionState,
-      session_id: row.sessionId
-    }));
+    const cursor = query.cursor ? decodeThreadListCursor(query.cursor, viewer.userId, query.bud_id) : null;
+    if (query.cursor && !cursor) return reply.code(400).send({ error: "invalid_cursor" });
+    await ready();
+    reply.header("Cache-Control", "no-store");
+    return listFeed.snapshot(viewer.userId, async () => {
+      const rows = await loadThreadSummaries(viewer.userId, { budId: query.bud_id, limit: query.limit + 1, cursor });
+      const threads = rows.slice(0, query.limit);
+      const hasMore = rows.length > query.limit;
+      return { threads, page: { has_more: hasMore,
+        next_cursor: hasMore ? encodeThreadListCursor(viewer.userId, query.bud_id, threads.at(-1)!) : null } };
+    });
   });
 
   server.post("/api/threads", async (request, reply) => {
@@ -125,6 +73,60 @@ export async function registerThreadCoreRoutes(
     if (!(await getAuthorizedBud(viewer, body.bud_id))) {
       reply.code(404).send({ error: "bud_not_found" });
       return;
+    }
+
+    if (body.opening_message) {
+      if (!agentService?.durableInvocations) return reply.code(503).send({ error: "durable_admission_required" });
+      const opening = body.opening_message;
+      try {
+        const result = await new ThreadCreationRepository().create({ owner: viewer.userId,
+          budId: body.bud_id, key: body.creation_key!, fingerprint: creationFingerprint(body) }, async () => {
+          const initial = resolveEffectiveModelSelection({
+            requestedModel: Object.hasOwn(body, "model") ? body.model : undefined,
+            requestedReasoning: body.reasoning_effort ?? null, serviceDefaultModel: config.defaultModel,
+          });
+          const selection = resolveEffectiveModelSelection({
+            requestedModel: Object.hasOwn(opening, "model") ? opening.model : undefined,
+            requestedReasoning: opening.reasoning_effort ?? null,
+            threadModel: initial.source === "explicit_request" ? initial.model : null,
+            threadReasoning: initial.source === "explicit_request" ? initial.reasoningEffort : null,
+            serviceDefaultModel: config.defaultModel, allowRetiredFallback: true,
+          });
+          if (await sendLocalModelAvailabilityError(reply, { budId: body.bud_id, model: selection.model })) return null;
+          return { title: body.title,
+            modelId: initial.source === "explicit_request" ? initial.model : null,
+            reasoningEffort: initial.source === "explicit_request" ? initial.reasoningEffort : null,
+            admission: { text: opening.text, clientId: opening.client_id,
+              model: selection.model, reasoningEffort: selection.reasoningEffort,
+              persistModelSelection: selection.source === "explicit_request",
+              metadata: { ...toModelSelectionMetadata(selection),
+                ...(opening.browser_viewport ? { browser_viewport: opening.browser_viewport } : {}),
+                ...(opening.cwd ? { preferred_cwd: opening.cwd } : {}) },
+            } };
+        });
+        if (!result) return;
+        if (!result.duplicate && threadTitleService) {
+          void threadTitleService.maybeGenerateFromFirstUserMessage({ threadId: result.thread.threadId,
+            userMessageId: result.message.messageId, userMessageText: opening.text }).catch(() => {
+            server.log.warn({ threadId: result.thread.threadId, component: "thread_title" }, "Thread title generation failed");
+          });
+        }
+        const environment = await agentService.getEnvironmentForBud(body.bud_id);
+        return reply.code(result.duplicate ? 200 : 201).send({ thread_id: result.thread.threadId,
+          thread: serializeThread(result.thread), message: serializeMessage(result.message),
+          invocation: serializeInvocation(result.invocation),
+          agent: { started: false, queued: ["pending", "retry_wait", "waiting_for_bud", "waiting_for_model"].includes(result.invocation.status),
+            mode: environment.mode, bud_status: environment.bud_status } });
+      } catch (error) {
+        if (sendModelSelectionError(reply, error)) return;
+        if (error instanceof InvocationError) return reply.code(
+          error.code.endsWith("not_found") ? 404 : error.code.endsWith("conflict") ? 409 : 400,
+        ).send({ error: error.code });
+        if (isUniqueViolation(error) || (error as { cause?: { code?: string } })?.cause?.code === "23505") {
+          return reply.code(409).send({ error: "client_id_conflict" });
+        }
+        throw error;
+      }
     }
 
     let initialSelection: ReturnType<typeof resolveEffectiveModelSelection>;

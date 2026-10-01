@@ -1,3 +1,4 @@
+import { invocationTimingTransaction, recordInvocationChange } from "../agent/invocation-timing.js";
 import { automationModelResolver, type AutomationModelResolution } from "./automation-model.js";
 import { and, desc, eq, isNull, lt, lte } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
@@ -65,6 +66,7 @@ export class AutomationProposals {
   private async finish(tx: Transaction, row: Proposal, status: "expired" | "canceled" | "stale") {
     const [updated] = await tx.update(proposals).set({ status, version: row.version + 1, updatedAt: this.now() })
       .where(and(eq(proposals.id, row.id), eq(proposals.createdByUserId, row.createdByUserId))).returning();
+    recordInvocationChange(tx, row.invocationId);
     return updated;
   }
   private async reconcile(tx: Transaction, row: Proposal): Promise<Proposal> {
@@ -81,7 +83,7 @@ export class AutomationProposals {
   }
 
   async get(owner: string, id: string) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       return this.serialize(tx, await this.reconcile(tx, await this.load(tx, owner, id)));
     });
@@ -101,7 +103,7 @@ export class AutomationProposals {
         before = value.before;
       } catch { throw new DataRequestError(400, "invalid_automation_proposal_cursor", "Invalid proposal cursor"); }
     }
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       // There can be at most 20 pending proposals per owner. Reconcile before
       // filtering so an expired card cannot remain in the pending inventory.
@@ -118,7 +120,7 @@ export class AutomationProposals {
   }
 
   async request(context: AutomationProposalContext, input: unknown) {
-    return this.database.transaction(tx => this.requestInTransaction(tx, context, input));
+    return invocationTimingTransaction(this.database, tx => this.requestInTransaction(tx, context, input));
   }
 
   /** Runner must persist its waiting action and release its lease in this transaction. */
@@ -167,7 +169,7 @@ export class AutomationProposals {
     return this.resolve(owner, id, { ...parseAutomationProposalInput(automationProposalCancelSchema, input), decision: "cancel" });
   }
   private async resolve(owner: string, id: string, value: { decision: "approve" | "decline" | "cancel"; expected_version: number; idempotency_key: string }) {
-    return this.database.transaction(async tx => {
+    return invocationTimingTransaction(this.database, async tx => {
       await this.lockOwner(tx, owner);
       const prior = await this.load(tx, owner, id);
       if (prior.decisionIdempotencyKey === value.idempotency_key) {
@@ -196,6 +198,7 @@ export class AutomationProposals {
       const [row] = await tx.update(proposals).set({ status: value.decision === "approve" ? "approved" : value.decision === "decline" ? "declined" : "canceled",
         activatedRevision, version: prior.version + 1, decisionRequest: value, decisionIdempotencyKey: value.idempotency_key,
         decidedByUserId: owner, decidedAt: this.now(), updatedAt: this.now() }).where(and(eq(proposals.id, id), eq(proposals.createdByUserId, owner))).returning();
+      recordInvocationChange(tx, row.invocationId);
       return this.serialize(tx, row);
     });
   }

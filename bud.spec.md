@@ -525,6 +525,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
+| [plan/backend-mobile-performance/implementation-spec.md](./plan/backend-mobile-performance/implementation-spec.md) | Planned backend performance improvements: instrumentation, worker wakeups, atomic new chat, compact transcript/open recovery, one bounded user list feed, and small API follow-ups |
+| [plan/backend-mobile-performance/backend-mobile-performance.spec.md](./plan/backend-mobile-performance/backend-mobile-performance.spec.md) | Phase index, progress and validation for the reviewed mobile backend performance scope; implementation not started |
 | [plan/browser-streaming/browser-streaming.spec.md](./plan/browser-streaming/browser-streaming.spec.md) | Folder spec for the Proposal A CDP screencast/WSS experiment: capture feasibility, bounded private media integration, physical-device measurement and go/no-go; no production transport selected |
 | [plan/browser-streaming/README.md](./plan/browser-streaming/README.md) | Bounded streaming experiment plan linked to browser Phase 5, preserving outbound connectivity, existing input authority and passive observation |
 | [design/personal-data-ingestion-and-agent-triggers.md](./design/personal-data-ingestion-and-agent-triggers.md) | Proposed cross-repo integration of mobile location, HealthKit and contacts ingestion, scoped agent/app queries, and durable automation execution; includes source findings, deployment choices and a decision register |
@@ -924,3 +926,11 @@ Internal drain/cleanup blocks execution until acknowledged, without retaining
 human authority or requiring manual Return. Help requests park only their task;
 users can take control or redirect the agent through chat. Deploy migrations
 0044–0047 and matching service/web/daemon/mobile as one coordinated change.
+
+
+Backend/mobile performance now uses atomic opening-message admission, shared compact
+message projections, bounded thread open/list reads, an owner-scoped list feed and
+post-commit transcript publication. Migrations 0048/0049 and coordinated service/
+web/mobile adoption are required; daemon protocol is unchanged. Single-instance
+wake/replay remains a deployment constraint, not a permanent architecture promise.
+See [mobile API handoff](plan/backend-mobile-performance/mobile-api-handoff.md).
