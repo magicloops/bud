@@ -12,7 +12,10 @@ export function pendingInventory(state: ApiAgentState) {
   }
 }
 
-/** One request per dirty inventory, never a recurring healthy-idle poll. */
+/** Bounds staleness after a missed hint; hints remain the primary path. */
+export const PENDING_BACKSTOP_MS = 60_000
+
+/** One request per dirty inventory, plus one slow visible-only backstop read. */
 export function usePendingRequests(threadId: string, apply: (state: ApiAgentState) => void) {
   const callback = useRef(apply)
   useEffect(() => { callback.current = apply }, [apply])
@@ -21,6 +24,7 @@ export function usePendingRequests(threadId: string, apply: (state: ApiAgentStat
     let stopped = false, dirty = false, generation = 0, failures = 0
     let request: AbortController | null = null
     let timer: ReturnType<typeof setTimeout> | undefined
+    let backstop: ReturnType<typeof setTimeout> | undefined
     const visible = () => document.visibilityState !== 'hidden'
     const run = async () => {
       if (stopped || !dirty || request || !visible()) return
@@ -44,6 +48,7 @@ export function usePendingRequests(threadId: string, apply: (state: ApiAgentStat
         failures++
       } finally {
         request = null
+        arm()
         if (!stopped && dirty && visible()) schedule(failures ? Math.min(30_000, 1000 * 2 ** Math.min(failures - 1, 5)) : 0)
       }
     }
@@ -57,13 +62,21 @@ export function usePendingRequests(threadId: string, apply: (state: ApiAgentStat
       dirty = true
       if (!request && visible()) schedule(0)
     }
+    // Restarted by every completed read. Left unarmed while hidden: returning
+    // to the foreground invalidates, and that read arms it again.
+    const arm = () => {
+      clearTimeout(backstop)
+      if (!stopped) backstop = setTimeout(() => { if (visible()) invalidate() }, PENDING_BACKSTOP_MS)
+    }
     const foreground = () => { if (visible()) invalidate() }
     notify.current = invalidate
     document.addEventListener('visibilitychange', foreground)
+    arm()
     return () => {
       stopped = true
       notify.current = () => {}
       clearTimeout(timer)
+      clearTimeout(backstop)
       request?.abort()
       document.removeEventListener('visibilitychange', foreground)
     }

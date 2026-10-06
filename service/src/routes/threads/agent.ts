@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { AgentService, getThreadContextBudgetSnapshot } from "../../agent/index.js";
-import { loadThreadAgentState } from "./state-loader.js";
+import { activeTurnContextBudget, loadThreadAgentState } from "./state-loader.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
@@ -142,9 +142,8 @@ export async function registerThreadAgentRoutes(
     if (!access) return;
     const runtimeSnapshot = agentRuntime.getSnapshot(threadId);
     const environment = await agentService.getEnvironmentForBud(access.thread.budId);
-    const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget?.turn_id === runtimeSnapshot.turn_id
-      ? runtimeSnapshot.context_budget
-      : await getThreadContextBudgetSnapshot({ thread: access.thread, runtimeSnapshot, environment,
+    const contextBudget = activeTurnContextBudget(runtimeSnapshot)
+      ?? await getThreadContextBudgetSnapshot({ thread: access.thread, runtimeSnapshot, environment,
           tools: await agentService.getContextTools(environment, threadId, access.viewer.userId) });
     reply.header("Cache-Control", "no-store");
     return { context_budget: contextBudget };

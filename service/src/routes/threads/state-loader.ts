@@ -4,6 +4,13 @@ import { serializeInvocation } from "../../agent/invocation-view.js";
 import type { AuthorizedThread } from "../../auth/session.js";
 import type { AgentRuntimeSnapshot } from "../../runtime/agent-runtime-state.js";
 
+/** Active decisions describe the running turn, not a prediction for the next
+ *  turn. Preserve their source/turn/freshness; idle budgets require an explicit read. */
+export function activeTurnContextBudget(runtimeSnapshot: AgentRuntimeSnapshot) {
+  return runtimeSnapshot.active && runtimeSnapshot.context_budget?.turn_id === runtimeSnapshot.turn_id
+    ? runtimeSnapshot.context_budget : undefined;
+}
+
 /** Runtime boundary is captured synchronously by the caller before any reads. */
 export async function loadThreadAgentState(owner: string, thread: AuthorizedThread,
   agentService: AgentService, runtimeSnapshot: AgentRuntimeSnapshot) {
@@ -11,10 +18,7 @@ export async function loadThreadAgentState(owner: string, thread: AuthorizedThre
   const threadId = thread.threadId;
   const browserHandoff = await repository?.pendingBrowserHandoffForThread?.(owner, threadId);
   const environment = await agentService.getEnvironmentForBud(thread.budId);
-  // Active decisions describe the running turn, not a prediction for the next
-  // turn. Preserve their source/turn/freshness; idle budgets require an explicit read.
-  const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget?.turn_id === runtimeSnapshot.turn_id
-    ? runtimeSnapshot.context_budget : undefined;
+  const contextBudget = activeTurnContextBudget(runtimeSnapshot);
   const { context_budget: _runtimeBudget, ...runtime } = runtimeSnapshot;
   const result = {
     ...runtime,

@@ -10,9 +10,9 @@ register(`data:text/javascript,${encodeURIComponent(`export async function load(
   return result;
 }`)}`, import.meta.url)
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-const { usePendingRequests } = await import('./use-pending-requests')
+const { usePendingRequests, PENDING_BACKSTOP_MS } = await import('./use-pending-requests')
 
-test('healthy idle does not poll; hints coalesce, races retry, foreground and owner changes are fenced', async t => {
+test('slow visible backstop only; hints coalesce, races retry, foreground and owner changes are fenced', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const originalFetch = globalThis.fetch, originalDocument = globalThis.document
   const document = Object.assign(new EventTarget(), { visibilityState: 'visible' })
@@ -27,30 +27,40 @@ test('healthy idle does not poll; hints coalesce, races retry, foreground and ow
   }
   let view!: ReactTestRenderer
   const tick = async (ms = 0) => act(async () => { t.mock.timers.tick(ms) })
+  const respond = async (body: unknown, status = 200) => act(async () => requests.at(-1)!.resolve(Response.json(body, { status })))
   try {
     await act(async () => { view = create(createElement(Harness, { thread: 'a' })) })
-    await tick(600_000); assert.equal(requests.length, 0)
-    invalidate(); invalidate(); invalidate(); await tick(); assert.equal(requests.length, 1)
+    // Ten idle visible minutes: one cheap read per interval, never more.
+    for (let minute = 1; minute <= 10; minute++) {
+      await tick(PENDING_BACKSTOP_MS - 1); assert.equal(requests.length, minute - 1)
+      await tick(1); await tick(); assert.equal(requests.length, minute)
+      await respond({ pending_questions: [] })
+    }
+    assert.equal(applied.length, 10)
+    invalidate(); invalidate(); invalidate(); await tick(); assert.equal(requests.length, 11)
     invalidate()
-    await act(async () => requests[0].resolve(Response.json({ pending_questions: ['old'] })))
-    assert.equal(applied.length, 0)
-    await tick(); assert.equal(requests.length, 2)
-    await act(async () => requests[1].resolve(Response.json({ pending_questions: [] })))
-    assert.deepEqual(applied, [{ pending_questions: [] }])
-    await tick(600_000); assert.equal(requests.length, 2)
-    invalidate(); await tick()
-    await act(async () => requests[2].resolve(Response.json({}, { status: 503 })))
-    await tick(999); assert.equal(requests.length, 3)
-    await tick(1); assert.equal(requests.length, 4)
-    await act(async () => requests[3].resolve(Response.json({ pending_questions: [] })))
-    document.visibilityState = 'hidden'; invalidate(); await tick(); assert.equal(requests.length, 4)
+    await respond({ pending_questions: ['old'] })
+    assert.equal(applied.length, 10)
+    await tick(); assert.equal(requests.length, 12)
+    await respond({ pending_questions: [] })
+    assert.equal(applied.length, 11)
+    // A hint-driven read restarts the backstop interval.
+    await tick(PENDING_BACKSTOP_MS - 1); assert.equal(requests.length, 12)
+    await tick(1); await tick(); assert.equal(requests.length, 13)
+    await respond({}, 503)
+    await tick(999); assert.equal(requests.length, 13)
+    await tick(1); assert.equal(requests.length, 14)
+    await respond({ pending_questions: [] })
+    document.visibilityState = 'hidden'; invalidate(); await tick(); assert.equal(requests.length, 14)
+    await tick(600_000); assert.equal(requests.length, 14)
     document.visibilityState = 'visible'; document.dispatchEvent(new Event('visibilitychange'))
-    await tick(); assert.equal(requests.length, 5)
+    await tick(); assert.equal(requests.length, 15)
     await act(async () => view.update(createElement(Harness, { key: 'new-owner', thread: 'b' })))
-    assert.equal(requests[4].signal?.aborted, true)
-    await act(async () => requests[4].resolve(Response.json({ pending_questions: ['other-owner'] })))
-    assert.equal(applied.length, 2)
-    await tick(600_000); assert.equal(requests.length, 5)
+    assert.equal(requests[14].signal?.aborted, true)
+    await respond({ pending_questions: ['other-owner'] })
+    assert.equal(applied.length, 12)
+    await tick(PENDING_BACKSTOP_MS - 1); assert.equal(requests.length, 15)
+    await tick(1); await tick(); assert.equal(requests.length, 16)
   } finally {
     await act(async () => view?.unmount())
     globalThis.fetch = originalFetch

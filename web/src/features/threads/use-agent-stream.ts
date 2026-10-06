@@ -240,7 +240,7 @@ export function useAgentStream({
     onFinalizeTurn,
     onTurnTiming,
     onPendingRequestsChanged,
-  onInvocationChanged,
+    onInvocationChanged,
     refreshBootstrap,
   })
 
@@ -266,7 +266,7 @@ export function useAgentStream({
       onFinalizeTurn,
       onTurnTiming,
       onPendingRequestsChanged,
-  onInvocationChanged,
+      onInvocationChanged,
       refreshBootstrap,
     }
   }, [
@@ -285,7 +285,7 @@ export function useAgentStream({
     onFinalizeTurn,
     onTurnTiming,
     onPendingRequestsChanged,
-  onInvocationChanged,
+    onInvocationChanged,
     onStatusChange,
     onStreamEvent,
     onThreadTitle,
@@ -459,16 +459,10 @@ export function useAgentStream({
     source.addEventListener('agent.pending_requests_changed', evt => {
       if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
-      try {
-        const data = JSON.parse(evt.data)
-        const kinds = ['questions', 'data_requests', 'automation_requests', 'bootstrap_requests', 'browser_waits']
-        if (!Array.isArray(data.kinds) || !data.kinds.length || !data.kinds.every((kind: unknown) => kinds.includes(String(kind)))) {
-          recoverBootstrap('invalid_pending_event'); return
-        }
-        lastEventTimeRef.current = Date.now()
-        cursorRef.current = evt.lastEventId || cursorRef.current
-        callbacksRef.current.onPendingRequestsChanged?.()
-      } catch { recoverBootstrap('invalid_pending_event') }
+      // The payload is empty: the hint only means "reread pending inventory".
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onPendingRequestsChanged?.()
     })
 
     source.addEventListener('agent.invocation_changed', (evt) => {

@@ -31,16 +31,6 @@ export function mergeInvocationEvent(state: ApiAgentState, row: ApiAgentInvocati
   return { ...state, invocations }
 }
 
-export function invocationRevision(state: Pick<ApiAgentState, 'invocations' | 'pending_questions' | 'pending_data_requests' | 'pending_automation_requests' | 'pending_bootstrap_requests'>): string {
-  return JSON.stringify([
-    state.invocations?.map((row) => [row.invocation_id, row.status, row.reserves_thread, row.attempt, row.cancel_requested_at, row.outcome_code]),
-    state.pending_questions?.map((row) => row.request_id),
-    state.pending_data_requests?.map((row) => [row.request_id, row.request.version, row.request.status]),
-    state.pending_bootstrap_requests?.map((row) => [row.proposal_id, row.proposal.version, row.proposal.status]),
-    state.pending_automation_requests?.map((row) => [row.proposal_id, row.proposal.version, row.proposal.status]),
-  ])
-}
-
 export function invocationSummary(state: Pick<ApiAgentState, 'invocations'>) {
   const rows = state.invocations ?? []
   const current = rows.find((row) => row.reserves_thread)

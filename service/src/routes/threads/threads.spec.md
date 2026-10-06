@@ -356,12 +356,15 @@ cursors return 400 `invalid_message_cursor`; owner authorization precedes reads.
 foreign scope and deleted anchors.
 
 `pending-events.ts` / `.test.ts` coalesce bounded owner/thread hints, recheck current
-thread/Bud ownership and publish `agent.pending_requests_changed` with all five
-inventory kinds. Loss/overflow invalidates runtime replay. `change-listener.ts`
-requires migrations 0049/0050 and shares one LISTEN connection for list, transcript
-and pending hints; tests execute trigger SQL against isolated PostgreSQL tables.
+thread/Bud ownership and publish `agent.pending_requests_changed` with an empty
+payload. Loss/overflow invalidates runtime replay. Its queue/drain/generation
+logic intentionally duplicates `agent/transcript-events.ts`. `change-listener.ts`
+exports `requiredThreadChangeTriggers` (migrations 0049/0050), verifies all are
+enabled at readiness and shares one LISTEN connection for list, transcript and
+pending hints; tests execute trigger SQL in an isolated schema against copies of
+the real pending-table definitions.
 
 GET `/context-budget` authorizes before runtime/environment/context work and returns
 only `{context_budget}` with no-store. State/open include only matching active-turn
-budgets; omission means no update, and open's inclusion flag means supplied.
+budgets (`activeTurnContextBudget` in `state-loader.ts`, shared with the budget route); omission means no update, and open's inclusion flag means supplied.
 See [handoff](../../../../plan/client-state-performance/mobile-api-handoff.md).

@@ -813,17 +813,20 @@ compact wire shape; old history is normalized by the service before delivery.
 
 `use-pending-requests.ts` serializes dirty inventory reads, coalesces hints, rejects
 responses superseded by a newer hint, retries failures with capped backoff and
-revalidates on foreground. No recurring healthy-idle poll. The owner/thread-keyed
+revalidates on foreground. One backstop read runs per `PENDING_BACKSTOP_MS` (60s)
+while visible, restarted by any completed read; it bounds staleness after a
+missed hint and replaces the removed five-second poll. The owner/thread-keyed
 route applies only pending arrays; targeted reads never move the SSE cursor.
-`use-agent-stream.ts` forwards `agent.pending_requests_changed` with ordinary
-source/cursor fencing and malformed-event recovery.
+`use-agent-stream.ts` forwards `agent.pending_requests_changed` (empty payload)
+with ordinary source/cursor fencing. `invocation-state.ts` no longer exports
+`invocationRevision`.
 
 `thread-message-state.ts` exports `applyPendingRequestInventory`, replacing only
 managed pending cards, preserving canonical results and unrelated live work.
 `use-thread-messages.ts` clears removed pending protection and recovers rejected
 old message cursors with a fresh open window while retaining protected live rows.
 
-`use-pending-requests.test.tsx` tests ten-minute idle counts, hint/read races, retry,
+`use-pending-requests.test.tsx` tests ten-minute backstop counts, interval restart, hint/read races, retry,
 foreground and owner changes. `client-state-refresh.test.tsx` mounts message state
 to test pending-only cleanup and obsolete-cursor reset with live work preserved.
 Budget tests additionally verify supplied nonstale unknown avoids duplicate reads.

@@ -4,9 +4,7 @@ import { threadTable, budTable } from "../../db/schema.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
 import type { ThreadChange } from "./change-listener.js";
 
-export const pendingRequestKinds = ["questions", "data_requests", "automation_requests", "bootstrap_requests", "browser_waits"] as const;
-
-/** Hints describe inventory invalidation, never a stale captured request row. */
+/** Hints mean "reread pending inventory"; they carry no kinds, rows or identities. */
 export class PendingRequestEvents {
   private readonly pending = new Map<string, ThreadChange>();
   private draining: Promise<void> | undefined;
@@ -36,7 +34,7 @@ export class PendingRequestEvents {
       const generation = this.generation;
       try {
         if (await this.owned(hint) && generation === this.generation) {
-          this.runtime.emit(hint.thread_id!, { event: "agent.pending_requests_changed", data: { kinds: pendingRequestKinds } });
+          this.runtime.emit(hint.thread_id!, { event: "agent.pending_requests_changed", data: {} });
         }
       } catch { this.lost(); }
     }

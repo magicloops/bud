@@ -1,16 +1,17 @@
 # Mobile handoff: shared client state follow-ups
 
-Implementation date: 2026-10-05. Working tree only; no release/build assigned.
-Service and web implementation exists. Native adoption and physical acceptance
-are outstanding. This supplements the earlier backend/mobile handoff.
+Implementation date: 2026-10-05; revised 2026-10-06 ([Phase 6](phase-6-review-hardening.md)).
+Service and web implementation exists. Mobile is not live: build against this
+contract directly; there is no older behavior to remain compatible with.
+Native adoption and physical acceptance are outstanding. This supplements the
+earlier backend/mobile handoff.
 
 ## Upgrade together
 
 Run service `pnpm db:migrate` through `0050_pending_request_notifications.sql`
-before starting this service. Startup verifies the triggers. Then deploy matching
-web and mobile, reload clients and discard stored history pagination boundaries.
-No daemon change. Coordinate before merging: service auto-deploys from main.
-Record exact service revision and mobile build in validation-and-rollout.md.
+before starting this service. Startup verifies the triggers. Web deploys with
+the service. No daemon change and no mobile step gates the merge; record the
+first adopting mobile build in validation-and-rollout.md when it exists.
 
 ## Exact history boundaries (F3)
 
@@ -50,11 +51,11 @@ The existing authorized agent SSE stream adds:
 ```text
 event: agent.pending_requests_changed
 id: <ordinary opaque agent-stream cursor>
-data: {"kinds":["questions","data_requests","automation_requests","bootstrap_requests","browser_waits"]}
+data: {}
 ```
 
-Currently every hint invalidates all five kinds. It contains no request content
-or identity and is not an execution event. Commit notifications cover creation,
+The payload is empty; ignore any fields. Every hint invalidates all five
+inventories. It contains no request content or identity and is not an execution event. Commit notifications cover creation,
 decision, cancellation, persisted expiry/staleness/repair, and joined invocation/
 action visibility. No hint is published on rollback. Time passing alone is not a
 commit: expiry becomes canonical when existing maintenance persists the change.
@@ -63,18 +64,23 @@ Coalesce hints into one GET `/agent/state`; if another arrives during the read,
 discard that response's pending inventory and fetch again. Apply only these arrays
 as replacements, including empty arrays:
 
-| Kind | State field |
+| Inventory | State field |
 |---|---|
-| questions | pending_questions |
-| data_requests | pending_data_requests |
-| automation_requests | pending_automation_requests |
-| bootstrap_requests | pending_bootstrap_requests |
-| browser_waits | pending_browser_waits |
+| Questions | pending_questions |
+| App permissions | pending_data_requests |
+| Activation reviews | pending_automation_requests |
+| Existing-contact reviews | pending_bootstrap_requests |
+| Browser waits | pending_browser_waits |
 
 Keep canonical tool results and unrelated live tools/reasoning/text. Do not apply
 that targeted response's cursor, runtime activity or drafts. Failed dirty reads
 retry with capped backoff, stop on definitive resource/auth loss, pause while
-hidden and revalidate on foreground. Healthy idle requires no periodic state read.
+hidden and revalidate on foreground.
+
+Backstop: while the thread is visible, repeat the same coalesced GET
+`/agent/state` once per 60 seconds, restarting the interval after any completed
+inventory read (hint-driven or not). Apply it exactly like a hint-driven read.
+Never use `/open` or `/context-budget` for the backstop; do nothing while hidden.
 Standalone permissions/automation screens remain outside this contract.
 
 Duplicate hints are harmless. Existing bounded replay applies; listener loss,

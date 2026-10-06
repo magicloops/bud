@@ -19,13 +19,17 @@ request ledger are added. Trigger DDL is migration-owned, outside schema.ts.
 
 INSERT/UPDATE/DELETE are covered. Request updates differing only in updated_at
 are ignored; invocation lease heartbeats are ignored. Ordinary action progress
-outside waiting_for_user is ignored. One transaction may coalesce duplicate hints.
-All five kinds are invalidated together; publication rechecks current thread/Bud
+outside waiting_for_user is ignored before any row serialization. One transaction may coalesce duplicate hints.
+All five inventories are invalidated together (empty event payload); publication rechecks current thread/Bud
 ownership, then uses ordinary runtime replay. Queue overflow or publication loss
 forces resync. Existing expiry/staleness machinery still owns persisting those
 states; notifications do not introduce new expiry or grant-policy semantics.
 
-Exact migration tests exercise the five request tables, rollback, expiry and
+A missed hint is bounded by the clients' 60-second visible-thread backstop read.
+
+Exact migration tests run against copies of the real local table definitions
+(`LIKE public.<table>`, NOT NULL relaxed), so a renamed column fails the test.
+They exercise the five request tables, rollback, expiry and
 delete, action transitions, invocation reservation release and lease filtering
 through separate PostgreSQL connections. Publisher tests cover owner loss,
 publication failure and invalidation during an async ownership lookup. Mounted

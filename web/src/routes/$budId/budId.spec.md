@@ -309,7 +309,7 @@ From `@/components/workbench/chat-timeline`:
 
 The existing-thread view displays canonical invocation status from SSE. Pending
 inventory hints trigger coalesced cheap state reads; the five-second thread poll
-is removed. Only full bootstrap adopts a new stream cursor. Requests are fenced
+is removed in favor of one cheap backstop state read per visible minute. Only full bootstrap adopts a new stream cursor. Requests are fenced
 by owner/thread and generation; foreground/reconnect reconcile canonical state.
 
 For unexpected `needs_review` interruptions, an inline notice explains possible

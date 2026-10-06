@@ -493,6 +493,7 @@ locally. New service startup checks trigger installation; migrate before restart
 
 Generated custom migration with generated snapshot/journal. Adds seven filtered
 pending-inventory AFTER triggers and their function; reuses 0049 notification
-helper/channel. No table data changes. Requires 0049 first and 0050 before updated
+helper/channel. Action-table updates outside `waiting_for_user` return before any
+row serialization (edited in place 2026-10-06, before any non-local apply). No table data changes. Requires 0049 first and 0050 before updated
 service readiness. Local exact SQL and isolated PostgreSQL commit/rollback/expiry/
 action/reservation tests pass. db:push was canceled on unrelated constraint churn.

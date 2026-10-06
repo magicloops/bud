@@ -2,16 +2,18 @@
 
 Status: Service and web implemented; SQL notification and client race tests pass.
 Request: F1. Physical two-client producer/recovery acceptance pending.
+Amended by [Phase 6](phase-6-review-hardening.md): empty payload, 60-second
+visible-thread backstop, no mobile compatibility requirement.
 
 ## SSE contract
 
 Add `agent.pending_requests_changed` on the existing authorized thread stream:
 
 ```json
-{"kinds":["questions","data_requests","automation_requests","bootstrap_requests","browser_waits"]}
+{}
 ```
 
-`kinds` is a nonempty unique subset of this enum, sorted in the above order.
+The payload is empty; every hint invalidates all five inventories.
 No IDs or payloads are necessary: inventories are bounded and clients reread
 state once. Normal SSE event ID/resume semantics apply. This is an invalidation
 hint, not a state delta, execution wake, or durable delivery promise. Duplicate
@@ -36,7 +38,7 @@ Implementation uses migration-owned PostgreSQL AFTER triggers on request and
 joined invocation/action tables, reusing `bud_thread_changes`. This supersedes
 the planned application callback collection and adds migration 0050. PostgreSQL
 delivers only after the outer commit, including raw-pg and direct SQL writers.
-All five kinds invalidate together. Current owner/thread authorization is checked
+All five inventories invalidate together. Current owner/thread authorization is checked
 before publication. Existing bounded runtime replay and invalidateReplay handle
 publication/notification loss. See [mutation coverage](mutation-coverage.md).
 No Redis, outbox, new table or execution authority is introduced.
@@ -56,6 +58,7 @@ No Redis, outbox, new table or execution authority is introduced.
    read, avoid displaying its obsolete inventory and fetch again. Retry failed
    dirty refreshes with capped backoff; pause background work and retry on
    foreground. This is recovery of known dirty state, not an idle polling loop.
+   Separately, one cheap backstop read runs per 60 visible seconds (Phase 6).
 5. Replay gaps, publication failures and service restarts use full existing
    bootstrap/transcript reconciliation. Recheck on foreground/reconnect.
 
@@ -75,8 +78,8 @@ Standalone owner-level permission/automation screens are outside this phase.
       hints, mutation during refresh and publication failure tested.
 - [ ] Open/read/attach race and replay-miss recovery preserve pending cards,
       canonical finals, history and active drafts; no cursor advancement skips events.
-- [ ] Zero recurring agent-state/open/budget requests during ten minutes of a
-      healthy idle visible thread after initial hydration.
+- [ ] At most one cheap agent-state read per 60 seconds, and zero recurring
+      open/budget requests, during ten minutes of a healthy idle visible thread.
 - [ ] Unauthorized/cross-owner attach/replay rejected; no sensitive event fields.
 - [ ] Web stream/reducer tests and mobile full-response/replay fixtures delivered.
 

@@ -3,6 +3,10 @@
 CREATE FUNCTION bud_pending_requests_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE r jsonb; scope_thread uuid; scope_owner text;
 BEGIN
+  -- Ordinary tool action progress is unrelated to pending human input. Checked
+  -- first so it never serializes action rows. OLD/NEW are null outside their ops.
+  IF TG_TABLE_NAME='agent_invocation_action' AND OLD.status IS DISTINCT FROM 'waiting_for_user'
+    AND NEW.status IS DISTINCT FROM 'waiting_for_user' THEN RETURN NULL; END IF;
   IF TG_OP='UPDATE' THEN
     IF TG_TABLE_NAME='agent_invocation' THEN
       IF ROW(OLD.thread_id,OLD.created_by_user_id,OLD.status,OLD.reserves_thread,OLD.cancel_requested_at)
@@ -11,10 +15,6 @@ BEGIN
     ELSIF (to_jsonb(OLD)-'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW)-'updated_at') THEN RETURN NULL;
     END IF;
   END IF;
-  -- Ordinary tool action progress is unrelated to pending human input.
-  IF TG_TABLE_NAME='agent_invocation_action' AND
-    COALESCE(to_jsonb(OLD)->>'status','') <> 'waiting_for_user' AND
-    COALESCE(to_jsonb(NEW)->>'status','') <> 'waiting_for_user' THEN RETURN NULL; END IF;
   FOR r IN SELECT DISTINCT value FROM jsonb_array_elements(jsonb_build_array(
     CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END,
     CASE WHEN TG_OP='DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END)) LOOP

@@ -13,6 +13,14 @@ Unchecked end-to-end gates remain outstanding; no deployment performed.
 - [ ] Phase 5: decisions resolved and enforcement delivered, or separately reported
       as outstanding; do not count a deferral as fulfilling F4.
 
+- [ ] Phase 6: review fixes and 60-second visible-thread backstop implemented
+      locally; two-tab smoke test outstanding. See [Phase 6](phase-6-review-hardening.md).
+
+Mobile is not live (confirmed 2026-10-06). Mobile reload, build selection and
+cursor-clearing steps below do not gate merge; mobile adopts the final contract
+when it ships. Phase 6 replaces the zero-idle-request target with at most one
+cheap state read per 60 seconds per visible thread.
+
 ## Required evidence
 
 Each implementation PR records commands, environment, pass/fail/skips and fixture
@@ -102,3 +110,20 @@ Additional web recovery check: `pnpm exec tsx --tsconfig tsconfig.app.json --tes
 src/features/threads/client-recovery.test.tsx` passed 17/17, zero skipped, covering
 stream bootstrap, definitive auth/resource loss, navigation fences and reconnects.
 `git diff --check` passed. No commit, push or deployment performed.
+
+## Local evidence — 2026-10-06 (Phase 6)
+
+- Service `pnpm build`: passed. Service `BUD_DATA_DB_TEST=1 pnpm exec node --import tsx --test`
+  with `src/routes/threads/{message-cursor,change-listener,pending-events,agent-question-response,open,registration,messages}.test.ts`,
+  `src/request-metrics.test.ts`, `src/access-log.test.ts`: 30 passed, zero skipped.
+  The trigger test now copies real local table definitions.
+- Web `pnpm exec tsx --tsconfig tsconfig.app.json --test` with
+  `use-pending-requests`, `invocation-state`, `client-state-refresh`, `use-context-budget`,
+  `thread-message-state`, `client-recovery` and `streaming-parity` tests: 57 passed,
+  zero skipped. Backstop test: ten idle minutes produce exactly ten state reads.
+  `tsc -b --noEmit` and ESLint on changed web files: clean.
+- Migration 0050 edited in place (status filter before row serialization); its
+  function body was replaced in the hostname-verified local database. 0050 has
+  never run outside local databases.
+- Not done: hint-suppressed convergence and stream-cursor checks in a real
+  browser, two-account two-tab smoke test, deployment.

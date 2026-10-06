@@ -4,6 +4,13 @@ import { pool } from "../../db/client.js";
 export type ThreadChange = { owner: string; thread_id: string | null;
   kind: "summary" | "message" | "transcript" | "reset" | "pending"; message_id: string | null };
 
+/** Installed by migrations 0049/0050; readiness requires every one enabled. */
+export const requiredThreadChangeTriggers = [
+  "bud_thread_changed", "bud_thread_read_changed", "bud_thread_terminal_changed", "bud_thread_owner_changed",
+  "bud_transcript_changed", "bud_pending_questions", "bud_pending_data", "bud_pending_automation",
+  "bud_pending_bootstrap", "bud_pending_browser", "bud_pending_invocation", "bud_pending_action",
+] as const;
+
 /** Shared by list and transcript publishers; exactly one checked-out connection. */
 export class ThreadChangeListener {
   private client: PoolClient | undefined;
@@ -36,9 +43,9 @@ export class ThreadChangeListener {
       const schema = (await connection.query("select current_schema() as name")).rows[0].name;
       const installed = await connection.query(`select count(*)::int as count from pg_trigger t
         join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
-        where n.nspname=current_schema() and t.tgenabled in ('O','A') and t.tgname in
-        ('bud_thread_changed','bud_thread_read_changed','bud_thread_terminal_changed','bud_thread_owner_changed','bud_transcript_changed','bud_pending_questions','bud_pending_data','bud_pending_automation','bud_pending_bootstrap','bud_pending_browser','bud_pending_invocation','bud_pending_action')`);
-      if (installed.rows[0].count !== 12) throw new Error("thread_changes_migration_required: apply migrations 0049/0050");
+        where n.nspname=current_schema() and t.tgenabled in ('O','A') and t.tgname = any($1::text[])`,
+        [requiredThreadChangeTriggers]);
+      if (installed.rows[0].count !== requiredThreadChangeTriggers.length) throw new Error("thread_changes_migration_required: apply migrations 0049/0050");
       connection.on("notification", event => {
         if (event.channel !== "bud_thread_changes" || !event.payload || event.payload.length > 4096) return;
         try {

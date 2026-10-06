@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PendingRequestEvents, pendingRequestKinds } from "./pending-events.js";
+import { PendingRequestEvents } from "./pending-events.js";
 import type { ThreadChange } from "./change-listener.js";
 
 test("pending publication checks current ownership and invalidates continuity on failure", async () => {
@@ -10,7 +10,7 @@ test("pending publication checks current ownership and invalidates continuity on
     invalidateReplay: () => { losses++; } }, async () => { if (fail) throw Error("db unavailable"); return owned; });
   const hint: ThreadChange = { owner: "owner", thread_id: "thread", message_id: null, kind: "pending" };
   events.changed(hint); await events.flush();
-  assert.deepEqual(emitted, [{ event: "agent.pending_requests_changed", data: { kinds: pendingRequestKinds } }]);
+  assert.deepEqual(emitted, [{ event: "agent.pending_requests_changed", data: {} }]);
   owned = false; events.changed(hint); await events.flush(); assert.equal(emitted.length, 1);
   fail = true; events.changed(hint); await events.flush(); assert.equal(losses, 1);
   fail = false; owned = true; events.changed(hint); await events.flush(); assert.equal(emitted.length, 2);

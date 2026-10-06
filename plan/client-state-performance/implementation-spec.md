@@ -2,7 +2,11 @@
 
 Status: Phases 0–3 implemented in service/web; local validation recorded below.
 Native/physical acceptance and production measurements pending. Phase 4 deferred;
-Phase 5 awaits policy decisions. Updated: 2026-10-05.
+Phase 5 awaits policy decisions. Phase 6 review hardening implemented locally. Updated: 2026-10-06.
+
+Mobile is not live: no installed build consumes these contracts, so no
+backwards compatibility or mixed-version window is required. Where older text
+in this plan asks for mobile coordination before merge, [Phase 6](phase-6-review-hardening.md) supersedes it.
 
 ## Context
 
@@ -16,7 +20,7 @@ The external mobile repository is a handoff dependency, not part of this checkou
 ## Objective
 
 History pagination must not skip microsecond-boundary rows. An idle visible
-thread with a healthy stream must need no routine agent-state polling. Thread
+thread with a healthy stream needs only one cheap backstop state read per minute. Thread
 opening must never reconstruct model context to paint chat. Web and mobile use
 the same canonical snapshots, invalidation events and recovery rules. Auth policy
 must be enforced consistently before clients claim stronger revocation behavior.
@@ -31,6 +35,7 @@ must be enforced consistently before clients claim stronger revocation behavior.
 | [3: Pending events](phase-3-pending-request-events.md) | F1 complete invalidation, remove thread poll | Phase 2 cheap reads; publication/recovery coverage |
 | [4: Budget reuse](phase-4-budget-reuse.md) | Further F2 request reduction | Optional after Phase 0/2 measurements |
 | [5: Account policy](phase-5-account-policy.md) | F4 shared eligibility and revocation | Independent; policy/provider decisions before final schema |
+| [6: Review hardening](phase-6-review-hardening.md) | PR #140 fixes, slow cheap-state backstop, empty hint payload | Phases 1–3; lands in the same PR before merge |
 
 Phases are reviewable units, not mandatory separate PRs. Phases 2/3 can share a
 coordinated release. Phase 4 may be explicitly deferred without blocking 1–3.
@@ -126,7 +131,7 @@ No commit, PR, merge or deployment is authorized by this planning document.
 - Migration `0050_pending_request_notifications.sql` replaces the proposed
   application callback collection. Existing LISTEN infrastructure covers raw-pg,
   maintenance and operational writers without duplicated per-writer callbacks.
-  See [mutation coverage](mutation-coverage.md). All five kinds invalidate together.
+  See [mutation coverage](mutation-coverage.md). All five inventories invalidate together.
 - Active budget applicability is the matching runtime turn. It describes that
   running decision, not the next turn after a preference change. No idle cache.
 - INFO interval histograms are the chosen metrics export; production baseline
