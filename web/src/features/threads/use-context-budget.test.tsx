@@ -27,7 +27,7 @@ test('optional budget loads after mount, preserves omission and failures, and ho
     await act(async () => { view = create(createElement(Harness)) })
     assert.equal(view.root.findByType('p').children[0], 'Transcript visible')
     assert.equal(current.contextBudget, null)
-    assert.match(requests[0].url, /\/thread-A\/agent\/state$/)
+    assert.match(requests[0].url, /\/thread-A\/context-budget$/)
     await act(async () => requests[0].resolve(Response.json({ context_budget: budget('initial'), active: true, stream_cursor: 'ignored' })))
     assert.deepEqual(current.contextBudget, budget('initial'))
     await act(async () => current.applyContextBudget(undefined))
@@ -75,6 +75,21 @@ test('new budget evidence and owner/thread remounts fence late optional reads', 
     await act(async () => view.unmount())
     assert.equal(requests[5].signal?.aborted, true)
     await act(async () => requests[5].resolve(Response.json({ context_budget: budget('unmounted') })))
+  } finally {
+    await act(async () => view?.unmount())
+    globalThis.fetch = original
+  }
+})
+
+test('a supplied nonstale budget, including unknown, avoids the initial read', async () => {
+  const original = globalThis.fetch
+  let reads = 0
+  globalThis.fetch = async () => { reads++; return Response.json({}) }
+  let view!: ReactTestRenderer
+  function Harness() { useContextBudget('thread', budget('provided')); return null }
+  try {
+    await act(async () => { view = create(createElement(Harness)) })
+    assert.equal(reads, 0)
   } finally {
     await act(async () => view?.unmount())
     globalThis.fetch = original

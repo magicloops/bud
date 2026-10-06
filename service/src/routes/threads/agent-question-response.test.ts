@@ -21,6 +21,8 @@ class TestReply {
   payload: unknown = undefined;
   sent = false;
 
+  header(): this { return this; }
+
   status(code: number): this {
     this.statusCode = code;
     return this;
@@ -165,6 +167,7 @@ test("agent-state route includes runtime last_error after authorization", async 
   const contextBudget = {
     status: "available",
     source: "active_agent_decision",
+    turn_id: lastError.turn_id,
     checked_at: "2026-06-04T00:28:13.868Z",
   };
   const agentRuntime = {
@@ -428,4 +431,28 @@ test("agent state recovers persisted app and automation requests only after thre
   bootstrapResolved = true;
   const refreshed = await invokeRoute(handler, request);
   assert.deepEqual((refreshed.payload as Record<string, unknown>).pending_bootstrap_requests, []);
+});
+
+test("dedicated budget authorizes before runtime reads; cheap idle state omits old budgets", async t => {
+  t.after(() => mock.restoreAll());
+  let signedIn = false, owned = false, active = true, reads = 0;
+  mock.method(auth.api, "getSession", async () => signedIn ? SESSION as never : null);
+  mock.method(db.query.threadTable, "findFirst", async () => owned ? THREAD as never : null);
+  const budget = { status: "unknown", turn_id: "turn", source: "unknown", stale: false };
+  const server = createServer();
+  await registerThreadAgentRoutes(server, {
+    getEnvironmentForBud: async () => buildAgentEnvironmentSnapshot({ budId: THREAD.budId, online: false }),
+    getContextTools: () => { throw new Error("cheap state must not reconstruct context"); },
+  } as never, { getSnapshot: () => { reads++; return { active, turn_id: "turn", context_budget: budget }; } } as never);
+  const handler = server.routes.get("GET /api/threads/:threadId/context-budget")!;
+  const request = { params: { threadId: THREAD_ID } };
+  assert.equal((await invokeRoute(handler, request)).statusCode, 401);
+  signedIn = true;
+  assert.equal((await invokeRoute(handler, request)).statusCode, 404);
+  assert.equal(reads, 0);
+  owned = true;
+  assert.deepEqual((await invokeRoute(handler, request)).payload, { context_budget: budget });
+  active = false;
+  const result = await invokeRoute(server.routes.get("GET /api/threads/:threadId/agent/state")!, request);
+  assert.equal(Object.hasOwn(result.payload as object, "context_budget"), false);
 });

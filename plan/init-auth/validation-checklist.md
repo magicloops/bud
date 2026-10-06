@@ -719,3 +719,19 @@ no new rows, row stamps or private media authority.
   pagination fixtures. Owner SSE authorizes before LISTEN/delivery and closes on loss.
 - [x] Atomic creation and monotonic read-watermark fixtures cover owner isolation.
 - [ ] Repeat with actual native bearer client and production proxy after rollout.
+
+## Shared client state performance follow-ups
+
+- [x] Budget route fixture denies anonymous/foreign thread before runtime reads;
+  state inventory reads remain owner/thread scoped.
+- [x] Exact-cursor PostgreSQL fixture excludes foreign owner/thread rows.
+- [x] Pending publisher rechecks current thread/Bud ownership; owner loss publishes
+  no hint. Replay invalidates on publication/listener failure. No new row stamps.
+- [ ] Two real accounts using cookie/bearer: budget/open/state/messages and pending
+  attach/replay deny foreign resources; logout/account switch fences late reads.
+- [ ] Two real clients: create/resolve/expire each review kind with no later model
+  output; verify pending-only convergence and restart/resync.
+
+New budget reads use requireAuthorizedThreadAccess before runtime/context work.
+Pending hints carry kinds only on the already-authorized thread stream. This does
+not implement Phase 5 account disablement or immediate credential revocation.

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ApiAgentInvocation, ApiAgentState, ApiPendingQuestion } from '../../lib/api-types.ts'
-import { invocationAllowsLiveActivity, invocationRevision, invocationSummary, isInvocationEvent, mergeInvocationEvent } from './invocation-state.ts'
+import { invocationAllowsLiveActivity, invocationSummary, isInvocationEvent, mergeInvocationEvent } from './invocation-state.ts'
 import { applyAgentStateOverlay } from './thread-message-state.ts'
 
 const invocation = (overrides: Partial<ApiAgentInvocation> = {}): ApiAgentInvocation => ({
@@ -43,13 +43,6 @@ test('durable recovery suppresses stale activity but preserves legacy runtime be
   assert.equal(invocationAllowsLiveActivity({ ...active, invocations: [invocation({ status: 'running' })] }), true)
 })
 
-test('canonical refresh ignores lease heartbeats but detects answer and lifecycle transitions', () => {
-  const before = state({ invocations: [invocation()], pending_questions: [question] })
-  assert.equal(invocationRevision(before), invocationRevision({ ...before, invocations: [invocation({ updated_at: 'later' })] }))
-  assert.notEqual(invocationRevision(before), invocationRevision({ ...before, pending_questions: [] }))
-  assert.notEqual(invocationRevision(before), invocationRevision({ ...before, invocations: [invocation({ status: 'running' })] }))
-})
-
 test('cold bootstrap restores a question once, then removes it after answer', () => {
   const snapshot = state({ pending_questions: [question] })
   const rows = applyAgentStateOverlay([], snapshot)
@@ -67,17 +60,6 @@ test('canonical question result wins over stale durable and runtime pending snap
   const snapshot = state({ active: true, turn_id: question.turn_id, pending_questions: [question],
     pending_tool: { client_id: question.client_id, call_id: question.call_id, name: 'ask_user_questions', args: question.request } })
   assert.deepEqual(applyAgentStateOverlay([result], snapshot), [result])
-})
-
-test('permission creation and resolution refresh canonical thread state', () => {
-  const pending = { request_id: 'dar_request', turn_id: 'turn-1', client_id: 'client', call_id: 'call',
-    created_at: '2026-09-04T00:00:00Z', request: { request_id: 'dar_request', app_label: 'Contacts', purpose: 'Read names', status: 'pending', version: 0 } }
-  const before = state({ invocations: [invocation({ status: 'waiting_for_user', reserves_thread: true })], pending_data_requests: [] })
-  const waiting = { ...before, pending_data_requests: [pending] }
-  assert.notEqual(invocationRevision(before), invocationRevision(waiting))
-  assert.notEqual(invocationRevision(waiting), invocationRevision({ ...waiting, pending_data_requests: [] }))
-  assert.notEqual(invocationRevision(waiting), invocationRevision({ ...waiting,
-    pending_data_requests: [{ ...pending, request: { ...pending.request, version: 1, status: 'approved' } }] }))
 })
 
 test('automation reviews recover once and completed decisions beat stale pending state', () => {
@@ -112,9 +94,6 @@ test('automation reviews recover once and completed decisions beat stale pending
   assert.deepEqual(applyAgentStateOverlay([canonical], snapshot), [canonical])
   assert.deepEqual(applyAgentStateOverlay([], { ...snapshot,
     pending_automation_requests: [{ ...pending, client_id: null }] }), [])
-  assert.notEqual(invocationRevision(snapshot), invocationRevision(cleared))
-  assert.notEqual(invocationRevision(snapshot), invocationRevision({ ...snapshot,
-    pending_automation_requests: [{ ...pending, proposal: { ...pending.proposal, version: 1, status: 'approved' } }] }))
 })
 
 test('existing-contact reviews recover once and completed decisions beat stale pending state', () => {
@@ -151,9 +130,6 @@ test('existing-contact reviews recover once and completed decisions beat stale p
   assert.deepEqual(applyAgentStateOverlay([canonical], snapshot), [canonical])
   assert.deepEqual(applyAgentStateOverlay([], { ...snapshot,
     pending_bootstrap_requests: [{ ...pending, client_id: null }] }), [])
-  assert.notEqual(invocationRevision(snapshot), invocationRevision(cleared))
-  assert.notEqual(invocationRevision(snapshot), invocationRevision({ ...snapshot,
-    pending_bootstrap_requests: [{ ...pending, proposal: { ...pending.proposal, version: 1, status: 'approved' } }] }))
 })
 
 

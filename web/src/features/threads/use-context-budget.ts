@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ApiAgentState, ApiContextBudget } from '../../lib/api-types'
+import type { ApiContextBudget } from '../../lib/api-types'
 import { apiFetchJson } from '../../lib/transport'
 
 /** Mounted inside the owner/thread-keyed workbench; optional reads never apply agent state. */
@@ -19,7 +19,7 @@ export function useContextBudget(threadId: string, initial: ApiContextBudget | n
     const controller = new AbortController()
     pending.current = controller
     try {
-      const state = await apiFetchJson<ApiAgentState>(`/api/threads/${threadId}/agent/state`, { signal: controller.signal })
+      const state = await apiFetchJson<{ context_budget: ApiContextBudget | null }>(`/api/threads/${threadId}/context-budget`, { signal: controller.signal })
       if (!controller.signal.aborted && version === generation.current && state.context_budget !== undefined) {
         setContextBudget(state.context_budget)
       }
@@ -29,8 +29,9 @@ export function useContextBudget(threadId: string, initial: ApiContextBudget | n
       if (pending.current === controller) pending.current = null
     }
   }, [threadId])
+  const initialBudget = useRef(initial)
   useEffect(() => {
-    void refreshContextBudget()
+    if (!initialBudget.current || initialBudget.current.stale) void refreshContextBudget()
     return () => { pending.current?.abort() }
   }, [refreshContextBudget])
   return { contextBudget, applyContextBudget, refreshContextBudget }

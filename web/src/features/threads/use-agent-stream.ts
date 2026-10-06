@@ -117,6 +117,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onPendingRequestsChanged?: () => void
   onInvocationChanged?: (invocation: ApiAgentInvocation) => void
   onTurnTiming?: (timing: ApiTurnTiming) => void
   onStreamEvent: () => void
@@ -203,6 +204,7 @@ export function useAgentStream({
   onThreadTitle,
   onFinalizeTurn,
   onTurnTiming,
+  onPendingRequestsChanged,
   onInvocationChanged,
   refreshBootstrap,
 }: UseAgentStreamArgs) {
@@ -237,6 +239,7 @@ export function useAgentStream({
     onThreadTitle,
     onFinalizeTurn,
     onTurnTiming,
+    onPendingRequestsChanged,
     onInvocationChanged,
     refreshBootstrap,
   })
@@ -262,6 +265,7 @@ export function useAgentStream({
       onThreadTitle,
       onFinalizeTurn,
       onTurnTiming,
+      onPendingRequestsChanged,
       onInvocationChanged,
       refreshBootstrap,
     }
@@ -280,6 +284,7 @@ export function useAgentStream({
     onError,
     onFinalizeTurn,
     onTurnTiming,
+    onPendingRequestsChanged,
     onInvocationChanged,
     onStatusChange,
     onStreamEvent,
@@ -449,6 +454,15 @@ export function useAgentStream({
     source.addEventListener('heartbeat', () => {
       if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       lastEventTimeRef.current = Date.now()
+    })
+
+    source.addEventListener('agent.pending_requests_changed', evt => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
+      // The payload is empty: the hint only means "reread pending inventory".
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onPendingRequestsChanged?.()
     })
 
     source.addEventListener('agent.invocation_changed', (evt) => {

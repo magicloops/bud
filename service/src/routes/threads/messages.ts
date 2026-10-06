@@ -95,11 +95,11 @@ export async function registerThreadMessageRoutes(
     }
 
     const { thread, viewer } = access;
-    const beforeCursor = query.before ? decodeMessageCursor(query.before) : null;
-    const afterCursor = query.after ? decodeMessageCursor(query.after) : null;
+    const beforeCursor = query.before ? decodeMessageCursor(query.before, thread.threadId) : null;
+    const afterCursor = query.after ? decodeMessageCursor(query.after, thread.threadId) : null;
 
     if ((query.before && !beforeCursor) || (query.after && !afterCursor)) {
-      reply.code(400).send({ error: "invalid_cursor" });
+      reply.code(400).send({ error: "invalid_message_cursor" });
       return;
     }
 

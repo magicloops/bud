@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { AgentService } from "../../agent/index.js";
-import { loadThreadAgentState } from "./state-loader.js";
+import { AgentService, getThreadContextBudgetSnapshot } from "../../agent/index.js";
+import { activeTurnContextBudget, loadThreadAgentState } from "./state-loader.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
@@ -136,6 +136,18 @@ export async function registerThreadAgentRoutes(
       throw error;
     }
   });
+  server.get("/api/threads/:threadId/context-budget", async (request, reply) => {
+    const { threadId } = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, threadId);
+    if (!access) return;
+    const runtimeSnapshot = agentRuntime.getSnapshot(threadId);
+    const environment = await agentService.getEnvironmentForBud(access.thread.budId);
+    const contextBudget = activeTurnContextBudget(runtimeSnapshot)
+      ?? await getThreadContextBudgetSnapshot({ thread: access.thread, runtimeSnapshot, environment,
+          tools: await agentService.getContextTools(environment, threadId, access.viewer.userId) });
+    reply.header("Cache-Control", "no-store");
+    return { context_budget: contextBudget };
+  });
   server.get("/api/threads/:threadId/agent/state", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
@@ -144,7 +156,8 @@ export async function registerThreadAgentRoutes(
     }
 
     const runtimeSnapshot = agentRuntime.getSnapshot(params.threadId);
-    reply.send(await loadThreadAgentState(access.viewer.userId, access.thread, agentService, runtimeSnapshot, true));
+    reply.header("Cache-Control", "no-store");
+    reply.send(await loadThreadAgentState(access.viewer.userId, access.thread, agentService, runtimeSnapshot));
   });
 
   server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {

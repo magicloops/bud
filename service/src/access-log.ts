@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { RequestMetrics } from './request-metrics.js';
 import type { FastifyInstance } from 'fastify';
 
 const quiet = new Set([
@@ -13,6 +15,21 @@ export function accessLogLevel(method: string, route: string, status: number, du
 }
 /** One completion record; route templates never include query strings or IDs. */
 export function registerAccessLog(server: FastifyInstance) {
+  const histogram = new RequestMetrics();
+  const instance = randomUUID();
+  let intervalStart = new Date().toISOString();
+  const flush = () => {
+    const result = histogram.drain();
+    const intervalEnd = new Date().toISOString();
+    if (result.routes.length || result.dropped_observations) server.log.info({
+      component: 'request_metrics', instance_id: instance,
+      interval_start: intervalStart, interval_end: intervalEnd, ...result,
+    }, 'HTTP latency histogram');
+    intervalStart = intervalEnd;
+  };
+  const timer = setInterval(flush, 60_000);
+  timer.unref();
+  server.addHook('onClose', async () => { clearInterval(timer); flush(); });
   const metrics = new WeakMap<object, { started: number; handler_ms?: number; response_bytes?: number; rows?: number; headers_ms?: number; first_event_ms?: number }>();
   server.addHook('onRequest', async (request, reply) => {
     const metric = { started: performance.now() } as NonNullable<ReturnType<typeof metrics.get>>;
@@ -70,6 +87,7 @@ export function registerAccessLog(server: FastifyInstance) {
     const stream = !!request.headers.upgrade || String(reply.getHeader('content-type') ?? '').startsWith('text/event-stream');
     const duration_ms = Math.round(reply.elapsedTime);
     const { started: _started, ...measurement } = metrics.get(request) ?? { started: 0 };
+    if (!stream) histogram.observe(request.method, route, reply.statusCode, reply.elapsedTime, measurement.response_bytes);
     request.log[accessLogLevel(request.method, route, reply.statusCode, duration_ms, stream)]({
       method: request.method, route, status_code: reply.statusCode, duration_ms,
       ...measurement,

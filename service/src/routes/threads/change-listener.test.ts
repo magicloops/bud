@@ -25,6 +25,18 @@ test("migration publishes committed summary, joined-row and transcript changes t
     CREATE TABLE terminal_session(thread_id uuid,created_by_user_id text,state text,closed_at timestamptz,updated_at timestamptz);
     CREATE TABLE message(message_id uuid,thread_id uuid,created_by_user_id text,content text,updated_at timestamptz);`);
   await database.query(await readFile(new URL("../../../drizzle/migrations/0049_thread_change_publication.sql", import.meta.url), "utf8"));
+  // Real column names and types from the pushed local schema, so a renamed
+  // column fails here instead of silently dropping hints. Constraints are
+  // relaxed only to allow sparse fixture rows.
+  const pendingTables = ["agent_question_request", "data_access_request", "automation_proposal",
+    "automation_bootstrap_proposal", "browser_handoff", "agent_invocation", "agent_invocation_action"];
+  for (const table of pendingTables) await database.query(`CREATE TABLE ${table} (LIKE public.${table})`);
+  await database.query(`DO $$ DECLARE c record; BEGIN
+    FOR c IN SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema=current_schema() AND is_nullable='NO' AND table_name = ANY('{${pendingTables.join(",")}}') LOOP
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP NOT NULL', c.table_name, c.column_name);
+    END LOOP; END $$`);
+  await database.query(await readFile(new URL("../../../drizzle/migrations/0050_pending_request_notifications.sql", import.meta.url), "utf8"));
   const hints: ThreadChange[] = [];
   let losses = 0;
   listener.subscribe(hint => hints.push(hint), () => losses++);
@@ -65,6 +77,38 @@ test("migration publishes committed summary, joined-row and transcript changes t
   await settle();
   assert.ok(hints.some(hint => hint.kind === "transcript"));
   assert.deepEqual(hints.filter(hint => hint.kind === "summary").map(hint => hint.owner).sort(), ["other","owner"]);
+  hints.length = 0;
+  for (const table of ["agent_question_request", "data_access_request", "automation_proposal", "automation_bootstrap_proposal", "browser_handoff"]) {
+    await database.query(`insert into ${table}(thread_id,created_by_user_id,status) values($1,'other','pending')`, [id]);
+    await settle();
+    assert.ok(hints.some(h => h.kind === "pending" && h.owner === "other" && h.thread_id === id), table);
+    hints.length = 0;
+    const tx = await database.connect();
+    await tx.query("BEGIN");
+    await tx.query(`update ${table} set status='resolved'`);
+    await tx.query("ROLLBACK"); tx.release();
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 0, `${table} rollback`);
+    await database.query(`update ${table} set status='expired'`);
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1, `${table} expiry`);
+    hints.length = 0;
+    await database.query(`delete from ${table}`);
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1, `${table} deletion`);
+    hints.length = 0;
+  }
+  await database.query("insert into agent_invocation(id,thread_id,created_by_user_id,status,reserves_thread) values('inv',$1,'other','waiting_for_user',true)", [id]);
+  await settle(); hints.length = 0;
+  // Ordinary tool progress never involves waiting_for_user and publishes nothing.
+  await database.query("insert into agent_invocation_action(id,invocation_id,created_by_user_id,status) values('act','inv','other','intent')");
+  await database.query("update agent_invocation_action set status='running',evidence='{\"k\":1}' where id='act'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 0, "ordinary action progress");
+  await database.query("update agent_invocation_action set status='waiting_for_user' where id='act'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1, "action parks"); hints.length = 0;
+  await database.query("update agent_invocation set lease_expires_at=now()");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 0);
+  await database.query("update agent_invocation_action set status='completed'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1); hints.length = 0;
+  await database.query("update agent_invocation set reserves_thread=false,status='canceled'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1);
   await listener.close();
   assert.equal(losses, 1);
   await assert.rejects(listener.ready(), /stopped/);
