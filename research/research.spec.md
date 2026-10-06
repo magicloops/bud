@@ -8,6 +8,15 @@ This folder captures focused analysis of existing behavior, known tradeoffs, and
 
 ## Files
 
+### `ios-performance-backend-follow-ups.md`
+
+Assessment of mobile follow-ups F1–F6 against the backend and web client:
+pending-request invalidation, cheap state and context-budget reads, exact message
+cursors, account revocation policy, latency distributions, and existing worker
+wake-up behavior. Records recommended scope, cross-client adoption, validation,
+and unresolved policy/measurement questions before implementation planning.
+Promoted into [the phased implementation spec](../plan/client-state-performance/implementation-spec.md).
+
 ### `terminal-observation-long-waits.md`
 
 Research note on the Bud daemon and service-side `terminal.send` / `terminal.observe` wait path, covering output quiescence, the former 30-second default timeout budgets, premature settled readiness, post-dispatch quiescence timing, and long-running TUIs such as Codex and Claude Code. Promoted into [../plan/improve-observe/implementation-spec.md](../plan/improve-observe/implementation-spec.md) and updated with the Phase 1-4 implementation outcome.

@@ -612,3 +612,13 @@ serves list/transcript publication. Pure terminal heartbeat changes are ignored.
 The previous list hint trigger is removed; conversation-order maintenance stays.
 `thread-read-state.test.ts` also exercises 206-row bounded pagination with tied
 timestamps, archived rows and foreign Bud exclusion against PostgreSQL.
+
+## Pending inventory notification triggers
+
+Migration `0050_pending_request_notifications.sql` adds filtered AFTER triggers on
+the five request tables plus invocation/action joins, using the existing
+`bud_thread_changes` channel. Commit-only routing contains owner/thread identity,
+not content. No table/column changes, backfill or ownership stamping changes;
+Drizzle cannot represent this trigger DDL in schema.ts. Local exact SQL applied
+transactionally after canceling unrelated db:push constraint churn. See the
+client-state-performance implementation debug note. Deploy via db:migrate.

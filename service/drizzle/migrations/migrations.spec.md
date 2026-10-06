@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0049` currently)
+- Snapshot files for each migration (`0000` through `0050` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -488,3 +488,11 @@ commit-delivered identity-only change triggers and helper functions; removes the
 old per-Bud list notification trigger/function. Conversation-order maintenance
 is retained. Exact SQL executes in isolated PostgreSQL tests and was applied
 locally. New service startup checks trigger installation; migrate before restart.
+
+### `0050_pending_request_notifications.sql`
+
+Generated custom migration with generated snapshot/journal. Adds seven filtered
+pending-inventory AFTER triggers and their function; reuses 0049 notification
+helper/channel. No table data changes. Requires 0049 first and 0050 before updated
+service readiness. Local exact SQL and isolated PostgreSQL commit/rollback/expiry/
+action/reservation tests pass. db:push was canceled on unrelated constraint churn.

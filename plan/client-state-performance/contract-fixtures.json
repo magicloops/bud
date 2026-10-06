@@ -1,0 +1,283 @@
+{
+  "fixture_version": 1,
+  "synthetic": true,
+  "description": "Supplemental response examples; fixture-model token limits are illustrative, not a catalog claim.",
+  "cursor": {
+    "thread_id": "11111111-1111-4111-8111-111111111111",
+    "encoded": "eyJ2IjoyLCJ0aHJlYWRfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0wNVQxMjowMDowMC4xMjM0MDBaIiwibWVzc2FnZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiJ9",
+    "rejection": {
+      "status": 400,
+      "body": {
+        "error": "invalid_message_cursor"
+      }
+    }
+  },
+  "pending_event": {
+    "event": "agent.pending_requests_changed",
+    "data": {
+      "kinds": [
+        "questions",
+        "data_requests",
+        "automation_requests",
+        "bootstrap_requests",
+        "browser_waits"
+      ]
+    }
+  },
+  "empty_state": {
+    "active": false,
+    "turn_id": null,
+    "phase": "idle",
+    "pending_tool": null,
+    "draft_assistant": null,
+    "can_cancel": false,
+    "stream_cursor": null,
+    "updated_at": "2026-10-05T12:00:00.000Z",
+    "pending_questions": [],
+    "pending_data_requests": [],
+    "pending_automation_requests": [],
+    "pending_bootstrap_requests": [],
+    "pending_browser_waits": [],
+    "invocations": []
+  },
+  "question_state": {
+    "active": false,
+    "turn_id": null,
+    "phase": "idle",
+    "pending_tool": null,
+    "draft_assistant": null,
+    "can_cancel": false,
+    "stream_cursor": null,
+    "updated_at": "2026-10-05T12:00:00.000Z",
+    "pending_questions": [
+      {
+        "request_id": "qr_fixture",
+        "turn_id": "turn_fixture",
+        "client_id": "33333333-3333-4333-8333-333333333333",
+        "call_id": "call_fixture",
+        "created_at": "2026-10-05T12:00:00.000Z",
+        "request": {
+          "schema": "ask_user_questions_request_v1",
+          "request_id": "qr_fixture",
+          "questions": [
+            {
+              "question_id": "choice",
+              "kind": "boolean",
+              "label": "Continue?",
+              "skippable": true
+            }
+          ]
+        }
+      }
+    ],
+    "pending_data_requests": [],
+    "pending_automation_requests": [],
+    "pending_bootstrap_requests": [],
+    "pending_browser_waits": [],
+    "invocations": []
+  },
+  "budget_omitted": {
+    "active": false,
+    "turn_id": null,
+    "phase": "idle",
+    "pending_tool": null,
+    "draft_assistant": null,
+    "can_cancel": false,
+    "stream_cursor": null,
+    "updated_at": "2026-10-05T12:00:00.000Z",
+    "pending_questions": [],
+    "pending_data_requests": [],
+    "pending_automation_requests": [],
+    "pending_bootstrap_requests": [],
+    "pending_browser_waits": [],
+    "invocations": []
+  },
+  "budget_available": {
+    "context_budget": {
+      "status": "available",
+      "model": "fixture-model",
+      "provider": "openai",
+      "context_window_tokens": 128000,
+      "usable_context_window_tokens": 128000,
+      "reserved_output_tokens": 16000,
+      "usable_input_window_tokens": 112000,
+      "compaction_enabled": true,
+      "compaction_threshold_ratio": 0.9,
+      "compaction_threshold_tokens": 100800,
+      "effective_budget_tokens": 100800,
+      "message_estimated_tokens": 10,
+      "tool_schema_tokens": 0,
+      "estimated_input_tokens": 10,
+      "breakdown": [
+        {
+          "kind": "system_prompt",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "runtime_instructions",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "compaction_summary",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "user_messages",
+          "tokens": 10,
+          "percent_of_estimated_input": 1
+        },
+        {
+          "kind": "assistant_text",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "reasoning",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_calls",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_output",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "images",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_schemas",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        }
+      ],
+      "compaction_count": null,
+      "remaining_context_tokens": 100790,
+      "percent_of_context_budget": 0.0000992063492063492,
+      "percent_of_model_window": 0.000078125,
+      "basis": "model_agnostic_estimate",
+      "confidence": "medium",
+      "source": "durable_reconstruction",
+      "phase": "idle",
+      "turn_id": null,
+      "checked_at": "2026-10-05T12:00:00.000Z",
+      "stale": false,
+      "updated_at": "2026-10-05T12:00:00.000Z",
+      "reason": null,
+      "latest_checkpoint_id": null,
+      "compacted_through_message_id": null,
+      "compacted_through_llm_call_id": null,
+      "provider_usage_estimate": null
+    }
+  },
+  "budget_stale": {
+    "context_budget": {
+      "status": "available",
+      "model": "fixture-model",
+      "provider": "openai",
+      "context_window_tokens": 128000,
+      "usable_context_window_tokens": 128000,
+      "reserved_output_tokens": 16000,
+      "usable_input_window_tokens": 112000,
+      "compaction_enabled": true,
+      "compaction_threshold_ratio": 0.9,
+      "compaction_threshold_tokens": 100800,
+      "effective_budget_tokens": 100800,
+      "message_estimated_tokens": 10,
+      "tool_schema_tokens": 0,
+      "estimated_input_tokens": 10,
+      "breakdown": [
+        {
+          "kind": "system_prompt",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "runtime_instructions",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "compaction_summary",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "user_messages",
+          "tokens": 10,
+          "percent_of_estimated_input": 1
+        },
+        {
+          "kind": "assistant_text",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "reasoning",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_calls",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_output",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "images",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        },
+        {
+          "kind": "tool_schemas",
+          "tokens": 0,
+          "percent_of_estimated_input": 0
+        }
+      ],
+      "compaction_count": null,
+      "remaining_context_tokens": 100790,
+      "percent_of_context_budget": 0.0000992063492063492,
+      "percent_of_model_window": 0.000078125,
+      "basis": "model_agnostic_estimate",
+      "confidence": "medium",
+      "source": "durable_reconstruction",
+      "phase": "idle",
+      "turn_id": null,
+      "checked_at": "2026-10-05T12:00:00.000Z",
+      "stale": true,
+      "updated_at": "2026-10-05T12:00:00.000Z",
+      "reason": null,
+      "latest_checkpoint_id": null,
+      "compacted_through_message_id": null,
+      "compacted_through_llm_call_id": null,
+      "provider_usage_estimate": null
+    }
+  },
+  "budget_unknown": {
+    "context_budget": {
+      "status": "unknown",
+      "model": "fixture-model",
+      "provider": null,
+      "reason": "count_failed",
+      "source": "durable_reconstruction",
+      "phase": "idle",
+      "turn_id": null,
+      "checked_at": "2026-10-05T12:00:00.000Z",
+      "stale": false,
+      "updated_at": "2026-10-05T12:00:00.000Z"
+    }
+  }
+}

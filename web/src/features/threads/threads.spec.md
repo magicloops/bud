@@ -794,7 +794,7 @@ only those rows. `use-agent-stream.ts` handles transcript inserts/invalidations.
 ## Compact tool and optional budget adoption
 
 `use-context-budget.ts` owns the optional meter inside the owner/thread-keyed
-workbench. It loads `/agent/state` after mount and on accepted open recovery,
+workbench. It loads `/context-budget` after mount when no nonstale snapshot is supplied and on accepted open recovery,
 without applying that response's lifecycle, messages or stream cursor. Omitted
 budget values preserve the current meter; explicit null clears it. Newer budget
 snapshots abort superseded reads; unmount and request generations fence late
@@ -808,3 +808,22 @@ second tool payload. Canonical replacement retains the existing client identity.
 Work grouping reads return-control evidence from the structured payload, keeping
 pending browser waits outside collapsed work. Conformance fixtures use the same
 compact wire shape; old history is normalized by the service before delivery.
+
+## Event-driven pending state and exact pagination
+
+`use-pending-requests.ts` serializes dirty inventory reads, coalesces hints, rejects
+responses superseded by a newer hint, retries failures with capped backoff and
+revalidates on foreground. No recurring healthy-idle poll. The owner/thread-keyed
+route applies only pending arrays; targeted reads never move the SSE cursor.
+`use-agent-stream.ts` forwards `agent.pending_requests_changed` with ordinary
+source/cursor fencing and malformed-event recovery.
+
+`thread-message-state.ts` exports `applyPendingRequestInventory`, replacing only
+managed pending cards, preserving canonical results and unrelated live work.
+`use-thread-messages.ts` clears removed pending protection and recovers rejected
+old message cursors with a fresh open window while retaining protected live rows.
+
+`use-pending-requests.test.tsx` tests ten-minute idle counts, hint/read races, retry,
+foreground and owner changes. `client-state-refresh.test.tsx` mounts message state
+to test pending-only cleanup and obsolete-cursor reset with live work preserved.
+Budget tests additionally verify supplied nonstale unknown avoids duplicate reads.

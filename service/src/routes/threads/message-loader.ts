@@ -1,14 +1,14 @@
-import { and, asc, desc, eq } from "drizzle-orm";
-import { db } from "../../db/client.js";
+import { and, asc, desc, eq, getTableColumns } from "drizzle-orm";
+import { db, type Database } from "../../db/client.js";
 import { messageTable } from "../../db/schema.js";
 import type { AgentService } from "../../agent/index.js";
-import { encodeMessageCursor, newerThanMessageCursor, olderThanMessageCursor, serializeMessage, type MessageCursor } from "./shared.js";
+import { messageCursorTimestamp, encodeMessageCursor, newerThanMessageCursor, olderThanMessageCursor, serializeMessage, type MessageCursor } from "./shared.js";
 
 export async function loadMessagePage(owner: string, threadId: string, agentService: AgentService,
-  limit: number, beforeCursor: MessageCursor | null = null, afterCursor: MessageCursor | null = null) {
+  limit: number, beforeCursor: MessageCursor | null = null, afterCursor: MessageCursor | null = null, database: Pick<Database, "select"> = db) {
     const fetchNewerWindow = Boolean(afterCursor);
-    const rows = await db
-      .select()
+    const rows = await database
+      .select({ ...getTableColumns(messageTable), cursorTimestamp: messageCursorTimestamp })
       .from(messageTable)
       .where(
         and(

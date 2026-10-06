@@ -1,21 +1,20 @@
 import { toolPresentation } from "../../agent/message-view.js";
-import { AgentService, getThreadContextBudgetSnapshot } from "../../agent/index.js";
+import { AgentService } from "../../agent/index.js";
 import { serializeInvocation } from "../../agent/invocation-view.js";
 import type { AuthorizedThread } from "../../auth/session.js";
 import type { AgentRuntimeSnapshot } from "../../runtime/agent-runtime-state.js";
 
 /** Runtime boundary is captured synchronously by the caller before any reads. */
 export async function loadThreadAgentState(owner: string, thread: AuthorizedThread,
-  agentService: AgentService, runtimeSnapshot: AgentRuntimeSnapshot, includeContextBudget: boolean) {
+  agentService: AgentService, runtimeSnapshot: AgentRuntimeSnapshot) {
   const repository = agentService.durableInvocations;
   const threadId = thread.threadId;
   const browserHandoff = await repository?.pendingBrowserHandoffForThread?.(owner, threadId);
   const environment = await agentService.getEnvironmentForBud(thread.budId);
-  const contextBudget = includeContextBudget
-    ? runtimeSnapshot.active && runtimeSnapshot.context_budget ? runtimeSnapshot.context_budget
-      : await getThreadContextBudgetSnapshot({ thread, runtimeSnapshot, environment,
-        tools: await agentService.getContextTools(environment, threadId, owner) })
-    : undefined;
+  // Active decisions describe the running turn, not a prediction for the next
+  // turn. Preserve their source/turn/freshness; idle budgets require an explicit read.
+  const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget?.turn_id === runtimeSnapshot.turn_id
+    ? runtimeSnapshot.context_budget : undefined;
   const { context_budget: _runtimeBudget, ...runtime } = runtimeSnapshot;
   const result = {
     ...runtime,
@@ -31,7 +30,7 @@ export async function loadThreadAgentState(owner: string, thread: AuthorizedThre
     } : {}),
     ...(repository?.pendingBrowserWaitsForThread ? { pending_browser_waits: await repository.pendingBrowserWaitsForThread(owner, threadId) } : {}),
     environment,
-    ...(includeContextBudget ? { context_budget: contextBudget } : {}),
+    ...(contextBudget ? { context_budget: contextBudget } : {}),
   };
   if (result.pending_tool) result.pending_tool = { ...result.pending_tool,
     presentation: toolPresentation(result.pending_tool.name, result.pending_tool.args ?? {}, true) };

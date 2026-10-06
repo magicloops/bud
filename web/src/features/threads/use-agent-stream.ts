@@ -117,6 +117,7 @@ type ThreadTitleEvent = {
 }
 
 type UseAgentStreamArgs = {
+  onPendingRequestsChanged?: () => void
   onInvocationChanged?: (invocation: ApiAgentInvocation) => void
   onTurnTiming?: (timing: ApiTurnTiming) => void
   onStreamEvent: () => void
@@ -203,6 +204,7 @@ export function useAgentStream({
   onThreadTitle,
   onFinalizeTurn,
   onTurnTiming,
+  onPendingRequestsChanged,
   onInvocationChanged,
   refreshBootstrap,
 }: UseAgentStreamArgs) {
@@ -237,7 +239,8 @@ export function useAgentStream({
     onThreadTitle,
     onFinalizeTurn,
     onTurnTiming,
-    onInvocationChanged,
+    onPendingRequestsChanged,
+  onInvocationChanged,
     refreshBootstrap,
   })
 
@@ -262,7 +265,8 @@ export function useAgentStream({
       onThreadTitle,
       onFinalizeTurn,
       onTurnTiming,
-      onInvocationChanged,
+      onPendingRequestsChanged,
+  onInvocationChanged,
       refreshBootstrap,
     }
   }, [
@@ -280,7 +284,8 @@ export function useAgentStream({
     onError,
     onFinalizeTurn,
     onTurnTiming,
-    onInvocationChanged,
+    onPendingRequestsChanged,
+  onInvocationChanged,
     onStatusChange,
     onStreamEvent,
     onThreadTitle,
@@ -449,6 +454,21 @@ export function useAgentStream({
     source.addEventListener('heartbeat', () => {
       if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
       lastEventTimeRef.current = Date.now()
+    })
+
+    source.addEventListener('agent.pending_requests_changed', evt => {
+      if (eventSourceRef.current !== source || threadIdRef.current !== agentThreadId) return
+      if (evt.lastEventId && evt.lastEventId === cursorRef.current) return
+      try {
+        const data = JSON.parse(evt.data)
+        const kinds = ['questions', 'data_requests', 'automation_requests', 'bootstrap_requests', 'browser_waits']
+        if (!Array.isArray(data.kinds) || !data.kinds.length || !data.kinds.every((kind: unknown) => kinds.includes(String(kind)))) {
+          recoverBootstrap('invalid_pending_event'); return
+        }
+        lastEventTimeRef.current = Date.now()
+        cursorRef.current = evt.lastEventId || cursorRef.current
+        callbacksRef.current.onPendingRequestsChanged?.()
+      } catch { recoverBootstrap('invalid_pending_event') }
     })
 
     source.addEventListener('agent.invocation_changed', (evt) => {

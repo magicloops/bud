@@ -744,3 +744,12 @@ Thread list GET is now bounded `{threads,page,feed_checkpoint}` and owner SSE is
 `/api/me/thread-list/stream`. The per-Bud list route is removed. Thread messages
 include a bounded read-only POST `/messages/reconcile` for mutation recovery.
 See the thread folder spec and mobile handoff for ordering and release constraints.
+
+## Shared client state performance
+
+Thread composition shares the existing change listener with `PendingRequestEvents`,
+drains publication at close and forces replay recovery on notification loss.
+Migration 0050 is required at startup. Thread state/open avoid reconstruction;
+GET `/api/threads/:threadId/context-budget` is the separate authorized meter read.
+Message pagination uses exact v2 cursors; web/mobile reset rejected old boundaries.
+See [thread spec](./threads/threads.spec.md) and the client-state-performance plan.

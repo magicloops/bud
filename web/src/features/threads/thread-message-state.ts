@@ -382,6 +382,26 @@ export const mergeLatestBootstrapState = (
   }
 }
 
+/** Inventory invalidation replaces only managed pending cards, never live work. */
+export function applyPendingRequestInventory(messages: ApiMessage[], state: ApiAgentState) {
+  const managed = new Set<string>()
+  if (state.pending_questions !== undefined) managed.add('ask_user_questions')
+  if (state.pending_data_requests !== undefined) managed.add('data_request_api_key')
+  if (state.pending_automation_requests !== undefined) managed.add('automations_request_activation')
+  if (state.pending_bootstrap_requests !== undefined) managed.add('automations_request_existing_contacts')
+  if (state.pending_browser_waits !== undefined) managed.add('browser_request_handoff')
+  const belongs = (message: ApiMessage) => isPendingToolMessage(message) && (
+    managed.has(String(message.tool_payload?.tool ?? message.display_role)) ||
+    (state.pending_browser_waits !== undefined && message.tool_payload?.wait_kind === 'return_control'))
+  let next = applyAgentStateOverlay(messages.filter(message => !isAgentSyntheticMessage(message)), {
+    ...state, active: false, pending_tool: null, draft_assistant: null, draft_reasoning: [],
+  })
+  for (const message of messages) {
+    if (isAgentSyntheticMessage(message) && !belongs(message)) next = upsertMessage(next, message)
+  }
+  return next
+}
+
 export const finalizeTurnMessages = (
   messages: ApiMessage[], turnId: string, status: 'succeeded' | 'failed' | 'canceled',
 ) => messages.flatMap(message => {

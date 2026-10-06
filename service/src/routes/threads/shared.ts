@@ -1,7 +1,7 @@
 import { serializeMessageView } from "../../agent/message-view.js";
 import { Buffer } from "node:buffer";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -278,57 +278,40 @@ export function serializeMessage(row: typeof messageTable.$inferSelect) {
 }
 
 const MessageCursorSchema = z.object({
-  created_at: z.string(),
+  v: z.literal(2),
+  thread_id: z.string().uuid(),
+  created_at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/),
   message_id: z.string().uuid(),
-});
+}).strict();
 
-export type MessageCursor = {
-  createdAt: Date;
-  messageId: string;
-};
+export type MessageCursor = { createdAt: string; messageId: string; threadId: string };
 
-export function encodeMessageCursor(
-  row: Pick<typeof messageTable.$inferSelect, "createdAt" | "messageId">,
-): string {
-  return Buffer.from(
-    JSON.stringify({
-      created_at: row.createdAt.toISOString(),
-      message_id: row.messageId,
-    }),
-    "utf-8",
-  ).toString("base64url");
+// Separate SQL text selection: neither pg nor Drizzle may map this through Date.
+export const messageCursorTimestamp = sql<string>`to_char(${messageTable.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+export function encodeMessageCursor(row: { cursorTimestamp: string; messageId: string; threadId: string }): string {
+  return Buffer.from(JSON.stringify({ v: 2, thread_id: row.threadId,
+    created_at: row.cursorTimestamp, message_id: row.messageId })).toString("base64url");
 }
 
-export function decodeMessageCursor(value: string): MessageCursor | null {
+export function decodeMessageCursor(value: string, threadId?: string): MessageCursor | null {
   try {
-    const parsed = MessageCursorSchema.parse(
-      JSON.parse(Buffer.from(value, "base64url").toString("utf-8")),
-    );
-    const createdAt = new Date(parsed.created_at);
-    if (Number.isNaN(createdAt.getTime())) {
-      return null;
-    }
-    return {
-      createdAt,
-      messageId: parsed.message_id,
-    };
-  } catch {
-    return null;
-  }
+    if (value.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+    const parsed = MessageCursorSchema.parse(JSON.parse(Buffer.from(value, "base64url").toString("utf-8")));
+    // Date is used ONLY to validate the calendar, never as the SQL boundary.
+    const millis = parsed.created_at.slice(0, 23) + "Z";
+    if (new Date(millis).toISOString() !== millis || parsed.created_at.startsWith("0000") ||
+        (threadId !== undefined && parsed.thread_id !== threadId)) return null;
+    return { createdAt: parsed.created_at, messageId: parsed.message_id, threadId: parsed.thread_id };
+  } catch { return null; }
 }
 
-export function olderThanMessageCursor(cursor: MessageCursor): ReturnType<typeof or> {
-  return or(
-    lt(messageTable.createdAt, cursor.createdAt),
-    and(eq(messageTable.createdAt, cursor.createdAt), lt(messageTable.messageId, cursor.messageId)),
-  );
+export function olderThanMessageCursor(cursor: MessageCursor) {
+  return sql`(${messageTable.createdAt}, ${messageTable.messageId}) < (${cursor.createdAt}::timestamptz, ${cursor.messageId}::uuid)`;
 }
 
-export function newerThanMessageCursor(cursor: MessageCursor): ReturnType<typeof or> {
-  return or(
-    gt(messageTable.createdAt, cursor.createdAt),
-    and(eq(messageTable.createdAt, cursor.createdAt), gt(messageTable.messageId, cursor.messageId)),
-  );
+export function newerThanMessageCursor(cursor: MessageCursor) {
+  return sql`(${messageTable.createdAt}, ${messageTable.messageId}) > (${cursor.createdAt}::timestamptz, ${cursor.messageId}::uuid)`;
 }
 
 export async function requireAuthorizedThreadAccess(

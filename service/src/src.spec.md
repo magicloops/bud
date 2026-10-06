@@ -481,3 +481,11 @@ lifecycle alongside timing, privacy, severity and SSE frame boundaries.
 `server.ts` exposes Server-Timing through allowed-origin CORS, connects committed
 invocation hints to the worker and ordered public lifecycle publisher, and drains
 publication before database shutdown. See the backend-mobile-performance plan.
+
+## Route latency histograms
+
+`request-metrics.ts` / `.test.ts` implement bounded route-template histograms and
+aggregation/quantile checks. `access-log.ts` observes finite HTTP completions
+independent of log severity, exporting INFO intervals every 60s and on close.
+Counts, duration buckets and measured response bytes exclude identities/content.
+SSE first-frame timing remains separate. See the client-state-performance runbook.

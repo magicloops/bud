@@ -23,6 +23,10 @@ and locally validated; native adoption, rollout and measured acceptance remain.
 
 ## Dependencies and boundaries
 
+The subsequent [shared client state plan](../client-state-performance/implementation-spec.md)
+specifies follow-ups F1–F6: cursor precision, cheap budget/state reads, complete
+pending-request invalidation, metrics and separately gated account policy.
+
 - [Reviewed requests](../../reference/IOS_PERFORMANCE_BACKEND_REQUESTS.md) and
   [current-contract answers](../../reference/IOS_PERFORMANCE_BACKEND_QUESTIONS.md).
 - Existing durable invocation repository, runtime replay, thread/list serializers

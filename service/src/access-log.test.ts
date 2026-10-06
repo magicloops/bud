@@ -20,7 +20,7 @@ test('one completion contains template/correlation and no query, body or raw IDs
   server.get('/api/browser/sessions/:session_id',async()=>({ok:true}));
   await server.inject('/api/browser/sessions/secret-id?viewer_id=secret-viewer');
   await server.close();
-  assert.equal(records.length,1);
+  assert.equal(records.filter(row => row.msg === 'Request completed').length,1);
   assert.equal(records[0].route,'/api/browser/sessions/:session_id');
   assert.equal(records[0].level,20); assert.ok(records[0].reqId);
   assert.equal(JSON.stringify(records).includes('secret'),false);

@@ -351,6 +351,13 @@
       "when": 1790812554532,
       "tag": "0049_thread_change_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1791247085373,
+      "tag": "0050_pending_request_notifications",
+      "breakpoints": true
     }
   ]
 }

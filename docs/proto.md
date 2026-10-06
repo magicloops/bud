@@ -4321,3 +4321,29 @@ foreign and deleted IDs are simply missing. Fence obsolete fetch generations.
 
 See [mobile handoff](../plan/backend-mobile-performance/mobile-api-handoff.md)
 for exact migration order, retry rules, inclusions and remaining validation limits.
+
+## Shared client state follow-ups — 2026-10-05
+
+This supersedes earlier idle-budget and message-cursor descriptions. Message
+cursors are opaque v2, bound to thread and exact PostgreSQL timestamp/UUID tuple;
+old/malformed/wrong-thread values return 400 `invalid_message_cursor`. Reset once
+through `/open`, preserving separately tracked optimistic/live evidence.
+
+`/agent/state` and `/open` never reconstruct model context. A matching active-turn
+budget may be included; omission is no update. `included.context_budget` means
+supplied, including unknown/stale values. Authorized GET
+`/api/threads/:thread_id/context-budget` returns only `{context_budget}` with
+no-store, using the active decision or existing context accounting.
+
+The owned agent SSE stream adds `agent.pending_requests_changed` with
+`{"kinds":["questions","data_requests","automation_requests","bootstrap_requests","browser_waits"]}`.
+It uses ordinary stream IDs/bounded replay; duplicate hints may coalesce. Read cheap
+state once and replace pending arrays only, including empty arrays. Hints during
+a read require a follow-up; ordinary reads never advance stream cursor or overwrite
+live runtime drafts. Listener/publication loss requires full canonical resync.
+Notifications reflect committed changes, not wall-clock expiry by itself.
+
+Migration 0050 must precede service startup; coordinate web/mobile cursor resets
+and budget endpoint adoption. No daemon protocol changes or new auth-revocation
+guarantees. See [handoff](../plan/client-state-performance/mobile-api-handoff.md)
+and [mutation coverage](../plan/client-state-performance/mutation-coverage.md).

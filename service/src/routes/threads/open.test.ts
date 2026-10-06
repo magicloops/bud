@@ -29,7 +29,7 @@ test("open authorizes before bounded reads and captures one early runtime bounda
         return chain;
       },
       limit(limit: number) {
-        if (!projection) { assert.equal(limit, 8); return Promise.resolve([]); }
+        if (projection && "cursorTimestamp" in (projection as object)) { assert.equal(limit, 8); return Promise.resolve([]); }
         assert.equal(limit, 1);
         return failRead ? Promise.reject(new Error("required read failed")) : Promise.resolve([{
           threadId, budId: "bud", modelId: null, reasoningEffort: null, sessionId: null,

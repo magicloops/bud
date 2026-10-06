@@ -24,12 +24,12 @@ export async function registerThreadOpenRoute(server: FastifyInstance, agentServ
     const [summaries, transcript, agentState] = await Promise.all([
       loadThreadSummaries(access.viewer.userId, { threadId }),
       loadMessagePage(access.viewer.userId, threadId, agentService, query.data.limit),
-      loadThreadAgentState(access.viewer.userId, access.thread, agentService, snapshot, false),
+      loadThreadAgentState(access.viewer.userId, access.thread, agentService, snapshot),
     ]);
     if (!summaries[0]) return reply.code(404).send({ error: "thread_not_found" });
     reply.header("Cache-Control", "no-store");
     return { thread: summaries[0], transcript, agent_state: agentState,
       stream_cursor: snapshot.stream_cursor,
-      included: { web_view: false, browser: false, context_budget: false } };
+      included: { web_view: false, browser: false, context_budget: agentState.context_budget !== undefined } };
   });
 }

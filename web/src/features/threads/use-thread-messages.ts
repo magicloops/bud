@@ -2,9 +2,10 @@ import { mergeTurnTimings } from './turn-timing'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '@/lib/transport'
 import { generateMessageClientId } from '@/lib/messages'
-import type { ApiAgentState, ApiMessage, ApiMessagePage } from '@/lib/api-types'
+import type { ApiAgentState, ApiMessage, ApiMessagePage, ApiThreadOpen } from '@/lib/api-types'
 import {
   applyAgentStateOverlay,
+  applyPendingRequestInventory,
   insertStreamMessage,
   buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
@@ -189,6 +190,15 @@ export function useThreadMessages({
     publish(next.messages)
   }, [publish, applyTurnTimings])
 
+  const applyPendingRequests = useCallback((state: ApiAgentState) => {
+    const next = applyPendingRequestInventory(messagesRef.current, state)
+    const ids = new Set(next.map(message => message.client_id))
+    for (const current of messagesRef.current) {
+      if (!ids.has(current.client_id)) protectedIds.current.delete(current.client_id)
+    }
+    publish(next)
+  }, [publish])
+
   const reconcileLoadedMessages = useCallback(async () => {
     if (!threadId) return
     const scope = selection.current
@@ -252,6 +262,25 @@ export function useThreadMessages({
       }
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}))
+        if (resp.status === 400 && body.error === 'invalid_message_cursor') {
+          const reset = await apiFetch(`/api/threads/${threadId}/open?limit=${THREAD_MESSAGE_PAGE_LIMIT}`)
+          if (selection.current !== scope || shouldAbortForUnauthorized(reset)) return
+          if (!reset.ok) throw new Error(`History reset failed: HTTP ${reset.status}`)
+          const opened = await reset.json() as ApiThreadOpen
+          if (selection.current !== scope) return
+          // Reset obsolete pagination, keeping only locally protected live/optimistic
+          // evidence outside the fresh window. Do not move the live SSE cursor.
+          const fresh = mergeLatestBootstrapState(
+            messagesRef.current.filter(message => protectedIds.current.has(message.client_id)),
+            opened.transcript.page, opened.transcript, opened.agent_state,
+            protectedIds.current, removedIds.current,
+          )
+          publish(fresh.messages)
+          messagePageRef.current = opened.transcript.page
+          setMessagePage(opened.transcript.page)
+          applyTurnTimings([...(opened.transcript.turn_timings ?? []), ...(opened.agent_state.invocations ?? [])])
+          return
+        }
         throw new Error(body.error ?? `HTTP ${resp.status}`)
       }
 
@@ -523,6 +552,7 @@ export function useThreadMessages({
     chatScrollRef,
     mergeLatestBootstrap,
     applyAgentState,
+    applyPendingRequests,
     loadOlderMessages,
     reconcileLoadedMessages,
     addOptimisticUserMessage,

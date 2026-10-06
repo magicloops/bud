@@ -28,6 +28,7 @@ import { ThreadTerminalGridPane } from '@/components/workbench/thread-terminal-g
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
+import { usePendingRequests, pendingInventory } from '@/features/threads/use-pending-requests'
 import { useContextBudget } from '@/features/threads/use-context-budget'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
 import { getAgentStateRuntimeErrorMessage } from '@/features/threads/agent-state-error'
@@ -35,7 +36,7 @@ import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
-import { invocationSummary, invocationAllowsLiveActivity, invocationRevision, mergeInvocationEvent } from '@/features/threads/invocation-state'
+import { invocationSummary, invocationAllowsLiveActivity, mergeInvocationEvent } from '@/features/threads/invocation-state'
 import { submitQuestionResponseFlow, type QuestionResponseContinuation } from '@/features/threads/question-response-submit'
 import {
   getStatusFromAgentState,
@@ -125,9 +126,6 @@ function ThreadViewContent() {
   const [durableState, setDurableState] = useState(initialAgentState)
   const durableStateRef = useRef(durableState)
   durableStateRef.current = durableState
-  // Lifecycle events update the badge immediately, but do not prove that every
-  // transcript writer has been recovered. Keep the polling baseline separate.
-  const recoveredInvocationRevisionRef = useRef(invocationRevision(initialAgentState))
   const durableSummary = invocationSummary(durableState)
   const reviewedInvocation = durableSummary?.invocation.status === 'needs_review' ? durableSummary.invocation : null
   const reviewKey = reviewedInvocation ? `${threadId}:${reviewedInvocation.invocation_id}:${reviewedInvocation.updated_at}` : null
@@ -235,6 +233,7 @@ function ThreadViewContent() {
     chatScrollRef,
     mergeLatestBootstrap,
     applyAgentState,
+    applyPendingRequests,
     loadOlderMessages,
     reconcileLoadedMessages,
     addOptimisticUserMessage,
@@ -315,7 +314,6 @@ function ThreadViewContent() {
   useEffect(() => {
     if (outputActivityRevision.current > 0) return
     setDurableState(initialAgentState)
-    recoveredInvocationRevisionRef.current = invocationRevision(initialAgentState)
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     applyContextBudget(initialAgentState.context_budget)
@@ -394,20 +392,20 @@ function ThreadViewContent() {
     const scope = currentThreadRef.current
     const activityRevision = outputActivityRevision.current
     const sequence = ++refreshSequence.current
+    void refreshContextBudget()
     const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
 
     if (currentThreadRef.current !== scope || scope.threadId !== targetThreadId || isAuthRedirectPending()) return nextAgentState
     if (activityRevision !== outputActivityRevision.current || sequence !== refreshSequence.current) return nextAgentState
     setDurableState(nextAgentState)
     applyAgentState(nextAgentState)
-    agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     applyContextBudget(nextAgentState.context_budget)
     applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyContextBudget, applyAgentState, applyAgentStateError, resetAssistantActivityGate])
+  }, [refreshContextBudget, applyContextBudget, applyAgentState, applyAgentStateError, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const scope = currentThreadRef.current
@@ -424,7 +422,6 @@ function ThreadViewContent() {
     await reconcileLoadedMessages()
     if (currentThreadRef.current !== scope) return nextAgentState
     void refreshContextBudget()
-    recoveredInvocationRevisionRef.current = invocationRevision(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
@@ -435,7 +432,6 @@ function ThreadViewContent() {
     return nextAgentState
   }, [applyContextBudget, refreshContextBudget, applyAgentStateError, mergeLatestBootstrap, reconcileLoadedMessages, resetAssistantActivityGate])
 
-  const durableEnabled = durableState.invocations !== undefined
   const abandonReviewedInvocation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!reviewedInvocation || !reviewKey || reviewInFlightRef.current) return
@@ -467,28 +463,13 @@ function ThreadViewContent() {
       setReviewSubmitting(false)
     }
   }
-  useEffect(() => {
-    if (!durableEnabled) return
-    let disposed = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const poll = async () => {
-      if (disposed || isAuthRedirectPending()) return
-      try {
-        if (document.visibilityState === 'visible') {
-          const snapshot = await apiFetchJson<ApiAgentState>(`/api/threads/${threadId}/agent/state`)
-          if (!disposed && invocationRevision(snapshot) !== recoveredInvocationRevisionRef.current) {
-            await refreshAgentBootstrap(threadId)
-          }
-        }
-      } catch {
-        // Stream recovery remains active; retry canonical state on the next tick.
-      } finally {
-        if (!disposed) timer = setTimeout(poll, 5000)
-      }
-    }
-    timer = setTimeout(poll, 5000)
-    return () => { disposed = true; clearTimeout(timer) }
-  }, [durableEnabled, refreshAgentBootstrap, threadId])
+  const refreshPendingRequests = usePendingRequests(threadId, snapshot => {
+    // Inventory reads never replace live lifecycle/drafts or the SSE resume cursor.
+    const next = { ...durableStateRef.current, ...pendingInventory(snapshot) }
+    durableStateRef.current = next
+    setDurableState(next)
+    applyPendingRequests(snapshot)
+  })
 
   const handleThreadTitleUpdate = useCallback((title: string) => {
     upsertThreadSummary({ ...initialThread, title })
@@ -685,6 +666,7 @@ function ThreadViewContent() {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
   } = useAgentStream({
+    onPendingRequestsChanged: refreshPendingRequests,
     onInvocationChanged: (invocation) => {
       const next = mergeInvocationEvent(durableStateRef.current, invocation)
       if (next === durableStateRef.current) return

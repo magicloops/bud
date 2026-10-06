@@ -10,6 +10,7 @@ import { registerThreadMessageRoutes } from "./threads/messages.js";
 import { registerThreadModelContextRoutes } from "./threads/model-context.js";
 import { registerThreadOpenRoute } from "./threads/open.js";
 import { ThreadChangeListener } from "./threads/change-listener.js";
+import { PendingRequestEvents } from "./threads/pending-events.js";
 import { ThreadListFeed } from "./threads/list-feed.js";
 import { TranscriptEvents } from "../agent/transcript-events.js";
 export { registerThreadTerminalRoutes } from "./threads/terminal.js";
@@ -24,14 +25,16 @@ export async function registerThreadRoutes(
   const changes = new ThreadChangeListener();
   const feed = new ThreadListFeed();
   const transcript = new TranscriptEvents(agentRuntime);
+  const pending = new PendingRequestEvents(agentRuntime);
   const unsubscribe = changes.subscribe(hint => {
-    if (hint.kind === "reset") { feed.reset(hint.owner); transcript.lost(); }
+    if (hint.kind === "reset") { feed.reset(hint.owner); transcript.lost(); pending.lost(); }
     else if (hint.kind === "summary" && hint.thread_id) feed.changed(hint.owner, hint.thread_id);
+    else if (hint.kind === "pending") pending.changed(hint);
     else transcript.changed(hint);
-  }, () => { feed.reset(); transcript.lost(); });
+  }, () => { feed.reset(); transcript.lost(); pending.lost(); });
   server.addHook("onReady", () => changes.ready());
   server.addHook("preClose", async () => {
-    await changes.close(); unsubscribe(); await transcript.flush();
+    await changes.close(); unsubscribe(); await transcript.flush(); await pending.flush();
   });
   await registerThreadListStream(server, changes, feed);
   await registerThreadCoreRoutes(server, terminalSessionManager, agentService, threadTitleService, feed, () => changes.ready());

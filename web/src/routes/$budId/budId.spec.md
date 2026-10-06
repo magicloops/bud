@@ -307,7 +307,10 @@ From `@/components/workbench/chat-timeline`:
 
 ## Durable invocation mode
 
-The existing-thread view displays the canonical invocation status and a cancellation action independently of live streaming. It polls owner-authorized agent state every five seconds while visible only when the service advertises durable fields, ignores heartbeat-only changes, and refreshes transcript/bootstrap on lifecycle changes. Requests do not overlap within the poll loop; obsolete thread visits and unmounts cannot apply late bootstrap responses. Legacy-service behavior remains. First-send navigation already enters this same loader path. Durable follow-up sends queue without superseding a parked question. Browser end-to-end timing validation remains pending before cutover.
+The existing-thread view displays canonical invocation status from SSE. Pending
+inventory hints trigger coalesced cheap state reads; the five-second thread poll
+is removed. Only full bootstrap adopts a new stream cursor. Requests are fenced
+by owner/thread and generation; foreground/reconnect reconcile canonical state.
 
 For unexpected `needs_review` interruptions, an inline notice explains possible
 ongoing commands and offers a single Stop run button plus terminal access. The
@@ -321,7 +324,7 @@ Pending app-data requests render once at their original tool position from the
 canonical `pending_data_requests` snapshot, including after cold bootstrap.
 Allow/Deny acts inline; View details opens the shared read-only dialog. The live permission tool
 event requests a state refresh instead of adding a generic running tool row;
-the existing durable poll detects decision/removal and refreshes the transcript.
+pending invalidation clears resolved cards; transcript events supply results.
 New-thread layout is unaffected because permission requests require a persisted
 thread. Browser interaction remains unverified.
 
@@ -337,13 +340,12 @@ status. Cold recovery uses `pending_automation_requests`; the timeline renders
 the shared review at its original tool position. No separate top-of-chat automation
 panel is added. New-thread layout is unaffected because proposals require an
 existing admitted invocation. Decisions use the existing owner-authorized human
-endpoint; the durable poll refreshes the original transcript after resolution.
+endpoint; pending and transcript events reconcile resolution.
 
 Existing-contact tool events enter waiting state only when their public args
 identify a committed pending existing-contact review; no-work/error tool calls
 continue as ordinary activity. Cold state recognizes `pending_bootstrap_requests`
-and renders the shared review in place. Polling removes resolved reviews and
-refreshes the original result. New-thread layout remains unaffected.
+and renders the shared review in place. Pending hints remove resolved reviews; transcript events supply results. New-thread layout remains unaffected.
 
 
 ChatDataContext now opens from the top-bar settings icon beside the transcript
@@ -442,8 +444,7 @@ Bootstrap recovery uses `/open` and bounded loaded-history reconciliation.
 Thread open omits optional context-budget/browser/web-view work explicitly. Recovery
 uses the shared early checkpoint; persisted rows beat replayed synthetic/insert
 rows. `transcript.message` uses the canonical decoder and `transcript.invalidated`
-starts recovery. Existing durable-state fallback remains for non-message pending
-inventories. New chat uses one atomic create/opening-message POST and retries the
+starts recovery. Pending inventory hints replace the old durable-state polling fallback. New chat uses one atomic create/opening-message POST and retries the
 same mounted request/key; no cross-reload retry persistence is claimed.
 
 
@@ -454,6 +455,6 @@ resolves. Initial optional budget loading does not block transcript paint or str
 attachment. Accepted `/open` recovery preserves omitted budget values and starts
 an independent budget refresh. Explicit state/compaction budgets supersede older
 optional reads; those reads never apply agent lifecycle or stream cursors.
-Failures retain the last known meter. Existing state refreshes after send, model
-change, cancel and final continue to supply budgets; five-second pending-inventory
-recovery remains intact. Browser notices use structured tool payloads only.
+Failures retain the last known meter. Explicit refreshes after send, model
+change, cancel and final start independent `/context-budget` reads; pending-inventory
+recovery is event-driven. Browser notices use structured tool payloads only.

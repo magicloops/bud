@@ -19,11 +19,12 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 `summary-loader.ts` owns the list/open summary projection (attention, model and
 terminal fields). `message-loader.ts` owns the bounded history query and settled
 timings. `state-loader.ts` shares the authorized durable/runtime projection;
-ordinary `/agent/state` retains context-budget reconstruction.
+ordinary `/agent/state` never reconstructs context. The dedicated authorized
+`/context-budget` route owns optional reconstruction.
 
 `GET /api/threads/:threadId/open?limit=100` authorizes the thread, accepts limits
 1–200 and returns `thread`, `transcript`, `agent_state`, `stream_cursor`, and
-`included:{web_view:false,browser:false,context_budget:false}`. No optional resource
+`included:{web_view:false,browser:false,context_budget:<supplied>}`. No optional resource
 or idle budget reconstruction runs. Both runtime overlays and attachment use the
 same snapshot captured synchronously before canonical reads; no later cursor can
 replace it. Required-load failures fail the response. This compound read is not
@@ -98,7 +99,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
 - enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
-- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, actual environment/tool catalog, provider-prefix accounting, and compaction threshold as the agent loop
+- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, using only a runtime decision for the matching active turn; idle reconstruction moved to GET `/context-budget`
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - passes through `draft_assistant.started_at` so refreshes can recover active assistant draft timing from service timestamps
 - passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
@@ -133,7 +134,7 @@ Read-only "model view" route: `GET /api/threads/:threadId/model-context`
 **Behavior**:
 - authorizes the owning thread first (`401` unauthenticated, `404` non-owner) before any load
 - resolves the thread's effective model/reasoning exactly like the agent loop, runs `AgentConversationLoader.loadWithDiagnostics` for that provider, then inserts the Bud environment's runtime instructions with `applyRuntimeInstructionsWithSources`
-- serializes canonical messages to snake_case blocks with per-message provenance (`source`) and per-message token estimates; adds the environment's tool list, tool-schema tokens, compaction boundary, the system prompt `scope`/`version`, `turn_active`, and the same `context_budget` snapshot `/agent/state` returns
+- serializes canonical messages to snake_case blocks with per-message provenance (`source`) and per-message token estimates; adds the environment's tool list, tool-schema tokens, compaction boundary, the system prompt `scope`/`version`, `turn_active`, and the same accounting used by `/context-budget`
 - model-view per-message/top-level token counts remain heuristic composition; nested `context_budget` is the shared provider-anchored utilization total when compatible
 - `buildModelContextDocument` / `serializeCanonicalBlock` are pure and unit-tested; the handler is thin
 
@@ -328,7 +329,7 @@ tool results. Tool payload no longer repeats in wire content and metadata.
   PostgreSQL retry/rollback/deletion and exact migration tests.
 - `summary-loader.ts`: shared owner/Bud SQL projection with bounded tuple pagination.
 - `message-loader.ts`: bounded transcript page and settled turn timings.
-- `state-loader.ts`: shared runtime/durable state; optional context reconstruction.
+- `state-loader.ts`: shared runtime/durable state; no context reconstruction.
 - `open.ts` / `.test.ts`: one fresh checkpoint before authorized required reads.
 - `change-listener.ts` / `.test.ts`: one shared LISTEN connection; validates migration,
   detects continuity loss; exact SQL commit/rollback/join/ownership fixtures.
@@ -345,3 +346,22 @@ SQL. Read-only routes stamp no rows. No additional runtime dependencies.
 Thread/Bud ownership changes and thread deletion emit reset hints. Reset invalidates
 replay and ends HTTP agent attachments after a resync frame; clients must authorize
 again before opening/attaching. This does not change OAuth revocation policy.
+
+## Shared client state follow-ups
+
+`shared.ts` and `message-loader.ts` use v2 thread-bound history cursors with exact
+PostgreSQL microseconds and strict timestamp/UUID tuple comparisons. Invalid/old
+cursors return 400 `invalid_message_cursor`; owner authorization precedes reads.
+`message-cursor.test.ts` validates real PostgreSQL traversal, equal timestamps,
+foreign scope and deleted anchors.
+
+`pending-events.ts` / `.test.ts` coalesce bounded owner/thread hints, recheck current
+thread/Bud ownership and publish `agent.pending_requests_changed` with all five
+inventory kinds. Loss/overflow invalidates runtime replay. `change-listener.ts`
+requires migrations 0049/0050 and shares one LISTEN connection for list, transcript
+and pending hints; tests execute trigger SQL against isolated PostgreSQL tables.
+
+GET `/context-budget` authorizes before runtime/environment/context work and returns
+only `{context_budget}` with no-store. State/open include only matching active-turn
+budgets; omission means no update, and open's inclusion flag means supplied.
+See [handoff](../../../../plan/client-state-performance/mobile-api-handoff.md).

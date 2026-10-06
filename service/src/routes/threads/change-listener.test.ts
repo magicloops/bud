@@ -25,6 +25,16 @@ test("migration publishes committed summary, joined-row and transcript changes t
     CREATE TABLE terminal_session(thread_id uuid,created_by_user_id text,state text,closed_at timestamptz,updated_at timestamptz);
     CREATE TABLE message(message_id uuid,thread_id uuid,created_by_user_id text,content text,updated_at timestamptz);`);
   await database.query(await readFile(new URL("../../../drizzle/migrations/0049_thread_change_publication.sql", import.meta.url), "utf8"));
+  await database.query(`
+    CREATE TABLE agent_question_request(thread_id uuid,created_by_user_id text,status text,updated_at timestamptz);
+    CREATE TABLE data_access_request(LIKE agent_question_request);
+    CREATE TABLE automation_proposal(LIKE agent_question_request);
+    CREATE TABLE automation_bootstrap_proposal(LIKE agent_question_request);
+    CREATE TABLE browser_handoff(LIKE agent_question_request);
+    CREATE TABLE agent_invocation(id text,thread_id uuid,created_by_user_id text,status text,reserves_thread boolean,cancel_requested_at timestamptz,lease_expires_at timestamptz);
+    CREATE TABLE agent_invocation_action(invocation_id text,created_by_user_id text,status text);
+  `);
+  await database.query(await readFile(new URL("../../../drizzle/migrations/0050_pending_request_notifications.sql", import.meta.url), "utf8"));
   const hints: ThreadChange[] = [];
   let losses = 0;
   listener.subscribe(hint => hints.push(hint), () => losses++);
@@ -65,6 +75,33 @@ test("migration publishes committed summary, joined-row and transcript changes t
   await settle();
   assert.ok(hints.some(hint => hint.kind === "transcript"));
   assert.deepEqual(hints.filter(hint => hint.kind === "summary").map(hint => hint.owner).sort(), ["other","owner"]);
+  hints.length = 0;
+  for (const table of ["agent_question_request", "data_access_request", "automation_proposal", "automation_bootstrap_proposal", "browser_handoff"]) {
+    await database.query(`insert into ${table} values($1,'other','pending',now())`, [id]);
+    await settle();
+    assert.ok(hints.some(h => h.kind === "pending" && h.owner === "other" && h.thread_id === id), table);
+    hints.length = 0;
+    const tx = await database.connect();
+    await tx.query("BEGIN");
+    await tx.query(`update ${table} set status='resolved'`);
+    await tx.query("ROLLBACK"); tx.release();
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 0, `${table} rollback`);
+    await database.query(`update ${table} set status='expired'`);
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1, `${table} expiry`);
+    hints.length = 0;
+    await database.query(`delete from ${table}`);
+    await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1, `${table} deletion`);
+    hints.length = 0;
+  }
+  await database.query("insert into agent_invocation values('inv',$1,'other','waiting_for_user',true,null,now())", [id]);
+  await database.query("insert into agent_invocation_action values('inv','other','waiting_for_user')");
+  await settle(); assert.ok(hints.some(h => h.kind === "pending")); hints.length = 0;
+  await database.query("update agent_invocation set lease_expires_at=now()");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 0);
+  await database.query("update agent_invocation_action set status='completed'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1); hints.length = 0;
+  await database.query("update agent_invocation set reserves_thread=false,status='canceled'");
+  await settle(); assert.equal(hints.filter(h => h.kind === "pending").length, 1);
   await listener.close();
   assert.equal(losses, 1);
   await assert.rejects(listener.ready(), /stopped/);
