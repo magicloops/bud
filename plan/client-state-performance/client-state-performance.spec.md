@@ -33,6 +33,8 @@ Related source specs are listed in [implementation-spec.md](implementation-spec.
 ## Implementation artifacts
 
 - `mobile-api-handoff.md`: REST/SSE contracts and coordinated client rollout.
+- [`reference/IOS_PERFORMANCE_BACKEND_FOLLOW_UPS_RESPONSE.md`](../../reference/IOS_PERFORMANCE_BACKEND_FOLLOW_UPS_RESPONSE.md):
+  standalone F1–F6 response for the mobile team, with per-request client actions.
 - `contract-fixtures.json`: synthetic exact cursor, pending replacement and budget
   omission/available/stale/unknown examples; available budget uses service builder.
 - `mutation-coverage.md`: trigger boundaries, ownership, tests and physical gaps.
