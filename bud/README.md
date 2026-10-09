@@ -10,14 +10,33 @@ cargo fmt
 cargo build
 ```
 
-Use [bud/.env.example](./.env.example) as a shell-export template:
+Prepare an isolated development environment from `bud/`:
 
 ```bash
-cp .env.example .env
-set -a; source .env; set +a
+source ../dev/daemon-env.sh https   # or http for ws://localhost:3000/ws
+BUD_BROWSER_TRACE=1 cargo run -- --terminal-enabled
 ```
 
-Bud does not auto-load `.env` itself; you need to export the variables in your shell before running `cargo run`.
+This keeps the existing Cargo workflow while selecting `~/.bud-dev`, a separate
+claim/identity, terminal storage and browser profiles. Production installed from
+get.bud.dev stays in `~/.bud`. The setup clears legacy identity/terminal path,
+enrollment, gRPC and browser-executable/helper overrides; tracing, browser mode
+and local LLM settings are preserved. Source it **after** any existing `.env`
+setup. It never edits that file, moves state, claims a Bud or starts a daemon.
+
+Customize through `BUD_DEV_BASE_DIR`, `BUD_DEV_SERVER_URL`,
+`BUD_DEV_DEVICE_NAME` and `BUD_DEV_DEFAULT_CWD` before sourcing. The base must not
+overlap `~/.bud`, including through symlinks. A local daemon can use localhost
+while mobile connects to the service through ngrok; the endpoints need not match.
+The `.env.example` and `.env.https.example` shell templates also select `.bud-dev`.
+
+Bud loads `<selected base>/bud.env` as defaults before starting Tokio. For direct
+commands, CLI flags win over exported shell settings, which win over file
+settings. Managed startup clears inherited `BUD_*` settings and uses its own
+file plus a pinned base; configure its server in that file. The file cannot
+redirect its base or place identity/terminal storage outside it. This also means
+`browser prepare`'s persisted headed choice is available to the next Cargo run
+unless explicitly overridden in the shell.
 
 Inspect build metadata with:
 
@@ -53,7 +72,7 @@ For the optional local HTTPS profile, copy
 unchanged; Caddy forwards that WSS connection to the same service `/ws`
 endpoint.
 
-Bud also persists a stable non-secret installation identity beside the configured identity file. With the default settings that path is `~/.bud/installation-id`.
+Bud also persists a stable non-secret installation identity beside the configured identity file. For development this is `~/.bud-dev/installation-id`; production defaults to `~/.bud/installation-id`.
 
 By default, Bud uses `~/.bud` for daemon state and `$HOME` as the working directory. For local/dev isolation, use `--local`; Bud will derive state from `.bud` under the launch directory and use that launch directory as the default cwd. Explicit `--base-dir`, `--cwd`, `--identity-file`, and `--terminal-base-dir` values override those derived defaults.
 
@@ -68,157 +87,64 @@ With terminal support enabled, `bud doctor` also verifies the terminal session r
 
 Machines upgraded from the old tmux-backed builds can clean up orphaned legacy `s_*` tmux sessions with a one-shot `bud doctor --cleanup-tmux`; it is a silent no-op everywhere else.
 
-## Local Run
+## Local Run Alongside Production
 
-Start the service and web app first, then:
-
-```bash
-cd bud
-set -a; source .env; set +a
-cargo run -- --terminal-enabled
-```
-
-With the optional HTTPS profile, start Caddy from the repo root first and use
-the HTTPS env example before running the same command:
+Start the service/web development stack first, then from `bud/`:
 
 ```bash
-cp .env.https.example .env
-set -a; source .env; set +a
-cargo run -- --terminal-enabled
+source ../dev/daemon-env.sh https
+# Prepare the independent development browser once, if needed:
+cargo run -- browser prepare --helper-dir ./browser-helper --node "$(command -v node)" --no-restart
+BUD_BROWSER_TRACE=1 cargo run -- --terminal-enabled
 ```
 
-On first run without a stored identity:
+Use `http` with the no-Caddy stack. On first launch, approve the new development
+Bud's claim in the local app. Later runs reuse `.bud-dev/identity.json` and its
+sibling `installation-id`. Browser sign-ins are independent of production;
+sharing the Chrome executable does not share Chrome profiles.
 
-1. Bud calls `/api/device-auth/start`
-2. Bud prints a claim URL and terminal QR code
-3. You open the link or scan the QR
-4. You sign in through the web flow if needed
-5. Bud polls `/api/device-auth/poll`, stores the issued `device_secret`, and reconnects over the configured control transport
+If older development runs used `~/.bud`, preserve that state. Do not install over
+it or copy its identity into production without first establishing which backend
+owns it. A stored identity from another service origin is rejected and retained.
+A second daemon using the same base, identity directory or terminal directory is
+refused; aliases through symlinks do not create another instance. Detached
+terminal holders survive daemon exit and do not retain the daemon lock.
 
-On later runs, Bud reuses:
+Use an explicit selector for installed production commands from a dev shell:
 
-- `~/.bud/identity.json`
-- `~/.bud/installation-id`
+```bash
+"$HOME/.bud/bin/bud" --base-dir "$HOME/.bud" status
+"$HOME/.bud/bin/bud" --base-dir "$HOME/.bud" restart
+```
 
-If you delete only the identity file and keep `installation-id`, reclaiming should reuse the same Bud record.
+Foreground Cargo instances should be restarted with Ctrl+C and the same Cargo
+command. Browser prepare/remove prints that instruction instead of replacing
+foreground development with a background process. Managed nondefault instances
+use separate hashed launchd/systemd service names. Existing default service names
+remain unchanged. Managed startup needs `BUD_SERVER_URL` in its own `bud.env`;
+`bud start` does not silently turn a shell-only dev configuration into a service.
+
+The installer defaults to the production backend even from a development shell.
+To install against a different backend deliberately, use `BUD_INSTALL_SERVER_URL`
+(the installer no longer reads the daemon's `BUD_SERVER_URL` as an install knob).
+No service/web/mobile upgrade or database migration is needed for this change;
+upgrade the daemon before relying on isolated lifecycle commands. An older daemon
+without the new instance lock must be stopped explicitly before reusing its state.
 
 ## Local Multi-Account Testing
 
-For local multi-account work, the practical pattern is:
-
-1. Build Bud once.
-2. Copy the binary into one directory per local test account.
-3. Run each copy through a small wrapper script that pins Bud's state into that directory.
-
-Copying the binary is optional. The useful part is that the wrapper script can derive the instance root from `$(dirname "$0")` and keep `identity.json`, `installation-id`, and terminal logs together.
-
-### Build Once
+Select a different dev base and name in each shell before sourcing the setup:
 
 ```bash
-cd bud
-cargo build
+export BUD_DEV_BASE_DIR="$HOME/.bud-dev/account-a"
+export BUD_DEV_DEVICE_NAME=account-a
+source ../dev/daemon-env.sh https
+cargo run -- --terminal-enabled
 ```
 
-This produces `target/debug/bud`.
-
-### Example Instance Layout
-
-```text
-$HOME/.bud-dev/
-  account-a/
-    bud
-    run.sh
-  account-b/
-    bud
-    run.sh
-```
-
-### Copy the Binary Into Per-Account Directories
-
-```bash
-cd bud
-mkdir -p "$HOME/.bud-dev/account-a" "$HOME/.bud-dev/account-b"
-cp target/debug/bud "$HOME/.bud-dev/account-a/bud"
-cp target/debug/bud "$HOME/.bud-dev/account-b/bud"
-chmod +x "$HOME/.bud-dev/account-a/bud" "$HOME/.bud-dev/account-b/bud"
-```
-
-### Example `run.sh`
-
-Place this next to the copied binary in each account directory:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-exec "$SCRIPT_DIR/bud" \
-  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
-  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
-  --base-dir "$SCRIPT_DIR/.bud" \
-  --cwd "$SCRIPT_DIR" \
-  --terminal-enabled
-```
-
-With that layout:
-
-- device credentials are stored at `$SCRIPT_DIR/.bud/identity.json`
-- the stable installation identity is stored at `$SCRIPT_DIR/.bud/installation-id`
-- terminal session state (holder sockets, output rings, logs) is stored under `$SCRIPT_DIR/.bud/term/`
-
-### Example `make-bud-instance.sh`
-
-If you want a repeatable team helper, this script creates one prepared instance directory:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-INSTANCE_NAME="${1:?usage: $0 <instance-name> [dest-root]}"
-DEST_ROOT="${2:-$HOME/.bud-dev}"
-INSTANCE_DIR="$DEST_ROOT/$INSTANCE_NAME"
-
-cd bud
-cargo build
-
-mkdir -p "$INSTANCE_DIR"
-cp target/debug/bud "$INSTANCE_DIR/bud"
-chmod +x "$INSTANCE_DIR/bud"
-
-cat > "$INSTANCE_DIR/run.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-exec "$SCRIPT_DIR/bud" \
-  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
-  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
-  --base-dir "$SCRIPT_DIR/.bud" \
-  --cwd "$SCRIPT_DIR" \
-  --terminal-enabled
-EOF
-
-chmod +x "$INSTANCE_DIR/run.sh"
-echo "Created $INSTANCE_DIR"
-```
-
-Example usage:
-
-```bash
-./make-bud-instance.sh account-a
-./make-bud-instance.sh account-b
-```
-
-Then run:
-
-```bash
-$HOME/.bud-dev/account-a/run.sh
-$HOME/.bud-dev/account-b/run.sh
-```
-
-Approve each Bud from the browser session that should own it. If you are testing two different user accounts on one machine, use separate browser profiles or separate authenticated sessions during the approval flow.
+Repeat with `account-b` in a separate shell and approve each independently using
+the intended signed-in account. A copied binary or background-service install is
+not required.
 
 ## Legacy Manual Enrollment
 

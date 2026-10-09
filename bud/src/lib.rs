@@ -8,6 +8,7 @@ pub mod files;
 pub mod grpc_control;
 pub mod grpc_data;
 pub mod identity;
+pub mod instance;
 pub mod journal;
 pub mod lifecycle;
 pub mod local_llm;
@@ -26,6 +27,29 @@ pub use util::setup_tracing;
 
 pub async fn run(args: BudArgs) -> anyhow::Result<()> {
     use lifecycle::LifecyclePaths;
+
+    if matches!(args.command, Some(BudCommand::Claim)) {
+        identity::validate_server(&args.resolved_paths().identity_file, &args.server).await?;
+        if identity::load_identity(&args.resolved_paths().identity_file)
+            .await?
+            .is_some()
+        {
+            println!("Bud is already claimed (existing identity preserved).");
+            return Ok(());
+        }
+    }
+    // Acquire before BudApp creates installation IDs, reconciles helpers or
+    // opens transports. Claim and foreground run share the same state boundary.
+    let _instance = if matches!(
+        args.command,
+        None | Some(BudCommand::Run) | Some(BudCommand::Claim)
+    ) {
+        let guard = instance::InstanceLock::acquire(&args)?;
+        identity::validate_server(&args.resolved_paths().identity_file, &args.server).await?;
+        Some(guard)
+    } else {
+        None
+    };
 
     match args.command.clone() {
         Some(BudCommand::Doctor(doctor_args)) => doctor::run_doctor(&args, &doctor_args).await,

@@ -10,7 +10,7 @@ Thin CLI entrypoint:
 
 - prints build metadata for `--version` before entering normal CLI parsing
 - handles internal `service-run <base>` before Tokio: loads installer-format `bud.env` as data, then execs the same binary with an explicit base directory
-- parses `BudArgs` with `clap`
+- loads selected `bud.env` defaults and parses `BudArgs` with `clap` before Tokio; direct CLI > shell > file precedence
 - initializes tracing
 - runs the daemon inside a Tokio `LocalSet`
 - delegates all real runtime behavior to `bud::run(...)`
@@ -21,6 +21,7 @@ Crate root for the daemon runtime.
 
 - declares the internal modules
 - re-exports `BudArgs`, `BudCommand`, `ServiceCommand`, and `setup_tracing()`
+- fences foreground run/claim with per-state-directory locks and rejects stored identity/service-origin mismatch before connecting
 - exposes `run(args)` as the single high-level entry used by `main.rs`, dispatching subcommands (`doctor`, `claim`, lifecycle verbs `start|stop|restart|status|logs`, `service install|uninstall`) before entering the long-running daemon loop; `run` or no subcommand = foreground daemon
 
 ### `config.rs`
@@ -32,7 +33,17 @@ CLI and environment configuration.
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
 - resolves the device display name via `BudArgs::device_name()`: explicit `--name`/`BUD_DEVICE_NAME` when set, otherwise the machine's short hostname (label before the first dot; `bud` fallback) — the old hardcoded `bud-dev` default is gone; the service may suffix the name (`host-2`, …) on the owning account
 - owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
+- loads selected `bud.env` as defaults; duplicate assignments use the last value, file base/local selectors are ignored, and file identity/terminal overrides outside the base reject
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
+
+### `instance.rs`
+
+Canonical base/identity/terminal-root locking for foreground and managed daemons.
+Existing symlink ancestors resolve before lock/service identity selection. The
+nonblocking close-on-exec locks survive reconnects but are released on daemon
+exit; detached terminal holders do not inherit them through exec. Locked owner
+metadata backs PID/status checks so stale pidfiles do not authorize signaling.
+Independent state roots can run concurrently; shared advanced overrides reject.
 
 ### `doctor.rs`
 
@@ -53,14 +64,17 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
 
 - `ServiceManager::detect()` → launchd (macOS) / systemd user (Linux with a
   reachable user manager) / none
-- generates the launchd plist (`~/Library/LaunchAgents/dev.bud.daemon.plist`;
+- derives nondefault service names from a SHA-256 of the canonical base; default
+  `~/.bud` retains `dev.bud.daemon` / `bud.service` for installed deployments.
+  Mutation verifies existing definitions point at the selected base/executable.
+- generates the launchd plist (`~/Library/LaunchAgents/<selected-label>.plist`;
   directly executes `bud service-run <base>` (no shell); the pre-runtime bootstrap
   loads `bud.env` on each launch, preserving file-over-inherited-env precedence
   and explicit base-dir selection; `RunAtLoad`, `KeepAlive.SuccessfulExit=false`,
   `AbandonProcessGroup=true`, `ProcessType=Interactive` for responsive terminal
   and browser work, stdout/err → `<base>/logs/daemon.log`) and the
-  systemd user unit (`~/.config/systemd/user/bud.service`;
-  `EnvironmentFile=-<base>/bud.env`, `Restart=on-failure`, **`KillMode=process`**,
+  systemd user unit (`~/.config/systemd/user/<selected-unit>`;
+  direct `service-run <base>` with quoted/escaped arguments, `Restart=on-failure`, **`KillMode=process`**,
   `StandardOutput/Error=append:` the same log file) — generated content is
   cross-validated against the doctor's supervision parsers in tests
 - `service install` writes + loads the service (bootstrap/enable --now) and
@@ -73,9 +87,16 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   orphan processes are not retroactively migrated. See
   [launch-policy scope and rollout](../../plan/macos-interactive-daemon.md).
 - verbs `start|stop|restart` dispatch to the platform manager when the service
-  file exists, otherwise a pidfile fallback (`<base>/bud.pid`): detached
-  `setsid` spawn with env parsed from `bud.env`, SIGTERM to the daemon pid
+  file exists, otherwise a detached fallback (`<base>/bud.pid` plus locked owner metadata):
+  `setsid` spawn with explicit base and selected file configuration, SIGTERM to the daemon pid
   only — never process groups, never holders
+- managed startup requires a server in the selected `bud.env`; it clears inherited
+  `BUD_*` variables before applying that file and pins the base explicitly.
+  Foreground restart and browser restart offers instruct the user to rerun Cargo;
+  they do not silently replace it with a managed instance.
+- `status` prints selected base/executable/service identity, distinguishes CLI
+  build and managed/interactive server settings, and scopes holder counts to the
+  selected terminal root; running-daemon build is explicitly unqueried.
 - `status` prints manager kind + service state, daemon pid, identity summary
   (or a `bud claim` hint), server URL from `bud.env`, holder count, log path;
   `logs [-n] [-f]` tails `<base>/logs/daemon.log`
@@ -140,8 +161,7 @@ successful probe, prepare persists `BUD_BROWSER_HEADED=1|0` using the shared env
 writer, then offers restart. The probe remains headless; this does not certify
 headed launch. Native windows start minimized and use the same persistent profile.
 Status reports the configured next-start mode (JSON `configured_headed`), not a
-claim about the live Chrome process. Foreground `bud run` still needs the env
-variable explicitly; managed start/restart loads `bud.env`.
+claim about the live Chrome process. Foreground `bud run` loads selected `bud.env` defaults; an explicit shell setting wins. Managed startup clears inherited Bud settings and loads its selected file.
 
 ### `app.rs`
 
@@ -360,6 +380,7 @@ Local device identity persistence.
 - keeps the stable sibling `installation-id` file separate from the secret-bearing identity file
 - clears invalid identity state when the backend rejects stored credentials
 - writes private files with `0600` permissions
+- validates stored service origin before run/claim (HTTP/WS and HTTPS/WSS equivalents accepted); mismatch preserves credentials and requires a separate base
 
 ### `claim.rs`
 

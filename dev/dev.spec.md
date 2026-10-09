@@ -10,6 +10,20 @@ the default HTTP quickstart depend on extra local services.
 
 ## Files
 
+### `daemon-env.sh` / `daemon-env.mjs` / `daemon-env.test.mjs`
+
+Sourceable Bash/Zsh development environment setup from the root or `bud/`:
+`source ../dev/daemon-env.sh https` (or `http`), then the existing
+`BUD_BROWSER_TRACE=1 cargo run -- --terminal-enabled`. Selects `.bud-dev`,
+local backend, dev name and repo cwd; `BUD_DEV_*` overrides are explicit.
+Clears inherited shared-state/enrollment/transport/browser-path settings while
+preserving intentional tracing/mode/LLM settings. Rejects production base
+intersection through canonical/symlink paths and production app endpoints.
+Node generates shell-quoted exports without executing them; the shell wrapper
+applies them only after successful validation. No files or services are changed.
+Tests execute both shells and cover inherited overrides, quoting and aliases.
+
+
 ### `local-dev.mjs` / `local-dev.test.mjs`
 
 Explicit root launchers: `pnpm dev` for HTTP localhost:5173, `pnpm dev:https`

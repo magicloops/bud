@@ -6,6 +6,8 @@
 > Bud. Nothing here is implemented yet; this records the options and a
 > recommended order so the work can be picked up later.
 
+> **October 8, 2026 review:** the [production/development isolation plan](../plan/daemon-dev-production-isolation.md) supersedes the coexistence scope and recommended order below. It uses the existing base selector, foreground development first, and accounts for inherited path overrides and lifecycle collisions. The dev-build upgrade guard has shipped (see §2.3); the earlier self-overwrite hazard is historical. Local installer/release-channel parity remains deferred.
+
 **Related Docs**:
 - [managed-daemon-lifecycle.md](./managed-daemon-lifecycle.md) — service
   install / `bud.env` / upgrade contract this builds on
