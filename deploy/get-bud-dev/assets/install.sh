@@ -2,13 +2,22 @@
 set -eu
 
 BASE_URL="${BUD_INSTALL_BASE_URL:-https://get.bud.dev}"
-SERVER_URL="${BUD_SERVER_URL:-wss://app.bud.dev/ws}"
+SERVER_URL="${BUD_INSTALL_SERVER_URL:-wss://app.bud.dev/ws}"
 INSTALL_ROOT="${BUD_INSTALL_ROOT:-$HOME/.bud}"
 BIN_DIR="$INSTALL_ROOT/bin"
 BUD_BIN="$BIN_DIR/bud"
 IDENTITY_FILE="$INSTALL_ROOT/identity.json"
 ENV_FILE="$INSTALL_ROOT/bud.env"
 MANIFEST_URL="$BASE_URL/releases/stable/manifest.json"
+
+# An install from a development shell must not reuse its identity, terminal
+# storage, transports or browser helper. Installer knobs/server/claim above
+# remain explicit inputs; the generated environment owns the installed daemon.
+unset BUD_IDENTITY_FILE BUD_TERMINAL_BASE_DIR BUD_LOCAL BUD_ENROLLMENT_TOKEN
+unset BUD_GRPC_CONTROL_URL BUD_GRPC_DATA_URL BUD_DEFAULT_CWD BUD_UPGRADE_BASE_URL
+unset BUD_BROWSER_EXECUTABLE BUD_BROWSER_HELPER BUD_BROWSER_NODE BUD_BROWSER_TRACE BUD_BROWSER_HEADED
+export BUD_BASE_DIR="$INSTALL_ROOT"
+
 
 log() {
   printf '%s\n' "$*" >&2

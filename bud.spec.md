@@ -524,6 +524,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 | Document | Purpose |
 |----------|---------|
+| [debug/render-browser-takeover-control-expiry.md](./debug/render-browser-takeover-control-expiry.md) | Production takeover expiry evidence, configuration audit and unconfirmed clock/latency hypotheses |
+| [plan/daemon-dev-production-isolation.md](./plan/daemon-dev-production-isolation.md) | Sourceable Cargo environment, base-scoped lifecycle and installer isolation implemented; live installed production/development coexistence acceptance remains open |
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
 | [plan/backend-mobile-performance/implementation-spec.md](./plan/backend-mobile-performance/implementation-spec.md) | Planned backend performance improvements: instrumentation, worker wakeups, atomic new chat, compact transcript/open recovery, one bounded user list feed, and small API follow-ups |
 | [plan/backend-mobile-performance/backend-mobile-performance.spec.md](./plan/backend-mobile-performance/backend-mobile-performance.spec.md) | Phase index, progress and validation for the reviewed mobile backend performance scope; implementation not started |

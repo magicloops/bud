@@ -66,6 +66,10 @@ Covers:
 - artifact download failure without replacing an existing binary
 - host-dependency remediation (for example a failed holder smoke check)
   surfacing through `bud doctor` without failing the install
+- inherited development identity/terminal/enrollment/transport/browser overrides
+  are cleared before child invocations; `BUD_INSTALL_SERVER_URL` explicitly
+  selects an alternate backend, while normal installs ignore daemon-shell
+  `BUD_SERVER_URL` and default to production
 - existing identity claim-overwrite refusal
 - unsupported host rejection before download
 

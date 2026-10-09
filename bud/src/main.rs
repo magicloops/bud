@@ -1,5 +1,4 @@
 use anyhow::Result;
-use clap::Parser;
 use tokio::task::LocalSet;
 
 use bud::{run, setup_tracing, BudArgs};
@@ -24,17 +23,16 @@ fn main() -> Result<()> {
         );
         return bud::lifecycle::service_run(std::path::Path::new(&base));
     }
-    daemon_main()
-}
-
-#[tokio::main]
-async fn daemon_main() -> Result<()> {
     if bud::version::maybe_print_version_from_env() {
         return Ok(());
     }
+    let args = bud::config::parse_with_defaults()?;
+    daemon_main(args)
+}
 
+#[tokio::main]
+async fn daemon_main(args: BudArgs) -> Result<()> {
     setup_tracing();
-    let args = BudArgs::parse();
     let local = LocalSet::new();
     local.run_until(run(args)).await
 }

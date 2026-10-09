@@ -94,6 +94,10 @@ Modular daemon implementation split across:
 - `terminal/session_task.rs` for the stem-event → proto 0.3 frame pump
 - `terminal/repl_registry.rs` and `terminal/shims.rs` for REPL prompt policy and shell-integration shims
 
+### `tests/` → [tests.spec.md](./tests/tests.spec.md)
+
+Executable-level diagnostics, terminal persistence and isolated instance/lifecycle tests.
+
 ### `target/` (git-ignored)
 
 Cargo build artifacts. Not tracked in version control.
@@ -226,6 +230,12 @@ Subcommand:
 
 `bud --version` prints the daemon package version plus build commit, target
 triple, and profile so installed release artifacts are inspectable.
+
+Production defaults to `~/.bud`; development templates and
+`source ../dev/daemon-env.sh http|https` select `~/.bud-dev`, preserving direct
+Cargo execution. Independent claims, terminal roots and browser profiles are
+required. Nondefault lifecycle names derive from the canonical base; runtime
+locks reject duplicate/shared-state daemons. See [usage](./README.md#local-run-alongside-production).
 
 The default local env template targets `ws://localhost:3000/ws`. The optional
 HTTPS parity template targets `wss://localhost:3443/ws` through the repo-root

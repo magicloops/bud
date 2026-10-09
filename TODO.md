@@ -34,6 +34,8 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **Production browser takeover — Render expiry investigation.** Both web and mobile show blank/reconnecting private views; `/control` returns `browser_control_expired`. Save/correlate acquire/renew and media logs, verify deployment/clock timing, and resolve the reported `browser_busy` request URL before selecting a fix. Clock skew is a hypothesis, not a confirmed cause. [Debug note](./debug/render-browser-takeover-control-expiry.md).
+
 - [ ] **Browser workspace lifecycle — final pre-merge gate.** Tracked in [REPL Phase 8](./plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md), including admission/cleanup, usable capacity recovery and outstanding earlier-phase acceptance. The ten-workspace cap is an interim mitigation.
 
 - [ ] **Persistent browser REPL.** REPL-only cutover is implemented in every environment, without historical result adapters. Finish workspace lifecycle and matching-stack acceptance in [Phase 8](./plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md). Current output defaults to 8 KiB; normal takeover preserves memory. [Plan](./plan/bud-owned-browser/repl-implementation.md). [Design](./design/browser-repl.md).
@@ -53,15 +55,7 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
     behavior, toolbar collapse, programmatic IME focus from tap — the three
     things headless Chromium cannot emulate
     ([design/responsive-web-layout.md](./design/responsive-web-layout.md) status).
-- **Dev-install parity and multiple Bud instances**
-  - Options and recommended order in
-    [design/dev-install-parity-and-multi-instance.md](./design/dev-install-parity-and-multi-instance.md):
-    installer `BUD_INSTALL_BINARY` for local builds, a local release channel
-    for testing `bud upgrade`, persisting `BUD_UPGRADE_BASE_URL` in `bud.env`,
-    and instance-scoped base dirs + service labels so two Buds can coexist.
-  - Do first: `bud upgrade` currently replaces dev builds (crate version
-    `v0.1.0` ≠ stable) and ignores the install channel; a second install
-    overwrites the first's `dev.bud.daemon` / `bud.service` unit.
+- [ ] **Production/development daemon isolation — live acceptance.** Phases 1–2 of the [plan](./plan/daemon-dev-production-isolation.md) are implemented: sourceable Cargo environment, independent state, base-scoped service identities, lifecycle guards and installer isolation. Complete the independently claimed installed-production/checkout-development coexistence checks and production takeover reproduction. [Automated validation and limitations](./debug/daemon-dev-production-isolation.md). No existing installation or state was changed. Local release-channel testing remains deferred.
 - **Multi-server local LLM support** (deferred by design — one origin per Bud)
   - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
     endpoint already work (advertise-all + per-thread picker). Multiple

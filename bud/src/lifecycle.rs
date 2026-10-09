@@ -67,12 +67,13 @@ pub struct LifecyclePaths {
     pub log_file: PathBuf,
     pub pid_file: PathBuf,
     pub identity_file: PathBuf,
+    pub terminal_base_dir: PathBuf,
 }
 
 impl LifecyclePaths {
     pub fn resolve(args: &BudArgs) -> Result<Self> {
         let resolved = args.resolved_paths();
-        let base_dir = resolved.base_dir.clone();
+        let base_dir = crate::instance::canonical_path(&resolved.base_dir)?;
         // Prefer the installed binary path when it exists (the service file
         // must survive `cargo` dev binaries moving around); fall back to the
         // current executable for dev installs.
@@ -88,16 +89,73 @@ impl LifecyclePaths {
             log_file: base_dir.join("logs").join("daemon.log"),
             pid_file: base_dir.join("bud.pid"),
             identity_file: resolved.identity_file,
+            terminal_base_dir: resolved.terminal_base_dir,
             base_dir,
             binary,
         })
+    }
+
+    pub fn launchd_label(&self) -> String {
+        if self.is_default() {
+            LAUNCHD_LABEL.to_string()
+        } else {
+            format!(
+                "{LAUNCHD_LABEL}.{}",
+                crate::instance::key(&self.base_dir).expect("resolved base")
+            )
+        }
+    }
+
+    pub fn systemd_unit_name(&self) -> String {
+        if self.is_default() {
+            SYSTEMD_UNIT_NAME.to_string()
+        } else {
+            format!(
+                "bud-{}.service",
+                crate::instance::key(&self.base_dir).expect("resolved base")
+            )
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        match (
+            crate::instance::canonical_path(&self.base_dir),
+            crate::instance::canonical_path(&home_dir().join(".bud")),
+        ) {
+            (Ok(base), Ok(default)) => base == default,
+            _ => false,
+        }
+    }
+
+    pub fn command_hint(&self, verb: &str) -> String {
+        format!(
+            "{} --base-dir {} {verb}",
+            sh_single_quote(&self.binary.to_string_lossy()),
+            sh_single_quote(&self.base_dir.to_string_lossy())
+        )
+    }
+
+    /// Do not mutate a selected service file that points at other state/binary.
+    pub fn verify_service(&self, manager: ServiceManager) -> Result<()> {
+        if let Some(path) = self.service_file_path(manager) {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => anyhow::ensure!(
+                    service_matches(self, manager, &content),
+                    "service {} belongs to a different base or executable; refusing to modify it",
+                    path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
     }
 
     pub fn launchd_plist_path(&self) -> PathBuf {
         home_dir()
             .join("Library")
             .join("LaunchAgents")
-            .join(format!("{LAUNCHD_LABEL}.plist"))
+            .join(format!("{}.plist", self.launchd_label()))
     }
 
     pub fn systemd_unit_path(&self) -> PathBuf {
@@ -105,7 +163,7 @@ impl LifecyclePaths {
             .join(".config")
             .join("systemd")
             .join("user")
-            .join(SYSTEMD_UNIT_NAME)
+            .join(self.systemd_unit_name())
     }
 
     pub fn service_file_path(&self, manager: ServiceManager) -> Option<PathBuf> {
@@ -167,7 +225,7 @@ pub fn launchd_plist(paths: &LifecyclePaths) -> String {
 </dict>
 </plist>
 "#,
-        label = LAUNCHD_LABEL,
+        label = paths.launchd_label(),
         binary = xml_escape(&paths.binary.to_string_lossy()),
         base = xml_escape(&paths.base_dir.to_string_lossy()),
         log = xml_escape(&paths.log_file.to_string_lossy()),
@@ -183,8 +241,7 @@ Description=Bud daemon
 After=network-online.target
 
 [Service]
-EnvironmentFile=-{env}
-ExecStart={bin} --terminal-enabled
+ExecStart={bin} service-run {base}
 Restart=on-failure
 RestartSec=2
 KillMode=process
@@ -194,10 +251,49 @@ StandardError=append:{log}
 [Install]
 WantedBy=default.target
 "#,
-        env = paths.env_file.display(),
-        bin = paths.binary.display(),
-        log = paths.log_file.display(),
+        bin = systemd_quote(&paths.binary.to_string_lossy()),
+        base = systemd_quote(&paths.base_dir.to_string_lossy()),
+        log = paths.log_file.to_string_lossy().replace('%', "%%"),
     )
+}
+
+fn systemd_quote(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%")
+            .replace('\n', "\\n")
+            .replace('$', "$$")
+    )
+}
+
+fn service_matches(paths: &LifecyclePaths, manager: ServiceManager, content: &str) -> bool {
+    match manager {
+        ServiceManager::Launchd => {
+            content.contains(&format!(
+                "<string>{}</string>",
+                xml_escape(&paths.binary.to_string_lossy())
+            )) && content.contains(&format!(
+                "<string>{}</string>",
+                xml_escape(&paths.base_dir.to_string_lossy())
+            ))
+        }
+        ServiceManager::SystemdUser => {
+            let expected = format!(
+                "ExecStart={} service-run {}",
+                systemd_quote(&paths.binary.to_string_lossy()),
+                systemd_quote(&paths.base_dir.to_string_lossy())
+            );
+            let legacy_bin = format!("ExecStart={} --terminal-enabled", paths.binary.display());
+            let legacy_env = format!("EnvironmentFile=-{}", paths.env_file.display());
+            content.lines().any(|line| line == expected)
+                || (content.lines().any(|line| line == legacy_bin)
+                    && content.lines().any(|line| line == legacy_env))
+        }
+        ServiceManager::None => false,
+    }
 }
 
 fn xml_escape(value: &str) -> String {
@@ -317,18 +413,20 @@ fn load_env_file(paths: &LifecyclePaths) -> Vec<(String, String)> {
 /// Build the direct-launch bootstrap without mutating the process environment.
 /// Called before Tokio exists; exec retains launchd's PID and supervision.
 fn service_run_command(binary: &std::path::Path, base: &std::path::Path) -> Result<Command> {
-    let env_file = base.join("bud.env");
-    let content = match std::fs::read_to_string(&env_file) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error).context("cannot read managed daemon environment"),
-    };
     let mut command = Command::new(binary);
     command
         .arg("--base-dir")
         .arg(base)
-        .args(["--terminal-enabled", "run"])
-        .envs(parse_env_file(&content));
+        .args(["--terminal-enabled", "run"]);
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("BUD_") {
+            // Remove inherited configuration, then reapply this instance's file.
+            command.env_remove(&key);
+        }
+    }
+    command
+        .envs(crate::config::environment_defaults(base)?)
+        .env("BUD_MANAGED_LAUNCH", "1");
     Ok(command)
 }
 
@@ -343,11 +441,18 @@ pub fn service_run(base: &std::path::Path) -> Result<()> {
 // Install / uninstall
 // ---------------------------------------------------------------------------
 
+fn require_managed_server(paths: &LifecyclePaths) -> Result<()> {
+    anyhow::ensure!(crate::config::environment_defaults(&paths.base_dir)?.iter().any(|(key, value)| key == "BUD_SERVER_URL" && !value.is_empty()), "set BUD_SERVER_URL in {} before managed startup (foreground development uses the shell environment)", paths.env_file.display());
+    Ok(())
+}
+
 pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
     let manager = ServiceManager::detect();
+    paths.verify_service(manager)?;
     std::fs::create_dir_all(&paths.log_dir)
         .with_context(|| format!("cannot create {}", paths.log_dir.display()))?;
 
+    require_managed_server(paths)?;
     match manager {
         ServiceManager::Launchd => {
             let plist_path = paths.launchd_plist_path();
@@ -357,7 +462,7 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
             std::fs::write(&plist_path, launchd_plist(paths))
                 .with_context(|| format!("cannot write {}", plist_path.display()))?;
             // Re-installs: drop any loaded copy first (ignore "not loaded").
-            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
+            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
             run_checked(
                 "launchctl",
                 &["bootstrap", &gui_domain(), &plist_path.to_string_lossy()],
@@ -375,13 +480,19 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
             std::fs::write(&unit_path, systemd_unit(paths))
                 .with_context(|| format!("cannot write {}", unit_path.display()))?;
             run_checked("systemctl", &["--user", "daemon-reload"])?;
-            run_checked("systemctl", &["--user", "enable", SYSTEMD_UNIT_NAME])?;
+            run_checked(
+                "systemctl",
+                &["--user", "enable", &paths.systemd_unit_name()],
+            )?;
             // restart, not `enable --now`: reinstalls/upgrades run over an
             // ALREADY-RUNNING unit, and `--now` only starts stopped units —
             // the old daemon kept running the old binary/env (seen live:
             // a freshly enabled local-LLM endpoint never reached the
             // picker because the pre-upgrade daemon never re-helloed).
-            run_checked("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
+            run_checked(
+                "systemctl",
+                &["--user", "restart", &paths.systemd_unit_name()],
+            )?;
             // Linger keeps the user manager (and Bud) alive without an open
             // session. Best-effort: polkit may refuse on hardened distros.
             if !run_quiet("loginctl", &["enable-linger"]) {
@@ -408,10 +519,16 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
 }
 
 pub fn service_uninstall(paths: &LifecyclePaths) -> Result<()> {
-    match ServiceManager::detect() {
+    let manager = ServiceManager::detect();
+    paths.verify_service(manager)?;
+    if !paths.service_installed(manager) {
+        println!("No service installed for {}.", paths.base_dir.display());
+        return Ok(());
+    }
+    match manager {
         ServiceManager::Launchd => {
             let plist_path = paths.launchd_plist_path();
-            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
+            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
             if plist_path.is_file() {
                 std::fs::remove_file(&plist_path)?;
             }
@@ -421,7 +538,7 @@ pub fn service_uninstall(paths: &LifecyclePaths) -> Result<()> {
             let unit_path = paths.systemd_unit_path();
             let _ = run_quiet(
                 "systemctl",
-                &["--user", "disable", "--now", SYSTEMD_UNIT_NAME],
+                &["--user", "disable", "--now", &paths.systemd_unit_name()],
             );
             if unit_path.is_file() {
                 std::fs::remove_file(&unit_path)?;
@@ -443,12 +560,16 @@ pub fn service_uninstall(paths: &LifecyclePaths) -> Result<()> {
 pub fn start(paths: &LifecyclePaths) -> Result<()> {
     let manager = ServiceManager::detect();
     if paths.service_installed(manager) {
+        paths.verify_service(manager)?;
         match manager {
             ServiceManager::Launchd => {
                 service_install(paths)?;
             }
             ServiceManager::SystemdUser => {
-                run_checked("systemctl", &["--user", "start", SYSTEMD_UNIT_NAME])?;
+                run_checked(
+                    "systemctl",
+                    &["--user", "start", &paths.systemd_unit_name()],
+                )?;
             }
             ServiceManager::None => unreachable!(),
         }
@@ -461,12 +582,13 @@ pub fn start(paths: &LifecyclePaths) -> Result<()> {
 pub fn stop(paths: &LifecyclePaths) -> Result<()> {
     let manager = ServiceManager::detect();
     if paths.service_installed(manager) {
+        paths.verify_service(manager)?;
         match manager {
             ServiceManager::Launchd => {
-                run_checked("launchctl", &["bootout", &gui_domain_target()])?;
+                run_checked("launchctl", &["bootout", &gui_domain_target(paths)])?;
             }
             ServiceManager::SystemdUser => {
-                run_checked("systemctl", &["--user", "stop", SYSTEMD_UNIT_NAME])?;
+                run_checked("systemctl", &["--user", "stop", &paths.systemd_unit_name()])?;
             }
             ServiceManager::None => unreachable!(),
         }
@@ -480,25 +602,34 @@ pub fn stop(paths: &LifecyclePaths) -> Result<()> {
 pub fn restart(paths: &LifecyclePaths) -> Result<()> {
     let manager = ServiceManager::detect();
     if paths.service_installed(manager) {
+        paths.verify_service(manager)?;
         match manager {
             ServiceManager::Launchd => {
                 // Re-register, rather than kickstart a stale shell-based job.
                 service_install(paths)?;
             }
             ServiceManager::SystemdUser => {
-                run_checked("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
+                run_checked(
+                    "systemctl",
+                    &["--user", "restart", &paths.systemd_unit_name()],
+                )?;
             }
             ServiceManager::None => unreachable!(),
         }
         println!("Bud restarted. Terminal sessions reattach automatically.");
         return Ok(());
     }
-    let _ = stop_pidfile(paths);
+    anyhow::ensure!(
+        !daemon_running(paths) || crate::instance::managed_running(&paths.base_dir),
+        "this instance runs in the foreground; stop and rerun its Cargo command to restart it"
+    );
+    stop_pidfile(paths)?;
     start_pidfile(paths)
 }
 
 pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
     let manager = ServiceManager::detect();
+    paths.verify_service(manager)?;
     println!("Bud status");
     println!("==========");
     let current = crate::upgrade::current_release_version();
@@ -520,13 +651,24 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
             Err(_) => println!("version: {current}"),
         }
     }
+    println!("CLI build: {}", crate::version::version_line());
+    println!("base: {}", paths.base_dir.display());
+    println!(
+        "executable: {} (running daemon build not queried)",
+        paths.binary.display()
+    );
     println!("service manager: {}", manager.describe());
+    println!(
+        "service identity: {} / {}",
+        paths.launchd_label(),
+        paths.systemd_unit_name()
+    );
 
     let installed = paths.service_installed(manager);
     let state = if installed {
         match manager {
-            ServiceManager::Launchd => launchd_state(),
-            ServiceManager::SystemdUser => systemd_state(),
+            ServiceManager::Launchd => launchd_state(paths),
+            ServiceManager::SystemdUser => systemd_state(paths),
             ServiceManager::None => "unknown".to_string(),
         }
     } else {
@@ -555,10 +697,12 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
     let env = load_env_file(paths);
     let server = env
         .iter()
+        .rev()
         .find(|(k, _)| k == "BUD_SERVER_URL")
         .map(|(_, v)| v.clone())
         .unwrap_or_else(|| args.server.clone());
-    println!("server: {server}");
+    println!("managed server: {server}");
+    println!("interactive server: {}", args.server);
     match configured_llm_url(paths, args) {
         Some(url) => {
             let client = reqwest::Client::new();
@@ -577,7 +721,10 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
         }
         None => println!("llm: not configured (enable with `bud llm enable <url>`)"),
     }
-    println!("holders: {} terminal holder(s) running", holder_count());
+    println!(
+        "holders: {} terminal holder(s) running",
+        holder_count(paths)
+    );
     println!("logs: {} (tail with `bud logs`)", paths.log_file.display());
     Ok(())
 }
@@ -737,7 +884,7 @@ pub async fn llm_enable(paths: &LifecyclePaths, url: String, force: bool) -> Res
         "Saved {LLM_GENERIC_ENV_KEY} to {}.",
         paths.env_file.display()
     );
-    println!("Apply it with: bud restart");
+    println!("Apply it with: {}", paths.command_hint("restart"));
     Ok(())
 }
 
@@ -749,7 +896,7 @@ pub fn llm_disable(paths: &LifecyclePaths) -> Result<()> {
             "Removed the local LLM endpoint from {}.",
             paths.env_file.display()
         );
-        println!("Apply it with: bud restart");
+        println!("Apply it with: {}", paths.command_hint("restart"));
     } else {
         println!("Local LLM endpoint was not configured; nothing to do.");
     }
@@ -765,6 +912,7 @@ fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
         println!("Bud is already running (pid {pid}).");
         return Ok(());
     }
+    require_managed_server(paths)?;
     std::fs::create_dir_all(&paths.log_dir)?;
     let log = std::fs::OpenOptions::new()
         .create(true)
@@ -772,10 +920,8 @@ fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
         .open(&paths.log_file)?;
     let log_err = log.try_clone()?;
 
-    let mut command = Command::new(&paths.binary);
+    let mut command = service_run_command(&paths.binary, &paths.base_dir)?;
     command
-        .arg("--terminal-enabled")
-        .envs(load_env_file(paths))
         .stdin(std::process::Stdio::null())
         .stdout(log)
         .stderr(log_err);
@@ -790,10 +936,25 @@ fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
             });
         }
     }
-    let child = command
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to spawn {}", paths.binary.display()))?;
-    std::fs::write(&paths.pid_file, child.id().to_string())?;
+    // The child records its PID only after acquiring its instance lock.
+    let started = std::time::Instant::now();
+    while read_live_pid(paths) != Some(child.id()) {
+        if let Some(status) = child.try_wait()? {
+            bail!(
+                "daemon exited ({status}); inspect {}",
+                paths.log_file.display()
+            );
+        }
+        anyhow::ensure!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "daemon did not start; inspect {}",
+            paths.log_file.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
     println!(
         "Bud started in the background (pid {}, logs at {}).",
         child.id(),
@@ -817,7 +978,14 @@ fn stop_pidfile(paths: &LifecyclePaths) -> Result<()> {
         nix::sys::signal::Signal::SIGTERM,
     )
     .with_context(|| format!("failed to signal pid {pid}"))?;
-    let _ = std::fs::remove_file(&paths.pid_file);
+    let started = std::time::Instant::now();
+    while read_live_pid(paths) == Some(pid) {
+        anyhow::ensure!(
+            started.elapsed() < std::time::Duration::from_secs(15),
+            "daemon {pid} is still shutting down; no replacement started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     Ok(())
 }
 
@@ -828,15 +996,7 @@ pub(crate) fn daemon_running(paths: &LifecyclePaths) -> bool {
 }
 
 fn read_live_pid(paths: &LifecyclePaths) -> Option<u32> {
-    let raw = std::fs::read_to_string(&paths.pid_file).ok()?;
-    let pid: u32 = raw.trim().parse().ok()?;
-    // Signal 0 = existence probe.
-    let alive = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok();
-    if alive {
-        Some(pid)
-    } else {
-        None
-    }
+    crate::instance::running_pid(&paths.base_dir)
 }
 
 // ---------------------------------------------------------------------------
@@ -847,16 +1007,16 @@ fn gui_domain() -> String {
     format!("gui/{}", nix::unistd::getuid().as_raw())
 }
 
-fn gui_domain_target() -> String {
-    format!("{}/{}", gui_domain(), LAUNCHD_LABEL)
+fn gui_domain_target(paths: &LifecyclePaths) -> String {
+    format!("{}/{}", gui_domain(), paths.launchd_label())
 }
 
 fn whoami() -> String {
     std::env::var("USER").unwrap_or_else(|_| "<user>".to_string())
 }
 
-fn launchd_state() -> String {
-    let target = gui_domain_target();
+fn launchd_state(paths: &LifecyclePaths) -> String {
+    let target = gui_domain_target(paths);
     match Command::new("launchctl").args(["print", &target]).output() {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -870,9 +1030,9 @@ fn launchd_state() -> String {
     }
 }
 
-fn systemd_state() -> String {
+fn systemd_state(paths: &LifecyclePaths) -> String {
     match Command::new("systemctl")
-        .args(["--user", "is-active", SYSTEMD_UNIT_NAME])
+        .args(["--user", "is-active", &paths.systemd_unit_name()])
         .output()
     {
         Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
@@ -880,13 +1040,22 @@ fn systemd_state() -> String {
     }
 }
 
-fn holder_count() -> usize {
+fn holder_count(paths: &LifecyclePaths) -> usize {
     let Ok(out) = Command::new("ps").args(["ax", "-o", "command"]).output() else {
         return 0;
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter(|line| line.contains("bud term-hold") && !line.contains("grep"))
+        .filter(|line| {
+            line.contains("bud term-hold")
+                && line.contains(
+                    &paths
+                        .terminal_base_dir
+                        .join("term")
+                        .to_string_lossy()
+                        .to_string(),
+                )
+        })
         .count()
 }
 
@@ -926,7 +1095,47 @@ mod tests {
             log_file: PathBuf::from("/home/user/.bud/logs/daemon.log"),
             pid_file: PathBuf::from("/home/user/.bud/bud.pid"),
             identity_file: PathBuf::from("/home/user/.bud/identity.json"),
+            terminal_base_dir: PathBuf::from("/home/user/.bud"),
         }
+    }
+
+    #[test]
+    fn separate_bases_have_separate_services_and_ownership() {
+        let mut production = test_paths();
+        production.base_dir = home_dir().join(".bud");
+        assert_eq!(production.launchd_label(), LAUNCHD_LABEL);
+        assert_eq!(production.systemd_unit_name(), SYSTEMD_UNIT_NAME);
+        let mut dev = test_paths();
+        dev.base_dir = home_dir().join(".bud-dev");
+        assert_ne!(dev.launchd_plist_path(), production.launchd_plist_path());
+        assert_ne!(dev.systemd_unit_path(), production.systemd_unit_path());
+        assert!(service_matches(
+            &dev,
+            ServiceManager::Launchd,
+            &launchd_plist(&dev)
+        ));
+        assert!(!service_matches(
+            &production,
+            ServiceManager::Launchd,
+            &launchd_plist(&dev)
+        ));
+        assert!(service_matches(
+            &dev,
+            ServiceManager::SystemdUser,
+            &systemd_unit(&dev)
+        ));
+        assert!(!service_matches(
+            &production,
+            ServiceManager::SystemdUser,
+            &systemd_unit(&dev)
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let alias = dir.path().join("alias");
+        std::fs::create_dir_all(dir.path().join("base")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("base"), &alias).unwrap();
+        dev.base_dir = alias.join("future");
+        production.base_dir = dir.path().join("base/future");
+        assert_eq!(dev.launchd_label(), production.launchd_label());
     }
 
     #[test]
@@ -936,8 +1145,9 @@ mod tests {
             unit.contains("KillMode=process"),
             "holders must survive restarts"
         );
-        assert!(unit.contains("EnvironmentFile=-/home/user/.bud/bud.env"));
-        assert!(unit.contains("ExecStart=/home/user/.bud/bin/bud --terminal-enabled"));
+        assert!(
+            unit.contains("ExecStart=\"/home/user/.bud/bin/bud\" service-run \"/home/user/.bud\"")
+        );
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("StandardOutput=append:/home/user/.bud/logs/daemon.log"));
         assert!(unit.contains("WantedBy=default.target"));
@@ -975,7 +1185,9 @@ mod tests {
             .map(|(key, value)| {
                 (
                     key.to_string_lossy().into_owned(),
-                    value.unwrap().to_string_lossy().into_owned(),
+                    value
+                        .map(|v| v.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
                 )
             })
             .collect();
@@ -992,8 +1204,9 @@ mod tests {
             service_run_command(std::path::Path::new("/bud"), &base)
                 .unwrap()
                 .get_envs()
+                .filter(|(_, value)| value.is_some())
                 .count(),
-            0
+            1
         );
         std::fs::create_dir(base.join("bud.env")).unwrap();
         assert!(service_run_command(std::path::Path::new("/bud"), &base).is_err());

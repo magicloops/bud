@@ -24,6 +24,7 @@ async function createFakeBudArchive(t, dir, options = {}) {
     path.join(stage, "bud"),
     [
       "#!/bin/sh",
+      'env | sort > "${BUD_TEST_LOG}.env"',
       'if [ "$1" = "doctor" ]; then',
       '  echo "doctor server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-} terminal=${BUD_TERMINAL_ENABLED:-} claim=${BUD_CLAIM_ID:-}" >> "$BUD_TEST_LOG"',
       options.doctorMessage ? `  echo ${JSON.stringify(options.doctorMessage)} >&2` : "",
@@ -179,6 +180,29 @@ test("install.sh installs verified artifact and passes claim only to bootstrap",
   assert.match(fakeLog, /claim claim=bic_test server=wss:\/\/app\.bud\.dev\/ws base=/);
   assert.match(fakeLog, /service install server=wss:\/\/app\.bud\.dev\/ws base=/);
   assert.doesNotMatch(fakeLog, /bootstrap/, "background flow must not exec the foreground daemon");
+});
+
+test("installer ignores inherited development configuration and supports an explicit install server", async t => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const archiveServer = await startReleaseServer(t, manifestFor("http://127.0.0.1:1", sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(archiveServer, sha256), bytes);
+  const logPath = path.join(dir, "bud.log");
+  const base = {
+    HOME: path.join(dir, "home"), BUD_INSTALL_BASE_URL: server, BUD_TEST_LOG: logPath,
+    BUD_INSTALL_NO_LLM_PROBE: "1", BUD_SERVER_URL: "ws://localhost:3443/ws",
+    BUD_BASE_DIR: "/dev-state", BUD_IDENTITY_FILE: "/dev-state/identity.json",
+    BUD_TERMINAL_BASE_DIR: "/dev-state", BUD_ENROLLMENT_TOKEN: "must-not-leak",
+    BUD_GRPC_CONTROL_URL: "http://dev-control", BUD_BROWSER_HELPER: "/dev-helper",
+  };
+  let result = await runInstall(base);
+  assert.equal(result.code, 0, result.stderr);
+  const env = await readFile(`${logPath}.env`, "utf8");
+  assert.match(env, /^BUD_SERVER_URL=wss:\/\/app.bud.dev\/ws$/m);
+  assert.doesNotMatch(env, /^BUD_(IDENTITY_FILE|TERMINAL_BASE_DIR|ENROLLMENT_TOKEN|GRPC_CONTROL_URL|BROWSER_HELPER)=/m);
+  result = await runInstall({ ...base, BUD_INSTALL_SERVER_URL: "wss://test.example/ws" });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(await readFile(`${logPath}.env`, "utf8"), /^BUD_SERVER_URL=wss:\/\/test.example\/ws$/m);
 });
 
 test("install.sh names the bud: BUD_INSTALL_NAME override rides bud.env and the claim env", async (t) => {

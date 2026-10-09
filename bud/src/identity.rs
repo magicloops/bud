@@ -97,3 +97,51 @@ async fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all().await?;
     Ok(())
 }
+
+/// Refuse cross-environment reuse before auth failures can clear credentials.
+pub async fn validate_server(path: &Path, server: &str) -> Result<()> {
+    if let Some(identity) = load_identity(path).await? {
+        let origin = |value: &str| -> Result<String> {
+            let mut url = url::Url::parse(value)?;
+            let scheme = match url.scheme() {
+                "ws" => "http",
+                "wss" => "https",
+                other => other,
+            }
+            .to_owned();
+            url.set_scheme(&scheme)
+                .map_err(|_| anyhow::anyhow!("invalid service scheme"))?;
+            Ok(url.origin().ascii_serialization())
+        };
+        if origin(&identity.server_url)? != origin(server)? {
+            bail!("stored Bud identity belongs to a different service origin; select a separate --base-dir and claim it (existing identity preserved)");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn origin_mismatch_preserves_identity_and_accepts_http_ws_equivalence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity.json");
+        let identity = DeviceIdentity {
+            bud_id: "bud-test".into(),
+            device_secret: "secret".into(),
+            server_url: "wss://app.bud.dev/ws".into(),
+            name: "test".into(),
+            default_cwd: "/tmp".into(),
+        };
+        persist_identity(&path, &identity).await.unwrap();
+        let before = fs::read(&path).await.unwrap();
+        validate_server(&path, "https://app.bud.dev/")
+            .await
+            .unwrap();
+        assert!(validate_server(&path, "wss://localhost:3443/ws")
+            .await
+            .is_err());
+        assert_eq!(fs::read(&path).await.unwrap(), before);
+    }
+}

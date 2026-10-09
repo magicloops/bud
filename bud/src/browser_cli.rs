@@ -487,11 +487,23 @@ fn offer_restart(args: &BudArgs, assume_yes: bool, no_restart: bool) -> Result<(
     let running = paths.service_installed(lifecycle::ServiceManager::detect())
         || lifecycle::daemon_running(&paths);
     if !running {
-        println!("Daemon is not running; it will pick up the change on `bud start`.");
+        println!(
+            "Daemon is not running; apply with {}.",
+            paths.command_hint("start")
+        );
+        return Ok(());
+    }
+    if !paths.service_installed(lifecycle::ServiceManager::detect())
+        && !crate::instance::managed_running(&paths.base_dir)
+    {
+        println!("This instance runs in the foreground. Stop it and rerun its Cargo command to apply the change (base: {}).", paths.base_dir.display());
         return Ok(());
     }
     if no_restart {
-        println!("Restart the daemon to apply: bud restart");
+        println!(
+            "Restart the daemon to apply: {}",
+            paths.command_hint("restart")
+        );
         return Ok(());
     }
     if confirm(
@@ -502,7 +514,7 @@ fn offer_restart(args: &BudArgs, assume_yes: bool, no_restart: bool) -> Result<(
         lifecycle::restart(&paths)?;
         println!("Restarted. Terminal sessions reattach automatically.");
     } else {
-        println!("Restart later with: bud restart");
+        println!("Restart later with: {}", paths.command_hint("restart"));
     }
     Ok(())
 }

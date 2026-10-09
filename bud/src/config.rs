@@ -350,6 +350,46 @@ impl BudArgs {
     }
 }
 
+/// Load selected bud.env as defaults before Tokio starts. Explicit CLI and
+/// shell settings win for interactive commands; managed startup clears inherited
+/// Bud settings first, making the selected file authoritative there.
+pub fn parse_with_defaults() -> anyhow::Result<BudArgs> {
+    let initial = BudArgs::parse();
+    let base = initial.resolved_paths().base_dir;
+    for (key, value) in environment_defaults(&base)? {
+        if std::env::var_os(&key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+    Ok(BudArgs::parse())
+}
+
+pub(crate) fn environment_defaults(
+    base: &std::path::Path,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let content = match std::fs::read_to_string(base.join("bud.env")) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut vars = std::collections::BTreeMap::new();
+    for (key, value) in crate::lifecycle::parse_env_file(&content) {
+        // Selection is already made. Never let this file redirect it.
+        if key == "BUD_BASE_DIR" || key == "BUD_LOCAL" {
+            continue;
+        }
+        if key == "BUD_IDENTITY_FILE" || key == "BUD_TERMINAL_BASE_DIR" {
+            let path = crate::instance::canonical_path(&expand_cli_path(&value))?;
+            anyhow::ensure!(
+                path.starts_with(crate::instance::canonical_path(base)?),
+                "{key} in bud.env points outside the selected base"
+            );
+        }
+        vars.insert(key, value);
+    }
+    Ok(vars.into_iter().collect())
+}
+
 fn expand_cli_path(path: &str) -> PathBuf {
     PathBuf::from(shellexpand::tilde(path).into_owned())
 }
@@ -397,6 +437,23 @@ mod tests {
             debug: false,
             command: None,
         }
+    }
+
+    #[test]
+    fn env_defaults_cannot_redirect_state_and_last_assignment_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bud.env");
+        std::fs::write(&path, "BUD_BASE_DIR='/wrong'\nBUD_LOCAL=true\nBUD_SERVER_URL='ws://first/ws'\nBUD_SERVER_URL='ws://last/ws'\n").unwrap();
+        assert_eq!(
+            super::environment_defaults(dir.path()).unwrap(),
+            vec![("BUD_SERVER_URL".into(), "ws://last/ws".into())]
+        );
+        std::fs::write(
+            &path,
+            "BUD_IDENTITY_FILE='/another-instance/identity.json'\n",
+        )
+        .unwrap();
+        assert!(super::environment_defaults(dir.path()).is_err());
     }
 
     #[test]
