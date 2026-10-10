@@ -1,6 +1,6 @@
 # Phase 7b: R2 Worker validation and manual cutover handoff
 
-Status: implemented and validated locally; candidate deployment and real edge
+Status: implemented and validated locally; direct deployment and real edge
 acceptance pending. No Cloudflare provisioning or deployment was performed.
 
 Parent: [Phase 7](phase-7-r2-release-delivery.md).
@@ -32,23 +32,20 @@ Resources are managed in the dashboard, not through the beta `cf` CLI:
 2. In Workers & Pages, configure an R2 binding **`RELEASES`** to that bucket.
    The same binding is declared in `deploy/get-bud-dev/wrangler.toml` so later
    authorized deployment preserves it.
-3. For candidate acceptance, use an isolated candidate Worker with the same
-   code, compatibility date and binding. Add a temporary custom hostname
-   through the dashboard. Do not attach that candidate to `get.bud.dev` yet.
-   Workers preview/editor URLs are insufficient to prove real edge caching;
-   use a custom hostname and fresh curl clients.
-4. Deploy the candidate code only when authorized. The current production
-   Worker remains on GitHub redirects. A production promotion using this new
-   code must select an already mirrored release until Phase 7c adds the gate.
+3. Bud is pre-launch with no users relying on this host. No candidate Worker or
+   temporary hostname is required. After Phase 7c is reviewed and merged,
+   authorize promotion of v0.1.25 directly to get.bud.dev and run the checks below.
+4. Keep the previous Worker deployment available for rollback; provision and
+   purge through the dashboard, not the beta cf CLI.
 
 No R2 S3 credentials are needed in the Worker; its binding grants reads. Release
 artifacts are intentionally anonymous public resources, not user/thread data.
 Only authenticated release operators have bucket write/promotion credentials;
 the HTTP Worker permits GET/HEAD on validated paths, with no listing or writes.
 
-## Candidate acceptance
+## Direct edge acceptance
 
-Set `BUD_RELEASE_TEST_ORIGIN` to the candidate's HTTPS custom hostname. Example
+Set `BUD_RELEASE_TEST_ORIGIN=https://get.bud.dev`. Example
 commands below use the already mirrored release; save files in a temporary
 working directory and compare against the canonical GitHub manifest:
 
@@ -78,7 +75,7 @@ curl -fsS -H 'Range: bytes=0-1023' -D "$BUD_RELEASE_TEST_DIR/range-headers" \
 - [ ] Beyond-end range returns no-store 416; malformed/multiple ranges return
   full 200. Unknown version/target returns no-store 404. POST returns 405.
 - [ ] Versioned manifest bytes match the GitHub source. Installer and stable
-  routes remain no-store; use the same static promotion assets for the candidate
+  routes remain no-store; use the deployed static promotion assets
   when checking those routes.
 - [ ] Save deployed run/hostname and header/hash evidence here. Do not claim
   the original slow-download issue resolved until Phase 7c's full-transfer
@@ -89,8 +86,63 @@ or delete real immutable objects merely to simulate errors.
 
 ## Remaining production work
 
-Phase 7c must integrate verified mirroring before stable promotion, remove
-obsolete redirect-map generation, backfill retained versions, purge old edge
-redirects, validate production downloads/rollback and measure full-transfer
-speed. Browser-cached year-long redirects cannot be remotely purged; use fresh
-clients and the next release's new versioned URLs for clean acceptance.
+Phase 7c's verified preparation and mandatory deployed checker are implemented
+locally. Actual deployment, selected historical mirroring, dashboard purge,
+installer/upgrade checks and two-network timing evidence remain pending.
+Browser-cached year-long redirects cannot be remotely purged; use fresh clients
+and the next release's new versioned URLs for clean acceptance.
+
+## Phase 7c operator sequence
+
+Run mutation commands only after implementation review/merge and explicit
+release/deployment authorization. Cloudflare provisioning/purging stays manual.
+The workflows now accept only `version`; the old optional `smoke` input is removed
+because deployed integrity checks are mandatory.
+
+1. Confirm RELEASES binding and deployment token permissions in the dashboard.
+2. Mirror v0.1.24 using the existing mirror-only workflow. v0.1.25 is already
+   verified; promotion re-verifies it. Inventory on 2026-10-10 confirmed v0.1.24
+   has all four target archives and manifest.v0.1.24.json. Older versions and
+   install-canary tags are omitted unless needed; their GitHub assets remain.
+3. Promote v0.1.25. Preparation downloads once, verifies source and R2 bytes,
+   and writes stable assets only after mirror success. The same workflow then
+   deploys and verifies full downloads automatically. A post-deploy smoke failure
+   reports failure but does not automatically roll back; inspect and explicitly
+   restore the previous Worker deployment if necessary.
+
+```sh
+gh workflow run bud-release-mirror.yml --repo magicloops/bud -f version=v0.1.24
+gh workflow run get-bud-dev-promote.yml --repo magicloops/bud -f version=v0.1.25
+```
+
+Wait for the first workflow to succeed before starting promotion. Record both
+run URLs. Purge existing versioned archive redirect URLs through the Cloudflare
+dashboard if stale edge redirects persist, then repeat read-only checks.
+
+4. Obtain canonical manifests and run verification on the affected connection:
+
+```sh
+BUD_RELEASE_TEST_DIR=$(mktemp -d)
+gh release download v0.1.25 --repo magicloops/bud \
+  --pattern manifest.v0.1.25.json --dir "$BUD_RELEASE_TEST_DIR"
+gh release download v0.1.24 --repo magicloops/bud \
+  --pattern manifest.v0.1.24.json --dir "$BUD_RELEASE_TEST_DIR"
+node scripts/bud-release-smoke.mjs "$BUD_RELEASE_TEST_DIR/manifest.v0.1.25.json" --benchmark
+node scripts/bud-release-smoke.mjs "$BUD_RELEASE_TEST_DIR/manifest.v0.1.24.json" --historical
+```
+
+The checker validates all four hashes/sizes, HEAD, ranges/416, ETag, manifests
+and at least one full HIT. `--benchmark` additionally reports three serial
+Apple Silicon full transfers with cache and CF-Ray evidence. Repeat on a second
+network. Require the Phase 7 target (<10-second median and >=3x baseline
+improvement) before marking the throughput issue resolved.
+
+5. Exercise installer and bud upgrade on a disposable account/machine with
+   isolated state, so the installed/dev daemon identities and launch agent are
+   untouched. Installer fixtures already validate checksum and failure behavior;
+   actual platform service refresh remains a manual check. Save version/download
+   and service restart evidence.
+6. With separate authorization, promote v0.1.24 as a stable rollback, validate
+   it and v0.1.25 historical URLs, then promote v0.1.25 again and validate both.
+   R2 versioned objects remain unchanged throughout. Record run URLs and stable
+   observations rather than checking off rollback based only on local tests.

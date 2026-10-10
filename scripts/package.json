@@ -4,7 +4,7 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test bud-release.test.mjs bud-release-mirror.test.mjs"
+    "test": "node --test bud-release.test.mjs bud-release-mirror.test.mjs bud-release-promote.test.mjs bud-release-smoke.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1149.0"

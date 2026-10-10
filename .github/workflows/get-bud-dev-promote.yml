@@ -6,11 +6,6 @@ on:
       version:
         description: "Immutable GitHub Release version to promote, for example v0.1.0."
         required: true
-      smoke:
-        description: "Run deployed get.bud.dev smoke checks after Worker deploy."
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: read
@@ -29,38 +24,30 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: deploy/get-bud-dev/package-lock.json
+          cache-dependency-path: |
+            deploy/get-bud-dev/package-lock.json
+            scripts/package-lock.json
 
       - name: Validate Worker delivery
         run: |
           npm ci --ignore-scripts --prefix deploy/get-bud-dev
           npm test --prefix deploy/get-bud-dev
 
-      - name: Download release manifest
+      - name: Validate release tooling
+        run: |
+          npm ci --ignore-scripts --prefix scripts
+          npm test --prefix scripts
+
+      - name: Verify mirror and prepare stable assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          gh release download "${VERSION}" \
-            --pattern "manifest.${VERSION}.json" \
-            --dir "dist/get-bud-dev"
-          test -f "dist/get-bud-dev/manifest.${VERSION}.json"
-
-      - name: Generate Worker promotion assets
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          node scripts/bud-release.mjs promotion-assets \
-            --manifest "dist/get-bud-dev/manifest.${VERSION}.json" \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --assets-dir "deploy/get-bud-dev/assets"
-          cat deploy/get-bud-dev/assets/releases/stable/manifest.json
-          cat deploy/get-bud-dev/assets/_release-assets.json
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/bud-release-promote.mjs "$VERSION" deploy/get-bud-dev/assets
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4
@@ -71,57 +58,5 @@ jobs:
           workingDirectory: deploy/get-bud-dev
           command: deploy
 
-      - name: Smoke get.bud.dev
-        if: ${{ inputs.smoke == true }}
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          curl -fsSI https://get.bud.dev
-          root_script="$(mktemp)"
-          trap 'rm -f "${root_script}"' EXIT
-          curl -fsSL https://get.bud.dev -o "${root_script}"
-          head -n 1 "${root_script}" | grep -Fx '#!/bin/sh'
-          curl -fsSI https://get.bud.dev/install.sh
-          curl -fsSI https://get.bud.dev/releases/stable/manifest.json
-          # Worker version propagation to the edge is eventually consistent:
-          # a single-shot check right after deploy has repeatedly caught the
-          # PREVIOUS release. Poll until the new manifest version shows up.
-          matched=""
-          for attempt in $(seq 1 18); do
-            served="$(curl -fsSL https://get.bud.dev/releases/stable/manifest.json \
-              | node -e 'let d=""; process.stdin.on("data", c => d += c); process.stdin.on("end", () => { console.log(JSON.parse(d).version ?? ""); });')"
-            if [ "${served}" = "${VERSION}" ]; then
-              echo "stable manifest serves ${served} (attempt ${attempt})"
-              matched="1"
-              break
-            fi
-            echo "stable manifest still ${served:-<unparseable>} (want ${VERSION}); retrying in 10s (attempt ${attempt}/18)"
-            sleep 10
-          done
-          if [ -z "${matched}" ]; then
-            echo "stable manifest never converged on ${VERSION} within 3 minutes"
-            exit 1
-          fi
-          # Versioned artifact routes propagate to the edge on the same
-          # eventually-consistent schedule as the manifest (v0.1.15 promote:
-          # manifest converged, the artifact HEAD 404'd one second later on
-          # one PoP, then served) — poll them the same way.
-          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            url="https://get.bud.dev/releases/${VERSION}/bud-${target}.tar.gz"
-            ok=""
-            for attempt in $(seq 1 18); do
-              if curl -fsSI "${url}" >/dev/null; then
-                echo "artifact ${target} served (attempt ${attempt})"
-                ok="1"
-                break
-              fi
-              echo "artifact ${target} not served yet; retrying in 10s (attempt ${attempt}/18)"
-              sleep 10
-            done
-            if [ -z "${ok}" ]; then
-              echo "artifact ${target} never became available within 3 minutes"
-              exit 1
-            fi
-          done
+      - name: Verify deployed release bytes and caching
+        run: node scripts/bud-release-smoke.mjs deploy/get-bud-dev/assets/releases/stable/manifest.json

@@ -127,9 +127,8 @@ Static Worker assets.
 
 - `install.sh` - public shell installer served at `/install.sh`
 - `releases/stable/manifest.json` - generated during stable promotion
-- `releases/vX.Y.Z/manifest.json` and `_release-assets.json` - still generated
-  by the current promotion utility for the deployed redirect implementation;
-  the new Worker does not read them. Remove obsolete generation in Phase 7c.
+- Versioned manifests and archives live only in R2. Promotion no longer
+  generates historical static manifests or a redirect map.
 
 ## Dependencies
 

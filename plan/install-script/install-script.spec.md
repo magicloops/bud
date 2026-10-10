@@ -79,7 +79,7 @@ mirror-only validation, safe reruns, and the later Worker binding cutover.
 
 ### `phase-7b-validation.md`
 
-Local Worker/runtime evidence and manual candidate binding, custom-hostname
+Local Worker/runtime evidence and manual binding and direct get.bud.dev
 edge acceptance and production cutover checklist.
 
 ### `validation-checklist.md`
@@ -101,8 +101,9 @@ Release-gate validation checklist focused on GitHub Release artifacts,
 <!-- SPEC:TODO -->
 - Phase 7a mirror uploads and read-only rerun are validated. Phase 7b Worker
   streaming/cache implementation passes local fixture and workerd tests. Manual
-  candidate binding/deployment acceptance, Phase 7c promotion gating/backfill
-  and deployed performance checks remain open. Existing installer URLs stay.
+  direct binding/deployment acceptance, selected rollback-version mirroring
+  and deployed performance checks remain open. Phase 7c promotion gating and
+  mandatory full-download checker are implemented and locally tested. Existing installer URLs stay.
 
 ---
 

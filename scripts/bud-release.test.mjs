@@ -11,7 +11,6 @@ import {
   buildChecksums,
   buildManifest,
   buildPromotionAssets,
-  buildReleaseAssetMap,
   buildReleaseNotes,
   packageArtifact,
   selectManifestArtifact,
@@ -181,42 +180,7 @@ test("buildReleaseNotes includes commit and target matrix", async (t) => {
   assert.equal(await readFile(notesPath, "utf8"), notes);
 });
 
-test("buildReleaseAssetMap maps first-party manifest URLs to GitHub Release assets", async (t) => {
-  const dir = await tempDir(t);
-  const manifestPath = path.join(dir, "manifest.json");
-  await writeFile(
-    manifestPath,
-    JSON.stringify({
-      version: "v0.1.0",
-      channel: "stable",
-      published_at: "2026-05-30T00:00:00Z",
-      artifacts: [
-        {
-          target: "x86_64-unknown-linux-gnu",
-          url: "https://get.bud.dev/releases/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
-          sha256: "a".repeat(64),
-          min_os: "glibc 2.35",
-          size: 123,
-        },
-      ],
-    }),
-  );
-
-  const mapPath = path.join(dir, "_release-assets.json");
-  const releaseAssets = await buildReleaseAssetMap({
-    manifest: manifestPath,
-    githubRepository: "bud-dev/bud",
-    out: mapPath,
-  });
-
-  assert.deepEqual(releaseAssets, {
-    "v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz":
-      "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
-  });
-  assert.deepEqual(JSON.parse(await readFile(mapPath, "utf8")), releaseAssets);
-});
-
-test("buildPromotionAssets writes Worker static manifest and release-map assets", async (t) => {
+test("buildPromotionAssets writes only the stable manifest and preserves installer bytes", async (t) => {
   const dir = await tempDir(t);
   const manifest = {
     version: "v0.1.0",
@@ -236,18 +200,18 @@ test("buildPromotionAssets writes Worker static manifest and release-map assets"
   await writeFile(manifestPath, JSON.stringify(manifest));
 
   const assetsDir = path.join(dir, "assets");
+  await mkdir(assetsDir, { recursive: true });
+  await writeFile(path.join(assetsDir, "install.sh"), "installer unchanged");
   const output = await buildPromotionAssets({
     manifest: manifestPath,
-    githubRepository: "bud-dev/bud",
     assetsDir,
   });
 
   assert.deepEqual(JSON.parse(await readFile(output.stable_manifest_path, "utf8")), manifest);
-  assert.deepEqual(JSON.parse(await readFile(output.version_manifest_path, "utf8")), manifest);
-  assert.deepEqual(JSON.parse(await readFile(output.release_assets_path, "utf8")), {
-    "v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz":
-      "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
-  });
+  assert.equal(await readFile(path.join(assetsDir, "install.sh"), "utf8"), "installer unchanged");
+  assert.deepEqual(Object.keys(output), ["stable_manifest_path"]);
+  assert.equal(existsSync(path.join(assetsDir, "_release-assets.json")), false);
+  assert.equal(existsSync(path.join(assetsDir, "releases", manifest.version)), false);
 });
 
 test("checksum mismatch fixture and verifier reject tampered archives", async (t) => {

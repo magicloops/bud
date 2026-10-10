@@ -39,7 +39,7 @@
 
 - [x] CI creates GitHub Releases from tags or manual dispatch
 - [x] CI uploads assets/checksums/manifests
-- [x] CI generates Worker release map
+- [x] CI generates stable manifest (redirect map replaced in Phase 7c)
 - [x] stable promotion workflow added
 - [x] Worker deploy step added
 - [x] post-deploy smoke checks added
@@ -81,5 +81,8 @@
 - [x] 7a: read-only rerun validated (run 38035311447); stable remains v0.1.25
 - [x] 7b: Worker R2 binding declared, streaming delivery and cache/range implementation
 - [x] 7b: 24 route/delivery/workerd tests pass locally
-- [ ] 7b: manual binding/candidate deployment and real edge acceptance
-- [ ] 7c: promotion gate, historical backfill, deployed integrity and performance acceptance
+- [ ] 7b: manual binding/direct deployment and real edge acceptance
+- [x] 7c: verified-mirror promotion gate and mandatory deployed integrity checker
+- [x] 7c: 24 release/mirror/promotion/smoke tests pass locally
+- [x] 7c: v0.1.24 rollback assets inventoried; older versions remain on GitHub
+- [ ] 7c: mirror v0.1.24, direct deployment, edge purge, rollback and performance acceptance
