@@ -159,3 +159,79 @@ fn selected_service_install_restart_and_uninstall_preserve_other_instance() {
         .lines()
         .any(|line| line.ends_with("/dev.bud.daemon") || line.ends_with(" bud.service")));
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn launchd_reload_retries_only_transient_bootstrap_eio_after_successful_bootout() {
+    use std::os::unix::fs::PermissionsExt;
+    for (scenario, success, retry) in [
+        ("transient", true, true),
+        ("persistent", false, true),
+        ("other", false, false),
+        ("not_loaded", false, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("dev");
+        let tools = dir.path().join("tools");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::create_dir(&tools).unwrap();
+        std::fs::write(
+            base.join("bud.env"),
+            "BUD_SERVER_URL='ws://localhost:3000/ws'\n",
+        )
+        .unwrap();
+        let script = tools.join("launchctl");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$SERVICE_TEST_LOG"
+if [ "$1" = bootout ]; then
+    [ "$SCENARIO" != not_loaded ]; exit $?
+fi
+if [ "$SCENARIO" = transient ] && [ -f "$SERVICE_TEST_MARKER" ]; then exit 0; fi
+printf 'seen' > "$SERVICE_TEST_MARKER"
+printf 'Bootstrap failed: diagnostic preserved\n' >&2
+if [ "$SCENARIO" = other ]; then exit 64; fi
+exit 5
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.path().join("calls");
+        let started = std::time::Instant::now();
+        let output = cli(dir.path(), &base)
+            .env("PATH", &tools)
+            .env("SCENARIO", scenario)
+            .env("SERVICE_TEST_LOG", &log)
+            .env("SERVICE_TEST_MARKER", dir.path().join("attempt"))
+            .args(["service", "install"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            success,
+            "{scenario}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let attempts = calls
+            .lines()
+            .filter(|line| line.starts_with("bootstrap "))
+            .count();
+        assert_eq!(attempts > 1, retry, "{scenario}: {calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("bootout "))
+                .count(),
+            1
+        );
+        if !success {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("diagnostic preserved"));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "retry must be bounded"
+        );
+    }
+}
