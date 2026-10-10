@@ -3,7 +3,7 @@
 ## Objective
 
 Make release publication repeatable: CI should build the daemon, publish GitHub
-Release assets, generate the `get.bud.dev` manifest/redirect map, and promote a
+Release assets, generate the `get.bud.dev` stable manifest, and promote a
 stable channel intentionally.
 
 ## Workflow Shape
@@ -31,8 +31,9 @@ stable channel intentionally.
 
 - Generate stable manifest with first-party URLs:
   `https://get.bud.dev/releases/vX.Y.Z/...`
-- Generate Worker release map:
-  first-party path -> exact GitHub Release asset URL.
+- Download and verify all four exact GitHub release archives and their manifest.
+- Mirror immutable objects to R2 and verify read-back before generating stable
+  assets; versioned routes stream R2 bytes. Phase 7 replaces the old redirect map.
 - Deploy Worker/static assets through Wrangler.
 - Smoke-test `get.bud.dev` after deploy.
 
@@ -63,7 +64,7 @@ Preferred rollback:
 
 1. Pick the previous known-good version.
 2. Re-run promotion workflow for that version.
-3. Worker updates `/releases/stable/manifest.json` and redirect map.
+3. Worker updates `/releases/stable/manifest.json` only.
 4. Existing versioned URLs stay immutable.
 
 If the Worker deploy itself is bad:
@@ -76,7 +77,7 @@ Implemented workflow behavior:
 
 - `.github/workflows/get-bud-dev-promote.yml` is manual-only.
 - Re-running it with a previous immutable GitHub Release version repoints the
-  stable manifest and Worker redirect map to that version.
+  stable manifest to that version after verifying its retained R2 objects.
 - Versioned GitHub Release assets are never mutated during rollback.
 - Cloudflare Worker deployment rollback remains available from Cloudflare's
   deployment history if the Worker script/config itself is bad.
@@ -95,6 +96,8 @@ Cloudflare:
 - `CLOUDFLARE_ACCOUNT_ID`
 - Worker edit/deploy permission for the `get-bud-dev` script
 - custom domain already bound or deploy permission to bind it
+- R2 bucket-scoped R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY for verified mirroring
+- Worker RELEASES binding to the private bud-releases-prod bucket
 
 Do not store GitHub PATs or Cloudflare global API keys for this workflow.
 
@@ -103,14 +106,14 @@ Do not store GitHub PATs or Cloudflare global API keys for this workflow.
 - `.github/workflows/bud-release.yml`
 - `scripts/bud-release.mjs`
 - Worker deploy scripts/config under `deploy/get-bud-dev/`
-- generated release-map artifact
+- verified R2 mirror and stable manifest generation
 - promotion workflow inputs
 
 ## Test Plan
 
 - Manual `canary` run publishes to a draft/pre-release or test tag.
 - Promotion to a test channel deploys Worker assets.
-- Smoke validates `install.sh`, stable manifest, and redirect map.
+- Smoke validates `install.sh`, stable manifest, and full archive integrity.
 - Rollback promotion repoints stable manifest to previous version.
 - CI refuses to promote when any required target artifact is missing.
 
@@ -118,7 +121,7 @@ Do not store GitHub PATs or Cloudflare global API keys for this workflow.
 
 - [x] CI creates GitHub Release assets
 - [x] CI generates checksums and per-version manifest
-- [x] CI generates release-map for Worker redirects
+- [x] CI generates stable assets after verified R2 mirroring (Phase 7c)
 - [x] stable promotion deploys Worker assets/config
 - [x] promotion can be manual by version
 - [x] rollback is documented

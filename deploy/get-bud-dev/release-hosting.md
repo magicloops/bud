@@ -139,15 +139,13 @@ events, never query strings, credentials or raw exception objects.
    already passed upload and read-only rerun).
 2. Manually confirm `RELEASES` points to `bud-releases-prod` in the dashboard;
    checked-in Wrangler configuration declares the same binding.
-3. Validate the R2 Worker on a candidate deployment before the production
-   switch; see [Phase 7b validation](../../plan/install-script/phase-7b-validation.md).
-4. Finish Phase 7c's mirror-before-promotion gate and deployed smoke checks.
-   Until then, the promotion workflow requires a previously mirrored version;
-   generating static assets alone no longer makes an archive available.
+3. Finish Phase 7c's verified-mirror promotion gate and mandatory deployed smoke checks.
+4. Because Bud is pre-launch with no users relying on this host, validate directly
+   on get.bud.dev after authorized promotion; no candidate hostname is required.
+   See [direct edge validation](../../plan/install-script/phase-7b-validation.md).
 5. On the authorized production cutover, purge old cached redirects, validate
    all four full archive hashes/ranges and retained versions, then benchmark
    complete downloads from the affected machine and a second network.
 
-No installer or daemon changes are required. Legacy redirect map generation
-remains solely until the Phase 7c production switch; the new Worker does not
-consume it. Bucket provisioning/bindings remain manual, not `cf`-managed.
+No installer or daemon changes are required. Promotion generates only the stable static manifest after verified R2 mirroring;
+obsolete redirect-map generation has been removed. Bucket provisioning/bindings remain manual, not `cf`-managed.

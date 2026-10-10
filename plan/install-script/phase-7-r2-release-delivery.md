@@ -1,10 +1,15 @@
 # Phase 7: R2 release delivery
 
-Status: Phase 7a mirror implementation and live acceptance complete, including
-read-only rerun. Node action warning fix remains uncommitted. Phases 7b/7c
-are tracked separately: Phase 7b is implemented and locally validated, with
-manual candidate/edge acceptance pending; Phase 7c remains scoped.
+Status: Phases 7a/7b and the Node action fix are merged (PRs #143/#144).
+Worker implementation is validated locally; deployment/edge acceptance remains
+pending. Phase 7c implementation is locally validated; authorized deployment and live
+acceptance remain pending.
 
+Pre-launch rollout decision: no users depend on this host yet. Validate directly
+on get.bud.dev after an authorized promotion; omit the candidate Worker and
+second hostname. Retain integrity checks and rollback. Initially retain only
+v0.1.25 (current) and v0.1.24 (rollback/development); older releases remain
+canonical on GitHub and can be mirrored explicitly when needed.
 Manual provisioning: [Phase 7a setup runbook](phase-7a-cloudflare-setup.md).
 
 ## Context
@@ -76,7 +81,7 @@ Exit: local fixture tests exercise all failure paths; an explicitly selected rea
 
 - [ ] Configure and confirm the `RELEASES` binding to the private bucket in the dashboard and checked-in Worker config.
 
-- [x] Replace Worker archive redirects and `_release-assets.json` reads with R2 delivery; stable/installer remain static. Obsolete generation/tests remain until the Phase 7c production switch.
+- [x] Replace Worker archive redirects and `_release-assets.json` reads with R2 delivery; stable/installer remain static. Phase 7c removes obsolete generation/tests.
 - [x] Serve only known archive names and published version manifests. A missing object returns uncached 404; R2 failures return an uncached 503 rather than redirecting silently to GitHub.
 - [x] Stream full bodies without buffering the archive in Worker memory. Return accurate `Content-Length`, content type, `Content-Disposition`, ETag, `Accept-Ranges` and immutable cache headers.
 - [x] Cache successful complete `200` responses with canonical pathname keys; discard irrelevant query strings. Do not cache errors, partial responses or a HEAD body as the full archive. Cache-write failure must not fail the download.
@@ -85,17 +90,16 @@ Exit: local fixture tests exercise all failure paths; an explicitly selected rea
 - [x] Add an explicit diagnostic header for edge HIT/MISS/BYPASS and structured origin/error logging without credentials. Cloudflare's cache match can serve ranges from a complete cached response with `Content-Length`; test the actual deployed behavior.
 
 Local evidence: 24 fixture/workerd tests pass, including actual R2 and Cache
-API range reads with a 2 MiB archive. Node action v6 fix is included in the
-working tree; promotion runs the new Worker suite before deployment.
-[Manual candidate and edge validation](phase-7b-validation.md) remains pending.
+API range reads with a 2 MiB archive. Node action v6 fix is merged; promotion runs the new Worker suite before deployment.
+[Direct deployment and edge validation](phase-7b-validation.md) remains pending.
 
-Exit: Worker tests and a deployed candidate route prove byte integrity, cold/warm semantics and bounded streaming behavior.
+Exit: Worker tests and a deployed get.bud.dev route prove byte integrity, cold/warm semantics and bounded streaming behavior.
 
 ## Phase 7c: promotion, backfill and rollout
 
-- [ ] Promotion downloads/verifies/mirrors all four GitHub assets, then generates stable assets and deploys the R2-enabled Worker. Fail before deployment if the mirror is incomplete.
-- [ ] Add full-download SHA-256/size checks for all four first-party archives to deployed smoke tests; preserve installer and stable-manifest checks. Check ranges and one warm cache request too.
-- [ ] Backfill v0.1.25, v0.1.24 and other previously promoted stable versions with published manifests using the same explicit tooling. Inventory eligible releases first; do not invent missing manifests or include experimental canaries automatically. Record coverage and any omissions.
+- [x] Promotion downloads/verifies/mirrors all four GitHub assets, then generates stable assets and deploys the R2-enabled Worker. Fail before deployment if the mirror is incomplete.
+- [x] Add full-download SHA-256/size checks for all four first-party archives to deployed smoke tests; preserve installer and stable-manifest checks. Check ranges and one warm cache request too.
+- [ ] Inventory and retain v0.1.25 and v0.1.24 using the mirror-only workflow. Older versions stay on GitHub unless needed for development/rollback; do not invent missing manifests or automatically mirror canaries. Record coverage and omissions.
 - [ ] Validate historical URLs after a subsequent promotion and rollback. Rollback repoints only stable; R2 versioned bytes and manifests stay immutable.
 - [ ] Purge old archive redirect entries from Cloudflare during cutover. Existing browser-cached year-long 302s cannot be purged remotely; validate with fresh clients and make the next newly tagged release the clean browser-cache path. Existing curl/reqwest callers do not need a client upgrade.
 - [ ] Benchmark the actual full archive from the affected machine and a second network, recording cache status and repeat variability.
@@ -132,3 +136,27 @@ Exit: production smoke checks and performance evidence pass; prior URLs and roll
 Hosting and release automation only. Manifest schema, archive URLs, checksums and binary contents remain unchanged. WSS, SSE, database, agent tools and web/mobile application code are unaffected.
 
 Deploy order: provision credentials/bucket -> mirror and verify retained versions -> deploy Worker/promotion changes -> run production smoke/performance checks -> publish/promote the next normal release. No daemon restart or new daemon tag is needed to improve downloads from uncached existing URLs.
+
+## Phase 7c implementation scope and next steps
+
+- One promotion helper downloads exact GitHub assets once, verifies/mirrors them
+  and generates stable assets only after R2 read-back succeeds. Failures cannot
+  reach deployment. Remove obsolete redirect-map and static historical generation.
+- Mandatory deployed smoke checks stream/hash all four archives, verify stable
+  and historical manifests, HEAD, ranges, ETag and one warm full cache hit.
+  Poll read-only requests for edge propagation; never retry a deployment automatically.
+- Reuse mirror-only workflow for the selected rollback version. No new uploader,
+  legacy routing or broad historical backfill is needed.
+- After implementation review/merge, manually confirm the binding and authorize
+  promotion of v0.1.25. Purge redirects through the dashboard if needed; verify
+  retained URLs and record three serial full transfers on each of two networks.
+- Finally exercise install/upgrade in isolated state and a stable rollback/re-promotion.
+  These operations need separate deployment/release authorization. No new tag needed.
+
+Specs affected: scripts/scripts.spec.md, .github/workflows/workflows.spec.md,
+deploy/get-bud-dev/get-bud-dev.spec.md and install-script.spec.md. No application
+protocol, database or client changes.
+
+Local Phase 7c evidence: 24 release/mirror/promotion/smoke tests pass. Inventory
+confirmed v0.1.24 has all four target archives and manifest; actual mirroring,
+direct deployment, redirect purge, two-network benchmarks and rollback are pending.

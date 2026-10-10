@@ -47,14 +47,17 @@ The workflow:
 - uses `actions/checkout@v5` for Node.js 24-compatible checkout
 - installs Node.js 22 with `actions/setup-node@v6` and runs the Worker fixture
   and workerd runtime tests before any deployment
-- downloads `manifest.<version>.json` from that GitHub Release
-- generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
+- installs/tests release tooling, then invokes `bud-release-promote.mjs` to
+  download exact assets once, verify/mirror all four archives and manifest to R2,
+  and write the stable manifest only after successful read-back verification
+- R2 credentials are confined to the preparation step; failure prevents deployment
 - deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with
   `cloudflare/wrangler-action@v4` and explicitly requests Wrangler v4
-- optionally smoke-tests `/`, `/install.sh`, the stable manifest and Linux
-  artifact availability, polling routes for edge propagation
-- Phase 7c still needs the verified mirror gate and full deployed checksum/range
-  checks; until then, mirror a selected version before invoking promotion
+- requires deployed acceptance with `bud-release-smoke.mjs`: all four full
+  checksums/sizes, canonical manifest content, installer/no-store, HEAD, ranges,
+  ETag and a warm cache hit. Read-only propagation polling does not retry deploys
+- promotion/rollback never delete or replace R2 versioned objects; the mirror-only
+  workflow can retain a selected historical release without changing stable
 
 ### `bud-release-mirror.yml`
 

@@ -274,54 +274,15 @@ export async function buildReleaseNotes(options) {
   return content;
 }
 
-export async function buildReleaseAssetMap(options) {
-  const manifestPath = path.resolve(requiredOption(options, "manifest"));
-  const githubRepository = requiredOption(options, "githubRepository");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  validateManifestShape(manifest);
-
-  const releaseAssets = {};
-  for (const artifact of manifest.artifacts) {
-    const artifactName = path.basename(new URL(artifact.url).pathname);
-    releaseAssets[`${manifest.version}/${artifactName}`] =
-      `https://github.com/${githubRepository}/releases/download/${manifest.version}/${artifactName}`;
-  }
-
-  if (options.out) {
-    const outPath = path.resolve(options.out);
-    await mkdir(path.dirname(outPath), { recursive: true });
-    await writeFile(outPath, `${JSON.stringify(releaseAssets, null, 2)}\n`);
-  }
-
-  return releaseAssets;
-}
-
 export async function buildPromotionAssets(options) {
   const manifestPath = path.resolve(requiredOption(options, "manifest"));
   const assetsDir = path.resolve(requiredOption(options, "assetsDir"));
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   validateManifestShape(manifest);
-
-  const releaseAssets = await buildReleaseAssetMap({
-    manifest: manifestPath,
-    githubRepository: requiredOption(options, "githubRepository"),
-  });
-
   const stableManifestPath = path.join(assetsDir, "releases", "stable", "manifest.json");
-  const versionManifestPath = path.join(assetsDir, "releases", manifest.version, "manifest.json");
-  const releaseAssetsPath = path.join(assetsDir, "_release-assets.json");
-
   await mkdir(path.dirname(stableManifestPath), { recursive: true });
-  await mkdir(path.dirname(versionManifestPath), { recursive: true });
-  await writeFile(stableManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(versionManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(releaseAssetsPath, `${JSON.stringify(releaseAssets, null, 2)}\n`);
-
-  return {
-    stable_manifest_path: stableManifestPath,
-    version_manifest_path: versionManifestPath,
-    release_assets_path: releaseAssetsPath,
-  };
+  await copyFile(manifestPath, stableManifestPath);
+  return { stable_manifest_path: stableManifestPath };
 }
 
 export function validateManifestShape(manifest) {
@@ -450,8 +411,7 @@ function usage() {
     "  node scripts/bud-release.mjs manifest --version <vX.Y.Z> --channel stable --base-url https://get.bud.dev --metadata-dir <dir> --out <path>",
     "  node scripts/bud-release.mjs checksums --artifact-dir <dir> --out <path>",
     "  node scripts/bud-release.mjs notes --version <vX.Y.Z> --commit <sha> --metadata-dir <dir> --out <path>",
-    "  node scripts/bud-release.mjs release-map --manifest <path> --github-repository <owner/repo> --out <path>",
-    "  node scripts/bud-release.mjs promotion-assets --manifest <path> --github-repository <owner/repo> --assets-dir <dir>",
+    "  node scripts/bud-release.mjs promotion-assets --manifest <path> --assets-dir <dir>",
     "  node scripts/bud-release.mjs detect-target",
     "  node scripts/bud-release.mjs verify --file <path> --sha256 <hex>",
   ].join("\n");
@@ -482,12 +442,6 @@ async function main() {
   if (command === "notes") {
     const notes = await buildReleaseNotes(options);
     process.stdout.write(notes);
-    return;
-  }
-
-  if (command === "release-map") {
-    const releaseAssets = await buildReleaseAssetMap(options);
-    console.log(JSON.stringify(releaseAssets, null, 2));
     return;
   }
 

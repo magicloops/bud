@@ -103,3 +103,22 @@ installer regression tests pass; npm audit reports zero vulnerabilities.
 Slow-cache and interrupted-origin fixtures confirm that failed cache writes
 do not publish partial objects or block complete downloads. Candidate/edge
 acceptance and production throughput measurements remain pending.
+
+## Phase 7c implementation validation
+
+Pre-launch scope now validates directly on get.bud.dev after authorized promotion;
+no candidate hostname. Keep v0.1.24 for rollback; its four archives and manifest
+were inventoried through gh release view on 2026-10-10. Older tags are omitted
+unless needed. No deployment/backfill has been performed by this implementation.
+
+Initial `npm test --prefix scripts` returned 21 pass / 2 fail with
+`stable manifest did not converge on canonical bytes`. The Worker formats static
+JSON on output, so stable integrity must compare parsed canonical content rather
+than raw formatting. Versioned R2 manifests still require exact byte equality.
+Update the checker and rerun its successful-path and corruption fixtures.
+
+The formatting failure is fixed. Promotion and checker tests now include failure
+before stable generation, stream hash/size validation, redirects, corrupted
+ranges, absent cache hits, propagation and historical validation. Final local
+suite results are recorded in the Phase 7 checklist; live performance remains
+unmeasured until authorized rollout.
