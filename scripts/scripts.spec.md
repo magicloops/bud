@@ -5,10 +5,32 @@ Repo-level automation scripts that do not belong to a single package.
 ## Purpose
 
 This folder contains small Node.js utilities used by CI and release workflows.
-Scripts should avoid package-local dependencies unless the owning package
-explicitly provides them.
+The release mirror has an isolated package in this folder; other utilities
+continue to use Node built-ins unless documented below.
 
 ## Files
+
+### `bud-release-mirror.mjs`
+
+Mirror-only publisher for an explicit GitHub release to private R2. Downloads
+the exact manifest and fixed four-target archive matrix through authenticated
+`gh`; validates all source bytes before writes; conditionally creates immutable
+objects with HTTP/SHA-256 metadata; verifies actual existing/uploaded bytes;
+publishes the version manifest last. Matching reruns are read-only and partial
+runs can resume. Conflicts fail without overwriting. Never deploys or promotes
+stable. Configuration is supplied through account/bucket and R2 S3 credentials.
+
+### `bud-release-mirror.test.mjs`
+
+Integrity, source validation, interrupted/read-back failures, resumption,
+idempotency and concurrent/conflicting writes, exact GitHub asset selection,
+SDK request metadata, and real SDK HTTP transport against a local S3 fixture.
+
+### `package.json` / `package-lock.json`
+
+Isolated release-tool dependency and reproducible npm lockfile. Install with
+`npm ci --ignore-scripts --prefix scripts`; run release/mirror tests with
+`npm test --prefix scripts`.
 
 ### `bud-release.mjs`
 
@@ -64,6 +86,8 @@ checksum mismatch fixture.
 
 - Node.js 20+
 - host `tar` command for archive creation and archive-content tests
+- `@aws-sdk/client-s3` for the R2 S3 mirror (locked in this folder's npm package)
+- authenticated GitHub CLI for downloading exact release assets
 
 ---
 

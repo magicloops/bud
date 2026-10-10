@@ -62,9 +62,21 @@ Phase for serving the same installer shell script from the root
 `curl -fsSL https://get.bud.dev | sh` while service-generated commands keep the
 explicit `/install.sh` path.
 
+### `phase-7-r2-release-delivery.md`
+
+Follow-up scope for verified R2 mirroring, Worker byte serving and edge caching,
+promotion gates, retained historical URLs, backfill and full-download performance
+acceptance. Replaces archive redirects when deployed; installers keep their URLs
+and SHA-256 contract.
+
 ### `progress-checklist.md`
 
 Running implementation checklist for this install-script plan.
+
+### `phase-7a-cloudflare-setup.md`
+
+Manual dashboard runbook for the private R2 bucket and scoped publisher secrets,
+mirror-only validation, safe reruns, and the later Worker binding cutover.
 
 ### `validation-checklist.md`
 
@@ -83,10 +95,10 @@ Release-gate validation checklist focused on GitHub Release artifacts,
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- This plan deliberately starts with GitHub Releases as the only archive origin.
-  If GitHub availability becomes an install blocker, add an R2 or S3 mirror and
-  teach the manifest/installer to retry mirrors after checksum or transport
-  failure.
+- R2 mirror tooling is implemented in Phase 7a after slow GitHub archive downloads
+  were reproduced. Manual infrastructure setup, real mirror validation, Worker
+  byte delivery and deployed performance acceptance remain open;
+  the intended change is server-side byte serving with existing installer URLs.
 
 ---
 

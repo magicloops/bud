@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: bud-release-publication
+  cancel-in-progress: false
+
 jobs:
   promote:
     name: Promote ${{ inputs.version }} to get.bud.dev
