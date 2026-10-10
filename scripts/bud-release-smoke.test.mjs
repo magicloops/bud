@@ -61,6 +61,27 @@ test("deployed checker verifies four complete archives, ranges, conditionals, ca
   assert.equal(logs.filter((line) => line.event === "release_benchmark").length, 3);
 });
 
+test("checker requests identity encoding while preserving range and conditional headers", async () => {
+  const options = fixture();
+  const fetcher = options.fetcher;
+  let ranges = 0, conditionals = 0;
+  options.fetcher = async (url, init) => {
+    const headers = new Headers(init.headers);
+    if (headers.has("range")) ranges++;
+    if (headers.has("if-none-match")) conditionals++;
+    const response = await fetcher(url, init);
+    if (headers.get("accept-encoding") === "identity") return response;
+    // fetch exposes decoded JSON, but edge compression removes its byte length.
+    const encoded = new Headers(response.headers);
+    encoded.delete("content-length");
+    encoded.set("content-encoding", "br");
+    return new Response(response.body, { status: response.status, headers: encoded });
+  };
+  await smokeRelease(options);
+  assert.equal(ranges, 16);
+  assert.equal(conditionals, 4);
+});
+
 test("checker rejects redirects, corrupt bytes, wrong size, wrong ranges and absent cache hits", async () => {
   for (const fault of ["redirect", "checksum", "size", "range", "cache"]) {
     const options = fixture();

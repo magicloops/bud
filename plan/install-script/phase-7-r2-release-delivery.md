@@ -1,9 +1,9 @@
 # Phase 7: R2 release delivery
 
 Status: Phases 7a/7b and the Node action fix are merged (PRs #143/#144).
-Worker implementation is validated locally; deployment/edge acceptance remains
-pending. Phase 7c implementation is locally validated; authorized deployment and live
-acceptance remain pending.
+The R2 Worker deployed in run 38039166332. Live current/historical integrity,
+range and cache checks pass. A checker encoding fix awaits commit/CI revalidation;
+second-network timing, isolated install/upgrade and live rollback remain pending.
 
 Pre-launch rollout decision: no users depend on this host yet. Validate directly
 on get.bud.dev after an authorized promotion; omit the candidate Worker and
@@ -23,7 +23,7 @@ The v0.1.25 Apple Silicon archive (16.3 MB) took about one minute in both a brow
 - [Workflow spec](../../.github/workflows/workflows.spec.md)
 - [Earlier R2 hosting recommendation](../../design/release-artifact-hosting-r2-vs-s3.md)
 
-Current delivery is `get.bud.dev -> github.com -> release-assets.githubusercontent.com`. The Worker caches only its redirect. Promotion also replaces the generated release map with one version, which explains why previously promoted first-party archives can disappear.
+Before Phase 7, delivery was `get.bud.dev -> github.com -> release-assets.githubusercontent.com`. The Worker cached only its redirect. Promotion replaced the generated release map with one version, which explained disappearing historical URLs. The deployed Worker now serves retained R2 objects.
 
 ## Objective and acceptance
 
@@ -91,7 +91,7 @@ Exit: local fixture tests exercise all failure paths; an explicitly selected rea
 
 Local evidence: 24 fixture/workerd tests pass, including actual R2 and Cache
 API range reads with a 2 MiB archive. Node action v6 fix is merged; promotion runs the new Worker suite before deployment.
-[Direct deployment and edge validation](phase-7b-validation.md) remains pending.
+[Direct deployment and edge validation](phase-7b-validation.md) passed from the local SJC connection; final CI checker revalidation remains pending.
 
 Exit: Worker tests and a deployed get.bud.dev route prove byte integrity, cold/warm semantics and bounded streaming behavior.
 
@@ -101,7 +101,7 @@ Exit: Worker tests and a deployed get.bud.dev route prove byte integrity, cold/w
 - [x] Add full-download SHA-256/size checks for all four first-party archives to deployed smoke tests; preserve installer and stable-manifest checks. Check ranges and one warm cache request too.
 - [x] Inventory and retain v0.1.25 and v0.1.24 using the mirror-only workflow. Older versions stay on GitHub unless needed for development/rollback; do not invent missing manifests or automatically mirror canaries. Record coverage and omissions.
 - [ ] Validate historical URLs after a subsequent promotion and rollback. Rollback repoints only stable; R2 versioned bytes and manifests stay immutable.
-- [ ] Purge old archive redirect entries from Cloudflare during cutover. Existing browser-cached year-long 302s cannot be purged remotely; validate with fresh clients and make the next newly tagged release the clean browser-cache path. Existing curl/reqwest callers do not need a client upgrade.
+- [ ] Inspect old archive redirect entries and purge through the dashboard if needed. Existing browser-cached year-long 302s cannot be purged remotely; validate with fresh clients and make the next newly tagged release the clean browser-cache path. Existing curl/reqwest callers do not need a client upgrade.
 - [ ] Benchmark the actual full archive from the affected machine and a second network, recording cache status and repeat variability.
 - [ ] Exercise normal installer and `bud upgrade` from v0.1.24/v0.1.25 in isolated state, ensuring checksum validation and service refresh still work.
 
@@ -158,5 +158,9 @@ deploy/get-bud-dev/get-bud-dev.spec.md and install-script.spec.md. No applicatio
 protocol, database or client changes.
 
 Local Phase 7c evidence: 24 release/mirror/promotion/smoke tests pass. Inventory
-confirmed v0.1.24 has all four target archives and manifest; actual mirroring,
-direct deployment, redirect purge, two-network benchmarks and rollback are pending.
+confirmed v0.1.24 has all four target archives and manifest. Both versions are
+mirrored and deployed. Live SJC checks pass all eight archive hashes and sizes,
+canonical manifests, ranges and cache hits. v0.1.25 warm transfers: 1.842, 1.577
+and 2.221 seconds (median 1.842, about 33x faster than the 61.416-second baseline).
+No stale redirects were observed; no purge performed. Second-network timings,
+isolated install/upgrade, live rollback and CI checker revalidation remain pending.

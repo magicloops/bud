@@ -145,3 +145,28 @@ a CI-only observation. The proposed fix drains and verifies the complete cache
 proxy response instead of canceling it. All 24 Worker tests pass with this fix
 under Node 22.23.3; git diff --check passes. Live CI revalidation is pending
 commit/merge of this small test-only fix. No production deployment occurred.
+
+## Promotion retry: edge compression in the deployed checker
+
+PR #146 merged as 0cb644d. Run 38039166332 passed all 24 Worker tests on
+Linux, verified the mirror, and deployed the R2 Worker. Its post-deploy checker
+failed with `null !== '1225'` for the versioned manifest Content-Length.
+Production now serves R2 bytes; stable remains v0.1.25.
+
+Live Node fetch reproduction: default Accept-Encoding returns Brotli JSON,
+no Content-Length, and 1225 decoded bytes. Explicit `Accept-Encoding: identity`
+returns no Content-Encoding, Content-Length 1225, and the same canonical bytes.
+This is a checker transport assumption, not a corrupt object. Request identity
+encoding for integrity checks (including range requests), preserving exact
+length, SHA-256 and canonical-byte assertions. Add a fixture that simulates the
+edge's encoding negotiation before continuing read-only deployed validation.
+
+
+Resolution check: identity-encoding checker passes live for v0.1.25 and v0.1.24,
+including all eight complete hashes/sizes, manifests, ranges/conditionals and
+warm full cache hits. Additional live guardrail checks also pass. Current Mac
+archive first full transfer: 1.614 seconds (MISS). Three serial warm transfers:
+1.842, 1.577, 2.221 seconds (HIT, SJC); median 1.842, about 33x faster than
+61.416 seconds. See phase-7b-validation.md for CF-Ray evidence. All 25 local
+release-tool tests pass. The checker fix awaits commit and live CI revalidation;
+second-network timings, isolated install/upgrade and stable rollback remain open.

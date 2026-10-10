@@ -1,7 +1,8 @@
 # Phase 7b: R2 Worker validation and manual cutover handoff
 
-Status: implemented and validated locally; direct deployment and real edge
-acceptance pending. No Cloudflare provisioning or deployment was performed.
+Status: R2 Worker deployed on 2026-10-10; local live edge acceptance passes.
+Checker encoding fix awaits commit/CI revalidation. Second-network performance,
+isolated install/upgrade and stable rollback remain open.
 
 Parent: [Phase 7](phase-7-r2-release-delivery.md).
 
@@ -87,8 +88,9 @@ or delete real immutable objects merely to simulate errors.
 ## Remaining production work
 
 Phase 7c's verified preparation and mandatory deployed checker are implemented
-locally. Actual deployment, selected historical mirroring, dashboard purge,
-installer/upgrade checks and two-network timing evidence remain pending.
+and deployed. Current/historical mirroring and local edge acceptance pass;
+CI checker revalidation, installer/upgrade, rollback and second-network timing
+evidence remain pending. No stale redirect was observed, so no purge performed.
 Browser-cached year-long redirects cannot be remotely purged; use fresh clients
 and the next release's new versioned URLs for clean acceptance.
 
@@ -155,11 +157,41 @@ verified, then the version manifest was published and verified. All 24 release
 tooling tests passed in CI. No check annotations were reported, confirming the
 setup-node@v6 action warning fix on a live run. The user subsequently confirmed the RELEASES binding. Promotion was dispatched
 as run 38039057997, but Worker runtime validation failed before preparation or
-deployment. Production is unchanged.
+deployment. Production was unchanged by that first attempt.
 
 Promotion failure follow-up: the cache readiness probe canceled a Miniflare
 proxy response, raising ERR_INVALID_STATE in its Node writer cleanup. The local
 fix drains and SHA-256 verifies that cached response instead. All 24 Worker
 tests pass under Node 22.23.3 on macOS; the original failure was CI-only. The
-fix must be committed/merged and validated in the next promotion run before
-claiming Linux CI or deployed acceptance.
+fix merged in PR #146; retry run 38039166332 passed all 24 Worker tests on
+Linux and deployed successfully. Its smoke step failed at manifest length
+(`null !== 1225`): default Node fetch received Brotli JSON with no Content-Length.
+Explicit identity encoding returned the canonical 1225 bytes and full length.
+The checker now requests identity encoding; 25 release-tool tests pass locally.
+This new checker fix still needs commit/CI revalidation.
+
+
+## Live byte and performance acceptance, 2026-10-10
+
+[Deployed retry run 38039166332](https://github.com/magicloops/bud/actions/runs/38039166332)
+kept stable on v0.1.25. Read-only runs of the corrected checker passed for both
+v0.1.25 and retained v0.1.24: all eight full archive hashes/sizes, canonical
+version manifests, HEAD lengths, closed/open/suffix ranges, 304/416, and a full
+warm cache hit. Current installer/root and stable are 200/no-store. Additional
+live checks passed warm range HIT, weak/stale If-Range full fallback, multiple-range
+full fallback, nonmatching ETag, missing-version 404 and POST 405/no-store.
+No stale redirect was observed; no dashboard purge was performed.
+
+Local SJC network timings (each transfer hashes the complete 16,294,586 bytes):
+
+| Transfer | Seconds | Cache | CF-Ray |
+|---|---:|---|---|
+| First full Mac archive | 1.614 | MISS | a48461bcca60eb24-SJC |
+| Warm benchmark 1 | 1.842 | HIT | a48461fd883415d8-SJC |
+| Warm benchmark 2 | 1.577 | HIT | a484620919d52702-SJC |
+| Warm benchmark 3 | 2.221 | HIT | a4846212ed1c15d8-SJC |
+
+Warm median: 1.842 seconds, about 33x faster than the 61.416-second baseline.
+This meets the target on this connection. Repeat the benchmark on a second
+network before marking two-network acceptance complete. Historical archive
+MISS transfers took 1.699–2.471 seconds and all matched canonical hashes.

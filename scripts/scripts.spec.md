@@ -39,7 +39,8 @@ The helper does not itself deploy; the manual workflow deploys only after succes
 Mandatory deployed acceptance streams all four complete archives and hashes them
 against the canonical manifest, requires R2/no redirects, verifies manifests,
 installer/no-store, HEAD, ranges/416, ETag and a warm full cache hit. Read-only
-polling handles propagation. Keeps only 1 KiB at each archive end for range
+polling handles propagation. Requests identity encoding to verify stored byte
+lengths independently of edge JSON compression. Keeps only 1 KiB at each archive end for range
 comparison. Reports hashes/sizes/timing/cache/CF-Ray; `--benchmark` records three
 additional serial Apple Silicon transfers, and `--historical` validates retained
 versioned resources independently of mutable stable. Fixture tests use the real

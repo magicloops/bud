@@ -14,8 +14,8 @@ release channel:
 - GitHub Actions builds, packages, uploads, and attests artifacts.
 - `get.bud.dev` is a Cloudflare Worker custom domain.
 - The Worker serves `install.sh` and the stable manifest.
-- The currently deployed versioned archive URLs redirect to GitHub; Phase 7
-  replaces them with verified private R2 bytes and edge caching at the same URLs.
+- Phase 7 serves versioned archives from verified private R2 bytes with edge
+  caching at the original first-party URLs.
 
 ## Files
 
@@ -99,11 +99,10 @@ Release-gate validation checklist focused on GitHub Release artifacts,
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Phase 7a mirror uploads and read-only rerun are validated. Phase 7b Worker
-  streaming/cache implementation passes local fixture and workerd tests. Manual
-  direct binding/deployment acceptance, selected rollback-version mirroring
-  and deployed performance checks remain open. Phase 7c promotion gating and
-  mandatory full-download checker are implemented and locally tested. Existing installer URLs stay.
+- Phases 7a/7b are deployed: current and v0.1.24 historical byte integrity,
+  ranges and cache hits pass live checks. The Phase 7c checker identity-encoding
+  fix awaits commit/CI revalidation. Second-network timings, isolated install/upgrade
+  and stable rollback/re-promotion remain open. Existing installer URLs stay.
 
 ---
 
