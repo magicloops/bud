@@ -34,6 +34,8 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **Daemon release download speed.** Implement [install-script Phase 7](./plan/install-script/phase-7-r2-release-delivery.md): verified R2 mirror, Worker byte serving/cache, gated promotion, historical release backfill and complete-download performance acceptance. [Measured GitHub CDN slowdown](./debug/release-download-throughput.md). Existing installer URLs and SHA-256 verification remain unchanged.
+
 - [ ] **Production browser takeover — Render expiry investigation.** Both web and mobile show blank/reconnecting private views; `/control` returns `browser_control_expired`. Save/correlate acquire/renew and media logs, verify deployment/clock timing, and resolve the reported `browser_busy` request URL before selecting a fix. Clock skew is a hypothesis, not a confirmed cause. [Debug note](./debug/render-browser-takeover-control-expiry.md).
 
 - [ ] **Browser workspace lifecycle — final pre-merge gate.** Tracked in [REPL Phase 8](./plan/bud-owned-browser/repl-phase-8-workspace-lifecycle.md), including admission/cleanup, usable capacity recovery and outstanding earlier-phase acceptance. The ten-workspace cap is an interim mitigation.

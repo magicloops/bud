@@ -1,0 +1,41 @@
+name: Mirror Bud release to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact existing GitHub release tag to mirror, for example v0.1.25. Does not promote stable."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bud-release-publication
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+      - name: Install release tooling
+        run: npm ci --ignore-scripts --prefix scripts
+      - name: Test release tooling
+        run: npm test --prefix scripts
+      - name: Mirror and verify exact release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: bud-releases-prod
+        run: node scripts/bud-release-mirror.mjs "$VERSION"

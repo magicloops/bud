@@ -42,6 +42,8 @@ Manual promotion workflow for `https://get.bud.dev`.
 The workflow:
 
 - accepts an immutable GitHub Release version
+- shares a non-canceling `bud-release-publication` concurrency group with
+  mirror-only runs
 - uses `actions/checkout@v5` for Node.js 24-compatible checkout
 - downloads `manifest.<version>.json` from that GitHub Release
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
@@ -52,7 +54,19 @@ The workflow:
   checks repeatedly raced it and read the previous release), and a
   versioned artifact redirect
 
+### `bud-release-mirror.yml`
+
+Manually dispatched, mirror-only workflow for one exact existing release tag.
+Installs the isolated release-tool package, runs its tests, downloads through
+the read-only GitHub token and uploads/verifies R2 objects using bucket-scoped
+S3 credentials. Shares promotion's concurrency group; never deploys the Worker
+or changes stable. Manual bucket/credential setup and acceptance are described
+in [Phase 7a](../../plan/install-script/phase-7a-cloudflare-setup.md).
+
 ## Dependencies
+
+- `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` GitHub secrets
+- Private R2 bucket `bud-releases-prod`
 
 - [../../scripts/scripts.spec.md](../../scripts/scripts.spec.md)
 - [../../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md](../../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md)

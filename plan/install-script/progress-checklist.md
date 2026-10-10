@@ -69,3 +69,14 @@
 - [x] `/install.sh` remains supported
 - [x] service-generated commands remain on `/install.sh`
 - [ ] live promoted Worker validates root alias behavior
+
+## Phase 7: R2 Release Delivery
+
+- [x] 7a: verified mirror helper and explicit-version backfill workflow
+- [x] 7a: immutable conditional uploads, read-back verification, manifest-last publication
+- [x] 7a: local release/mirror suite passes (18 tests)
+- [x] 7a: manual Cloudflare setup runbook
+- [x] 7a: manual private bucket and scoped credentials configured (user report; GitHub secret names verified)
+- [ ] 7a: real release mirror and read-only rerun validated with stable unchanged
+- [ ] 7b: Worker R2 binding, streaming delivery and cache/range behavior
+- [ ] 7c: promotion gate, historical backfill, deployed integrity and performance acceptance
