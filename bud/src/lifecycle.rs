@@ -462,11 +462,8 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
             std::fs::write(&plist_path, launchd_plist(paths))
                 .with_context(|| format!("cannot write {}", plist_path.display()))?;
             // Re-installs: drop any loaded copy first (ignore "not loaded").
-            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
-            run_checked(
-                "launchctl",
-                &["bootstrap", &gui_domain(), &plist_path.to_string_lossy()],
-            )?;
+            let unloaded = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
+            launchd_bootstrap(&plist_path, unloaded)?;
             println!(
                 "Installed launchd agent {plist_path}",
                 plist_path = plist_path.display()
@@ -1072,6 +1069,35 @@ fn run_checked(program: &str, args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn launchd_bootstrap(plist: &std::path::Path, unloaded: bool) -> Result<()> {
+    let domain = gui_domain();
+    let plist = plist.to_string_lossy();
+    let started = std::time::Instant::now();
+    loop {
+        let output = Command::new("launchctl")
+            .args(["bootstrap", &domain, &plist])
+            .output()
+            .context("failed to run launchctl")?;
+        if output.status.success() {
+            return Ok(());
+        }
+        // Successful bootout can return before launchd removes the old job.
+        // Immediate bootstrap then returns EIO (5). Only retry this reload
+        // race, never arbitrary errors or an unsuccessful initial unload.
+        if unloaded
+            && output.status.code() == Some(5)
+            && started.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+        bail!(
+            "launchctl bootstrap {domain} {plist} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
 }
 
 fn run_quiet(program: &str, args: &[&str]) -> bool {

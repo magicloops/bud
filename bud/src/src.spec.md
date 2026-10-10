@@ -77,7 +77,10 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   direct `service-run <base>` with quoted/escaped arguments, `Restart=on-failure`, **`KillMode=process`**,
   `StandardOutput/Error=append:` the same log file) — generated content is
   cross-validated against the doctor's supervision parsers in tests
-- `service install` writes + loads the service (bootstrap/enable --now) and
+- launchd reload retries bootstrap exit 5 for at most five seconds after a
+  successful bootout, allowing asynchronous registration removal to finish;
+  first-install/other errors fail immediately and preserve launchctl diagnostics
+- `service install` writes + loads the service (bootstrap/systemd restart) and
   best-effort `loginctl enable-linger` on Linux; `service uninstall` unloads
   and removes it; identity is never touched
 - macOS start/restart regenerate and reload the installed plist, migrating old
