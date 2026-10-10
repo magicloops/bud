@@ -1,4 +1,17 @@
 {
   "private": true,
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "miniflare": "4.20260730.0"
+  },
+  "scripts": {
+    "test": "node --test worker.test.mjs release-delivery.test.mjs release-runtime.test.mjs",
+    "test:installer": "node --test install-sh.test.mjs"
+  },
+  "overrides": {
+    "miniflare": {
+      "undici": "7.29.1",
+      "sharp": "0.35.5"
+    }
+  }
 }

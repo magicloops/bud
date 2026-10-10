@@ -25,6 +25,16 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: deploy/get-bud-dev/package-lock.json
+
+      - name: Validate Worker delivery
+        run: |
+          npm ci --ignore-scripts --prefix deploy/get-bud-dev
+          npm test --prefix deploy/get-bud-dev
 
       - name: Download release manifest
         shell: bash

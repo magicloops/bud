@@ -7,8 +7,9 @@ release artifacts.
 
 Phase 3 produces the artifact bundle and manifest in GitHub Actions. The actual
 GitHub Release is the canonical immutable archive. `get.bud.dev` is a
-Cloudflare Worker front door that serves the installer and manifests while
-redirecting versioned artifact URLs to exact GitHub Release asset URLs.
+Cloudflare Worker front door. Phase 7b implements direct byte delivery from a
+private R2 mirror with complete-response edge caching. This code is not yet
+deployed; the current public Worker continues to redirect archives to GitHub.
 
 ## Required Paths
 
@@ -21,8 +22,10 @@ Versioned artifacts are immutable:
 /releases/vX.Y.Z/bud-aarch64-unknown-linux-gnu.tar.gz
 ```
 
-These first-party URLs are served by the Worker as redirects to GitHub Release
-assets. The manifest should not expose GitHub `latest` URLs.
+The R2-enabled Worker streams these first-party URLs from private objects,
+without an outbound GitHub request. The version manifest is a completion marker;
+cold archive reads return 404 until it exists. Historical manifests are served
+from `/releases/<version>/manifest.json`. The manifest never exposes `latest` URLs.
 
 The stable channel manifest is mutable and points at immutable artifacts:
 
@@ -52,12 +55,13 @@ curl -fsSL https://get.bud.dev | sh
 The Worker is configured with `assets.run_worker_first = true` so `/`,
 `/install.sh`, and `/releases/stable/manifest.json` always run through Worker
 code before static asset serving. These mutable routes return
-`Cache-Control: no-store`; immutable versioned manifests and archive redirects
-keep long-lived cache headers.
+`Cache-Control: no-store`; R2 versioned manifests and complete archive responses
+use `public, max-age=31536000, immutable`. Only full 200 responses populate
+`caches.default`, with pathname keys ignoring query strings. Cache storage is
+local to each Cloudflare data center; cache misses stream R2 directly.
 
 The script downloads the stable manifest, selects the current OS/architecture
-target, follows first-party artifact URLs through the Worker redirect to GitHub
-Releases, verifies SHA-256, installs to `~/.bud/bin/bud`, writes
+target, downloads its first-party artifact URL, verifies SHA-256, installs to `~/.bud/bin/bud`, writes
 `~/.bud/bud.env`, runs `bud doctor`, and then starts Bud in the foreground
 unless `BUD_INSTALL_SKIP_BOOTSTRAP=1` is set. `BUD_CLAIM_ID` is forwarded only
 to the first bootstrap process and is not persisted in `bud.env`. The preflight
@@ -102,20 +106,48 @@ Deferred before broader public launch:
 - macOS code signing
 - macOS notarization
 - automated vulnerability audit gate
-- R2/S3 mirror if GitHub Release availability or customer network policy becomes
-  an install blocker
+- Production R2 cutover, verified promotion gate and deployed performance
+  acceptance (Phase 7); mirror upload and read-only rerun already passed
 
-## Upload Handoff
+## R2 Delivery Contract
 
-Until CI has production Worker-promotion credentials, a release operator should:
+`RELEASES` binds the private `bud-releases-prod` bucket; the Worker only performs
+object reads. Objects use the public pathname without its leading slash. Only
+known archive filenames and strict versioned manifest routes are exposed; no
+listing or upload route exists. R2 writer credentials belong to the CI mirror,
+not the Worker or public callers.
 
-1. Run the `Bud Release Artifacts` workflow from a tag or explicit manual run.
-2. Confirm the GitHub Release contains the target archives, `checksums.txt`, and
-   per-version manifest.
-3. Promote a stable manifest and release redirect map into the `get-bud-dev`
-   Worker config/assets.
-4. Confirm `/`, `/install.sh`, `/releases/stable/manifest.json`,
-   `/releases/<version>/manifest.json`, and each versioned artifact redirect are
-   reachable.
-5. Download each archive through the first-party URL and verify it against the
-   stable manifest SHA-256 before exposing the corresponding installer path.
+Full GET/HEAD return byte length, quoted ETag, Last-Modified, Accept-Ranges and
+archive download disposition. HEAD does not fetch a full R2 body or fill cache.
+Single closed/open/suffix ranges return 206; unsatisfiable ranges return no-store
+416. Malformed or multi-range headers are ignored and receive the full body.
+If-None-Match supports weak comparison, lists and wildcard; If-Range requires
+a matching strong ETag or exact Last-Modified date. Cold and warm semantics
+are identical. Missing objects return no-store 404; storage failures return
+no-store 503, without a silent GitHub fallback. Cache failures preserve delivery.
+
+`X-Bud-Release-Origin: r2` and `X-Bud-Release-Cache: HIT|MISS|BYPASS` identify the
+serving path. MISS can also appear on HEAD/304/range/error responses which do
+not populate cache. HIT means the request was answered from a complete cached
+representation; BYPASS means cache was unavailable or its range lookup fell
+back to R2. Logs contain validated path, method/status/cache and fixed error
+events, never query strings, credentials or raw exception objects.
+
+## Cutover Handoff
+
+1. Mirror the selected GitHub release and verify all required bytes (v0.1.25
+   already passed upload and read-only rerun).
+2. Manually confirm `RELEASES` points to `bud-releases-prod` in the dashboard;
+   checked-in Wrangler configuration declares the same binding.
+3. Validate the R2 Worker on a candidate deployment before the production
+   switch; see [Phase 7b validation](../../plan/install-script/phase-7b-validation.md).
+4. Finish Phase 7c's mirror-before-promotion gate and deployed smoke checks.
+   Until then, the promotion workflow requires a previously mirrored version;
+   generating static assets alone no longer makes an archive available.
+5. On the authorized production cutover, purge old cached redirects, validate
+   all four full archive hashes/ranges and retained versions, then benchmark
+   complete downloads from the affected machine and a second network.
+
+No installer or daemon changes are required. Legacy redirect map generation
+remains solely until the Phase 7c production switch; the new Worker does not
+consume it. Bucket provisioning/bindings remain manual, not `cf`-managed.

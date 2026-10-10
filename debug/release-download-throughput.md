@@ -62,3 +62,44 @@ User confirmed roughly one minute in both the browser and `bud upgrade`, matchin
 
 ## Separate Observation
 - The previous version's first-party v0.1.24 archive path returned 404 after v0.1.25 promotion. Historical first-party release routing should be investigated separately; it does not explain the current archive's successful but slow download.
+
+## Phase 7a mirror acceptance and action warning
+
+[First live mirror run](https://github.com/magicloops/bud/actions/runs/38035057306)
+succeeded on 2026-10-10. Logs confirm all four v0.1.25 archives were uploaded
+and read back successfully, followed by the version manifest.
+[Read-only rerun](https://github.com/magicloops/bud/actions/runs/38035311447)
+verified all five existing objects without uploading replacements. Public stable
+was checked after the rerun and still serves v0.1.25. This is not evidence of faster public delivery;
+the production Worker still redirects to GitHub.
+
+The run emitted a Node.js 20 deprecation annotation for `actions/setup-node@v4`.
+Its internal action runtime is separate from `node-version: "22"`, which selects
+the runtime for our release scripts. The minimal fix is `actions/setup-node@v6`,
+whose [action definition](https://raw.githubusercontent.com/actions/setup-node/v6/action.yml)
+uses Node.js 24 internally; keep Node 22 and existing explicit npm cache inputs.
+Validate YAML locally and confirm the warning is absent on a subsequent live run.
+
+## Phase 7b local runtime dependency check
+
+`npm install --save-dev --save-exact miniflare@4.20260730.0 --prefix deploy/get-bud-dev`
+reported three high-severity dev-dependency findings (Miniflare via pinned
+Undici and Sharp). npm offered an alpha major upgrade. Retain the stable
+Miniflare 4 runtime and explicitly override those two transitive dependencies
+to patched Undici 7.29.1 and Sharp 0.35.5; verify npm audit and actual runtime
+tests before retaining the overrides. These are local test dependencies only.
+
+`npm test --prefix deploy/get-bud-dev` exposed a real-runtime failure while
+adding bounded cache streaming: the workerd warm-range test returned
+`404 !== 206` after removing its isolated fixture origin. Wrapping R2's native
+body in a JavaScript stream loses the runtime's known-length stream type;
+Cache API cannot reliably retain range-capable Content-Length from a header
+alone. Use Cloudflare FixedLengthStream for the client and cache branches,
+then assert full/cache lengths in the runtime regression. A bounded 256 KiB
+cache queue must abandon slow writers rather than buffer the whole archive.
+
+Resolution validated locally: all 24 Worker fixture/workerd tests and 22
+installer regression tests pass; npm audit reports zero vulnerabilities.
+Slow-cache and interrupted-origin fixtures confirm that failed cache writes
+do not publish partial objects or block complete downloads. Candidate/edge
+acceptance and production throughput measurements remain pending.

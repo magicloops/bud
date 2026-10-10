@@ -14,9 +14,8 @@ release channel:
 - GitHub Actions builds, packages, uploads, and attests artifacts.
 - `get.bud.dev` is a Cloudflare Worker custom domain.
 - The Worker serves `install.sh` and the stable manifest.
-- Versioned `get.bud.dev/releases/...` artifact URLs redirect to GitHub Release
-  assets so the installer keeps a first-party manifest contract while avoiding
-  Worker byte-proxying.
+- The currently deployed versioned archive URLs redirect to GitHub; Phase 7
+  replaces them with verified private R2 bytes and edge caching at the same URLs.
 
 ## Files
 
@@ -78,6 +77,11 @@ Running implementation checklist for this install-script plan.
 Manual dashboard runbook for the private R2 bucket and scoped publisher secrets,
 mirror-only validation, safe reruns, and the later Worker binding cutover.
 
+### `phase-7b-validation.md`
+
+Local Worker/runtime evidence and manual candidate binding, custom-hostname
+edge acceptance and production cutover checklist.
+
 ### `validation-checklist.md`
 
 Release-gate validation checklist focused on GitHub Release artifacts,
@@ -95,10 +99,10 @@ Release-gate validation checklist focused on GitHub Release artifacts,
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- R2 mirror tooling is implemented in Phase 7a after slow GitHub archive downloads
-  were reproduced. Manual infrastructure setup, real mirror validation, Worker
-  byte delivery and deployed performance acceptance remain open;
-  the intended change is server-side byte serving with existing installer URLs.
+- Phase 7a mirror uploads and read-only rerun are validated. Phase 7b Worker
+  streaming/cache implementation passes local fixture and workerd tests. Manual
+  candidate binding/deployment acceptance, Phase 7c promotion gating/backfill
+  and deployed performance checks remain open. Existing installer URLs stay.
 
 ---
 

@@ -1,7 +1,9 @@
 # Phase 7: R2 release delivery
 
-Status: Phase 7a tooling implemented and locally validated; manual Cloudflare
-setup reported complete; real mirror acceptance pending. Phases 7b/7c remain scoped.
+Status: Phase 7a mirror implementation and live acceptance complete, including
+read-only rerun. Node action warning fix remains uncommitted. Phases 7b/7c
+are tracked separately: Phase 7b is implemented and locally validated, with
+manual candidate/edge acceptance pending; Phase 7c remains scoped.
 
 Manual provisioning: [Phase 7a setup runbook](phase-7a-cloudflare-setup.md).
 
@@ -53,8 +55,7 @@ Artifacts are intentionally public Bud release resources, not user/thread resour
 
 ## Phase 7a: verified mirror tooling and infrastructure
 
-- [x] Manual private bucket/token setup reported complete; required GitHub secret names verified. Values and bucket access await real mirror validation.
-- [ ] Confirm the Worker binding with Phase 7b.
+- [x] Manual private bucket/token setup reported complete; required GitHub secret names verified. Bucket access and all five uploaded objects verified in run 38035057306.
 - [x] Add mirror tooling using a maintained S3-compatible client with bucket-scoped CI credentials. Keep credentials in GitHub secrets, never generated assets or logs.
 - [x] Fetch the exact GitHub release manifest and archives using `GH_TOKEN`; do not follow arbitrary manifest-provided URLs to acquire files. Derive filenames from the known target matrix and validated version.
 - [x] Require each current supported target exactly once; reject duplicates, malformed versions/paths, missing assets, size or checksum mismatch before upload.
@@ -64,20 +65,29 @@ Artifacts are intentionally public Bud release resources, not user/thread resour
 
 Validation: `npm test --prefix scripts` passes 18 tests, including actual SDK
 HTTP transport against a local S3 fixture. The user completed manual bucket/token
-provisioning; GitHub secret names were verified on 2026-10-10. No real release
-has been mirrored yet.
+provisioning; [run 38035057306](https://github.com/magicloops/bud/actions/runs/38035057306)
+verified all four v0.1.25 archives and the manifest on 2026-10-10.
+[Run 38035311447](https://github.com/magicloops/bud/actions/runs/38035311447)
+verified all five existing objects without uploads; public stable remains v0.1.25.
 
 Exit: local fixture tests exercise all failure paths; an explicitly selected real release can be mirrored and verified without changing the deployed stable version.
 
 ## Phase 7b: Worker byte delivery and caching
 
-- [ ] Replace archive redirects and `_release-assets.json` lookups with validated R2 reads. Remove obsolete redirect-map generation and tests once the production switch is complete; keep the stable/installer static-asset path.
-- [ ] Serve only known archive names and published version manifests. A missing object returns uncached 404; R2 failures return an uncached 503 rather than redirecting silently to GitHub.
-- [ ] Stream full bodies without buffering the archive in Worker memory. Return accurate `Content-Length`, content type, `Content-Disposition`, ETag, `Accept-Ranges` and immutable cache headers.
-- [ ] Cache successful complete `200` responses with canonical pathname keys; discard irrelevant query strings. Do not cache errors, partial responses or a HEAD body as the full archive. Cache-write failure must not fail the download.
-- [ ] Implement single closed/open/suffix ranges on cold R2 reads and warm cache hits, including `206`, correct lengths/`Content-Range`, unsatisfiable `416`, and explicit multi-range behavior (ignore unsupported multi-range and return the full representation).
-- [ ] Implement `If-None-Match` and `If-Range` consistently. HEAD returns full-representation metadata and no body; it must not download the full object just to populate cache.
-- [ ] Add an explicit diagnostic header for edge HIT/MISS/BYPASS and structured origin/error logging without credentials. Cloudflare's cache match can serve ranges from a complete cached response with `Content-Length`; test the actual deployed behavior.
+- [ ] Configure and confirm the `RELEASES` binding to the private bucket in the dashboard and checked-in Worker config.
+
+- [x] Replace Worker archive redirects and `_release-assets.json` reads with R2 delivery; stable/installer remain static. Obsolete generation/tests remain until the Phase 7c production switch.
+- [x] Serve only known archive names and published version manifests. A missing object returns uncached 404; R2 failures return an uncached 503 rather than redirecting silently to GitHub.
+- [x] Stream full bodies without buffering the archive in Worker memory. Return accurate `Content-Length`, content type, `Content-Disposition`, ETag, `Accept-Ranges` and immutable cache headers.
+- [x] Cache successful complete `200` responses with canonical pathname keys; discard irrelevant query strings. Do not cache errors, partial responses or a HEAD body as the full archive. Cache-write failure must not fail the download.
+- [x] Implement single closed/open/suffix ranges on cold R2 reads and warm cache hits, including `206`, correct lengths/`Content-Range`, unsatisfiable `416`, and explicit multi-range behavior (ignore unsupported multi-range and return the full representation).
+- [x] Implement `If-None-Match` and `If-Range` consistently. HEAD returns full-representation metadata and no body; it must not download the full object just to populate cache.
+- [x] Add an explicit diagnostic header for edge HIT/MISS/BYPASS and structured origin/error logging without credentials. Cloudflare's cache match can serve ranges from a complete cached response with `Content-Length`; test the actual deployed behavior.
+
+Local evidence: 24 fixture/workerd tests pass, including actual R2 and Cache
+API range reads with a 2 MiB archive. Node action v6 fix is included in the
+working tree; promotion runs the new Worker suite before deployment.
+[Manual candidate and edge validation](phase-7b-validation.md) remains pending.
 
 Exit: Worker tests and a deployed candidate route prove byte integrity, cold/warm semantics and bounded streaming behavior.
 

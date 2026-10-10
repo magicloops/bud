@@ -13,3 +13,7 @@ enabled = true
 [[routes]]
 pattern = "get.bud.dev"
 custom_domain = true
+
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "bud-releases-prod"
