@@ -1,7 +1,7 @@
 # Phase 7a: manual Cloudflare setup and mirror validation
 
 Status: mirror tooling and local validation implemented; manual bucket/token
-setup reported complete. Real R2 mirror validation is pending. This runbook uses the dashboard, not `cf`.
+setup complete. Live mirror and same-version read-only rerun succeeded. This runbook uses the dashboard, not `cf`.
 
 Parent: [Phase 7: R2 release delivery](phase-7-r2-release-delivery.md).
 
@@ -86,11 +86,14 @@ binding alone does not switch existing redirects to R2 byte delivery.
 - [x] Local integrity, conflict, interruption, resumption and conditional-write tests.
 - [x] Actual AWS SDK HTTP transport tested against a local S3 fixture, including file streaming and conditional rejection.
 - [x] Private bucket and scoped credentials configured manually (user reported complete).
-  GitHub secret names verified on 2026-10-10; permissions and values await the real mirror test.
-- [ ] `v0.1.25` mirrored and all five R2 objects verified by the tool.
-- [ ] Same-version rerun verifies existing bytes without replacement.
-- [ ] Current deployed stable manifest unchanged by mirroring.
+  GitHub secret names and successful bucket access verified on 2026-10-10.
+- [x] `v0.1.25` mirrored and all five R2 objects verified by the tool.
+- [x] Same-version rerun verifies existing bytes without replacement.
+- [x] Mirror workflow performs no stable writes/deployment; public stable remains v0.1.25.
 - [ ] `RELEASES` binding configured with the Phase 7b Worker deployment.
 
-Record the successful workflow run URL or local validation date here once
-performed. Production remains on GitHub redirects until Phases 7b/7c.
+First mirror: [successful run, 2026-10-10](https://github.com/magicloops/bud/actions/runs/38035057306).
+Read-only rerun: [successful run, 2026-10-10](https://github.com/magicloops/bud/actions/runs/38035311447).
+All five objects reported `Verified existing`; stable was checked as v0.1.25.
+The Node.js 20 action warning is addressed locally by upgrading setup-node to v6;
+a new live run is needed to validate the workflow update. Production remains on GitHub redirects until Phases 7b/7c.

@@ -77,6 +77,9 @@
 - [x] 7a: local release/mirror suite passes (18 tests)
 - [x] 7a: manual Cloudflare setup runbook
 - [x] 7a: manual private bucket and scoped credentials configured (user report; GitHub secret names verified)
-- [ ] 7a: real release mirror and read-only rerun validated with stable unchanged
-- [ ] 7b: Worker R2 binding, streaming delivery and cache/range behavior
+- [x] 7a: first real release mirror succeeds (v0.1.25, run 38035057306)
+- [x] 7a: read-only rerun validated (run 38035311447); stable remains v0.1.25
+- [x] 7b: Worker R2 binding declared, streaming delivery and cache/range implementation
+- [x] 7b: 24 route/delivery/workerd tests pass locally
+- [ ] 7b: manual binding/candidate deployment and real edge acceptance
 - [ ] 7c: promotion gate, historical backfill, deployed integrity and performance acceptance

@@ -1,15 +1,15 @@
 # get-bud-dev
 
-Release-hosting handoff documentation for `https://get.bud.dev`.
+Release-hosting implementation and handoff for `https://get.bud.dev`.
 
 ## Files
 
 ### `release-hosting.md`
 
 Defines the expected hosted paths for versioned Bud daemon archives, the stable
-manifest, and the future installer. It also records the v1 artifact integrity
-policy and manual upload handoff while CI publishing credentials remain
-unwired.
+manifest and installer. Records the integrity contract, R2 cutover and manual
+binding/validation handoff; production stays on the existing deployment until
+explicitly promoted.
 
 ### `worker.js`
 
@@ -20,19 +20,46 @@ Responsibilities:
 - serves `/` as a landing-page install-script alias
 - serves `/install.sh`
 - serves `/releases/stable/manifest.json`
-- serves versioned `/releases/vX.Y.Z/manifest.json`
-- redirects versioned daemon archive URLs to exact GitHub Release asset URLs
-- reads promoted manifests and `_release-assets.json` from the Worker static
-  asset binding when deployment-time environment values are not supplied
+- routes known versioned archives and manifests to private R2 byte delivery
+- reads the stable manifest and installer from the Worker static asset binding
+  when deployment-time environment values are not supplied
 - allows only `GET` and `HEAD`
 - returns `404` for unknown paths without exposing directory listings
 - requires no GitHub API token at runtime
 
 ### `worker.test.mjs`
 
-Node test coverage for Worker route behavior, content types, cache headers,
-root installer alias behavior, versioned artifact redirects, `HEAD`, `405`,
-and `404` handling.
+Node fixture coverage for mutable static routes, root installer alias, `HEAD`,
+method denial and unknown-path handling.
+
+### `release-delivery.js`
+
+Strict version/target allowlist and R2 streaming for immutable release objects.
+Checks the version manifest completion marker before cold archive reads. Uses
+R2 metadata for HEAD, ETag/304 and If-Range checks, bounded R2 reads for single
+ranges, and complete-200-only Cache API storage through waitUntil. Warm ranges
+use Cache API range lookup, with bounded R2 fallback on eviction/failure.
+Client-driven streaming limits the cache writer queue to 256 KiB and abandons
+slow cache writes. Native FixedLengthStream preserves known-length metadata
+for cache range support.
+Returns query-independent HIT/MISS/BYPASS diagnostics and sanitized origin/cache
+logs; missing objects and storage errors are no-store 404/503, without GitHub
+fallback. Releases are anonymous public resources; publishers alone have bucket
+write credentials. No viewer/user rows are involved.
+
+### `release-delivery.test.mjs`
+
+Fixtures cover cold/warm bodies, completion-marker gating, all targets and
+historical manifests, HEAD, ranges/416/multi-range fallback, ETag/If-Range,
+cache errors/eviction, streaming before completion, origin races and strict
+route rejection, bounded slow-cache handling and interrupted origin bodies.
+
+### `release-runtime.test.mjs`
+
+Runs the actual Worker modules in workerd via Miniflare with isolated R2 and
+Cache bindings and prohibited outbound fetches. Validates 2 MiB archive hash,
+real R2 suffix reads, full cache population, warm cached ranges after fixture
+origin deletion, conditional requests and stable no-store behavior.
 
 ### `install-sh.test.mjs`
 
@@ -76,15 +103,21 @@ Covers:
 ### `wrangler.toml`
 
 Cloudflare Worker deployment config for the `get.bud.dev` custom domain route
-and static asset binding. The custom-domain route uses the bare hostname
+and static asset binding, plus private R2 bucket `bud-releases-prod` bound as
+`RELEASES`. The custom-domain route uses the bare hostname
 `get.bud.dev`; Cloudflare custom domains do not allow path or wildcard route
 patterns. Static assets set `run_worker_first = true` so mutable installer and
 stable-manifest routes always run through Worker code before the static asset
 cache.
 
-### `package.json`
+### `package.json` / `package-lock.json`
 
-Local package metadata that marks this folder as ESM for Node-based Worker tests.
+Isolated ESM test tooling with reproducible npm lockfile and a pinned Miniflare
+4 dev dependency. Scoped overrides use patched Undici 7.29.1 and Sharp 0.35.5
+because the stable Miniflare release pins vulnerable versions. These are not
+Worker runtime dependencies. Run `npm ci --ignore-scripts --prefix deploy/get-bud-dev`
+and `npm test --prefix deploy/get-bud-dev`; installer regressions use
+`npm run test:installer --prefix deploy/get-bud-dev`.
 
 ## Subfolders
 
@@ -94,11 +127,14 @@ Static Worker assets.
 
 - `install.sh` - public shell installer served at `/install.sh`
 - `releases/stable/manifest.json` - generated during stable promotion
-- `releases/vX.Y.Z/manifest.json` - generated during version promotion
-- `_release-assets.json` - generated redirect map from first-party artifact
-  path to exact GitHub Release asset URL
+- `releases/vX.Y.Z/manifest.json` and `_release-assets.json` - still generated
+  by the current promotion utility for the deployed redirect implementation;
+  the new Worker does not read them. Remove obsolete generation in Phase 7c.
 
 ## Dependencies
+
+- Private R2 binding `RELEASES` and Cloudflare `caches.default`
+- Node.js 22 for local tests; Miniflare/workerd only in the test package
 
 - [../../scripts/scripts.spec.md](../../scripts/scripts.spec.md)
 - [../../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md](../../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md)

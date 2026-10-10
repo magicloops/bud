@@ -45,19 +45,23 @@ The workflow:
 - shares a non-canceling `bud-release-publication` concurrency group with
   mirror-only runs
 - uses `actions/checkout@v5` for Node.js 24-compatible checkout
+- installs Node.js 22 with `actions/setup-node@v6` and runs the Worker fixture
+  and workerd runtime tests before any deployment
 - downloads `manifest.<version>.json` from that GitHub Release
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
 - deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with
   `cloudflare/wrangler-action@v4` and explicitly requests Wrangler v4
-- optionally smoke-tests `/`, `/install.sh`, the stable manifest (polling up Both the stable manifest AND the versioned Linux artifact routes are polled (up to 3 minutes) — Worker propagation is eventually consistent per route, and the v0.1.15 promote saw the manifest converge while an artifact HEAD 404'd a second later.
-  to 3 minutes for edge propagation of the new Worker version — single-shot
-  checks repeatedly raced it and read the previous release), and a
-  versioned artifact redirect
+- optionally smoke-tests `/`, `/install.sh`, the stable manifest and Linux
+  artifact availability, polling routes for edge propagation
+- Phase 7c still needs the verified mirror gate and full deployed checksum/range
+  checks; until then, mirror a selected version before invoking promotion
 
 ### `bud-release-mirror.yml`
 
 Manually dispatched, mirror-only workflow for one exact existing release tag.
-Installs the isolated release-tool package, runs its tests, downloads through
+Uses `actions/setup-node@v6` (Node.js 24 action runtime) to install Node.js 22
+for the scripts, with explicit npm lockfile caching. Installs the isolated
+release-tool package, runs its tests, downloads through
 the read-only GitHub token and uploads/verifies R2 objects using bucket-scoped
 S3 credentials. Shares promotion's concurrency group; never deploys the Worker
 or changes stable. Manual bucket/credential setup and acceptance are described
