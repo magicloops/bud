@@ -43,16 +43,18 @@ test("workerd streams a full archive and serves real cached ranges and condition
   const sha = (data) => createHash("sha256").update(data).digest("hex");
   assert.equal(sha(Buffer.from(await full.arrayBuffer())), sha(bytes));
   // Cache writes use waitUntil; observe completion with a bounded condition,
-  // not arbitrary sleeps. No cached body is consumed by this readiness probe.
+  // not arbitrary sleeps. Drain the Miniflare proxy body: canceling it can
+  // race the Node bridge writer cleanup and raise an unhandled rejection.
   const cache = (await mf.getCaches()).default;
   let cached;
   for (let attempt = 0; attempt < 20; attempt++) {
     cached = await cache.match(url);
-    if (cached) { await cached.body.cancel(); break; }
+    if (cached) break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.ok(cached, "full response must populate cache");
   assert.equal(cached.headers.get("content-length"), String(bytes.length));
+  assert.equal(sha(Buffer.from(await cached.arrayBuffer())), sha(bytes));
   // Origin removal in this isolated fixture proves warm reads use cached bytes.
   await bucket.delete(prefix + name);
   for (const [range, start, end] of [["bytes=5-100", 5, 100], ["bytes=2093056-", bytes.length - 4096, bytes.length - 1], ["bytes=-4096", bytes.length - 4096, bytes.length - 1]]) {

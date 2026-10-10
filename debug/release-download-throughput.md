@@ -122,3 +122,26 @@ before stable generation, stream hash/size validation, redirects, corrupted
 ranges, absent cache hits, propagation and historical validation. Final local
 suite results are recorded in the Phase 7 checklist; live performance remains
 unmeasured until authorized rollout.
+
+Live rollback-version mirror succeeded in run 38038417151 on 2026-10-10: all
+five v0.1.24 objects uploaded/read-back verified, all 24 release-tool tests passed,
+and no check annotations were reported. Production promotion and throughput
+measurements remain pending the user's manual binding confirmation.
+
+## First promotion attempt blocked before deployment
+
+User confirmed the Cloudflare RELEASES -> bud-releases-prod binding on 2026-10-10.
+Promotion run 38039057997 failed at `npm test --prefix deploy/get-bud-dev`
+(23 pass, 1 fail); preparation and deployment were skipped. The workerd test
+raised an unhandled rejection: `TypeError: Invalid state: Writer is not bound
+to a WritableStream`, `ERR_INVALID_STATE`, at WritableStreamDefaultWriter.abort
+and miniflare/dist/src/index.js:72560. The cache readiness probe cancels a
+Miniflare proxy body; cancellation races writer cleanup on the CI Node runtime.
+Reproduce with current Node 22, then drain/hash the isolated cached body instead
+of canceling the proxy. Retain all cache length/hash/range assertions.
+
+The cancellation race did not reproduce on macOS with Node 22.23.3; it remains
+a CI-only observation. The proposed fix drains and verifies the complete cache
+proxy response instead of canceling it. All 24 Worker tests pass with this fix
+under Node 22.23.3; git diff --check passes. Live CI revalidation is pending
+commit/merge of this small test-only fix. No production deployment occurred.

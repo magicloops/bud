@@ -79,7 +79,7 @@ Exit: local fixture tests exercise all failure paths; an explicitly selected rea
 
 ## Phase 7b: Worker byte delivery and caching
 
-- [ ] Configure and confirm the `RELEASES` binding to the private bucket in the dashboard and checked-in Worker config.
+- [x] Configure and confirm the `RELEASES` binding to the private bucket in the dashboard and checked-in Worker config.
 
 - [x] Replace Worker archive redirects and `_release-assets.json` reads with R2 delivery; stable/installer remain static. Phase 7c removes obsolete generation/tests.
 - [x] Serve only known archive names and published version manifests. A missing object returns uncached 404; R2 failures return an uncached 503 rather than redirecting silently to GitHub.
@@ -99,7 +99,7 @@ Exit: Worker tests and a deployed get.bud.dev route prove byte integrity, cold/w
 
 - [x] Promotion downloads/verifies/mirrors all four GitHub assets, then generates stable assets and deploys the R2-enabled Worker. Fail before deployment if the mirror is incomplete.
 - [x] Add full-download SHA-256/size checks for all four first-party archives to deployed smoke tests; preserve installer and stable-manifest checks. Check ranges and one warm cache request too.
-- [ ] Inventory and retain v0.1.25 and v0.1.24 using the mirror-only workflow. Older versions stay on GitHub unless needed for development/rollback; do not invent missing manifests or automatically mirror canaries. Record coverage and omissions.
+- [x] Inventory and retain v0.1.25 and v0.1.24 using the mirror-only workflow. Older versions stay on GitHub unless needed for development/rollback; do not invent missing manifests or automatically mirror canaries. Record coverage and omissions.
 - [ ] Validate historical URLs after a subsequent promotion and rollback. Rollback repoints only stable; R2 versioned bytes and manifests stay immutable.
 - [ ] Purge old archive redirect entries from Cloudflare during cutover. Existing browser-cached year-long 302s cannot be purged remotely; validate with fresh clients and make the next newly tagged release the clean browser-cache path. Existing curl/reqwest callers do not need a client upgrade.
 - [ ] Benchmark the actual full archive from the affected machine and a second network, recording cache status and repeat variability.

@@ -85,4 +85,6 @@
 - [x] 7c: verified-mirror promotion gate and mandatory deployed integrity checker
 - [x] 7c: 24 release/mirror/promotion/smoke tests pass locally
 - [x] 7c: v0.1.24 rollback assets inventoried; older versions remain on GitHub
-- [ ] 7c: mirror v0.1.24, direct deployment, edge purge, rollback and performance acceptance
+- [x] 7c: v0.1.24 mirrored/read-back verified (run 38038417151)
+- [x] setup-node@v6 live run has no deprecation annotation
+- [ ] 7c: direct deployment, edge purge if needed, rollback and performance acceptance

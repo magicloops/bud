@@ -146,3 +146,20 @@ improvement) before marking the throughput issue resolved.
    it and v0.1.25 historical URLs, then promote v0.1.25 again and validate both.
    R2 versioned objects remain unchanged throughout. Record run URLs and stable
    observations rather than checking off rollback based only on local tests.
+
+## Live rollout evidence
+
+2026-10-10: [v0.1.24 mirror run 38038417151](https://github.com/magicloops/bud/actions/runs/38038417151)
+succeeded on merged commit 5320767. All four archives were uploaded and read back
+verified, then the version manifest was published and verified. All 24 release
+tooling tests passed in CI. No check annotations were reported, confirming the
+setup-node@v6 action warning fix on a live run. The user subsequently confirmed the RELEASES binding. Promotion was dispatched
+as run 38039057997, but Worker runtime validation failed before preparation or
+deployment. Production is unchanged.
+
+Promotion failure follow-up: the cache readiness probe canceled a Miniflare
+proxy response, raising ERR_INVALID_STATE in its Node writer cleanup. The local
+fix drains and SHA-256 verifies that cached response instead. All 24 Worker
+tests pass under Node 22.23.3 on macOS; the original failure was CI-only. The
+fix must be committed/merged and validated in the next promotion run before
+claiming Linux CI or deployed acceptance.

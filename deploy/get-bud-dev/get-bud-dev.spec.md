@@ -59,7 +59,9 @@ route rejection, bounded slow-cache handling and interrupted origin bodies.
 Runs the actual Worker modules in workerd via Miniflare with isolated R2 and
 Cache bindings and prohibited outbound fetches. Validates 2 MiB archive hash,
 real R2 suffix reads, full cache population, warm cached ranges after fixture
-origin deletion, conditional requests and stable no-store behavior.
+origin deletion, conditional requests and stable no-store behavior. Cache
+readiness drains and hashes the Miniflare proxy body rather than canceling it,
+avoiding a Node bridge writer-cleanup race seen in CI.
 
 ### `install-sh.test.mjs`
 
