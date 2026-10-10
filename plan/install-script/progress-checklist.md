@@ -68,7 +68,7 @@
 - [x] Worker tests cover `HEAD /`
 - [x] `/install.sh` remains supported
 - [x] service-generated commands remain on `/install.sh`
-- [ ] live promoted Worker validates root alias behavior
+- [x] live promoted Worker validates root alias behavior
 
 ## Phase 7: R2 Release Delivery
 
@@ -81,10 +81,12 @@
 - [x] 7a: read-only rerun validated (run 38035311447); stable remains v0.1.25
 - [x] 7b: Worker R2 binding declared, streaming delivery and cache/range implementation
 - [x] 7b: 24 route/delivery/workerd tests pass locally
-- [ ] 7b: manual binding/direct deployment and real edge acceptance
+- [x] 7b: manual binding/direct deployment and real edge acceptance (run 38039166332; local live checks pass)
 - [x] 7c: verified-mirror promotion gate and mandatory deployed integrity checker
 - [x] 7c: 24 release/mirror/promotion/smoke tests pass locally
 - [x] 7c: v0.1.24 rollback assets inventoried; older versions remain on GitHub
 - [x] 7c: v0.1.24 mirrored/read-back verified (run 38038417151)
 - [x] setup-node@v6 live run has no deprecation annotation
-- [ ] 7c: direct deployment, edge purge if needed, rollback and performance acceptance
+- [x] 7c: current/historical integrity and SJC timings pass; no stale redirect observed
+- [ ] 7c: checker identity-encoding fix committed and CI revalidated
+- [ ] 7c: second-network timings, isolated install/upgrade and live rollback

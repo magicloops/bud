@@ -37,9 +37,15 @@ export async function smokeRelease({ manifestBytes, origin = "https://get.bud.de
   wait = sleep, attempts = 18, log = console.log, benchmark = false, historical = false }) {
   const manifest = JSON.parse(manifestBytes);
   validateMirrorManifest(manifest, manifest.version);
-  const request = (url, options = {}) => fetcher(url, {
-    redirect: "manual", signal: AbortSignal.timeout(120_000), ...options,
-  });
+  const request = (url, options = {}) => {
+    // Edge compression can remove Content-Length even though fetch decodes the
+    // body. Verify the stored representation, including exact range lengths.
+    const headers = new Headers(options.headers);
+    headers.set("accept-encoding", "identity");
+    return fetcher(url, {
+      redirect: "manual", signal: AbortSignal.timeout(120_000), ...options, headers,
+    });
+  };
   // Deployment propagation retries only reads; corruption after convergence fails.
   let ready = historical;
   for (let i = 0; i < attempts && !historical; i++) {

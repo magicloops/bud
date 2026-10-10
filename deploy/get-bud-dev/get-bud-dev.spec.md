@@ -8,8 +8,7 @@ Release-hosting implementation and handoff for `https://get.bud.dev`.
 
 Defines the expected hosted paths for versioned Bud daemon archives, the stable
 manifest and installer. Records the integrity contract, R2 cutover and manual
-binding/validation handoff; production stays on the existing deployment until
-explicitly promoted.
+binding/validation handoff; the R2 Worker was explicitly promoted on 2026-10-10.
 
 ### `worker.js`
 

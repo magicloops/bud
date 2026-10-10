@@ -8,8 +8,9 @@ release artifacts.
 Phase 3 produces the artifact bundle and manifest in GitHub Actions. The actual
 GitHub Release is the canonical immutable archive. `get.bud.dev` is a
 Cloudflare Worker front door. Phase 7b implements direct byte delivery from a
-private R2 mirror with complete-response edge caching. This code is not yet
-deployed; the current public Worker continues to redirect archives to GitHub.
+private R2 mirror with complete-response edge caching, deployed on 2026-10-10
+in run 38039166332. Current and retained v0.1.24 archives pass live integrity
+and cache checks; final CI acceptance and rollout checks are tracked below.
 
 ## Required Paths
 
@@ -106,8 +107,9 @@ Deferred before broader public launch:
 - macOS code signing
 - macOS notarization
 - automated vulnerability audit gate
-- Production R2 cutover, verified promotion gate and deployed performance
-  acceptance (Phase 7); mirror upload and read-only rerun already passed
+- Final Phase 7 CI acceptance, second-network performance, isolated
+  install/upgrade and live rollback exercise; R2 delivery is deployed and
+  current/historical byte integrity passed from the local SJC connection
 
 ## R2 Delivery Contract
 
