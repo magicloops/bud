@@ -69,6 +69,86 @@ pub struct BudApp {
     local_llm_manager: LocalLlmManager,
     browser_manager: crate::browser::BrowserManager,
     debug_enabled: bool,
+    connection_budgets: ConnectionBudgets,
+}
+
+/// Startup budgets only; established sessions have no lifetime deadline.
+#[derive(Clone, Copy)]
+struct ConnectionBudgets {
+    setup: Duration,
+    authentication: Duration,
+    data_attachment: Duration,
+}
+
+impl Default for ConnectionBudgets {
+    fn default() -> Self {
+        Self {
+            setup: Duration::from_secs(30),
+            authentication: Duration::from_secs(20),
+            data_attachment: Duration::from_secs(10),
+        }
+    }
+}
+
+/// Dropping a pending setup future must not detach its channel writer.
+struct SetupWriter(Option<task::JoinHandle<()>>);
+
+impl SetupWriter {
+    fn take(&mut self) -> task::JoinHandle<()> {
+        self.0.take().expect("setup writer already transferred")
+    }
+
+    async fn shutdown(mut self) {
+        let handle = self.take();
+        handle.abort();
+        let _ = handle.await;
+    }
+}
+
+impl Drop for SetupWriter {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.0 {
+            handle.abort();
+        }
+    }
+}
+
+async fn connection_stage<T, E: From<anyhow::Error>>(
+    transport: &'static str,
+    stage: &'static str,
+    budget: Duration,
+    future: impl std::future::Future<Output = std::result::Result<T, E>>,
+) -> std::result::Result<T, E> {
+    let started = time::Instant::now();
+    let budget_ms = budget.as_millis() as u64;
+    info!(
+        transport,
+        stage, budget_ms, "Daemon connection stage started"
+    );
+    match time::timeout(budget, future).await {
+        Ok(result) => {
+            info!(
+                transport,
+                stage,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                ok = result.is_ok(),
+                "Daemon connection stage completed"
+            );
+            result
+        }
+        Err(_) => {
+            // The caller applies the existing retry or optional-carrier fallback.
+            warn!(
+                transport,
+                stage,
+                budget_ms,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                disposition = "retry_or_fallback",
+                "Daemon connection stage timed out"
+            );
+            Err(anyhow!("{transport} {stage} timed out after {budget_ms} ms").into())
+        }
+    }
 }
 
 struct SessionMeta {
@@ -103,6 +183,12 @@ impl GrpcDataAttachment {
 enum HandshakeError {
     AuthFailed { code: String, message: String },
     Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for HandshakeError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Other(error)
+    }
 }
 
 impl BudApp {
@@ -156,6 +242,7 @@ impl BudApp {
             local_llm_manager,
             browser_manager,
             debug_enabled,
+            connection_budgets: ConnectionBudgets::default(),
         }
     }
 
@@ -218,9 +305,17 @@ impl BudApp {
             self.local_llm_manager.refresh_capability().await;
             let url = Url::parse(&self.args.server)?;
             info!(server = %url, "Connecting to backend");
-            let (stream, _) = connect_async(url.clone())
-                .await
-                .with_context(|| format!("failed to connect to {}", url))?;
+            let (stream, _) = connection_stage(
+                "websocket",
+                "transport_setup",
+                self.connection_budgets.setup,
+                async {
+                    connect_async(url)
+                        .await
+                        .context("WebSocket transport setup failed")
+                },
+            )
+            .await?;
 
             match self.perform_handshake(stream).await {
                 Ok((stream, meta)) => {
@@ -265,7 +360,7 @@ impl BudApp {
             info!(endpoint = %endpoint, "Connecting to backend gRPC control gateway");
             let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<Value>();
             let (envelope_tx, envelope_rx) = mpsc::channel::<BudEnvelope>(128);
-            let writer_handle = task::spawn_local(async move {
+            let mut writer = SetupWriter(Some(task::spawn_local(async move {
                 while let Some(frame) = frame_rx.recv().await {
                     let envelope = match json_frame_to_envelope(&frame) {
                         Ok(envelope) => envelope,
@@ -278,20 +373,26 @@ impl BudApp {
                         break;
                     }
                 }
-            });
+            })));
             let sender = TransportSender::grpc(frame_tx.clone());
             let hello_frame = self.build_hello_frame(HelloTransportMode::GrpcControl)?;
             send_transport_frame(&sender, hello_frame)?;
 
-            let mut stream =
-                match connect_control_stream(&endpoint, ReceiverStream::new(envelope_rx)).await {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        drop(sender);
-                        let _ = writer_handle.await;
-                        return Err(err);
-                    }
-                };
+            let mut stream = match connection_stage(
+                "grpc_control",
+                "transport_setup",
+                self.connection_budgets.setup,
+                connect_control_stream(&endpoint, ReceiverStream::new(envelope_rx)),
+            )
+            .await
+            {
+                Ok(stream) => stream,
+                Err(err) => {
+                    drop(sender);
+                    writer.shutdown().await;
+                    return Err(err);
+                }
+            };
 
             match self.perform_grpc_handshake(&sender, &mut stream).await {
                 Ok(meta) => {
@@ -326,14 +427,14 @@ impl BudApp {
                             session_sender,
                             stream,
                             meta,
-                            writer_handle,
+                            writer.take(),
                             data_attachment,
                         )
                         .await;
                 }
                 Err(HandshakeError::AuthFailed { code, message }) => {
                     drop(sender);
-                    let _ = writer_handle.await;
+                    writer.shutdown().await;
                     if self.args.token.is_some() {
                         bail!(
                             "backend error during gRPC handshake (code={}): {}",
@@ -352,28 +453,49 @@ impl BudApp {
                 }
                 Err(HandshakeError::Other(err)) => {
                     drop(sender);
-                    let _ = writer_handle.await;
+                    writer.shutdown().await;
                     return Err(err);
                 }
             }
         }
     }
 
-    async fn perform_grpc_handshake(
+    async fn perform_grpc_handshake<S>(
         &mut self,
         sender: &TransportSender,
-        stream: &mut GrpcControlStream,
-    ) -> std::result::Result<SessionMeta, HandshakeError> {
+        stream: &mut S,
+    ) -> std::result::Result<SessionMeta, HandshakeError>
+    where
+        S: futures::Stream<Item = std::result::Result<BudEnvelope, tonic::Status>> + Unpin,
+    {
+        let ack = connection_stage(
+            "grpc_control",
+            "authentication",
+            self.connection_budgets.authentication,
+            self.exchange_grpc_hello(sender, stream),
+        )
+        .await?;
+        self.accept_hello_ack(ack, true).await
+    }
+
+    async fn exchange_grpc_hello<S>(
+        &mut self,
+        sender: &TransportSender,
+        stream: &mut S,
+    ) -> std::result::Result<HelloAckFrame, HandshakeError>
+    where
+        S: futures::Stream<Item = std::result::Result<BudEnvelope, tonic::Status>> + Unpin,
+    {
         loop {
             let envelope = stream
-                .message()
+                .next()
                 .await
-                .map_err(|err| HandshakeError::Other(err.into()))?
                 .ok_or_else(|| {
                     HandshakeError::Other(anyhow!(
                         "gRPC control stream closed before handshake completed"
                     ))
-                })?;
+                })?
+                .map_err(|err| HandshakeError::Other(err.into()))?;
             let text = envelope_to_json_text(&envelope).map_err(HandshakeError::Other)?;
             let envelope: Envelope =
                 serde_json::from_str(&text).map_err(|err| HandshakeError::Other(err.into()))?;
@@ -382,30 +504,7 @@ impl BudApp {
                 "hello_ack" => {
                     let ack: HelloAckFrame = serde_json::from_str(&text)
                         .map_err(|err| HandshakeError::Other(err.into()))?;
-                    if let Some(secret) = ack.device_secret.clone() {
-                        let new_identity = DeviceIdentity {
-                            bud_id: ack.bud_id.clone(),
-                            device_secret: secret,
-                            server_url: self.args.server.clone(),
-                            name: self.device_name.clone(),
-                            default_cwd: self.default_cwd.clone(),
-                        };
-                        persist_identity(&self.identity_path, &new_identity)
-                            .await
-                            .map_err(HandshakeError::Other)?;
-                        self.identity = Some(new_identity);
-                        self.args.token = None;
-                    } else if self.identity.is_none() {
-                        return Err(HandshakeError::Other(anyhow!(
-                            "hello_ack missing device_secret during enrollment"
-                        )));
-                    }
-                    return Ok(SessionMeta {
-                        bud_id: ack.bud_id,
-                        session_id: ack.session_id,
-                        heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
-                        envelope_binary: true,
-                    });
+                    return Ok(ack);
                 }
                 "hello_challenge" => {
                     let challenge: HelloChallengeFrame = serde_json::from_str(&text)
@@ -457,7 +556,7 @@ impl BudApp {
         info!(endpoint = %endpoint, "Attaching gRPC data stream");
         let (frame_tx, mut frame_rx) = mpsc::channel::<Value>(128);
         let (envelope_tx, envelope_rx) = mpsc::channel::<BudEnvelope>(128);
-        let writer_handle = task::spawn_local(async move {
+        let mut writer = SetupWriter(Some(task::spawn_local(async move {
             while let Some(frame) = frame_rx.recv().await {
                 let envelope = match json_frame_to_data_envelope(&frame) {
                     Ok(envelope) => envelope,
@@ -470,7 +569,7 @@ impl BudApp {
                     break;
                 }
             }
-        });
+        })));
 
         let mut streams = vec!["terminal_output", "localhost_http_proxy", "file_read"];
         if self.local_llm_manager.capability().is_some() {
@@ -490,19 +589,25 @@ impl BudApp {
         });
         if frame_tx.send(attach_frame).await.is_err() {
             drop(frame_tx);
-            let _ = writer_handle.await;
+            writer.shutdown().await;
             bail!("gRPC data writer stopped before attach");
         }
 
-        let mut stream =
-            match connect_data_stream(&endpoint, ReceiverStream::new(envelope_rx)).await {
-                Ok(stream) => stream,
-                Err(err) => {
-                    drop(frame_tx);
-                    let _ = writer_handle.await;
-                    return Err(err);
-                }
-            };
+        let mut stream = match connection_stage(
+            "grpc_data",
+            "attachment_setup",
+            self.connection_budgets.data_attachment,
+            connect_data_stream(&endpoint, ReceiverStream::new(envelope_rx)),
+        )
+        .await
+        {
+            Ok(stream) => stream,
+            Err(err) => {
+                drop(frame_tx);
+                writer.shutdown().await;
+                return Err(err);
+            }
+        };
 
         let reader_frame_tx = frame_tx.clone();
         let proxy_manager = self.proxy_manager.clone();
@@ -634,7 +739,7 @@ impl BudApp {
 
         Ok(Some(GrpcDataAttachment {
             sender: frame_tx,
-            writer_handle,
+            writer_handle: writer.take(),
             reader_handle,
         }))
     }
@@ -775,9 +880,60 @@ impl BudApp {
 
     async fn perform_handshake(
         &mut self,
-        mut stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     ) -> std::result::Result<
         (WebSocketStream<MaybeTlsStream<TcpStream>>, SessionMeta),
+        HandshakeError,
+    > {
+        let (stream, ack, binary) = connection_stage(
+            "websocket",
+            "authentication",
+            self.connection_budgets.authentication,
+            self.exchange_websocket_hello(stream),
+        )
+        .await?;
+        let meta = self.accept_hello_ack(ack, binary).await?;
+        Ok((stream, meta))
+    }
+
+    // Keep disk persistence outside the network deadline: cancelling a truncate/
+    // write midway could destroy an otherwise valid enrollment credential.
+    async fn accept_hello_ack(
+        &mut self,
+        ack: HelloAckFrame,
+        envelope_binary: bool,
+    ) -> std::result::Result<SessionMeta, HandshakeError> {
+        if let Some(secret) = ack.device_secret {
+            let identity = DeviceIdentity {
+                bud_id: ack.bud_id.clone(),
+                device_secret: secret,
+                server_url: self.args.server.clone(),
+                name: self.device_name.clone(),
+                default_cwd: self.default_cwd.clone(),
+            };
+            persist_identity(&self.identity_path, &identity).await?;
+            self.identity = Some(identity);
+            self.args.token = None;
+        } else if self.identity.is_none() {
+            return Err(anyhow!("hello_ack missing device_secret during enrollment").into());
+        }
+        Ok(SessionMeta {
+            bud_id: ack.bud_id,
+            session_id: ack.session_id,
+            heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
+            envelope_binary,
+        })
+    }
+
+    async fn exchange_websocket_hello(
+        &mut self,
+        mut stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> std::result::Result<
+        (
+            WebSocketStream<MaybeTlsStream<TcpStream>>,
+            HelloAckFrame,
+            bool,
+        ),
         HandshakeError,
     > {
         let hello_frame = self
@@ -827,31 +983,7 @@ impl BudApp {
                 "hello_ack" => {
                     let ack: HelloAckFrame = serde_json::from_str(&text)
                         .map_err(|err| HandshakeError::Other(err.into()))?;
-                    if let Some(secret) = ack.device_secret.clone() {
-                        let new_identity = DeviceIdentity {
-                            bud_id: ack.bud_id.clone(),
-                            device_secret: secret,
-                            server_url: self.args.server.clone(),
-                            name: self.device_name.clone(),
-                            default_cwd: self.default_cwd.clone(),
-                        };
-                        persist_identity(&self.identity_path, &new_identity)
-                            .await
-                            .map_err(HandshakeError::Other)?;
-                        self.identity = Some(new_identity);
-                        self.args.token = None;
-                    } else if self.identity.is_none() {
-                        return Err(HandshakeError::Other(anyhow!(
-                            "hello_ack missing device_secret during enrollment"
-                        )));
-                    }
-                    let meta = SessionMeta {
-                        bud_id: ack.bud_id,
-                        session_id: ack.session_id,
-                        heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
-                        envelope_binary,
-                    };
-                    return Ok((stream, meta));
+                    return Ok((stream, ack, envelope_binary));
                 }
                 "hello_challenge" => {
                     let challenge: HelloChallengeFrame = serde_json::from_str(&text)
@@ -1620,7 +1752,7 @@ mod tests {
             claim_id: None,
             name: Some("bud-test".into()),
             cwd: Some(workspace.to_string_lossy().into_owned()),
-            base_dir: None,
+            base_dir: Some(workspace.to_string_lossy().into_owned()),
             local: false,
             identity_file: Some(
                 workspace
@@ -1679,5 +1811,454 @@ mod tests {
 
         assert!(send_transport_message(&extra_sender, Message::Close(None)).is_err());
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    async fn connection_test_app(workspace: &std::path::Path, server: String) -> BudApp {
+        let mut args = test_args(workspace);
+        args.server = server;
+        args.reconnect_base_sec = 0;
+        let mut app = BudApp::new(args).await;
+        app.connection_budgets = ConnectionBudgets {
+            setup: Duration::from_millis(250),
+            authentication: Duration::from_millis(250),
+            data_attachment: Duration::from_millis(250),
+        };
+        let identity = DeviceIdentity {
+            bud_id: "bud-timeout-test".into(),
+            device_secret: "test-only-secret".into(),
+            server_url: app.args.server.clone(),
+            name: "test".into(),
+            default_cwd: workspace.to_string_lossy().into_owned(),
+        };
+        persist_identity(&app.identity_path, &identity)
+            .await
+            .unwrap();
+        app.identity = Some(identity);
+        app
+    }
+
+    fn test_frame(kind: &str) -> Value {
+        json!({"proto": PROTO_VERSION, "type": kind, "id": new_message_id(),
+            "ts": now_millis(), "ext": {}})
+    }
+
+    fn test_ack() -> Value {
+        let mut frame = test_frame("hello_ack");
+        frame["bud_id"] = json!("bud-timeout-test");
+        frame["session_id"] = json!("session-test");
+        frame["heartbeat_sec"] = json!(30);
+        frame
+    }
+
+    fn assert_transport_timeout<T>(result: std::result::Result<T, HandshakeError>) {
+        match result {
+            Err(HandshakeError::Other(error)) => assert!(error.to_string().contains("timed out")),
+            _ => panic!("expected transport timeout, not success or authentication rejection"),
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_and_tls_setup_timeout_dispose_socket() {
+        use tokio::io::AsyncReadExt;
+        for scheme in ["ws", "wss"] {
+            let dir = tempfile::tempdir().unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut app = connection_test_app(
+                dir.path(),
+                format!("{scheme}://{}/ws", listener.local_addr().unwrap()),
+            )
+            .await;
+            let before = tokio::fs::read(&app.identity_path).await.unwrap();
+            let peer = async {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = [0; 4096];
+                // Consume request/ClientHello until the deadline drops the socket.
+                while socket.read(&mut bytes).await.unwrap() != 0 {}
+            };
+            let attempt = async {
+                let error = app.connect_once().await.unwrap_err();
+                assert!(error.to_string().contains("transport_setup timed out"));
+            };
+            time::timeout(Duration::from_secs(3), async {
+                tokio::join!(peer, attempt);
+            })
+            .await
+            .unwrap();
+            assert_eq!(tokio::fs::read(&app.identity_path).await.unwrap(), before);
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_auth_deadline_survives_silent_peer_challenge_and_ping_noise() {
+        for challenge in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut app = connection_test_app(
+                dir.path(),
+                format!("ws://{}/ws", listener.local_addr().unwrap()),
+            )
+            .await;
+            let before = tokio::fs::read(&app.identity_path).await.unwrap();
+            let peer = async {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                let hello = ws.next().await.unwrap().unwrap();
+                assert!(matches!(hello, Message::Binary(_)));
+                if challenge {
+                    let mut frame = test_frame("hello_challenge");
+                    frame["nonce"] = json!("test-nonce");
+                    ws.send(Message::Text(frame.to_string())).await.unwrap();
+                    assert!(matches!(
+                        ws.next().await.unwrap().unwrap(),
+                        Message::Text(_)
+                    ));
+                    // Valid unexpected messages and pings must not refresh the budget.
+                    loop {
+                        if ws.send(Message::Ping(vec![1])).await.is_err() {
+                            break;
+                        }
+                        if ws
+                            .send(Message::Text(test_frame("log_ack").to_string()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        time::sleep(Duration::from_millis(10)).await;
+                    }
+                } else {
+                    assert!(ws.next().await.is_none_or(|message| message.is_err()));
+                }
+            };
+            let attempt = async {
+                let error = app.connect_once().await.unwrap_err();
+                assert!(error.to_string().contains("authentication timed out"));
+            };
+            time::timeout(Duration::from_secs(3), async {
+                tokio::join!(peer, attempt);
+            })
+            .await
+            .unwrap();
+            assert_eq!(app.identity.as_ref().unwrap().bud_id, "bud-timeout-test");
+            assert_eq!(tokio::fs::read(&app.identity_path).await.unwrap(), before);
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_loop_recovers_same_identity_and_keeps_healthy_idle_session() {
+        task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let app = connection_test_app(
+                    dir.path(),
+                    format!("ws://{}/ws", listener.local_addr().unwrap()),
+                )
+                .await;
+                let identity_path = app.identity_path.clone();
+                let before = tokio::fs::read(&identity_path).await.unwrap();
+                let peer = async {
+                    // First upgrade is silent and must expire automatically.
+                    let (mut first, _) = listener.accept().await.unwrap();
+                    let mut bytes = [0; 4096];
+                    use tokio::io::AsyncReadExt;
+                    while first.read(&mut bytes).await.unwrap() != 0 {}
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                    let Message::Binary(hello) = ws.next().await.unwrap().unwrap() else {
+                        panic!("hello");
+                    };
+                    let hello: Value =
+                        serde_json::from_str(&decode_bud_frame(&hello).unwrap()).unwrap();
+                    assert_eq!(hello["bud_id"], "bud-timeout-test");
+                    // Authentication delay succeeds within the budget.
+                    time::sleep(Duration::from_millis(20)).await;
+                    ws.send(Message::Text(test_ack().to_string()))
+                        .await
+                        .unwrap();
+                    let Message::Text(report) = ws.next().await.unwrap().unwrap() else {
+                        panic!("report");
+                    };
+                    let report: Value = serde_json::from_str(&report).unwrap();
+                    assert_eq!(report["type"], "reconnect_report");
+                    assert_eq!(report["bud_id"], "bud-timeout-test");
+                    assert_eq!(report["device_session_id"], "session-test");
+                    time::sleep(Duration::from_millis(800)).await;
+                    ws.send(Message::Ping(vec![9])).await.unwrap();
+                    loop {
+                        match ws.next().await.unwrap().unwrap() {
+                            Message::Pong(payload) => {
+                                assert_eq!(payload, vec![9]);
+                                break;
+                            }
+                            Message::Text(_) => {} // Immediate heartbeat is expected.
+                            other => panic!("unexpected {other:?}"),
+                        }
+                    }
+                    ws.close(None).await.unwrap();
+                    // Accepting attempt three proves established teardown/retry returned.
+                    let (_third, _) = listener.accept().await.unwrap();
+                };
+                time::timeout(Duration::from_secs(3), async {
+                    tokio::select! {
+                        _ = peer => {},
+                        result = app.run_loop() => panic!("run loop ended: {result:?}"),
+                    }
+                })
+                .await
+                .unwrap();
+                assert_eq!(tokio::fs::read(identity_path).await.unwrap(), before);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn grpc_auth_timeout_and_explicit_auth_failure_keep_distinct_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = connection_test_app(dir.path(), "ws://127.0.0.1/ws".into()).await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sender = TransportSender::grpc(tx);
+        let (in_tx, in_rx) = mpsc::channel(4);
+        let mut stream = ReceiverStream::new(in_rx);
+        let mut challenge = test_frame("hello_challenge");
+        challenge["nonce"] = json!("test-nonce");
+        in_tx
+            .send(Ok(json_frame_to_envelope(&challenge).unwrap()))
+            .await
+            .unwrap();
+        assert_transport_timeout(app.perform_grpc_handshake(&sender, &mut stream).await);
+        assert_eq!(rx.recv().await.unwrap()["type"], "hello_proof");
+        let mut rejection = test_frame("error");
+        rejection["code"] = json!("AUTH_FAILED");
+        rejection["message"] = json!("test rejection");
+        in_tx
+            .send(Ok(json_frame_to_envelope(&rejection).unwrap()))
+            .await
+            .unwrap();
+        assert!(matches!(
+            app.perform_grpc_handshake(&sender, &mut stream).await,
+            Err(HandshakeError::AuthFailed { .. })
+        ));
+        assert!(!grpc_error_allows_websocket_fallback(&anyhow!(
+            "backend error during gRPC handshake (code=AUTH_FAILED): test"
+        )));
+        assert!(grpc_error_allows_websocket_fallback(&anyhow!(
+            "grpc_control authentication timed out"
+        )));
+        in_tx
+            .send(Ok(json_frame_to_envelope(&test_ack()).unwrap()))
+            .await
+            .unwrap();
+        let meta = app
+            .perform_grpc_handshake(&sender, &mut stream)
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(meta.bud_id, "bud-timeout-test");
+    }
+
+    #[tokio::test]
+    async fn grpc_silent_setup_and_optional_data_setup_return_without_writer_drain() {
+        task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let endpoint = format!("http://{}", listener.local_addr().unwrap());
+                let mut app = connection_test_app(dir.path(), "ws://127.0.0.1/ws".into()).await;
+                let peer = async {
+                    use tokio::io::AsyncReadExt;
+                    for _ in 0..2 {
+                        let (mut socket, _) = listener.accept().await.unwrap();
+                        let mut bytes = [0; 4096];
+                        while socket.read(&mut bytes).await.unwrap() != 0 {}
+                    }
+                };
+                let attempts = async {
+                    let error = app.connect_once_grpc(endpoint.clone()).await.unwrap_err();
+                    assert!(error.to_string().contains("transport_setup timed out"));
+                    app.args.grpc_data_url = Some(endpoint);
+                    let meta = SessionMeta {
+                        bud_id: "test".into(),
+                        session_id: "test-session".into(),
+                        heartbeat_sec: 30,
+                        envelope_binary: true,
+                    };
+                    let error = app.start_grpc_data_attachment(&meta).await.err().unwrap();
+                    assert!(error.to_string().contains("attachment_setup timed out"));
+                };
+                time::timeout(Duration::from_secs(3), async {
+                    tokio::join!(peer, attempts);
+                })
+                .await
+                .unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_setup_aborts_writer_even_with_retained_sender() {
+        task::LocalSet::new()
+            .run_until(async {
+                let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+                let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+                let setup = task::spawn_local(async move {
+                    let _writer = SetupWriter(Some(task::spawn_local(async move {
+                        while rx.recv().await.is_some() {}
+                    })));
+                    started_tx.send(()).unwrap();
+                    std::future::pending::<()>().await;
+                });
+                started_rx.await.unwrap();
+                setup.abort();
+                let _ = setup.await;
+                time::timeout(Duration::from_secs(1), tx.closed())
+                    .await
+                    .unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_disposes_pending_websocket_auth_and_grpc_setup() {
+        task::LocalSet::new().run_until(async {
+            for grpc in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let mut app = connection_test_app(dir.path(), format!("ws://{address}/ws")).await;
+                app.connection_budgets.setup = Duration::from_secs(60);
+                app.connection_budgets.authentication = Duration::from_secs(60);
+                let before = tokio::fs::read(&app.identity_path).await.unwrap();
+                let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+                let peer = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    if grpc {
+                        ready_tx.send(()).unwrap();
+                        use tokio::io::AsyncReadExt;
+                        let mut bytes = [0; 4096];
+                        while socket.read(&mut bytes).await.unwrap() != 0 {}
+                    } else {
+                        let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                        ws.next().await.unwrap().unwrap(); // hello; no response
+                        ready_tx.send(()).unwrap();
+                        assert!(ws.next().await.is_none_or(|message| message.is_err()));
+                    }
+                };
+                let cancel = async {
+                    let attempt = async {
+                        if grpc { app.connect_once_grpc(format!("http://{address}")).await }
+                        else { app.connect_once_websocket().await }
+                    };
+                    tokio::select! {
+                        result = attempt => panic!("attempt completed before cancellation: {result:?}"),
+                        _ = ready_rx => {},
+                    }
+                };
+                time::timeout(Duration::from_secs(3), async { tokio::join!(peer, cancel); }).await.unwrap();
+                assert_eq!(tokio::fs::read(&app.identity_path).await.unwrap(), before);
+            }
+        }).await;
+    }
+
+    #[tokio::test]
+    async fn enrollment_ack_is_persisted_after_network_deadline_and_auth_rejection_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = connection_test_app(dir.path(), "ws://127.0.0.1/ws".into()).await;
+        app.identity = None;
+        app.args.token = Some("test-only-enrollment".into());
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let sender = TransportSender::grpc(tx);
+        let mut ack = test_ack();
+        ack["device_secret"] = json!("new-test-secret");
+        let mut stream = futures::stream::iter([Ok(json_frame_to_envelope(&ack).unwrap())]);
+        let meta = app
+            .perform_grpc_handshake(&sender, &mut stream)
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(meta.bud_id, "bud-timeout-test");
+        assert!(app.args.token.is_none());
+        assert_eq!(
+            load_identity(&app.identity_path)
+                .await
+                .unwrap()
+                .unwrap()
+                .device_secret,
+            "new-test-secret"
+        );
+        let before = tokio::fs::read(&app.identity_path).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = async {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            ws.next().await.unwrap().unwrap();
+            let mut frame = test_frame("error");
+            frame["code"] = json!("AUTH_FAILED");
+            frame["message"] = json!("test rejection");
+            ws.send(Message::Text(frame.to_string())).await.unwrap();
+        };
+        let client = async {
+            let (ws, _) = connect_async(format!("ws://{}/ws", listener.local_addr().unwrap()))
+                .await
+                .unwrap();
+            assert!(matches!(
+                app.perform_handshake(ws).await,
+                Err(HandshakeError::AuthFailed { .. })
+            ));
+        };
+        time::timeout(Duration::from_secs(3), async {
+            tokio::join!(peer, client);
+        })
+        .await
+        .unwrap();
+        // Classification leaves invalidation to the existing explicit-rejection caller.
+        assert_eq!(tokio::fs::read(&app.identity_path).await.unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn grpc_setup_timeout_falls_back_to_authenticated_websocket() {
+        task::LocalSet::new()
+            .run_until(async {
+                use tokio::io::AsyncReadExt;
+                let dir = tempfile::tempdir().unwrap();
+                let grpc_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let ws_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let mut app = connection_test_app(
+                    dir.path(),
+                    format!("ws://{}/ws", ws_listener.local_addr().unwrap()),
+                )
+                .await;
+                app.args.grpc_control_url =
+                    Some(format!("http://{}", grpc_listener.local_addr().unwrap()));
+                let grpc_peer = async {
+                    let (mut socket, _) = grpc_listener.accept().await.unwrap();
+                    let mut bytes = [0; 4096];
+                    while socket.read(&mut bytes).await.unwrap() != 0 {}
+                };
+                let ws_peer = async {
+                    let (socket, _) = ws_listener.accept().await.unwrap();
+                    let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                    ws.next().await.unwrap().unwrap();
+                    ws.send(Message::Text(test_ack().to_string()))
+                        .await
+                        .unwrap();
+                    let Message::Text(report) = ws.next().await.unwrap().unwrap() else {
+                        panic!("report");
+                    };
+                    assert_eq!(
+                        serde_json::from_str::<Value>(&report).unwrap()["type"],
+                        "reconnect_report"
+                    );
+                    ws.close(None).await.unwrap();
+                };
+                time::timeout(Duration::from_secs(3), async {
+                    let (_, _, result) = tokio::join!(grpc_peer, ws_peer, app.connect_once());
+                    result.unwrap();
+                })
+                .await
+                .unwrap();
+                assert_eq!(app.identity.as_ref().unwrap().bud_id, "bud-timeout-test");
+            })
+            .await;
     }
 }

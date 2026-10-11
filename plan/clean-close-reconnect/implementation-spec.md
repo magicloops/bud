@@ -26,6 +26,14 @@ Related docs:
 
 ## Objective
 
+October 2026 extension: [Phase 4](phase-4-connection-and-authentication-deadlines.md)
+also bounds connection setup and authentication after a silent attempt stalled
+for over eleven hours. See the [new incident](../../debug/daemon-connection-handshake-stall.md).
+Phases 1–3 remain implemented; Phase 4 is implemented with physical resume/network
+acceptance pending. It adds
+daemon startup deadlines and attempt cleanup without changing protocol shapes.
+Established-connection liveness remains a separate follow-up.
+
 Make the daemon reconnect promptly whenever the active WebSocket control
 transport closes or errors, even if old proxy/file tasks are still active. Old
 transport-bound work should be canceled or made unable to block reconnect.

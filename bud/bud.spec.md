@@ -123,6 +123,13 @@ Cargo build artifacts. Not tracked in version control.
 Key boundary decisions:
 
 - `app.rs` owns connection lifecycle and frame dispatch for both WebSocket and opt-in gRPC control.
+- Startup is bounded: transport setup 30 seconds, network authentication 20
+  seconds, optional gRPC data attachment setup 10 seconds. Silent peers trigger
+  existing retry/fallback without deleting device identity. Setup writers are
+  cancellation-owned; credential persistence occurs after the network exchange.
+  Healthy sessions are not subject to startup deadlines. See
+  [recovery scope](../plan/clean-close-reconnect/phase-4-connection-and-authentication-deadlines.md)
+  for remaining physical resume validation and established-liveness follow-up.
 - `app.rs` owns transport shutdown cleanup, including aborting the WebSocket writer task and canceling proxy/file stream work before reconnect.
 - `app.rs` also cancels local LLM stream work on disconnect and advertises
   `capabilities.llm` only when the configured ds4 probe is healthy.

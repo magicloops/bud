@@ -45,13 +45,24 @@ Runtime verification lives in [validation-checklist.md](./validation-checklist.m
 - [ ] direct WebSocket reconnect validation completed
 - [x] affected daemon specs updated
 
-## Overall Progress
+## Phase 4: Connection And Authentication Deadlines
+
+- [x] Incident evidence and proposed scope documented
+- [x] Bound WebSocket transport setup and complete network authentication exchange
+- [x] Bound optional gRPC setup/auth and data attachment; cancel owned writers
+- [x] Add safe stage timing and timeout diagnostics
+- [x] Add silent-peer, retry, healthy-idle and cancellation regressions
+- [x] Update affected daemon specs
+- [ ] Validate physical macOS resume/network recovery
+
+## Overall Progress (All Phases)
 
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 1 | Implemented | WebSocket shutdown now aborts the writer task and returns to reconnect without waiting on old sender clones |
 | 2 | Implemented | Proxy/file managers cancel active transport-bound tasks during daemon transport shutdown |
 | 3 | HTTPS validation complete | User validated macOS sleep/resume and Caddy process termination; direct `ws://localhost:3000/ws` forced-close validation remains optional |
+| 4 | Implemented; physical recovery acceptance pending | Setup/auth deadlines and cancellation-safe attempt cleanup; [plan](phase-4-connection-and-authentication-deadlines.md), [incident](../../debug/daemon-connection-handshake-stall.md) |
 
 ## Notes
 
