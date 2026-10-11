@@ -34,6 +34,8 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Immediate
 
+- [ ] **Daemon stalled connection timeout — physical recovery acceptance.** [Clean Close Reconnect Phase 4](./plan/clean-close-reconnect/phase-4-connection-and-authentication-deadlines.md) is implemented with bounded transport setup/authentication, cancellation-safe attempt cleanup and silent-peer retry tests. Validate sleep/resume and network restoration with the updated daemon; release/install remains a separate step. Installed v0.1.25 stalled before authentication completed for over eleven hours; restart restored the same identity. [Incident evidence](./debug/daemon-connection-handshake-stall.md). Established-connection liveness is a separate follow-up.
+
 - [ ] **Daemon release download speed.** Implement [install-script Phase 7](./plan/install-script/phase-7-r2-release-delivery.md): verified R2 mirror, Worker byte serving/cache, gated promotion, historical release backfill and complete-download performance acceptance. [Measured GitHub CDN slowdown](./debug/release-download-throughput.md). Existing installer URLs and SHA-256 verification remain unchanged.
 
 - [ ] **Production browser takeover — Render expiry investigation.** Both web and mobile show blank/reconnecting private views; `/control` returns `browser_control_expired`. Save/correlate acquire/renew and media logs, verify deployment/clock timing, and resolve the reported `browser_busy` request URL before selecting a fix. Clock skew is a hypothesis, not a confirmed cause. [Debug note](./debug/render-browser-takeover-control-expiry.md).

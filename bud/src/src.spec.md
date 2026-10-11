@@ -179,6 +179,13 @@ Top-level daemon orchestrator. `claim_only()` (backing `bud claim`) runs the dev
 - falls back to the WebSocket baseline when the opt-in gRPC control carrier is unavailable, while preserving auth failures instead of looping through fallback
 - opt-in tonic gRPC data attachment after control authentication when `BUD_GRPC_DATA_URL` is set
 - handshake and challenge-response auth
+- bounds WebSocket and optional gRPC control setup to 30 seconds, the complete
+  network authentication exchange to 20 seconds, and optional gRPC data setup
+  to 10 seconds; stage timing logs distinguish setup from authentication
+- expires silent attempts without invalidating identity; retries/falls back
+  through existing policy. Healthy authenticated sessions have no startup timer
+- aborts owned gRPC setup writers on error or cancellation, even with retained
+  sender clones; persists enrollment credentials after the network deadline
 - live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
 - routing inbound server frames to the run or terminal subsystems; terminal frames are **spawned per request** (`task::spawn_local`), never awaited inline in the dispatch loop, so long `await: "command"` sends cannot block heartbeats/credits (review finding D-H1); per-session ordering lives inside the terminal manager
@@ -494,6 +501,12 @@ High-value local tests now live next to the extracted abstractions:
   - version output includes build metadata and version flags are detected
 - `app.rs`
   - WebSocket session shutdown does not wait for stale cloned transport senders
+  - silent WebSocket upgrade/TLS/auth, ping noise and gRPC setup/auth deadlines
+  - automatic same-identity retry, reconciliation and healthy idle lifetime
+  - pending-attempt cancellation, writer abort, enrollment persistence and
+    explicit auth-rejection classification
+  - gRPC transport timeout falls back to authenticated WebSocket; optional data
+    timeout returns without waiting for writer channel drain
 - `protocol.rs`
   - inbound protocol validation (0.3 terminal frames; 0.2 refused)
   - deserialization coverage for every inbound 0.3 terminal frame (resume offset, await modes, retired-vocabulary rejection)

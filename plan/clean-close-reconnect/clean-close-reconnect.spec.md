@@ -9,12 +9,20 @@ mkcert+Caddy HTTPS profile, but the root risk is daemon-side transport cleanup:
 old proxy/file work can keep cloned transport senders alive and prevent the
 session loop from returning to the reconnect loop.
 
+Phase 4 extends this lifecycle work to silent connection setup/authentication
+attempts after a separate production incident in October 2026. Startup deadlines
+and attempt cleanup are implemented with physical resume/network acceptance
+pending; established-connection liveness is deferred.
+
 The plan keeps this as a daemon transport lifecycle hardening task. It does not
 change Caddy routing, local HTTPS setup, service WebSocket auth, proxy protocol
 frames, browser APIs, or database schema.
 
 ## Files
 
+- `phase-4-connection-and-authentication-deadlines.md`: Bound silent connection
+  setup/authentication attempts, including cancellation-safe gRPC setup cleanup;
+  record established-connection liveness as a separate follow-up.
 - `implementation-spec.md`: Overall approach, constraints, affected surfaces,
   acceptance criteria, and validation plan.
 - `phase-1-nonblocking-websocket-session-teardown.md`: Ensure a WebSocket
@@ -28,6 +36,8 @@ frames, browser APIs, or database schema.
 
 ## Dependencies
 
+- [../../debug/daemon-connection-handshake-stall.md](../../debug/daemon-connection-handshake-stall.md)
+  - October 2026 production setup/authentication stall, distinct from teardown.
 - [../../debug/bud-daemon-sleep-resume-reconnect-stall.md](../../debug/bud-daemon-sleep-resume-reconnect-stall.md)
   - investigation note for the reported sleep/resume reconnect stall.
 - [../../debug/bud-reconnect-after-service-restart.md](../../debug/bud-reconnect-after-service-restart.md)
@@ -47,6 +57,8 @@ frames, browser APIs, or database schema.
 - `bud/src/app.rs`: WebSocket session shutdown should return promptly after
   read-side close/error, and should not wait indefinitely for old writer-task
   channel drain.
+  Phase 4 also owns startup stage budgets, shared ack persistence and abort-on-drop
+  gRPC setup writers; adapter connect calls are bounded here.
 - `bud/src/proxy/mod.rs`: active HTTP proxy streams and local WebSocket proxy
   sessions need transport-disconnect cancellation.
 - `bud/src/files/mod.rs`: active file streams need transport-disconnect

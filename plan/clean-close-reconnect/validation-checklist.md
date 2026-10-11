@@ -65,3 +65,49 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - 2026-05-19: User validated the local HTTPS path with macOS sleep/resume and
   Caddy process termination. Both recovered as expected. Direct `ws://` forced
   close and file viewer-specific stream validation remain unchecked.
+
+## Phase 4: Connection Deadlines
+
+October 2026 implementation; earlier manual results above validate Phases 1–3,
+not the new startup deadlines.
+
+- [x] Silent HTTP upgrade and TLS handshake expire and dispose of sockets
+- [x] Silent authentication and challenge-without-ack expire
+- [x] Pings and valid unexpected frames cannot refresh authentication deadline
+- [x] Automatic retry uses the same stored identity and emits reconciliation
+- [x] Delayed valid authentication succeeds; healthy idle session exceeds startup budgets
+- [x] gRPC control/data setup expires without waiting on retained writer senders
+- [x] gRPC authentication timeout remains distinct from explicit `AUTH_FAILED`
+- [x] gRPC setup timeout falls back to authenticated WebSocket
+- [x] Caller cancellation disposes pending WebSocket auth/gRPC setup sockets
+- [x] Setup writer cancellation closes its receiver despite a retained sender
+- [x] Enrollment ack persists credentials; explicit auth rejection remains classified
+- [x] Existing terminal offset-exact reattachment and disconnect regressions pass
+- [x] Changed Rust file formatting and `git diff --check` pass
+- [ ] Physical macOS sleep/resume during startup and network restoration
+- [ ] Install released daemon and confirm production recovery after release approval
+
+Commands:
+
+```text
+cargo test --manifest-path bud/Cargo.toml --lib app::tests
+cargo test --manifest-path bud/Cargo.toml --quiet
+cargo clippy --manifest-path bud/Cargo.toml --all-targets
+rustfmt --edition 2021 --check bud/src/app.rs
+git diff --check
+```
+
+Tests use temporary state and loopback peers, including a stalled real TLS client
+and a real gRPC client awaiting setup. gRPC auth exchange cases use typed envelope
+streams; these are not a deployed end-to-end gRPC data-attachment/heartbeat test.
+Existing transport tests verify terminal fallback and unsupported generic-stream
+failure. No installed service was restarted and no production identity was used.
+
+Final automated results: 271 tests passed (235 library, 36 executable integration),
+11 existing browser fixtures ignored, no failures. All 11 app tests passed,
+including nine new connection-recovery regressions.
+
+Clippy succeeds with an existing `await_holding_lock` warning in browser-manager
+test code. Whole-package format check reports existing browser-manager formatting;
+the changed `app.rs` is formatted. Established half-open liveness remains a
+separate follow-up, as specified in Phase 4.
