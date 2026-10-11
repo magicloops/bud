@@ -63,9 +63,24 @@ test("shared browser resource: owner, concurrent admission, private recovery, re
   assert.equal(resource.private_content, true);
   const controller = resource.control_session_id!;
   await control.grantOverride("alice",controller,resource.revision,"override","viewer","carrier",Date.now()+6000);
-  await assert.rejects(control.renewOverride("bob",controller,"override","viewer","carrier",Date.now()+6000),/not_found/);
-  await assert.rejects(control.renewOverride("alice",controller,"old","viewer","carrier",Date.now()+6000),/expired/);
-  await control.renewOverride("alice",controller,"override","viewer","carrier",Date.now()+6000);
+  await assert.rejects(control.renewOverride("bob",controller,"override","viewer","carrier"),/not_found/);
+  await assert.rejects(control.renewOverride("alice",controller,"old","viewer","carrier"),/expired/);
+  await assert.rejects(control.renewOverride("alice",controller,"override","other-viewer","carrier"),/expired/);
+  await assert.rejects(control.renewOverride("alice",controller,"override","viewer","other-carrier"),/expired/);
+  // Service-clock offsets cannot reject or enlarge a persisted renewal.
+  const realNow = Date.now;
+  for (const skew of [-30_000, 2, 30_000]) {
+    const mockedNow = t.mock.method(Date, "now", () => realNow() + skew);
+    try {
+      await control.renewOverride("alice",controller,"override","viewer","carrier");
+    } finally { mockedNow.mock.restore(); }
+    const remaining = (await database.query(`select extract(epoch from (override_expires_at-clock_timestamp()))*1000 as ms
+      from browser_resource where id=$1`, [resource.id])).rows[0].ms;
+    assert.ok(Number(remaining)>0 && Number(remaining)<=6000);
+  }
+  await database.query("update browser_resource set override_expires_at=now()-interval '1 second' where id=$1", [resource.id]);
+  await assert.rejects(control.renewOverride("alice",controller,"override","viewer","carrier"),/expired/);
+  assert.equal((await repo.get("alice", "bud"))!.override_id,"override", "expired renewal must not replace the controller");
   const beforeRestart = resource;
   await new BrowserResourceRepository(database).recover();
   resource = (await repo.ensure("alice", "bud"));

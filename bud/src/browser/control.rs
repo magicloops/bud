@@ -207,11 +207,16 @@ impl Authority {
 }
 
 fn lease_deadline(expires: u64) -> Result<Instant, &'static str> {
-    let now = crate::util::now_millis();
-    if expires <= now || expires > now + 6000 {
+    Ok(Instant::now() + lease_remaining(expires, crate::util::now_millis())?)
+}
+
+fn lease_remaining(expires: u64, now: u64) -> Result<Duration, &'static str> {
+    if expires <= now {
         return Err("browser_control_expired");
     }
-    Ok(Instant::now() + Duration::from_millis(expires - now))
+    // A clock slightly ahead of ours must not turn a fresh bounded grant into
+    // an expiry error. Delayed grants still consume their remaining budget.
+    Ok(Duration::from_millis((expires - now).min(6000)))
 }
 
 #[cfg(test)]
@@ -289,9 +294,22 @@ mod tests {
     }
     #[test]
     fn delayed_deadlines_never_gain_a_fresh_six_seconds() {
-        assert!(lease_deadline(crate::util::now_millis() - 1).is_err());
-        assert!(lease_deadline(crate::util::now_millis() + 7000).is_err());
-        let deadline = lease_deadline(crate::util::now_millis() + 1000).unwrap();
-        assert!(deadline.duration_since(Instant::now()) <= Duration::from_millis(1000));
+        let now = 10_000;
+        assert!(lease_remaining(now - 1, now).is_err());
+        assert!(lease_remaining(now, now).is_err());
+        assert_eq!(
+            lease_remaining(now + 1000, now).unwrap(),
+            Duration::from_millis(1000)
+        );
+        for ahead in [2, 1000, 30_000] {
+            assert_eq!(
+                lease_remaining(now + 6000 + ahead, now).unwrap(),
+                Duration::from_secs(6)
+            );
+        }
+        assert_eq!(
+            lease_remaining(u64::MAX, now).unwrap(),
+            Duration::from_secs(6)
+        );
     }
 }

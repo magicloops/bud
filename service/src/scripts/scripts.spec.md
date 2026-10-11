@@ -8,6 +8,26 @@ Standalone scripts for database management and auth/bootstrap tasks like local s
 
 ## Files
 
+### `probe-browser-lease-clock.mjs`
+
+Read-only diagnostic for browser takeover renewal clock validation. Defaults to
+`DATABASE_URL` parsed directly from `service/.env.production`, resolved relative
+to the script; inherited shell variables and development `.env` cannot override
+that target. `--runtime-env` uses the Render shell's existing `DATABASE_URL`.
+No application config is imported. Missing configuration fails without fallback.
+
+Prints ten clock/latency samples, the six-second clock predicate result, and
+bounds on executing-host minus database clock offset. Identifies the executing
+host and omits credentials/raw driver errors. Uses a read-only PostgreSQL session
+and bounded connection/query timeouts; reads no browser or user rows.
+Local execution measures the local machine, not Render's service clock.
+
+```bash
+node src/scripts/probe-browser-lease-clock.mjs
+# On the Render service host:
+node src/scripts/probe-browser-lease-clock.mjs --runtime-env
+```
+
 ### `db-push.ts`
 
 Wrapper around `drizzle-kit push` for local schema initialization.

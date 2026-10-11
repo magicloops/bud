@@ -15,6 +15,8 @@ control connection. It launches no service-local Chrome and imports no spike cod
 - `resource-repository.test.ts`: isolated PostgreSQL migration, owner/FK boundaries,
   concurrent creation/takeover, private restart recovery, cross-thread return,
   canceled/completed waits, reset acknowledgement and owner-change coverage.
+  Renewal covers service-clock offsets, bounded DB expiry, viewer/carrier identity
+  and refusal to revive expired overrides.
 - `lifecycle.ts`: reconciles durable Bud-level stop/reset intent using the existing
   broker cleanup loop. Offline requests remain pending until exact daemon acknowledgement.
 - `broker.ts`: backend composition, capability availability, fenced dispatch and
@@ -717,6 +719,12 @@ recovery tickets and prepare/finish-return semantics. `control-repository.ts`
 persists exact override/viewer/carrier/deadline on the owned browser_resource;
 `control.ts` caches only acknowledged current authority. Six-second deadlines renew
 every two seconds. Identity and unexpired deadline are checked on renew/input/end;
+PostgreSQL renews a matching still-live override to its own `now()+6 seconds`,
+without comparing the service clock to an identical database upper bound.
+The service still stamps the daemon request deadline before persistence/dispatch
+and advances its cached lease only after a timely acknowledgement. Database,
+service and daemon expiry remain independent; a failed or delayed renewal cannot
+restore a released controller. No schema, wire-field or client change is needed.
 late or repeated end cannot affect a newer override. Release immediately retires
 intent, then the broker's independent 250ms sweep reconciles an acknowledged daemon
 End. Offline cleanup retries automatically. Startup retires old overrides.

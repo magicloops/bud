@@ -47,9 +47,9 @@ function fixture() {
     async grantOverride(_owner:string,_id:string,_revision:number,id:string,viewer:string,carrier:string,expires:number) {
       Object.assign(session,{override_id:id,override_viewer_id:viewer,override_carrier_id:carrier,override_expires_at:new Date(expires)});
     },
-    async renewOverride(_owner:string,_id:string,id:string,_viewer:string,_carrier:string,expires:number) {
+    async renewOverride(_owner:string,_id:string,id:string,_viewer:string,_carrier:string) {
       if(session.override_id!==id) throw new BrowserError("browser_control_expired");
-      session.override_expires_at=new Date(expires);
+      session.override_expires_at=new Date(Date.now()+6000);
     },
     async endOverride(_owner:string,_id:string,id:string,reason:string) {
       if(session.override_id!==id) return false;
