@@ -63,8 +63,8 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   timeout, poison after interrupted calls. Failure diagnostics include only the
   internal method, category and timing, never params or raw errors. No raw CDP/JS surface for the model.
 - `control.rs`: independent authority fence, epochs, private-content latch and
-  15-second controller lease. Pause fences before waiting for CDP; media/control
-  loss never returns authority to the agent automatically.
+  six-second controller lease. Pause fences before waiting for CDP; expiry and
+  disconnect retire human authority and schedule automatic agent reconciliation.
 - `media.rs`: subordinate ticket-authenticated WebSocket, demand-driven JPEG
   capture and authority checks before/after capture; one stream per browser.
   Logs termination phase/timing/frame count and whether private control was
@@ -807,8 +807,11 @@ character removal, no duplicate deletion and handler-driven focus/selection fenc
 
 This section supersedes earlier sticky-pause/prepare-return/recovery descriptions.
 `control.rs` admits only explicit Acquire, bounded Renew and internal Pause/End.
-Acquire/Renew carry `controller_id` and `lease_expires_at_ms`, at most six seconds
-in the future; wall-clock remaining time converts to a local monotonic deadline.
+Acquire/Renew carry `controller_id` and `lease_expires_at_ms`; expired timestamps
+reject, and positive remaining time is capped at six seconds before converting
+to a local monotonic deadline. Slightly future-skewed timestamps do not reject;
+delayed grants retain their shorter remaining lifetime. Large clock differences
+can still reject or consume the full cap; this is not clock synchronization.
 Expired IDs cannot renew. The idle worker checks authority every 100ms independently
 of the page mutex; expiry/carrier loss/restart retires input and media authority
 before attempting cleanup. `end_pending` is execution readiness, not human ownership.

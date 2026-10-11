@@ -4233,10 +4233,19 @@ Pause is internal takeover admission/drain only. End is service-owned reconcilia
 under a newer resource/workspace epoch after DB override retirement, not an
 unqualified client unlock. Old release/prepare_return/finish_return daemon variants
 are removed. Successful transitions return `control_acknowledged:true`.
-Acquire/renew reject expired deadlines and deadlines more than 6000ms in the future;
-remaining wall-clock time converts to a daemon monotonic deadline on admission.
-Delayed transport cannot start a fresh six-second window on receipt. Clock skew
-can reject admission; deployment requires reasonably synchronized clocks.
+Acquire/renew reject expired deadlines. Positive remaining wall-clock time is
+capped at 6000ms before conversion to a daemon monotonic deadline on admission;
+a timestamp slightly beyond that cap does not reject the grant. Delayed messages
+with less remaining time keep that shorter lifetime. This bounds authority but
+does not synchronize clocks or eliminate their dependency: large offsets can
+still reject grants or give them the full capped lifetime.
+
+Persisted override renewal checks the exact owner/workspace/controller/viewer/
+carrier and its existing unexpired database deadline, then sets that deadline to
+PostgreSQL `now()+6 seconds`. It does not validate a service-generated expiry
+against the database's six-second upper bound. Service cached authority retains
+its own dispatch-time deadline and requires timely daemon acknowledgement;
+expired or released controllers cannot be revived by renewal.
 
 Local authority checks and a 100ms daemon sweep expire independently of the page
 mutex. Input/media are fenced first; bounded channel/window cleanup completes before

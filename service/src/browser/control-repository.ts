@@ -61,15 +61,17 @@ export class BrowserControlRepository {
     });
   }
 
-  async renewOverride(owner: string, id: string, override: string, viewer: string, carrier: string, expires: number) {
+  async renewOverride(owner: string, id: string, override: string, viewer: string, carrier: string) {
     await this.get(owner,id);
-    const result = await this.database.query(`update browser_resource r set override_expires_at=greatest(override_expires_at,$6)
+    // The database owns the persisted deadline. Comparing a service-generated
+    // now()+6s against the DB's now()+6s rejects even millisecond clock offsets.
+    const result = await this.database.query(`update browser_resource r set override_expires_at=now()+interval '6 seconds'
       from browser_session s,bud b where s.id=$1 and s.browser_id=r.id and b.bud_id=r.bud_id
       and s.created_by_user_id=$2 and r.created_by_user_id=$2 and b.created_by_user_id=$2
       and r.control_session_id=s.id and r.override_id=$3 and r.override_viewer_id=$4
-      and r.override_carrier_id=$5 and r.override_expires_at>now() and $6>now() and $6<=now()+interval '6 seconds'
+      and r.override_carrier_id=$5 and r.override_expires_at>now()
       and r.retired_at is null and r.desired_state='open' and s.closed_at is null
-      returning r.id`, [id,owner,override,viewer,carrier,new Date(expires)]);
+      returning r.id`, [id,owner,override,viewer,carrier]);
     if (!result.rowCount) throw new BrowserError("browser_control_expired");
   }
 

@@ -467,8 +467,9 @@ export class BrowserControl {
     const control = this.controller(owner,sessionId,viewer);
     if (control.id !== overrideId || session.override_id !== overrideId) throw new BrowserError("browser_control_expired");
     const expires = Date.now() + 6000;
-    // Persist first. A lost reply cannot extend the service deadline from receipt time.
-    await this.repository.renewOverride(owner,sessionId,overrideId,viewer,control.carrier.tracker.sessionId,expires);
+    // DB renewal uses its own clock; service and daemon retain the original
+    // dispatch deadline. A lost reply cannot extend it from receipt time.
+    await this.repository.renewOverride(owner,sessionId,overrideId,viewer,control.carrier.tracker.sessionId);
     const request = this.repository.command(session, {action:"control",operation:"renew",controller_id:overrideId,lease_expires_at_ms:expires});
     const result = await this.dispatch(control.carrier,request,AbortSignal.timeout(5000));
     if (this.controllers.get(sessionId) !== control || control.expires <= Date.now()) {
