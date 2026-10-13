@@ -855,3 +855,16 @@ focus emulation. Checkpoints never restore a renewable human controller.
 The daemon advertises `browser.agent_default_control: true`; new service takeover
 requires it. Old control variants and paused-controller recovery are removed.
 The 24-hour workspace idle expiry remains separate from the six-second override.
+
+## Temporary production media delivery diagnostics
+
+`media.rs` and `stream_media.rs` sample the first three sends and slow/failed
+writes, capped at 24 sampled events per connection. INFO `browser_media` events
+include epoch, frame index/sequence, screenshot/screencast mode, JPEG/PNG format,
+payload bytes, monotonic write duration, success and timeout flags. Private
+feedback reports acknowledgement age/disposition and terminal stalled credit.
+Existing media-end records remain independent of the sample cap. No pixels,
+URLs, target/document/frame/focus/controller tokens, tickets or raw errors are
+logged. Deadlines, credit, authority and retry behavior are unchanged. Rebuild
+and restart the daemon to collect these events; see
+[production investigation](../../../debug/production-browser-media-delivery-stall.md).

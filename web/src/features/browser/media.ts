@@ -20,9 +20,14 @@ export class BrowserCanvas {
   private lastFrameAt: number | null = null;
   private closeReason = "none";
   private processingStage = "idle";
+  private diagnostics = 0;
   private diagnostic(event: string, details: Record<string, string | number | boolean | null> = {}) {
-    // Temporary local diagnostics. No URLs, frame bodies, tickets or input.
-    if (import.meta.env?.DEV) console.info("browser-media", JSON.stringify({
+    // Temporary production diagnostics: at most 24 events per connection.
+    // No URLs, frame bodies, tickets, tokens or input.
+    const terminal = ["closing", "socket_closed", "frame_processing_failed", "bitmap_rejected"].includes(event);
+    if (this.diagnostics >= 24 || (!terminal && this.diagnostics >= 20)) return;
+    this.diagnostics++;
+    console.info("browser-media", JSON.stringify({
       at: new Date().toISOString(), connection: this.diagnosticId, event,
       elapsed_ms: Date.now() - this.startedAt, frames: this.frames,
       frame_age_ms: this.lastFrameAt === null ? null : Date.now() - this.lastFrameAt,
@@ -120,7 +125,8 @@ export class BrowserCanvas {
           this.frames++; this.lastFrameAt = Date.now();
           if (this.frames === 1) this.diagnostic("first_frame");
           this.status("connected", frame.targets);
-        }, () => this.clear(), message => this.socket.send(message), () => this.close("stream_processing_failed"));
+        }, () => this.clear(), message => this.socket.send(message), () => this.close("stream_processing_failed"),
+          (event, details) => this.diagnostic(event, { ...details, buffered_bytes: this.socket.bufferedAmount }));
         this.stream.reset(control);
         return;
       }
@@ -159,6 +165,10 @@ export class BrowserCanvas {
     )
       throw new Error("invalid frame");
     this.decoding = true;
+    const receivedAt = performance.now();
+    const frameIndex = this.frames + 1;
+    if (frameIndex <= 3) this.diagnostic("frame_received", { mode: "screenshots", frame_index: frameIndex,
+      payload_chars: raw.length, image_chars: data.image.length, format: data.image_format === "png" ? "png" : "jpeg" });
     let bitmap: ImageBitmap | undefined;
     try {
       this.processingStage = "base64_decode";
@@ -169,6 +179,7 @@ export class BrowserCanvas {
       bitmap = await createImageBitmap(
         new Blob([bytes], { type: data.image_format === "png" ? "image/png" : "image/jpeg" }),
       );
+      const decodeMs = Math.round(performance.now() - receivedAt);
       if (this.disposed) return;
       this.processingStage = "bitmap_validation";
       if (bitmap.width > 2560 || bitmap.height > 2560 || bitmap.width * bitmap.height > 4_000_000) {
@@ -198,6 +209,10 @@ export class BrowserCanvas {
       this.status("connected", data.targets);
       this.processingStage = "frame_ack";
       this.socket.send(JSON.stringify({ type: "ack", pixel_ratio: this.captureRatio() }));
+      const elapsedMs = Math.round(performance.now() - receivedAt);
+      if (frameIndex <= 3 || elapsedMs >= 100)
+        this.diagnostic("frame_presented", { mode: "screenshots", frame_index: frameIndex,
+          decode_ms: decodeMs, receive_to_ack_ms: elapsedMs, buffered_bytes: this.socket.bufferedAmount });
       this.processingStage = "idle";
     } finally {
       bitmap?.close();

@@ -3,6 +3,8 @@ import test from "node:test";
 import { BrowserCanvas } from "./media.ts";
 
 test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async t => {
+  const diagnostics: string[] = [];
+  t.mock.method(console, "info", (_name: string, value: string) => diagnostics.push(value));
   const originalSocket = globalThis.WebSocket;
   const originalBitmap = globalThis.createImageBitmap;
   const originalObserver = globalThis.ResizeObserver;
@@ -68,6 +70,16 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     assert.equal(canvas.style.width, "240px", "idle frames scale to local layout changes");
     assert.equal(canvas.style.height, "160px");
     assert.equal(socket.sent.length, creditBeforeResize, "local resizing sends no demand or mutation");
+    // Saturate sampled diagnostics with slow frames. Credit/presentation must
+    // continue, and terminal close evidence must still fit the log budget.
+    let clock = 0;
+    t.mock.method(performance, "now", () => (clock += 101));
+    for (let i = 0; i < 30; i++) {
+      const ready = new Promise<void>(resolve => { drawn = resolve; });
+      socket.onmessage!({ data: JSON.stringify(base) });
+      await ready;
+    }
+    assert.equal(socket.sent.length, creditBeforeResize + 30);
     socket.onmessage!({ data: '{"type":"empty"}' });
     assert.equal(client.frame, null);
     assert.equal(states.at(-1), "empty");
@@ -76,6 +88,10 @@ test("JPEG to PNG preserves fitted CSS coordinates and one-frame credit", async 
     socket.onmessage!({ data: '{"type":"revoked"}' });
     assert.equal(client.frame, null);
     assert.equal(clears, 2, "revocation clears retained pixels immediately");
+    assert.ok(diagnostics.length <= 24);
+    assert.ok(diagnostics.some(value => JSON.parse(value).event === "closing"));
+    assert.ok(diagnostics.some(value => JSON.parse(value).format === "png"));
+    assert.doesNotMatch(diagnostics.join("\n"), /opaque|AA==|ws:\/\/fixture|viewer_id|frame_token|target_id|document_id/);
   } finally {
     client.close();
     globalThis.WebSocket = originalSocket;

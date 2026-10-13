@@ -1,5 +1,16 @@
 # Bud-owned browser viewer
 
+Temporary production `browser-media` console diagnostics in `media.ts` and
+`stream-canvas.ts` report the first three frame receives/presentations, slow
+decode/draw/ACK stages, payload lengths/formats and fixed close reasons. Each
+canvas connection emits at most 24 events, reserving four slots for terminal
+evidence. Connection UUIDs are diagnostic IDs, not viewer credentials. No page
+data, URLs, target/document/frame/focus/control tokens or arbitrary exceptions
+are printed. These records add no network requests and do not change pixels,
+input, credit, authorization or reconnect behavior. Reload the deployed shared
+web build on desktop/mobile to collect them; native rebuild is unnecessary.
+See [production media investigation](../../../../debug/production-browser-media-delivery-stall.md).
+
 Shared workbench/standalone authenticated viewer for an owner/thread/Bud browser session. Session
 IDs identify resources, never grant access. Service routes reauthorize reads,
 control, input and media; private input is not a transcript event.

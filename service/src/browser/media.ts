@@ -19,9 +19,12 @@ type Viewer = {
   checking: boolean;
   authorizationUntil: number;
   lastFrame: number;
+  lastSentAt: number;
   authorize: () => Promise<boolean>;
 };
 type Group = {
+  diagnosticId: string;
+  diagnostics: number;
   key: string;
   browserId: string;
   owner: string;
@@ -112,7 +115,7 @@ export class BrowserMedia {
   }
   private close(group: Group, reason: string) {
     if (group.closed) return;
-    this.onDiagnostic({ session_id: group.sessionId, event: "media_closed", reason, frames: group.frames, age_ms: Date.now() - group.started, viewers: group.viewers.size, awaiting: group.awaiting });
+    this.onDiagnostic({ session_id: group.sessionId, media_id: group.diagnosticId, epoch: group.epoch, event: "media_closed", reason, frames: group.frames, age_ms: Date.now() - group.started, viewers: group.viewers.size, awaiting: group.awaiting });
     group.closed = true;
     group.stream?.dispose();
     this.groups.delete(group.key);
@@ -200,7 +203,8 @@ export class BrowserMedia {
       const viewer = [...group.viewers][0];
       if (!viewer || group.stream) return;
       group.stream = new PrivateStreamRelay(group.daemon, viewer.socket,
-        () => this.checkViewer(group, viewer), () => this.close(group, "private_stream_failed"));
+        () => this.checkViewer(group, viewer), () => this.close(group, "private_stream_failed"),
+        fields => this.deliveryDiagnostic(group, fields));
       group.daemon.send(JSON.stringify({ mode: "screencast_v1", target_id: group.target }));
       return;
     }
@@ -210,6 +214,12 @@ export class BrowserMedia {
     const pixelRatio = group.carrier.hidpiCapture && viewers.every(v => v.pixelRatio !== undefined)
       ? Math.min(...viewers.map(v => v.pixelRatio!)) : undefined;
     group.daemon.send(JSON.stringify({ target_id: group.target, pixel_ratio: pixelRatio }));
+    if (group.frames < 3) this.deliveryDiagnostic(group, { event: "frame_requested",
+      frame_index: group.frames + 1, mode: "screenshots", pixel_ratio: pixelRatio ?? 0 });
+  }
+  private deliveryDiagnostic(group: Group, fields: Record<string, string | number | boolean>) {
+    if (group.diagnostics++ >= 24) return;
+    this.onDiagnostic({ session_id: group.sessionId, media_id: group.diagnosticId, epoch: group.epoch, ...fields });
   }
   async attachViewer(
     socket: WebSocket,
@@ -228,6 +238,8 @@ export class BrowserMedia {
       if (this.groups.size >= 32)
         throw new BrowserError("browser_media_capacity");
       group = {
+        diagnosticId: randomBytes(8).toString("hex"),
+        diagnostics: 0,
         key,
         browserId: session.browser_id,
         owner,
@@ -268,6 +280,7 @@ export class BrowserMedia {
       checking: false,
       authorizationUntil: Date.now() + 10_000,
       lastFrame: 0,
+      lastSentAt: 0,
     };
     active.viewers.add(viewer);
     active.dirty = true; // A new viewer needs pixels even when the agent is idle.
@@ -302,6 +315,9 @@ export class BrowserMedia {
           active.target = message.target_id;
         }
         if (message.type === "ack") {
+          if (active.frames <= 3) this.deliveryDiagnostic(active, { event: "frame_ack_received",
+            frame_index: viewer.lastFrame, mode: "screenshots", pixel_ratio: message.pixel_ratio ?? 0,
+            ack_age_ms: viewer.lastSentAt ? Math.round(performance.now() - viewer.lastSentAt) : 0 });
           if (viewer.pixelRatio !== message.pixel_ratio) active.dirty = true;
           viewer.pixelRatio = message.pixel_ratio;
         }
@@ -410,6 +426,7 @@ export class BrowserMedia {
     socket.on("error", () => {});
   }
   private async frame(group: Group, raw: string) {
+    const receivedAt = performance.now();
     if (group.closed || raw.length > 1_410_000) throw new Error("invalid media");
     const data = JSON.parse(raw);
     if (group.operationDriven && data.refresh === true) {
@@ -440,6 +457,9 @@ export class BrowserMedia {
     group.processing = true;
     const frame = data.empty === true ? z.object({ empty: z.literal(true) }).strict().parse(data) : frameSchema.parse(data);
     group.frames++;
+    if (group.frames <= 3) this.deliveryDiagnostic(group, { event: "frame_received", mode: "screenshots",
+      frame_index: group.frames, payload_bytes: Buffer.byteLength(raw),
+      format: "image" in frame ? frame.image_format ?? "jpeg" : "empty" });
     group.retries = 0;
     const viewers = [...group.viewers].filter((v) => v.ready);
     for (const viewer of viewers) {
@@ -447,7 +467,14 @@ export class BrowserMedia {
         group.dirty = true; // A newly joined legacy-quality viewer needs JPEG.
         continue;
       }
-      if (!(await this.checkViewer(group, viewer))) {
+      const authorizationStarted = performance.now();
+      const allowed = await this.checkViewer(group, viewer);
+      const authorizationMs = Math.round(performance.now() - authorizationStarted);
+      if (group.frames <= 3 || authorizationMs >= 100 || !allowed)
+        this.deliveryDiagnostic(group, { event: "frame_authorized", mode: "screenshots",
+          frame_index: group.frames, authorization_ms: authorizationMs, allowed,
+          relay_age_ms: Math.round(performance.now() - receivedAt) });
+      if (!allowed) {
         viewer.socket.terminate();
         continue;
       }
@@ -468,7 +495,16 @@ export class BrowserMedia {
       viewer.ready = false;
       viewer.lastFrame = group.frames;
       viewer.deadline = Date.now() + 5000;
-      viewer.socket.send(JSON.stringify("empty" in frame ? { type: "empty" } : { type: "frame", ...frame }));
+      const sentAt = performance.now();
+      viewer.lastSentAt = sentAt;
+      const frameIndex = group.frames;
+      const bufferedBytes = viewer.socket.bufferedAmount;
+      viewer.socket.send(JSON.stringify("empty" in frame ? { type: "empty" } : { type: "frame", ...frame }), error => {
+        const writeMs = Math.round(performance.now() - sentAt);
+        if (frameIndex <= 3 || writeMs >= 100 || error)
+          this.deliveryDiagnostic(group, { event: "frame_forwarded", mode: "screenshots", frame_index: frameIndex,
+            write_ms: writeMs, buffered_bytes: bufferedBytes, ok: !error });
+      });
     }
     group.processing = false;
     group.awaiting = false;

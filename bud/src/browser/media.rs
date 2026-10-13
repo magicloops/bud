@@ -58,6 +58,7 @@ pub(super) fn start(args: MediaStart) {
         let started = Instant::now();
         let mut phase = "connect";
         let mut frames = 0_u64;
+        let mut send_diagnostics = 0_u8;
         let mut target_count: Option<usize> = None;
         let mut close_code: Option<u16> = None;
         let current_connection = connection.clone();
@@ -269,11 +270,39 @@ pub(super) fn start(args: MediaStart) {
                     anyhow::bail!("browser_media_revoked");
                 }
                 phase = "send_frame";
-                tokio::time::timeout(
+                let payload = data.to_string();
+                let payload_bytes = payload.len();
+                let format = if data.get("image").is_none() {
+                    "control"
+                } else if data.get("image_format").is_some() {
+                    "png"
+                } else {
+                    "jpeg"
+                };
+                let send_started = Instant::now();
+                if frames < 3 && send_diagnostics < 24 {
+                    send_diagnostics += 1;
+                    tracing::info!(component = "browser_media", event = "frame_write_started",
+                        session_id = %session_id, epoch, frame_index = frames + 1,
+                        mode = "screenshots", format, payload_bytes, "Browser media delivery");
+                }
+                let sent = tokio::time::timeout(
                     Duration::from_secs(3),
-                    socket.send(Message::Text(data.to_string())),
+                    socket.send(Message::Text(payload)),
                 )
-                .await??;
+                .await;
+                let write_ms = send_started.elapsed().as_millis() as u64;
+                if send_diagnostics < 24
+                    && (frames < 3 || write_ms >= 250 || !matches!(&sent, Ok(Ok(()))))
+                {
+                    send_diagnostics += 1;
+                    tracing::info!(component = "browser_media", event = "frame_write_completed",
+                        session_id = %session_id, epoch, frame_index = frames + 1,
+                        mode = "screenshots", format, payload_bytes, write_ms,
+                        ok = matches!(&sent, Ok(Ok(()))), timed_out = sent.is_err(),
+                        "Browser media delivery");
+                }
+                sent??;
                 if data.get("image").is_some() {
                     frames += 1;
                 }
