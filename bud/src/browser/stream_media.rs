@@ -55,12 +55,19 @@ pub(super) async fn run(
     let mut live = None;
     let mut credits: VecDeque<Credit> = VecDeque::new();
     let mut sequence = 0u64;
+    let mut diagnostics = 0_u8;
     let mut next_send = Instant::now();
     let mut restarts: VecDeque<Instant> = VecDeque::new();
     let result = async {
         loop {
             if !allowed() { bail!("browser_media_revoked"); }
-            if credits.front().is_some_and(|c| c.sent.elapsed() > Duration::from_secs(1)) { bail!("browser_stream_stalled"); }
+            if let Some(credit) = credits.front().filter(|c| c.sent.elapsed() > Duration::from_secs(1)) {
+                tracing::info!(component = "browser_media", event = "frame_ack_timeout", epoch,
+                    frame_sequence = credit.sequence, payload_bytes = credit.bytes,
+                    ack_age_ms = credit.sent.elapsed().as_millis() as u64,
+                    outstanding_frames = credits.len(), "Private browser feedback stalled");
+                bail!("browser_stream_stalled");
+            }
             if source.is_none() || live.as_ref().is_some_and(|v: &Arc<std::sync::atomic::AtomicBool>| !v.load(Ordering::SeqCst)) {
                 // Bound crash/navigation churn instead of hiding it with reconnects.
                 while restarts.front().is_some_and(|t| t.elapsed() > Duration::from_secs(10)) { restarts.pop_front(); }
@@ -114,6 +121,13 @@ pub(super) async fn run(
                             if !matches!(disposition.as_str(), "presented" | "discarded") { bail!("browser_stream_invalid_ack"); }
                             let index = credits.iter().position(|c| c.generation == media_generation && c.sequence == frame_sequence)
                                 .context("browser_stream_invalid_ack")?;
+                            if diagnostics < 24 && (frame_sequence <= 3 || credits[index].sent.elapsed() >= Duration::from_millis(250)) {
+                                diagnostics += 1;
+                                tracing::info!(component = "browser_media", event = "frame_ack_received", epoch,
+                                    frame_sequence, disposition = %disposition,
+                                    ack_age_ms = credits[index].sent.elapsed().as_millis() as u64,
+                                    "Private browser feedback");
+                            }
                             credits.remove(index);
                         }
                         Feedback::Target { target_id } => {
@@ -161,7 +175,24 @@ pub(super) async fn run(
             let bytes = packet.len();
             if !allowed() || !live.as_ref().unwrap().load(Ordering::SeqCst) { continue; }
             credits.push_back(Credit { generation: generation.clone(), sequence, bytes, sent: Instant::now() });
-            send(socket, Message::Binary(packet)).await?;
+            let write_started = Instant::now();
+            if diagnostics < 24 && sequence <= 3 {
+                diagnostics += 1;
+                tracing::info!(component = "browser_media", event = "frame_write_started", epoch,
+                    frame_sequence = sequence, mode = "screencast", format = "jpeg",
+                    payload_bytes = bytes, "Browser media delivery");
+            }
+            let sent = send(socket, Message::Binary(packet)).await;
+            let write_ms = write_started.elapsed().as_millis() as u64;
+            if diagnostics < 24 && (sequence <= 3 || write_ms >= 250 || sent.is_err()) {
+                diagnostics += 1;
+                tracing::info!(component = "browser_media", event = "frame_write_completed", epoch,
+                    frame_sequence = sequence, mode = "screencast", format = "jpeg",
+                    payload_bytes = bytes, write_ms, ok = sent.is_ok(),
+                    timed_out = sent.as_ref().err().is_some_and(|e| e.is::<tokio::time::error::Elapsed>()),
+                    "Browser media delivery");
+            }
+            sent?;
             next_send = Instant::now() + Duration::from_millis(34);
         }
     }.await;

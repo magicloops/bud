@@ -757,3 +757,21 @@ authority-release transaction commits. Hooks are scoped to the composition root'
 registered pool, so fixture/independent pools do not notify another worker. No
 new listener connection or browser protocol change. Periodic eligibility remains
 the fallback for lost local hints.
+
+## Temporary production media delivery diagnostics
+
+`media.ts` assigns each relay a random noncredential `media_id` and emits at most
+24 sampled delivery records, plus its existing terminal lifecycle record. The
+first three frames and slow/failing stages report request density, received byte
+size/format, authorization time, forward write time, buffered bytes and feedback.
+Private `stream-media.ts` additionally identifies reset authorization, the 150ms
+relay-age discard and stalled reset/feedback. Timing is observational: no new
+queries, changed deadlines, credit, replay or authorization bypass. Owner, live
+viewer and exact private-override checks still precede forwarding.
+
+Fields exclude images, URLs, arbitrary errors, tickets and all control/frame/focus
+tokens. `frame_forwarded` records local socket write completion, not presentation;
+only matching feedback confirms downstream disposition. Deploy the service to
+enable logs; independently rebuilt daemon/web versions add the other legs. No
+DB, route or wire change. See
+[investigation](../../../debug/production-browser-media-delivery-stall.md).

@@ -32,9 +32,14 @@ export class PrivateStreamRelay {
   private closed = false;
   private readonly timer: ReturnType<typeof setInterval>;
   constructor(private daemon: WebSocket, private viewer: WebSocket,
-    private authorize: () => Promise<boolean>, private fail: () => void) {
+    private authorize: () => Promise<boolean>, private fail: () => void,
+    private diagnostic: (fields: Record<string, string | number | boolean>) => void = () => {}) {
     this.timer = setInterval(() => {
-      if ((this.resetAt && Date.now() - this.resetAt > 1000) || [...this.outstanding.values()].some(value => Date.now() - value.at > 1000)) this.closeWithFailure();
+      if ((this.resetAt && Date.now() - this.resetAt > 1000) || [...this.outstanding.values()].some(value => Date.now() - value.at > 1000)) {
+        this.diagnostic({ event: "stream_feedback_timeout", mode: "screencast", reset_pending: !!this.resetAt,
+          outstanding_frames: this.outstanding.size, buffered_bytes: this.viewer.bufferedAmount });
+        this.closeWithFailure();
+      }
     }, 100);
     this.timer.unref();
   }
@@ -61,7 +66,11 @@ export class PrivateStreamRelay {
     // The original deadline is retained when a newer generation supersedes it.
     while (this.pendingReset && !this.closed) {
       const reset = this.pendingReset; this.pendingReset = undefined;
-      if (!(await this.authorize()) || this.closed) return this.closeWithFailure();
+      const started = performance.now();
+      const allowed = await this.authorize();
+      this.diagnostic({ event: "stream_reset_authorized", mode: "screencast",
+        authorization_ms: Math.round(performance.now() - started), allowed, closed: this.closed });
+      if (!allowed || this.closed) return this.closeWithFailure();
       if (reset.generation !== this.generation) continue;
       if (this.viewer.readyState !== WebSocket.OPEN || this.viewer.bufferedAmount > 2 * 1024 * 1024) return this.closeWithFailure();
       this.viewer.send(reset.raw);
@@ -74,6 +83,8 @@ export class PrivateStreamRelay {
     const bytes = [...this.outstanding.values()].reduce((sum, item) => sum + item.bytes, 0);
     if (this.outstanding.size >= 3 || bytes + raw.length > 2 * 1024 * 1024) throw new Error("stream_credit");
     this.sequence = header.frame_sequence;
+    if (header.frame_sequence <= 3) this.diagnostic({ event: "frame_received", mode: "screencast",
+      frame_sequence: header.frame_sequence, payload_bytes: raw.length, source_age_ms: header.source_age_ms });
     this.outstanding.set(header.frame_sequence, { generation: header.media_generation, bytes: raw.length, at: Date.now(), forwarded: false });
     if (this.pending) this.retire(this.pending.sequence, this.pending.generation, "discarded");
     this.pending = { raw, sequence: header.frame_sequence, generation: header.media_generation };
@@ -86,15 +97,31 @@ export class PrivateStreamRelay {
         const frame = this.pending; this.pending = undefined;
         await this.resetting;
         if (this.closed) return;
+        const started = performance.now();
         const allowed = await this.authorize();
+        const authorizationMs = Math.round(performance.now() - started);
+        if (frame.sequence <= 3 || authorizationMs >= 100 || !allowed)
+          this.diagnostic({ event: "frame_authorized", mode: "screencast", frame_sequence: frame.sequence,
+            authorization_ms: authorizationMs, allowed, closed: this.closed });
         if (this.closed) return;
         if (!allowed || this.viewer.readyState !== WebSocket.OPEN) return this.closeWithFailure();
         if (frame.generation !== this.generation || frame.generation !== this.deliveredGeneration) { this.retire(frame.sequence, frame.generation, "discarded"); continue; }
         if (this.viewer.bufferedAmount + frame.raw.length > 2 * 1024 * 1024) return this.closeWithFailure();
         const credit = this.outstanding.get(frame.sequence)!;
-        if (Date.now() - credit.at > 150) { this.retire(frame.sequence, frame.generation, "discarded"); continue; }
+        if (Date.now() - credit.at > 150) {
+          this.diagnostic({ event: "frame_discarded", mode: "screencast", frame_sequence: frame.sequence,
+            reason: "relay_age", relay_age_ms: Date.now() - credit.at });
+          this.retire(frame.sequence, frame.generation, "discarded"); continue;
+        }
         credit.forwarded = true;
-        this.viewer.send(frame.raw, { binary: true });
+        const sentAt = performance.now();
+        const bufferedBytes = this.viewer.bufferedAmount;
+        this.viewer.send(frame.raw, { binary: true }, error => {
+          const writeMs = Math.round(performance.now() - sentAt);
+          if (frame.sequence <= 3 || writeMs >= 100 || error)
+            this.diagnostic({ event: "frame_forwarded", mode: "screencast", frame_sequence: frame.sequence,
+              payload_bytes: frame.raw.length, write_ms: writeMs, buffered_bytes: bufferedBytes, ok: !error });
+        });
       }
     } finally { this.processing = false; }
   }
@@ -108,8 +135,17 @@ export class PrivateStreamRelay {
     const item = this.outstanding.get(sequence);
     if (!item || item.generation !== generation) throw new Error("stream_invalid_ack");
     this.outstanding.delete(sequence);
+    if (sequence <= 3 || Date.now() - item.at >= 250)
+      this.diagnostic({ event: "frame_ack_received", mode: "screencast", frame_sequence: sequence,
+        disposition, forwarded: item.forwarded, ack_age_ms: Date.now() - item.at });
     if (!this.closed && this.daemon.readyState === WebSocket.OPEN) {
-      this.daemon.send(JSON.stringify({ type: "frame_ack", media_generation: generation, frame_sequence: sequence, disposition }));
+      const sentAt = performance.now();
+      this.daemon.send(JSON.stringify({ type: "frame_ack", media_generation: generation, frame_sequence: sequence, disposition }), error => {
+        const writeMs = Math.round(performance.now() - sentAt);
+        if (sequence <= 3 || writeMs >= 100 || error)
+          this.diagnostic({ event: "frame_ack_forwarded", mode: "screencast", frame_sequence: sequence,
+            write_ms: writeMs, ok: !error });
+      });
     }
   }
 }

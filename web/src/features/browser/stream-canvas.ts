@@ -4,7 +4,7 @@ type Header = BrowserFrame & {
   media_generation: string; frame_sequence: number; bitmap_width: number;
   bitmap_height: number; image_bytes: number; source_age_ms: number;
 };
-type Packet = { header: Header; image: ArrayBuffer };
+type Packet = { header: Header; image: ArrayBuffer; receivedAt?: number };
 const validId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 128;
 
 export function parseStreamPacket(raw: ArrayBuffer): Packet {
@@ -38,9 +38,12 @@ export class StreamCanvas {
   private clear: () => void;
   private send: (message: string) => void;
   private failed: () => void;
+  private diagnostic: (event: string, fields: Record<string, string | number | boolean>) => void;
   constructor(present: (bitmap: ImageBitmap, frame: BrowserFrame) => void,
-    clear: () => void, send: (message: string) => void, failed: () => void) {
+    clear: () => void, send: (message: string) => void, failed: () => void,
+    diagnostic: (event: string, fields: Record<string, string | number | boolean>) => void = () => {}) {
     this.present = present; this.clear = clear; this.send = send; this.failed = failed;
+    this.diagnostic = diagnostic;
   }
   reset(value: { media_version: number; media_generation: string; targets: BrowserFrame["targets"] }) {
     if (value.media_version !== 1 || !validId(value.media_generation) || value.media_generation === this.generation
@@ -56,6 +59,10 @@ export class StreamCanvas {
   receive(raw: ArrayBuffer) {
     if (this.closed) return;
     const packet = parseStreamPacket(raw);
+    packet.receivedAt = performance.now();
+    if (packet.header.frame_sequence <= 3)
+      this.diagnostic("frame_received", { mode: "screencast", frame_sequence: packet.header.frame_sequence,
+        payload_bytes: raw.byteLength, source_age_ms: packet.header.source_age_ms });
     if (packet.header.media_generation !== this.generation || packet.header.frame_sequence <= this.sequence) throw new Error("stream_sequence");
     this.sequence = packet.header.frame_sequence;
     if (this.fenced) { this.ack(packet, "discarded"); return; }
@@ -64,15 +71,23 @@ export class StreamCanvas {
     if (!this.decoding) void this.drain().catch(() => { this.dispose(); this.failed(); });
   }
   private ack(packet: Packet, disposition: "presented" | "discarded") {
-    if (!this.closed) this.send(JSON.stringify({ type: "frame_ack", media_generation: packet.header.media_generation,
-      frame_sequence: packet.header.frame_sequence, disposition }));
+    if (!this.closed) {
+      this.send(JSON.stringify({ type: "frame_ack", media_generation: packet.header.media_generation,
+        frame_sequence: packet.header.frame_sequence, disposition }));
+      const age = Math.round(performance.now() - (packet.receivedAt ?? performance.now()));
+      if (packet.header.frame_sequence <= 3 || age >= 100)
+        this.diagnostic("frame_ack_sent", { mode: "screencast", frame_sequence: packet.header.frame_sequence,
+          disposition, receive_to_ack_ms: age });
+    }
   }
   private async drain() {
     this.decoding = true;
     try {
       while (this.pending && !this.closed) {
         const packet = this.pending; this.pending = undefined;
+        const started = performance.now();
         const bitmap = await createImageBitmap(new Blob([packet.image], { type: "image/jpeg" }));
+        const decodeMs = Math.round(performance.now() - started);
         try {
           if (this.closed) return;
           if (this.fenced || packet.header.media_generation !== this.generation) { this.ack(packet, "discarded"); continue; }
@@ -82,6 +97,9 @@ export class StreamCanvas {
             frame_token: header.frame_token, media_generation: header.media_generation, viewport_id: header.viewport_id ?? undefined,
             width: header.width, height: header.height, targets: this.targets });
           this.ack(packet, "presented");
+          if (packet.header.frame_sequence <= 3 || decodeMs >= 100)
+            this.diagnostic("frame_presented", { mode: "screencast", frame_sequence: packet.header.frame_sequence,
+              decode_ms: decodeMs, decode_and_draw_ms: Math.round(performance.now() - started) });
         } finally { bitmap.close(); }
       }
     } finally { this.decoding = false; }

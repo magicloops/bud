@@ -100,3 +100,24 @@ test("stream diagnostics never emit arbitrary exception details", () => {
   assert.equal(streamErrorCode(new SyntaxError("private page text")), "stream_json");
   assert.equal(streamErrorCode(new Error("stream_sequence private page text")), "redacted");
 });
+
+test("delivery diagnostics distinguish authorization delay from image delivery without tokens", async () => {
+  const daemon = new Socket(), viewer = new Socket();
+  const diagnostics: Record<string, string | number | boolean>[] = [];
+  let slow = false;
+  const relay = new PrivateStreamRelay(daemon as unknown as WebSocket, viewer as unknown as WebSocket,
+    async () => { if (slow) await new Promise(resolve => setTimeout(resolve, 200)); return true; },
+    () => assert.fail("authorization delay must discard, not fail"), fields => diagnostics.push(fields));
+  try {
+    await relay.reset(reset());
+    slow = true;
+    relay.frame(packet(1));
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(viewer.sent.filter(Buffer.isBuffer).length, 0);
+    assert.equal(JSON.parse(daemon.sent[0] as string).disposition, "discarded");
+    assert.ok(diagnostics.some(value => value.event === "frame_received" && value.payload_bytes === packet(1).length));
+    assert.ok(diagnostics.some(value => value.event === "frame_authorized" && Number(value.authorization_ms) >= 150));
+    assert.ok(diagnostics.some(value => value.event === "frame_discarded" && value.reason === "relay_age"));
+    assert.doesNotMatch(JSON.stringify(diagnostics), /token1|media_generation|frame_token|target_id|document_id|image/);
+  } finally { relay.dispose(); }
+});
