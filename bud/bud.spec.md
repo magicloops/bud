@@ -294,3 +294,10 @@ Shared browser shutdown drains page work and confirms owned Chrome exit before
 releasing the profile lock. Persistent native-store support is currently macOS-only;
 probes/tests retain disposable profiles. See the browser runtime spec for privacy,
 stop/reset and surviving-process recovery limits.
+
+Upgrade/restart cleanup now uses a 30-second browser deadline, independently
+accessible process ownership and best-effort bounded preparation. Generated
+launchd/systemd stop budgets are 45 seconds; CLI waits allow 50 seconds.
+Launchd replacement signals/waits before unloading even an old five-second job.
+Unconfirmed daemon/profile exit blocks replacement; terminal process-group
+preservation remains unchanged. See [Phase 7](../plan/daemon-readiness/phase-7-browser-safe-upgrade-and-restart.md).

@@ -85,6 +85,13 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   and removes it; identity is never touched
 - macOS start/restart regenerate and reload the installed plist, migrating old
   shell registrations while retaining holder-safe supervision
+- Managed replacement first signals the verified selected daemon and waits up
+  to 50 seconds for both instance-lock release and actual process exit before
+  launchd unload/bootstrap. This protects the first upgrade from an old loaded
+  five-second job. A replacement PID or unconfirmed profile cleanup blocks reload.
+  Generated launchd `ExitTimeOut` and systemd `TimeoutStopSec` are 45 seconds;
+  systemd refresh stops/verifies/starts rather than replacing unconfirmed cleanup.
+  Live orphan Chrome is reported, never adopted or killed through a stored PID.
 - macOS upgrades invoke the updated binary's service install, applying Interactive
   scheduling to the replacement daemon. Owned Chrome must also relaunch; surviving
   orphan processes are not retroactively migrated. See
@@ -602,6 +609,19 @@ runtime tasks and owned children; `doctor.rs` reports the optional runtime and `
 identity. The outer run/signal boundary awaits manager shutdown before dropping
 its LocalSet; a second signal during that cleanup does not cancel it. Identity clearing also drains the owned browser. Detached terminal holders
 remain independent. See [browser runtime](./browser/browser.spec.md).
+
+Shutdown has a 30-second monotonic process deadline. REPL draining, page locking
+and public checkpoints share five seconds; root locking gets at most five more.
+Process ownership is retained independently of page/root locks so skipped or
+failed preparation cannot prevent termination. CDP close gets two seconds,
+acknowledged close one second to flush, then owned-child SIGTERM/SIGKILL and exit
+confirmation use the remaining bounded budget. No whole-cleanup timeout drops
+the termination future. Admission remains fenced while late work drains.
+Identity re-claim installs a fresh manager with the same runtime configuration
+after confirmed cleanup; old task clones remain fenced. The outer run loop keeps
+the app alive through shutdown and closes its current manager, including one
+replaced during re-claim.
+See [Phase 7](../../plan/daemon-readiness/phase-7-browser-safe-upgrade-and-restart.md).
 
 Browser REPL Phase 1 adds an exec-specific 512 KiB encoded command envelope in
 `app.rs`, accommodating JSON escaping of the manager's 64 KiB decoded source

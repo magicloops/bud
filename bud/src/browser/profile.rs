@@ -207,23 +207,30 @@ pub(super) fn singleton_stale(profile: &Path) -> bool {
     match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None) {
         Err(nix::errno::Errno::ESRCH) => true,
         Err(_) => false,
-        Ok(()) => !process_uses_profile(pid, profile),
+        Ok(()) => process_uses_profile(pid, profile) == Some(false),
     }
 }
 
-fn process_uses_profile(pid: i32, profile: &Path) -> bool {
+fn process_uses_profile(pid: i32, profile: &Path) -> Option<bool> {
     let needle = format!("--user-data-dir={}", profile.display());
     #[cfg(target_os = "linux")]
-    let command = std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map(|bytes| String::from_utf8_lossy(&bytes).replace('\0', " "))
-        .unwrap_or_default();
+    let command = String::from_utf8_lossy(&std::fs::read(format!("/proc/{pid}/cmdline")).ok()?)
+        .replace('\0', " ");
     #[cfg(not(target_os = "linux"))]
-    let command = std::process::Command::new("/bin/ps")
-        .args(["-o", "command=", "-p", &pid.to_string()])
-        .output()
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
-        .unwrap_or_default();
-    command.contains(&needle)
+    let command = {
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    if command.trim().is_empty() {
+        return None;
+    }
+    Some(command.contains(&needle))
 }
 
 fn ensure_singleton_free(profile: &Path) -> Result<()> {

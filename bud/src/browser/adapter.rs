@@ -72,6 +72,108 @@ struct Process {
     _persistent: Option<super::profile::Profile>,
 }
 
+/// Cleanup ownership independent of CDP, the page lock and workspace handles.
+#[derive(Clone)]
+pub(super) struct ProcessHandle(Arc<Mutex<Process>>);
+
+impl ProcessHandle {
+    #[cfg(test)]
+    pub(super) fn fixture(child: Child) -> Self {
+        Self(Arc::new(Mutex::new(Process {
+            child,
+            background_windows: false,
+            native_shown: false,
+            windows: HashMap::new(),
+            idle_tab: None,
+            _temporary: None,
+            _persistent: None,
+        })))
+    }
+    #[cfg(test)]
+    pub(super) async fn terminate(&self) -> Result<()> {
+        self.terminate_with_budgets(Duration::from_secs(5), Duration::from_secs(5))
+            .await
+    }
+
+    pub(super) async fn terminate_until(&self, deadline: Instant) -> Result<()> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        self.terminate_with_budgets(
+            remaining
+                .saturating_sub(Duration::from_secs(5))
+                .min(Duration::from_secs(5)),
+            remaining.min(Duration::from_secs(5)),
+        )
+        .await
+    }
+
+    async fn terminate_with_budgets(&self, grace: Duration, reap: Duration) -> Result<()> {
+        {
+            let mut process = self.0.lock().unwrap();
+            if process.child.try_wait()?.is_none() {
+                // Hold the child mutex through signaling: another handle cannot
+                // reap it and allow PID reuse between this check and SIGTERM.
+                let pid = process.child.id().context("browser_close_unconfirmed")?;
+                tracing::info!(
+                    component = "browser_shutdown",
+                    event = "terminate",
+                    pid,
+                    "Terminating owned browser process"
+                );
+                let result = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+                if result != Err(nix::errno::Errno::ESRCH) {
+                    result?;
+                }
+            }
+        }
+        if !self.wait_for_exit(grace).await? {
+            tracing::warn!(
+                component = "browser_shutdown",
+                event = "kill",
+                "Owned browser did not exit gracefully; escalating"
+            );
+            self.0.lock().unwrap().child.start_kill()?;
+            if !self.wait_for_exit(reap).await? {
+                bail!("browser_close_unconfirmed");
+            }
+        }
+        // An exited original child does not prove a relaunch left the profile
+        // unused. This clears only proven stale singleton files, never live ones.
+        let process = self.0.lock().unwrap();
+        if let Some(profile) = &process._persistent {
+            if profile.ensure_not_running().is_err() {
+                tracing::warn!(
+                    component = "browser_shutdown",
+                    event = "profile_still_in_use",
+                    "Browser child exited but profile ownership is unconfirmed"
+                );
+                bail!("browser_close_unconfirmed");
+            }
+        }
+        tracing::info!(
+            component = "browser_shutdown",
+            event = "exited",
+            "Owned browser exit confirmed"
+        );
+        Ok(())
+    }
+
+    async fn wait_for_exit(&self, budget: Duration) -> Result<bool> {
+        let deadline = Instant::now() + budget;
+        loop {
+            if self.0.lock().unwrap().child.try_wait()?.is_some() {
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+}
+
 /// One serial CDP/observation handle per workspace. A lifecycle handle owns Chrome.
 /// Workspaces share one persistent process/profile and global privacy authority.
 pub struct Browser {
@@ -101,6 +203,35 @@ pub struct Browser {
 }
 
 impl Browser {
+    pub(super) fn process_handle(&self) -> ProcessHandle {
+        ProcessHandle(self.process.clone())
+    }
+
+    pub(super) async fn shutdown_until(&mut self, deadline: Instant) -> Result<()> {
+        tracing::info!(
+            component = "browser_shutdown",
+            event = "cdp_close",
+            "Requesting owned browser close"
+        );
+        let closed = tokio::time::timeout(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(2)),
+            self.cdp.call(None, "Browser.close", json!({})),
+        )
+        .await;
+        // Allow an acknowledged close to flush the profile before OS signaling.
+        if matches!(closed, Ok(Ok(_))) {
+            self.process_handle()
+                .wait_for_exit(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(1)),
+                )
+                .await?;
+        }
+        self.process_handle().terminate_until(deadline).await
+    }
     /// Startup readiness must not open a window, even for headed browsing.
     pub(super) async fn launch_probe(runtime: &super::addon::Runtime) -> Result<Self> {
         Self::launch_mode(runtime, false).await
@@ -1044,11 +1175,21 @@ impl Browser {
         if self.document(session).await? != document {
             return Ok(None);
         }
-        let editable = self.cdp.call(Some(session), "Runtime.callFunctionOn", json!({
-            "objectId":object,"returnByValue":true,"arguments":[{"value":"probe"}],
-            "functionDeclaration":include_str!("human_edit.js")
-        })).await?["result"]["value"] == true;
-        if self.document(session).await? != document { return Ok(None); }
+        let editable = self
+            .cdp
+            .call(
+                Some(session),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId":object,"returnByValue":true,"arguments":[{"value":"probe"}],
+                    "functionDeclaration":include_str!("human_edit.js")
+                }),
+            )
+            .await?["result"]["value"]
+            == true;
+        if self.document(session).await? != document {
+            return Ok(None);
+        }
         let token = ulid::Ulid::new().to_string();
         self.focus = Some(Focus {
             editable,
@@ -1197,7 +1338,11 @@ impl Browser {
         };
         let matches_metrics = fields.iter().all(|key| {
             if streaming {
-                super::stream_guard::metric_matches(key, &expected_metrics[*key], &current_metrics[*key])
+                super::stream_guard::metric_matches(
+                    key,
+                    &expected_metrics[*key],
+                    &current_metrics[*key],
+                )
             } else {
                 current_metrics[*key].as_f64().is_some()
                     && current_metrics[*key].as_f64() == expected_metrics[*key].as_f64()
@@ -1300,8 +1445,12 @@ impl Browser {
                 }
             }
         }
-        let token = self.remember_human_focus(target, &session, document).await?;
-        Ok(json!({"focus_token":token,"focus_editable":self.focus.as_ref().is_some_and(|f| f.editable)}))
+        let token = self
+            .remember_human_focus(target, &session, document)
+            .await?;
+        Ok(
+            json!({"focus_token":token,"focus_editable":self.focus.as_ref().is_some_and(|f| f.editable)}),
+        )
     }
 
     /// Close-time hint removal for a workspace without a live handle; best-effort
@@ -1650,43 +1799,9 @@ impl Browser {
 
     async fn close_owned(&mut self, forget: bool) -> Result<()> {
         if self.workspace.is_empty() {
-            if self.process_exited()? {
-                return Ok(());
-            }
-            let _ = self.cdp.call(None, "Browser.close", json!({})).await;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                if self.process.lock().unwrap().child.try_wait()?.is_some() {
-                    return Ok(());
-                }
-                if Instant::now() >= deadline {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            self.process.lock().unwrap().child.start_kill()?;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                if self.process.lock().unwrap().child.try_wait()?.is_some() {
-                    // Our own child died by SIGKILL, so Chrome could not remove
-                    // its singleton files; ownership is certain here, clear them.
-                    let profile = self
-                        .process
-                        .lock()
-                        .unwrap()
-                        ._persistent
-                        .as_ref()
-                        .map(|p| p.path.clone());
-                    if let Some(path) = profile {
-                        super::profile::clear_singleton_files(&path);
-                    }
-                    return Ok(());
-                }
-                if Instant::now() >= deadline {
-                    bail!("browser_close_unconfirmed");
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
+            return self
+                .shutdown_until(Instant::now() + Duration::from_secs(13))
+                .await;
         } else {
             if forget {
                 // Best-effort: corrupt hints never block explicit close.
@@ -1826,6 +1941,115 @@ fn discovery_endpoint(text: &str) -> Option<String> {
 #[cfg(test)]
 mod launch_tests {
     use super::discovery_endpoint;
+
+    #[tokio::test]
+    async fn owned_process_escalates_and_preserves_unrelated_process() {
+        use super::*;
+        let mut command = Command::new("/bin/sleep");
+        command.arg("60").kill_on_drop(true);
+        unsafe {
+            command.pre_exec(|| {
+                libc::signal(libc::SIGTERM, libc::SIG_IGN);
+                Ok(())
+            });
+        }
+        let handle = ProcessHandle::fixture(command.spawn().unwrap());
+        let mut unrelated = Command::new("/bin/sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        handle
+            .terminate_with_budgets(Duration::from_millis(50), Duration::from_secs(2))
+            .await
+            .unwrap();
+        let status = handle.0.lock().unwrap().child.try_wait().unwrap().unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(unrelated.try_wait().unwrap().is_none());
+        unrelated.kill().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn exited_child_cannot_clear_a_live_replacement_singleton() {
+        use super::*;
+        let base = tempfile::tempdir().unwrap();
+        let profile =
+            super::super::profile::Profile::acquire(base.path(), "test", "resource", "owner")
+                .unwrap();
+        let path = profile.path.clone();
+        let mut replacement = Command::new("/bin/sh")
+            .args(["-c", "while :; do sleep 1; done", "sh"])
+            .arg(format!("--user-data-dir={}", path.display()))
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let owner = format!(
+            "{}-{}",
+            nix::unistd::gethostname().unwrap().to_string_lossy(),
+            replacement.id().unwrap()
+        );
+        std::os::unix::fs::symlink(&owner, path.join("SingletonLock")).unwrap();
+        let mut exited = Command::new("/usr/bin/true").spawn().unwrap();
+        exited.wait().await.unwrap();
+        let handle = ProcessHandle::fixture(exited);
+        handle.0.lock().unwrap()._persistent = Some(profile);
+        assert!(handle.terminate().await.is_err());
+        assert_eq!(
+            std::fs::read_link(path.join("SingletonLock")).unwrap(),
+            std::path::PathBuf::from(owner)
+        );
+        assert!(replacement.try_wait().unwrap().is_none());
+        replacement.kill().await.unwrap();
+        handle.terminate().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_poisoned_close_reopens_persistent_profile_without_reset() {
+        use super::*;
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let runtime = crate::browser::addon::test_runtime(executable);
+        let base = tempfile::tempdir().unwrap();
+        let profile =
+            super::super::profile::Profile::acquire(base.path(), "test", "resource", "owner")
+                .unwrap();
+        let path = profile.path.clone();
+        std::fs::write(path.join("preserved"), "profile sentinel").unwrap();
+        let mut browser = Browser::launch_profile(&runtime, false, None, Some(profile))
+            .await
+            .unwrap();
+        {
+            let call = browser.cdp.call(None, "Target.getTargets", json!({}));
+            tokio::pin!(call);
+            assert!(futures::poll!(call.as_mut()).is_pending());
+        }
+        assert!(browser.cdp.interrupted());
+        let process = browser.process_handle();
+        browser.close().await.unwrap();
+        assert!(process
+            .0
+            .lock()
+            .unwrap()
+            .child
+            .try_wait()
+            .unwrap()
+            .is_some());
+        drop(browser);
+        drop(process);
+        let profile =
+            super::super::profile::Profile::acquire(base.path(), "test", "resource", "owner")
+                .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.join("preserved")).unwrap(),
+            "profile sentinel"
+        );
+        let mut reopened = Browser::launch_profile(&runtime, false, None, Some(profile))
+            .await
+            .unwrap();
+        reopened.close().await.unwrap();
+    }
 
     #[tokio::test]
     #[ignore = "launches a visible Chrome window; requires BUD_BROWSER_EXECUTABLE"]

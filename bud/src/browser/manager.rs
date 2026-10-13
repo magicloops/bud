@@ -234,6 +234,8 @@ pub struct BrowserManager {
     entries: Arc<Mutex<HashMap<String, Arc<Slot>>>>,
     connection: watch::Sender<Option<String>>,
     root: Arc<AsyncMutex<Option<Browser>>>,
+    process: Arc<Mutex<Option<super::adapter::ProcessHandle>>>,
+    shutting_down: Arc<std::sync::atomic::AtomicBool>,
     authority: Arc<Mutex<Authority>>,
     page_lock: Arc<AsyncMutex<()>>,
     binding: Arc<Mutex<Option<(String, String)>>>,
@@ -253,6 +255,8 @@ impl BrowserManager {
             entries: Arc::default(),
             connection: watch::channel(None).0,
             root: Arc::default(),
+            process: Arc::default(),
+            shutting_down: Arc::default(),
             authority: Arc::default(),
             page_lock: Arc::default(),
             binding: Arc::default(),
@@ -262,6 +266,15 @@ impl BrowserManager {
             checkpoint_task: Arc::default(),
             idle_task: Arc::default(),
         }
+    }
+
+    /// Re-claim uses a fresh authority/connection domain. Old task clones remain
+    /// permanently fenced and cannot follow the replacement into a new owner.
+    pub(crate) fn for_new_identity(&self) -> Self {
+        let mut manager = Self::new(self.runtime.clone());
+        manager.runtime_info = self.runtime_info.clone();
+        manager.persistent = self.persistent.clone();
+        manager
     }
 
     /// Resolve the prepared add-on (or a development override), prove it can
@@ -306,34 +319,102 @@ impl BrowserManager {
 
     /// Stop capture/admission before draining page work and flushing Chrome's profile.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
+        let result = self.shutdown_with_budget(Duration::from_secs(5)).await;
+        if result.is_err() {
+            tracing::warn!(
+                component = "browser_shutdown",
+                event = "failed",
+                "Browser shutdown was not confirmed"
+            );
+        }
+        result
+    }
+
+    async fn shutdown_with_budget(&self, preparation_budget: Duration) -> anyhow::Result<()> {
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(30);
+        self.shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        tracing::info!(
+            component = "browser_shutdown",
+            event = "started",
+            "Browser shutdown fenced"
+        );
         self.disconnect();
         if let Some(task) = self.idle_task.lock().unwrap().take() {
             task.abort();
         }
-        self.stop_repl_cells().await?;
-        let _page = self.page_lock.lock().await;
-        // A private shutdown must never disclose current private addresses.
-        let live: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
-        for slot in live {
-            let mut entry = slot.state.lock().await;
-            let selected = entry.target.clone();
-            if self.authority.lock().unwrap().private_content() {
-                continue;
+        if let Some(task) = self.checkpoint_task.lock().unwrap().take() {
+            task.abort();
+        }
+        // One shared preparation budget, regardless of workspace count. Failure
+        // or cancellation here must never skip owned-process termination.
+        let prepared = tokio::time::timeout(preparation_budget, async {
+            self.stop_repl_cells().await?;
+            let _page = self.page_lock.lock().await;
+            // A private shutdown must never disclose current private addresses.
+            let live: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
+            for slot in live {
+                let mut entry = slot.state.lock().await;
+                let selected = entry.target.clone();
+                if self.authority.lock().unwrap().private_content() {
+                    continue;
+                }
+                if let Some(browser) = &mut entry.browser {
+                    if browser.save_pages(selected.as_deref()).await.is_err() {
+                        tracing::warn!("Browser page recovery checkpoint unavailable");
+                    }
+                }
             }
-            if let Some(browser) = &mut entry.browser {
-                if browser.save_pages(selected.as_deref()).await.is_err() {
-                    tracing::warn!("Browser page recovery checkpoint unavailable");
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        if !matches!(prepared, Ok(Ok(()))) {
+            tracing::warn!(
+                component = "browser_shutdown",
+                event = "preparation_skipped",
+                "Browser shutdown preparation failed or exceeded its budget"
+            );
+        }
+        // Root admission may still be draining; the saved process handle is
+        // available without taking the page/root lock in that case.
+        match tokio::time::timeout(preparation_budget, self.root.lock()).await {
+            Ok(mut root) => {
+                if let Some(browser) = root.as_mut() {
+                    browser.shutdown_until(deadline).await?;
+                } else {
+                    let process = self.process.lock().unwrap().clone();
+                    if let Some(process) = process {
+                        process.terminate_until(deadline).await?;
+                    }
+                }
+                *root = None;
+            }
+            Err(_) => {
+                let process = self.process.lock().unwrap().clone();
+                if let Some(process) = process {
+                    process.terminate_until(deadline).await?;
+                } else {
+                    anyhow::bail!("browser_shutdown_unconfirmed");
                 }
             }
         }
-        self.close_root().await?;
+        *self.process.lock().unwrap() = None;
         let slots: Vec<_> = self.entries.lock().unwrap().values().cloned().collect();
         for slot in slots {
-            slot.state.lock().await.browser = None;
+            if let Ok(mut state) = slot.state.try_lock() {
+                state.browser = None;
+            }
         }
         self.entries.lock().unwrap().clear();
         *self.binding.lock().unwrap() = None;
-        *self.authority.lock().unwrap() = Authority::default();
+        // Do not restore agent authority while late page/media tasks drain.
+        tracing::info!(
+            component = "browser_shutdown",
+            event = "completed",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "Browser shutdown completed"
+        );
         Ok(())
     }
 
@@ -348,6 +429,7 @@ impl BrowserManager {
             browser.close().await?;
         }
         *root = None;
+        *self.process.lock().unwrap() = None;
         Ok(())
     }
 
@@ -359,6 +441,9 @@ impl BrowserManager {
     }
 
     pub fn connect(&self, device_session_id: String) {
+        if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         self.connection.send_replace(Some(device_session_id));
         self.start_idle_expiry();
     }
@@ -406,6 +491,9 @@ impl BrowserManager {
     }
 
     async fn execute_inner(&self, request: Request) -> Reply {
+        if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Reply::error(&request, "browser_stale_connection", false);
+        }
         let now = crate::util::now_millis();
         if (request.expires_at_ms <= now && !matches!(request.command, Action::Cancel))
             || request.expires_at_ms > now + 45_000
@@ -809,11 +897,7 @@ impl BrowserManager {
             let disclose = !self.authority.lock().unwrap().private_content();
             if disclose
                 && self
-                    .flush_checkpoints(
-                        &request.session_id,
-                        &mut entry,
-                        false,
-                    )
+                    .flush_checkpoints(&request.session_id, &mut entry, false)
                     .await
                     .is_err()
             {
@@ -1243,6 +1327,7 @@ impl BrowserManager {
                     other.target = None;
                 }
                 *root = None;
+                *self.process.lock().unwrap() = None;
             }
             if root.is_none() {
                 *root = Some(if let Some((base, environment)) = &self.persistent {
@@ -1257,6 +1342,7 @@ impl BrowserManager {
                 } else {
                     Browser::launch(runtime).await?
                 });
+                *self.process.lock().unwrap() = root.as_ref().map(Browser::process_handle);
                 if matches!(action, Action::Ensure { .. }) {
                     let mut authority = self.authority.lock().unwrap();
                     // Pause/Stop fence before waiting for the page lock. A launch
@@ -1305,7 +1391,10 @@ impl BrowserManager {
                 self.start_checkpoints(root.as_ref().unwrap().checkpoint_endpoint().to_owned());
             }
         }
-        if let Action::Control { control: ControlCommand::End } = action {
+        if let Action::Control {
+            control: ControlCommand::End,
+        } = action
+        {
             // Ending an absent workspace is still valid: no input can remain there.
             if let Some(browser) = entry.browser.as_mut() {
                 browser.recover_channel().await?;
@@ -1654,6 +1743,128 @@ fn valid_action(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn identity_replacement_preserves_configuration_without_reviving_old_tasks() {
+        let mut old = BrowserManager::new(Some(crate::browser::addon::test_runtime(
+            "/missing/test-browser",
+        )));
+        old.persistent = Some((
+            std::path::PathBuf::from("/fixture/base"),
+            "environment".into(),
+        ));
+        old.connect("old".into());
+        old.shutdown().await.unwrap();
+        let fresh = old.for_new_identity();
+        assert_ne!(fresh.boot_id, old.boot_id);
+        assert_eq!(fresh.persistent, old.persistent);
+        assert_eq!(fresh.capability()["available"], true);
+        fresh.connect("new".into());
+        old.connect("new".into());
+        assert!(old.connection.borrow().is_none());
+        assert_eq!(fresh.connection.borrow().as_deref(), Some("new"));
+        assert_eq!(
+            old.execute(request(1, Action::Open { url: None }))
+                .await
+                .error,
+            Some("browser_stale_connection")
+        );
+        fresh.shutdown().await.unwrap();
+    }
+    #[tokio::test]
+    async fn live_shutdown_preserves_profile_after_failed_checkpoint_and_private_control() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        let (url, server) = fixture().await;
+        for private in [false, true] {
+            let base = tempfile::tempdir().unwrap();
+            let profile =
+                super::super::profile::Profile::acquire(base.path(), "test", "resource", "alice")
+                    .unwrap();
+            let path = profile.path.clone();
+            std::fs::write(path.join("bud-pages.json"), "invalid checkpoint").unwrap();
+            std::fs::write(path.join("preserved"), "profile sentinel").unwrap();
+            drop(profile);
+            let mut manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(
+                executable.clone(),
+            )));
+            manager.persistent = Some((base.path().to_owned(), "test".into()));
+            manager.connect("device".into());
+            let mut open = request(
+                1,
+                Action::Open {
+                    url: Some(url.clone()),
+                },
+            );
+            open.browser_id = "resource".into();
+            let opened = manager.execute(open).await;
+            assert!(opened.ok, "{opened:?}");
+            if private {
+                manager.authority.lock().unwrap().restore(true, true);
+            }
+            manager.shutdown().await.unwrap();
+            assert!(manager.root.lock().await.is_none());
+            let _profile =
+                super::super::profile::Profile::acquire(base.path(), "test", "resource", "alice")
+                    .unwrap();
+            assert_eq!(
+                std::fs::read_to_string(path.join("preserved")).unwrap(),
+                "profile sentinel"
+            );
+            assert_eq!(
+                std::fs::read_to_string(path.join("bud-pages.json")).unwrap(),
+                "invalid checkpoint"
+            );
+        }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn shutdown_terminates_owned_process_despite_busy_page_and_root() {
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(
+            "/missing/test-browser",
+        )));
+        manager.connect("device".into());
+        assert!(
+            !manager
+                .execute(request(1, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        let slot = manager.entries.lock().unwrap()["browser"].clone();
+        let _worker = slot.repl.lock().await;
+        let child = tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        *manager.process.lock().unwrap() =
+            Some(super::super::adapter::ProcessHandle::fixture(child));
+        let _page = manager.page_lock.lock().await;
+        let _root = manager.root.lock().await;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            manager.shutdown_with_budget(Duration::from_millis(20)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None),
+            Err(nix::errno::Errno::ESRCH)
+        );
+        assert!(manager.connection.borrow().is_none());
+        assert_eq!(*slot.repl_stop.borrow(), Some("browser_stopped"));
+        manager.connect("late".into());
+        assert!(manager.connection.borrow().is_none());
+        assert_eq!(
+            manager
+                .execute(request(1, Action::Open { url: None }))
+                .await
+                .error,
+            Some("browser_stale_connection")
+        );
+    }
 
     #[tokio::test]
     async fn startup_failure_returns_an_unavailable_manager_without_aborting_daemon_setup() {
@@ -1710,14 +1921,15 @@ mod tests {
                 Some("browser_stale_request")
             );
         }
-        let entries = manager.entries.lock().unwrap();
-        assert_eq!(entries.len(), 15);
-        assert_eq!(entries.values().filter(|s| uses_capacity(s)).count(), 0);
-        for slot in entries.values() {
-            slot.retain_until
-                .store(0, std::sync::atomic::Ordering::Relaxed);
+        {
+            let entries = manager.entries.lock().unwrap();
+            assert_eq!(entries.len(), 15);
+            assert_eq!(entries.values().filter(|s| uses_capacity(s)).count(), 0);
+            for slot in entries.values() {
+                slot.retain_until
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+            }
         }
-        drop(entries);
         let _ = manager
             .execute(request(1, Action::Open { url: None }))
             .await;
@@ -2858,12 +3070,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let prepared = manager
-            .execute(control(
-                4,
-                ControlCommand::End,
-            ))
-            .await;
+        let prepared = manager.execute(control(4, ControlCommand::End)).await;
         assert!(prepared.ok, "{prepared:?}");
         let returned = manager
             .execute(control(5, ControlCommand::End))

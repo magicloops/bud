@@ -23,6 +23,14 @@ The plan assumes:
 
 ## Files
 
+### `phase-7-browser-safe-upgrade-and-restart.md`
+
+Follow-up scope for the v0.1.26 live browser orphan incident: bound browser
+shutdown, align supervisor grace periods, stop and confirm the old daemon before
+replacement (including jobs with the old launchd timeout), preserve profiles and
+terminal holders, and validate a real installed upgrade. Implemented locally;
+installed old-version upgrade and production acceptance remain release gates.
+
 ### `implementation-spec.md`
 
 Parent implementation spec for daemon production-binary readiness.
