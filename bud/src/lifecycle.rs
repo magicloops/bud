@@ -22,6 +22,7 @@ use crate::identity::load_identity;
 
 pub const LAUNCHD_LABEL: &str = "dev.bud.daemon";
 pub const SYSTEMD_UNIT_NAME: &str = "bud.service";
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(50);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceManager {
@@ -216,6 +217,8 @@ pub fn launchd_plist(paths: &LifecyclePaths) -> String {
 	</dict>
 	<key>AbandonProcessGroup</key>
 	<true/>
+	<key>ExitTimeOut</key>
+	<integer>45</integer>
 	<key>ProcessType</key>
 	<string>Interactive</string>
 	<key>StandardOutPath</key>
@@ -245,6 +248,7 @@ ExecStart={bin} service-run {base}
 Restart=on-failure
 RestartSec=2
 KillMode=process
+TimeoutStopSec=45
 StandardOutput=append:{log}
 StandardError=append:{log}
 
@@ -449,20 +453,26 @@ fn require_managed_server(paths: &LifecyclePaths) -> Result<()> {
 pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
     let manager = ServiceManager::detect();
     paths.verify_service(manager)?;
+    anyhow::ensure!(
+        read_live_pid(paths).is_none() || crate::instance::managed_running(&paths.base_dir),
+        "this instance runs in the foreground; stop its Cargo command before replacing it"
+    );
     std::fs::create_dir_all(&paths.log_dir)
         .with_context(|| format!("cannot create {}", paths.log_dir.display()))?;
 
     require_managed_server(paths)?;
     match manager {
         ServiceManager::Launchd => {
+            // Signal while the old job is still registered: its loaded plist
+            // may allow only five seconds after bootout. Wait before unloading.
+            stop_selected_daemon(paths)?;
+            let unloaded = unload_launchd(paths)?;
             let plist_path = paths.launchd_plist_path();
             if let Some(parent) = plist_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&plist_path, launchd_plist(paths))
                 .with_context(|| format!("cannot write {}", plist_path.display()))?;
-            // Re-installs: drop any loaded copy first (ignore "not loaded").
-            let unloaded = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
             launchd_bootstrap(&plist_path, unloaded)?;
             println!(
                 "Installed launchd agent {plist_path}",
@@ -481,14 +491,17 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
                 "systemctl",
                 &["--user", "enable", &paths.systemd_unit_name()],
             )?;
-            // restart, not `enable --now`: reinstalls/upgrades run over an
-            // ALREADY-RUNNING unit, and `--now` only starts stopped units —
-            // the old daemon kept running the old binary/env (seen live:
-            // a freshly enabled local-LLM endpoint never reached the
-            // picker because the pre-upgrade daemon never re-helloed).
+            // Explicit stop/verify/start: do not replace a daemon whose browser
+            // cleanup failed. daemon-reload applied the new stop budget first.
+            run_checked("systemctl", &["--user", "stop", &paths.systemd_unit_name()])?;
+            anyhow::ensure!(
+                read_live_pid(paths).is_none(),
+                "daemon shutdown is unconfirmed"
+            );
+            ensure_profiles_stopped(paths)?;
             run_checked(
                 "systemctl",
-                &["--user", "restart", &paths.systemd_unit_name()],
+                &["--user", "start", &paths.systemd_unit_name()],
             )?;
             // Linger keeps the user manager (and Bud) alive without an open
             // session. Best-effort: polkit may refuse on hardened distros.
@@ -525,7 +538,8 @@ pub fn service_uninstall(paths: &LifecyclePaths) -> Result<()> {
     match manager {
         ServiceManager::Launchd => {
             let plist_path = paths.launchd_plist_path();
-            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target(paths)]);
+            stop_selected_daemon(paths)?;
+            unload_launchd(paths)?;
             if plist_path.is_file() {
                 std::fs::remove_file(&plist_path)?;
             }
@@ -582,10 +596,16 @@ pub fn stop(paths: &LifecyclePaths) -> Result<()> {
         paths.verify_service(manager)?;
         match manager {
             ServiceManager::Launchd => {
-                run_checked("launchctl", &["bootout", &gui_domain_target(paths)])?;
+                stop_selected_daemon(paths)?;
+                unload_launchd(paths)?;
             }
             ServiceManager::SystemdUser => {
                 run_checked("systemctl", &["--user", "stop", &paths.systemd_unit_name()])?;
+                anyhow::ensure!(
+                    read_live_pid(paths).is_none(),
+                    "daemon shutdown is unconfirmed"
+                );
+                ensure_profiles_stopped(paths)?;
             }
             ServiceManager::None => unreachable!(),
         }
@@ -606,10 +626,7 @@ pub fn restart(paths: &LifecyclePaths) -> Result<()> {
                 service_install(paths)?;
             }
             ServiceManager::SystemdUser => {
-                run_checked(
-                    "systemctl",
-                    &["--user", "restart", &paths.systemd_unit_name()],
-                )?;
+                service_install(paths)?;
             }
             ServiceManager::None => unreachable!(),
         }
@@ -909,6 +926,7 @@ fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
         println!("Bud is already running (pid {pid}).");
         return Ok(());
     }
+    ensure_profiles_stopped(paths)?;
     require_managed_server(paths)?;
     std::fs::create_dir_all(&paths.log_dir)?;
     let log = std::fs::OpenOptions::new()
@@ -964,26 +982,103 @@ fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
 }
 
 fn stop_pidfile(paths: &LifecyclePaths) -> Result<()> {
-    let Some(pid) = read_live_pid(paths) else {
+    let Some(_) = read_live_pid(paths) else {
         println!("Bud is not running (no live pidfile).");
-        return Ok(());
+        return ensure_profiles_stopped(paths);
     };
-    // SIGTERM to the daemon pid ONLY. Never a process group / pkill: holder
-    // processes share the binary name and must survive.
+    stop_selected_daemon(paths)
+}
+
+fn stop_selected_daemon(paths: &LifecyclePaths) -> Result<()> {
+    let Some(pid) = read_live_pid(paths) else {
+        return ensure_profiles_stopped(paths);
+    };
+    // Recheck locked ownership immediately before signaling. Never signal a
+    // process group: terminal holders share the binary name and must survive.
+    anyhow::ensure!(
+        read_live_pid(paths) == Some(pid),
+        "daemon ownership changed before shutdown"
+    );
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(pid as i32),
         nix::sys::signal::Signal::SIGTERM,
     )
     .with_context(|| format!("failed to signal pid {pid}"))?;
+    wait_for_daemon_exit(pid, STOP_WAIT, || read_live_pid(paths), process_alive)?;
+    ensure_profiles_stopped(paths)
+}
+
+fn process_alive(pid: u32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None)
+        != Err(nix::errno::Errno::ESRCH)
+}
+
+fn wait_for_daemon_exit(
+    pid: u32,
+    budget: std::time::Duration,
+    mut owner: impl FnMut() -> Option<u32>,
+    mut alive: impl FnMut(u32) -> bool,
+) -> Result<()> {
     let started = std::time::Instant::now();
-    while read_live_pid(paths) == Some(pid) {
+    loop {
+        let current = owner();
         anyhow::ensure!(
-            started.elapsed() < std::time::Duration::from_secs(15),
+            current.is_none() || current == Some(pid),
+            "daemon was replaced during shutdown; no replacement started"
+        );
+        if current.is_none() && !alive(pid) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            started.elapsed() < budget,
             "daemon {pid} is still shutting down; no replacement started"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    Ok(())
+}
+
+fn ensure_profiles_stopped(paths: &LifecyclePaths) -> Result<()> {
+    // Read-only ownership check. Never stop a process found through a profile
+    // lock or clear live singleton files as part of service replacement.
+    crate::browser::addon::claim_profiles(&paths.base_dir)
+        .map(drop)
+        .context("browser cleanup is unconfirmed; no replacement started")
+}
+
+fn unload_launchd(paths: &LifecyclePaths) -> Result<bool> {
+    let target = gui_domain_target(paths);
+    let state = Command::new("launchctl").args(["print", &target]).output()
+        .context("cannot inspect selected launchd job")?;
+    if !state.status.success() {
+        return Ok(false);
+    }
+    // A job can be starting (or auto-restarted) before it acquires the instance
+    // lock. Do not bootout an unverified live PID and invoke its old short timer.
+    for line in String::from_utf8_lossy(&state.stdout).lines() {
+        if let Some(pid) = line.trim().strip_prefix("pid = ").and_then(|v| v.parse::<u32>().ok()) {
+            anyhow::ensure!(pid > 1 && pid <= i32::MAX as u32 && !process_alive(pid),
+                "selected launchd job is still running without confirmed shutdown; no replacement started");
+        }
+    }
+    anyhow::ensure!(
+        read_live_pid(paths).is_none(),
+        "daemon restarted before service unload"
+    );
+    run_checked("launchctl", &["bootout", &target])?;
+    let started = std::time::Instant::now();
+    while run_quiet("launchctl", &["print", &target]) {
+        anyhow::ensure!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "old launchd job did not unload; no replacement started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    anyhow::ensure!(
+        read_live_pid(paths).is_none(),
+        "daemon restarted during service unload"
+    );
+    ensure_profiles_stopped(paths)?;
+    Ok(true)
 }
 
 /// Whether a pidfile-managed daemon is currently alive (upgrade uses this
@@ -1112,6 +1207,27 @@ fn run_quiet(program: &str, args: &[&str]) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn shutdown_wait_requires_process_exit_and_rejects_replacement_or_timeout() {
+        let budget = std::time::Duration::from_millis(200);
+        let mut checks = 0;
+        wait_for_daemon_exit(
+            42,
+            budget,
+            || None,
+            |_| {
+                checks += 1;
+                checks < 2
+            },
+        )
+        .unwrap();
+        assert_eq!(checks, 2, "lock release alone is not process exit");
+        assert!(wait_for_daemon_exit(42, budget, || Some(43), |_| false).is_err());
+        assert!(
+            wait_for_daemon_exit(42, std::time::Duration::ZERO, || Some(42), |_| true).is_err()
+        );
+    }
+
     fn test_paths() -> LifecyclePaths {
         LifecyclePaths {
             base_dir: PathBuf::from("/home/user/.bud"),
@@ -1175,6 +1291,7 @@ mod tests {
             unit.contains("ExecStart=\"/home/user/.bud/bin/bud\" service-run \"/home/user/.bud\"")
         );
         assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("TimeoutStopSec=45"));
         assert!(unit.contains("StandardOutput=append:/home/user/.bud/logs/daemon.log"));
         assert!(unit.contains("WantedBy=default.target"));
     }
@@ -1192,6 +1309,7 @@ mod tests {
         assert!(plist.contains("<string>/home/user/.bud</string>"));
         assert!(!plist.contains("/bin/sh"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+        assert!(plist.contains("<key>ExitTimeOut</key>\n\t<integer>45</integer>"));
         assert!(plist.contains("<key>ProcessType</key>\n\t<string>Interactive</string>"));
         assert!(plist.contains("/home/user/.bud/logs/daemon.log"));
         // KeepAlive on failure only: `bud stop` must stick.

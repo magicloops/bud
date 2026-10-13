@@ -246,17 +246,18 @@ impl BudApp {
         }
     }
 
-    pub async fn run(self) -> Result<()> {
-        let browser = self.browser_manager.clone();
+    pub async fn run(mut self) -> Result<()> {
         let result = tokio::select! {
             result = self.run_loop() => result,
             result = shutdown_signal() => result,
         };
-        browser.shutdown().await?;
+        // Use the current manager: identity re-claim can replace the original
+        // manager while the run loop is alive. Keep self through cleanup.
+        self.browser_manager.shutdown().await?;
         result
     }
 
-    async fn run_loop(mut self) -> Result<()> {
+    async fn run_loop(&mut self) -> Result<()> {
         self.installation_id = load_or_create_installation_id(&self.installation_id_path).await?;
         self.identity = load_identity(&self.identity_path).await?;
         if let Some(identity) = &self.identity {
@@ -1528,6 +1529,7 @@ impl BudApp {
         self.browser_manager.shutdown().await?;
         self.identity = None;
         clear_identity(&self.identity_path).await?;
+        self.browser_manager = self.browser_manager.for_new_identity();
         info!(path = %self.identity_path.display(), "Removed invalid bud identity");
         Ok(())
     }
@@ -1950,7 +1952,7 @@ mod tests {
             .run_until(async {
                 let dir = tempfile::tempdir().unwrap();
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let app = connection_test_app(
+                let mut app = connection_test_app(
                     dir.path(),
                     format!("ws://{}/ws", listener.local_addr().unwrap()),
                 )

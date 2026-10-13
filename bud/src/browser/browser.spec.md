@@ -42,6 +42,7 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   macOS secure-store preflight, first-creation appearance defaults and atomic
   launch-only color synchronization. Used by production admission; non-macOS
   persistent launch is explicitly unsupported pending credential-store acceptance.
+  Process-inspection failures remain uncertain and cannot authorize stale-lock removal.
 - `recovery.rs`: versioned, bounded, private, atomic agent-visible URL checkpoints; corrupt/symlinked data fails closed without modifying the profile. `forget` (used by workspace close) is best-effort so a corrupt file never blocks closing (Phase 3s D1).
 - `workspace_tests.rs`: opt-in disposable Chrome fixture proving shared cookies,
   separate target/observation ownership, opener inheritance and workspace-only close.
@@ -78,6 +79,33 @@ owns admission, live CDP state and process lifetime. No personal browser attachm
   A headed minimized/background regression covers fitted clicks, typing and scrolling.
 
 ## Limits and lifetime
+
+### Upgrade and shutdown cleanup
+
+Daemon shutdown permanently fences new admission and reconnect, aborts idle and
+checkpoint tasks, and gives REPL draining/page acquisition/public checkpointing a
+shared five-second budget. Private URLs remain excluded. Preparation failure is
+logged and cannot skip process cleanup. A process handle registered with the
+root is accessible independently of a busy page/root mutex; root acquisition
+has a separate five-second bound. Closed/replaced roots release that extra handle.
+
+Process cleanup retains a 30-second overall monotonic deadline, with bounded CDP
+close, a short acknowledged-close flush period, SIGTERM and then SIGKILL of only
+the unreaped owned child. Exit is confirmed before ownership is released. An
+exited child with a still-live replacement singleton reports unconfirmed close;
+it does not authorize lock removal, port adoption or signaling the replacement.
+Unknown process inspection remains fail-closed. Late operation/media results
+remain connection-fenced; shutdown does not restore agent admission.
+Identity clearing creates a fresh manager/boot ID with preserved runtime settings;
+it never revives the old connection or authority domain.
+
+`browser_shutdown` logs fixed stages, owned PID and elapsed time without page
+data. Unit fixtures cover stuck page/root/REPL locks, escalation and live
+replacement ownership. Real-Chrome fixtures cover poisoned CDP, profile reuse,
+corrupt checkpoint preservation and private shutdown. Installed old-version
+upgrade and production sign-in/takeover acceptance remain release gates in
+[Phase 7](../../../plan/daemon-readiness/phase-7-browser-safe-upgrade-and-restart.md).
+
 One workspace per thread shares the managed Chrome process and FIFO page lock.
 There is no fixed resident-workspace count cap. After 24 hours without use a
 minute-scale daemon sweep releases tabs/helpers/REPL resources; eligible public

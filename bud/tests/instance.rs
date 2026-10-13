@@ -2,6 +2,136 @@
 use std::path::Path;
 use std::process::Command;
 
+static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn request_shutdown(_: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+// Child fixture runs only when explicitly selected by the integration test.
+#[test]
+fn managed_shutdown_fixture() {
+    let Some(base) = std::env::var_os("SHUTDOWN_FIXTURE_BASE") else {
+        return;
+    };
+    use clap::Parser;
+    let base = std::path::PathBuf::from(base);
+    let action = nix::sys::signal::SigAction::new(
+        nix::sys::signal::SigHandler::Handler(request_shutdown),
+        nix::sys::signal::SaFlags::empty(),
+        nix::sys::signal::SigSet::empty(),
+    );
+    unsafe {
+        nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGTERM, &action).unwrap();
+    }
+    let args = bud::BudArgs::parse_from(["bud", "--base-dir", base.to_str().unwrap()]);
+    let lock = bud::instance::InstanceLock::acquire(&args).unwrap();
+    std::fs::write(base.join("fixture-ready"), "ready").unwrap();
+    let started = std::time::Instant::now();
+    while !SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(15),
+            "fixture was not stopped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Exceed the previously loaded launchd job's five-second grace period.
+    std::thread::sleep(std::time::Duration::from_secs(6));
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(std::env::var_os("SERVICE_TEST_LOG").unwrap())
+        .unwrap()
+        .write_all(b"cleanup_completed\n")
+        .unwrap();
+    drop(lock);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn launchd_upgrade_waits_for_old_daemon_cleanup_before_unload() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("dev");
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&base).unwrap();
+    std::fs::create_dir(&tools).unwrap();
+    std::fs::write(
+        base.join("bud.env"),
+        "BUD_SERVER_URL='ws://localhost:3000/ws'\n",
+    )
+    .unwrap();
+    let log = dir.path().join("calls");
+    std::fs::write(&log, "").unwrap();
+    let script = tools.join("launchctl");
+    std::fs::write(&script, r#"#!/bin/sh
+printf '%s\n' "$*" >> "$SERVICE_TEST_LOG"
+if [ "$1" = print ] && [ -n "$UNVERIFIED_PID" ]; then printf 'pid = %s\n' "$UNVERIFIED_PID"; exit 0; fi
+if [ "$1" = print ]; then [ ! -f "$SERVICE_TEST_LOG.unloaded" ]; exit $?; fi
+if [ "$1" = bootout ]; then
+    if [ -f "$SHUTDOWN_FIXTURE_BASE/bud.pid" ]; then printf 'unload preceded cleanup' >&2; exit 1; fi
+    : > "$SERVICE_TEST_LOG.unloaded"
+fi
+exit 0
+"#).unwrap();
+    std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .env_clear()
+        .env("HOME", dir.path())
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["--exact", "managed_shutdown_fixture"])
+        .env("BUD_MANAGED_LAUNCH", "1")
+        .env("SHUTDOWN_FIXTURE_BASE", &base)
+        .env("SERVICE_TEST_LOG", &log)
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !base.join("fixture-ready").exists() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Reap concurrently: kill(pid,0) alone considers a zombie still alive.
+    let child_pid = child.id();
+    let reaper = std::thread::spawn(move || child.wait().unwrap());
+    let output = cli(dir.path(), &base)
+        .env("PATH", &tools)
+        .env("SHUTDOWN_FIXTURE_BASE", &base)
+        .env("SERVICE_TEST_LOG", &log)
+        .args(["service", "install"])
+        .output()
+        .unwrap();
+    if !output.status.success() {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(child_pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    let status = reaper.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(status.success());
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.find("cleanup_completed").unwrap() < calls.find("bootout ").unwrap());
+    assert!(calls.find("bootout ").unwrap() < calls.find("bootstrap ").unwrap());
+    // A running loaded job without our instance lock is not safe to unload.
+    let rejected = cli(dir.path(), &base)
+        .env("PATH", &tools)
+        .env("SERVICE_TEST_LOG", &log)
+        .env("UNVERIFIED_PID", std::process::id().to_string())
+        .args(["service", "install"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let after = std::fs::read_to_string(&log).unwrap();
+    assert!(after[calls.len()..]
+        .lines()
+        .all(|line| line.starts_with("print ")));
+}
+
 fn cli(home: &Path, base: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_bud"));
     command
@@ -81,7 +211,7 @@ fn selected_service_install_restart_and_uninstall_preserve_other_instance() {
         let path = fake_bin.join(tool);
         std::fs::write(
             &path,
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SERVICE_TEST_LOG\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SERVICE_TEST_LOG\"\nif [ \"$1\" = print ]; then [ -f \"$SERVICE_TEST_LOG.loaded\" ]; exit $?; fi\nif [ \"$1\" = bootstrap ]; then : > \"$SERVICE_TEST_LOG.loaded\"; fi\nif [ \"$1\" = bootout ]; then /bin/rm -f \"$SERVICE_TEST_LOG.loaded\"; fi\n",
         )
         .unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -185,8 +315,11 @@ fn launchd_reload_retries_only_transient_bootstrap_eio_after_successful_bootout(
             &script,
             r#"#!/bin/sh
 printf '%s\n' "$*" >> "$SERVICE_TEST_LOG"
+if [ "$1" = print ]; then
+    [ "$SCENARIO" != not_loaded ] && [ ! -f "$SERVICE_TEST_LOG.unloaded" ]; exit $?
+fi
 if [ "$1" = bootout ]; then
-    [ "$SCENARIO" != not_loaded ]; exit $?
+    : > "$SERVICE_TEST_LOG.unloaded"; exit 0
 fi
 if [ "$SCENARIO" = transient ] && [ -f "$SERVICE_TEST_MARKER" ]; then exit 0; fi
 printf 'seen' > "$SERVICE_TEST_MARKER"
@@ -224,7 +357,7 @@ exit 5
                 .lines()
                 .filter(|line| line.starts_with("bootout "))
                 .count(),
-            1
+            if scenario == "not_loaded" { 0 } else { 1 }
         );
         if !success {
             assert!(String::from_utf8_lossy(&output.stderr).contains("diagnostic preserved"));
