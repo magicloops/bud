@@ -339,6 +339,15 @@ Idle, pre/post-lock and delivery checks retain connection/privacy fences. No new
 capability or request field: this unreleased feature has no compatibility branch.
 Authority and real Chrome tests cover epoch continuity and stale-command rejection.
 
+Authority publishes a local watch notification whenever its media fence changes.
+Media subscribes before validating and rechecks current authority after wakes;
+idle receive and network setup stop without waiting for remote EOF. Private idle
+waits also observe the monotonic lease deadline. In-flight CDP capture still
+drains and fenced output is discarded. Only the task's final drop guard releases
+the media slot, preventing old cleanup from clearing a replacement's busy flag.
+Fake-peer tests cover silent sockets, coalesced takeover/return and idle expiry.
+See [production reliability](../../../plan/browser-streaming/production-capture-and-takeover-reliability.md).
+
 ## Shared persistent runtime (Phase 3k)
 
 `configured_for` enables owner-bound persistent runtime and advertises
@@ -426,6 +435,45 @@ next normal capture demand replaces it without replaying input. Command CDP
 poisoning, ownership/document/layout validation, page locking and privacy fences
 remain unchanged. No new capture loop or foreground activation. See
 [reconnect investigation](../../../debug/browser-media-target-reconnect.md).
+
+Passive captures now enable target-scoped focus emulation on the dedicated
+screenshot attachment for the bounded capture/validation/downscale sequence,
+then confirm disable before returning pixels. A pending marker is set before
+enable; rejection, interruption and target destruction cannot silently lose that
+cleanup obligation. A poisoned capture connection is replaced for cleanup only,
+using known target identity and confirmed absence/disable. Unconfirmed cleanup
+retains the marker and reports `browser_capture_cleanup_unconfirmed`; later
+capture, private-source preparation and Return must resolve it first under the
+page lock. Private-source cleanup likewise precedes passive capture. Command
+viewport metrics, ownership, input guards and capture cadence are unchanged.
+`CaptureTiming.focus_ms` includes enable/cleanup time; no focus/page payload is logged.
+
+The disposable headed fixture covers minimized idle-tab capture, JPEG/PNG bounds,
+preserved editable value/caret, rejected capture, interrupted capture-channel
+cleanup, private-source preparation and vanished targets. This does not solve
+the separately reproduced selected-work-tab/minimized Chrome 155 stall by itself. Focus
+disable can emit page blur/visibility changes; no promise of unchanged focus
+events is made. The focus scope itself adds no foreground activation or persistent
+emulation; the authorized timeout exception below can restore a window.
+
+The subsequently authorized passive timeout fallback uses a two-second deadline
+on each dedicated screenshot call. After screenshot timeout and confirmed focus
+cleanup, `capture_scaled_timed_with_repair` may restore/select-idle/re-minimize one
+currently minimized owned window, then retry capture once with fresh validation.
+The idle tab must already exist in that same live window; normal/fullscreen,
+different-window and revoked requests do not repair. Media supplies live carrier/
+authority checks before repair, after restore and before retry. Re-minimization
+is attempted even on selection failure. Command/input calls are never canceled
+or replayed; agent-tool/private screenshot captures retain ten-second deadlines
+and private streaming is unchanged. Healthy captures do not inspect window state
+or switch tabs. `CaptureTiming.repairs`/`repair_ms` and a content-free repair event
+record the exception. The user accepted possible window flash only on this timeout
+path. A disposable selected-minimized regression verifies successful recovery,
+preserved page/value and normal-window/revocation denial; live acceptance is pending.
+If repair or recapture fails, the workspace suppresses further native repair until
+a passive capture succeeds. Reconnect cannot repeatedly flash a broken renderer's
+window. A real owned window plus permanently stalled fake capture-channel fixture
+verifies one repair, no repair on the next demand, and rearming on successful capture.
 
 ## Minimized selected-tab workaround
 On macOS headed Chrome, one process-owned static Bud tab remains selected while

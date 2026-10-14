@@ -1,5 +1,26 @@
 # Auth Validation Checklist
 
+## Production browser capture/takeover reliability — October 13
+
+- [x] Local media fences retire idle sockets even with silent peers and coalesced
+  takeover/return; passive agent epochs do not invalidate media. In-flight capture
+  drains and loses delivery authority on disconnect without poisoning command CDP.
+- [x] Shared desktop/mobile viewer tests reject late old-socket callbacks, restore
+  passive viewing on failed acquire and release the exact override on real private loss.
+- [x] Existing service control/relay fixtures retain owner resolution, idle auth
+  revocation and post-fence delivery withholding; no authorization bypass was added.
+- [ ] Two real accounts on Render: foreign cookie/scoped-mobile media remains 404;
+  logout/unclaim/visit expiry during capture or takeover clears private pixels.
+- [ ] Two owned workspaces and competing web/phone viewers: pending focus cleanup
+  cannot affect another target or a replacement source; capture cannot grant control.
+- [ ] Passive timeout repair on Render: only the owned minimized window containing
+  its idle tab may be restored/re-minimized. Revocation during restoration permits
+  parking only, with no new capture delivery or input; normal/foreign windows remain unchanged.
+
+Existing Bud/thread/workspace ownership and authenticated viewer/override resolution
+remain authoritative. No new routes, rows, grants, owner stamps or schema changes.
+See [the implementation plan](../browser-streaming/production-capture-and-takeover-reliability.md).
+
 ## Backend mobile performance
 
 - [x] Atomic creation PostgreSQL fixtures: foreign Bud rejected before preparation,

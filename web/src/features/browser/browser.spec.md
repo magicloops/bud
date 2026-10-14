@@ -527,6 +527,17 @@ waiting task. This supersedes historical private-pause/recovery descriptions abo
 Mounted tests cover hidden release, passive closure, reconnect, native suspension,
 input and handoff behavior. Physical phone/network acceptance remains in the plan.
 
+Before acquiring control (including first native Show), the viewer synchronously
+detaches its passive canvas. Old socket callbacks are identity-fenced and cannot
+end the new override. Expected media revocation during a control transition does
+not mark runtime ensure needed; successful acquisition opens one private socket
+without an `ensuring` teardown. Failed acquisition restores passive attachment.
+Unexpected private loss still releases promptly, and actual runtime loss still
+uses ensure. Mounted desktop and hosted-mobile regressions cover delayed old
+callbacks, failed acquisition, no redundant ensure and real private loss. This
+is shared viewer code; no native app rebuild or server contract change is needed.
+See [production reliability](../../../../plan/browser-streaming/production-capture-and-takeover-reliability.md).
+
 Transcript browser reveal reads only structured `tool_payload` from tool rows.
 Historical JSON normalization belongs to the service; plain display content never
 triggers browser discovery or reveal. Existing reveal identities remain unchanged.

@@ -17,6 +17,78 @@ register(`data:text/javascript,${encodeURIComponent(`export async function load(
 }`)}`, import.meta.url)
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+for (const mobile of [false, true]) test(`takeover keeps one private socket without redundant ensure (${mobile ? 'mobile' : 'web'})`, async () => {
+  const originalFetch = globalThis.fetch;
+  const originalAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
+  const clients: FakeCanvas[] = [];
+  class FakeCanvas {
+    frame = null;
+    closed = false;
+    constructor(_canvas: unknown, _url: string, _viewer: string, readonly status: (state: string) => void) { clients.push(this); }
+    close() { this.closed = true; this.status('unavailable'); }
+  }
+  Object.assign(globalThis, { __testBrowserCanvas: FakeCanvas });
+  let privateControl = false;
+  let rejectAcquire = true;
+  let ensures = 0;
+  let acquireReply!: (reply: Response) => void;
+  const operations: string[] = [];
+  const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen',
+    state: 'ready', runtime_status: 'available', revision: privateControl ? 2 : 1,
+    control_state: privateControl ? 'human_private' : 'agent', can_view: !privateControl,
+    owns_control: privateControl, override_id: privateControl ? 'override' : null });
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/ensure')) { ensures++; return Response.json(snapshot()); }
+    if (String(url).endsWith('/control')) {
+      const operation = JSON.parse(String(init?.body)).operation;
+      operations.push(operation);
+      if (operation === 'acquire') {
+        if (rejectAcquire) return Response.json({ error: 'browser_busy' }, { status: 409 });
+        return new Promise(resolve => { acquireReply = resolve; });
+      }
+      if (operation === 'release') privateControl = false;
+    }
+    return Response.json(snapshot());
+  };
+  const { BrowserViewer } = await import('./viewer');
+  let view!: ReactTestRenderer;
+  const take = () => view.root.findAllByType('button').find(b => b.children.includes('Take control'))!.props.onClick();
+  try {
+    await act(async () => { view = create(createElement(BrowserViewer, { sessionId: 'browser', mobile }),
+      { createNodeMock: element => element.type === 'canvas'
+        ? Object.assign(new EventTarget(), { style: {}, clientWidth: 640, clientHeight: 480 })
+        : ({ value: '' }) }); });
+    assert.equal(ensures, 1);
+    await act(async () => take());
+    assert.equal(clients.length, 2, 'failed acquisition restores passive viewing');
+    assert.equal(ensures, 1);
+    const passive = clients.at(-1)!;
+    rejectAcquire = false;
+    await act(async () => { void take(); });
+    assert.equal(passive.closed, true);
+    await act(async () => { passive.status('unavailable'); StateSocket.change(); });
+    assert.equal(ensures, 1, 'expected passive fence must not request recovery');
+    await act(async () => { privateControl = true; acquireReply(Response.json(snapshot())); });
+    assert.equal(clients.length, 3);
+    const privateClient = clients.at(-1)!;
+    await act(async () => { passive.status('unavailable'); StateSocket.change(); });
+    assert.equal(privateClient.closed, false);
+    assert.equal(clients.length, 3);
+    assert.equal(ensures, 1);
+    assert.deepEqual(operations, ['acquire', 'acquire']);
+    // An actual failure of the new private socket still releases immediately.
+    await act(async () => privateClient.status('unavailable'));
+    assert.deepEqual(operations, ['acquire', 'acquire', 'release']);
+    assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /Browser view was lost/);
+  } finally {
+    if (view) await act(async () => view.unmount());
+    globalThis.fetch = originalFetch;
+    globalThis.requestAnimationFrame = originalAnimationFrame;
+    Reflect.deleteProperty(globalThis, '__testBrowserCanvas');
+  }
+});
+
 test('private fit fences input; input failure survives a late renewal and releases without return', async () => {
   const originalAnimationFrame = globalThis.requestAnimationFrame
   globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame

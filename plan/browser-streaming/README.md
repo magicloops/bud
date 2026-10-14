@@ -1,5 +1,14 @@
 # Plan: Proposal A — CDP screencast over dedicated WSS
 
+> **October 13, 2026 follow-up:** Next work is scoped in
+> [production capture and takeover reliability](production-capture-and-takeover-reliability.md):
+> first retire fenced passive media promptly and stabilize viewer takeover, then
+> test capture-scoped focus emulation for initial passive screenshots. These
+> phases now have working-tree implementations and focused automated validation.
+> A user-authorized one-time passive timeout repair now addresses the local
+> selected/minimized Chrome reproduction. Render/iPhone acceptance remains open;
+> earlier experiment history below remains intact.
+
 > **October 1, 2026 update:** Private takeover streaming now defaults on at the
 > service, per the user's rollout decision. Set the service's
 > `BUD_BROWSER_STREAMING_EXPERIMENT=0` or `false` to opt out; the daemon requires

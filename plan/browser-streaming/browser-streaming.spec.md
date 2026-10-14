@@ -24,6 +24,7 @@ it does not commit Bud to a production media transport.
 |---|---|
 | [control-lifecycle-review.md](control-lifecycle-review.md) | Historical close-versus-pause audit; recommendations superseded by the agent-default control plan |
 | [README.md](README.md) | Parent plan: objectives, fixed boundaries, phase order, impacted contracts, progress and coordinated upgrade requirements |
+| [production-capture-and-takeover-reliability.md](production-capture-and-takeover-reliability.md) | October 13 follow-up: locally retire fenced passive tasks, stabilize takeover in the shared viewer, then test capture-scoped passive focus emulation; phased regression and Render/device acceptance |
 | [phase-1-capture-and-baseline.md](phase-1-capture-and-baseline.md) | Fixtures, reproducible baseline, dedicated CDP source, local ACKs and target/document/viewport provenance gate |
 | [phase-2-bounded-wss.md](phase-2-bounded-wss.md) | Implemented private admission, binary framing and bounded pipeline; current agent-default lifecycle and remaining acceptance register |
 | [phase-3-measurement-and-decision.md](phase-3-measurement-and-decision.md) | Network/device matrix, timing methodology, acceptance bars, resource/ownership validation and results template |
@@ -50,6 +51,14 @@ it does not commit Bud to a production media transport.
   authority, hosted WK viewer and request-driven viewport behavior.
 
 ## Status and deferred work
+
+The [production reliability follow-up](production-capture-and-takeover-reliability.md)
+has both implementation scopes in the working tree. The v0.1.28 reproduction identifies delayed old
+media retirement blocking private attachment and separately motivates testing
+passive screenshot focus emulation for hidden first-frame stalls. Automated
+idle-tab capture/cleanup and takeover regressions pass. The user-authorized
+passive timeout repair also passes the selected-minimized-tab reproduction;
+Render/physical-phone acceptance remains open.
 
 No new runtime dependencies or code in this directory. Phase 2 implementation and
 qualitative web/mobile retests are recorded; unchecked live acceptance and formal

@@ -37,6 +37,7 @@ pub struct Authority {
     // Remembers privacy transitions even if media misses takeover and return.
     // Advancing only the agent command epoch does not invalidate passive media.
     media_fence: u64,
+    changed: tokio::sync::watch::Sender<()>,
     pub end_pending: bool,
 }
 
@@ -50,12 +51,25 @@ impl Default for Authority {
             private: false,
             workspace: None,
             media_fence: 0,
+            changed: tokio::sync::watch::channel(()).0,
             end_pending: false,
         }
     }
 }
 
 impl Authority {
+    pub(super) fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.changed.subscribe()
+    }
+
+    fn fence_media(&mut self) {
+        self.media_fence += 1;
+        self.changed.send_replace(());
+    }
+
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.expires
+    }
     pub(super) fn private_content(&self) -> bool {
         self.private
     }
@@ -74,7 +88,7 @@ impl Authority {
         self.controller = None;
         self.workspace = None;
         self.expires = None;
-        self.media_fence += 1;
+        self.fence_media();
         self.end_pending = false;
     }
 
@@ -97,7 +111,7 @@ impl Authority {
     }
 
     pub fn pause(&mut self) {
-        self.media_fence += 1;
+        self.fence_media();
         self.mode = Mode::Paused;
         if self.controller.is_some() {
             self.end_pending = true;
@@ -199,7 +213,7 @@ impl Authority {
             }
         }
         if !matches!(command, ControlCommand::Renew { .. }) {
-            self.media_fence += 1;
+            self.fence_media();
         }
         self.epoch = epoch;
         Ok(())
