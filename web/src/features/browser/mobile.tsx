@@ -16,6 +16,7 @@ export function MobileBrowserEntry() {
   const query=new URLSearchParams(location.search);
   const viewerId=query.get("viewer_id") ?? "", visitId=query.get("visit_id") ?? "";
   const [active,setActive]=useState(false);
+  const [hasResumed,setHasResumed]=useState(false);
   const valid=location.pathname===`/browser-mobile/${sessionId}` && /^browser_[0-9A-HJKMNP-TV-Z]{26}$/.test(sessionId)
     && /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(viewerId)
     && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(visitId)
@@ -47,7 +48,7 @@ export function MobileBrowserEntry() {
       }
       keyboard.current=null;
       if(command.command==="suspend")setActive(false);
-      else if(command.command==="resume")setActive(true);
+      else if(command.command==="resume"){setHasResumed(true);setActive(true);}
       else {publish("result",{request_id:command.request_id,accepted:false});return;}
       const fence=++generation;
       // Acceptance is not proof of a completed control transition.
@@ -65,6 +66,6 @@ export function MobileBrowserEntry() {
   return <ThemeProvider><div className="h-full" style={{height:"100svh"}}>
     <BrowserViewer sessionId={sessionId} hostViewerId={viewerId} mobile embedded active={active}
       onKeyboardRequest={requestKeyboard} onAuthorizationLost={authorizationLost} onDismiss={()=>publish("dismiss")}/>
-    {!active&&<div className="fixed inset-0 z-50 bg-background" role="status">Browser paused</div>}
+    {!active&&<div className="fixed inset-0 z-50 bg-background" role="status">{hasResumed ? "Browser view hidden" : "Opening browser…"}</div>}
   </div></ThemeProvider>;
 }

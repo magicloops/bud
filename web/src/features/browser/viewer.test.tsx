@@ -35,7 +35,7 @@ for (const mobile of [false, true]) test(`takeover keeps one private socket with
   let acquireReply!: (reply: Response) => void;
   const operations: string[] = [];
   const snapshot = () => ({ session_id: 'browser', thread_id: 'thread', bud_id: 'bud', generation: 'gen',
-    state: 'ready', runtime_status: 'available', revision: privateControl ? 2 : 1,
+    state: 'ready', runtime_status: 'available', revision: privateControl ? 2 : operations.includes('release') ? 3 : 1,
     control_state: privateControl ? 'human_private' : 'agent', can_view: !privateControl,
     owns_control: privateControl, override_id: privateControl ? 'override' : null });
   globalThis.fetch = async (url, init) => {
@@ -81,6 +81,20 @@ for (const mobile of [false, true]) test(`takeover keeps one private socket with
     await act(async () => privateClient.status('unavailable'));
     assert.deepEqual(operations, ['acquire', 'acquire', 'release']);
     assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /Browser view was lost/);
+    await act(async () => StateSocket.change());
+    assert.notEqual(clients.at(-1), privateClient, 'recovery creates an authorized passive connection');
+    await act(async () => clients.at(-1)!.status('connected'));
+    assert.equal(view.root.findAllByProps({role:'alert'}).length, 0, 'a fresh passive view resolves its control-loss error');
+    assert.match(JSON.stringify(view.toJSON()), /Control ended/);
+    assert.deepEqual(operations, ['acquire', 'acquire', 'release'], 'recovery must remain passive');
+    await act(async () => { void take(); });
+    assert.equal(JSON.stringify(view.toJSON()).includes('Control ended.'), false, 'new takeover clears the resolved notice before its response');
+    await act(async () => { privateControl = true; acquireReply(Response.json({...snapshot(), revision:4})); });
+    await act(async () => clients.at(-1)!.status('connected'));
+    assert.equal(JSON.stringify(view.toJSON()).includes('You have control'), false);
+    assert.ok(view.root.findAllByType('button').some(b => b.children.includes('Return to agent')));
+    assert.equal(JSON.stringify(view.toJSON()).includes('Control ended.'), false, 'private control must not show a passive recovery notice');
+
   } finally {
     if (view) await act(async () => view.unmount());
     globalThis.fetch = originalFetch;
@@ -155,15 +169,15 @@ test('private fit fences input; input failure survives a late renewal and releas
     await act(async () => take.props.onClick())
     assert.equal(view.root.findAllByType('p').some(p => p.children.includes('Sign in and return control.')), true)
     await act(async () => clients.at(-1)!.show())
-    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit to this device'))!.props.onClick())
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
     assert.equal(sizes.length, 1)
     const connections = clients.length
-    const controls = view.root.findByProps({ 'aria-label': 'Browser controls' })
+    const controls = view.root.findByProps({ 'aria-label': 'More browser options' })
     await act(async () => controls.props.onClick())
-    assert.equal(view.root.findByProps({ 'aria-label': 'Browser controls panel' }).props.hidden, false)
+    assert.equal(view.root.findByProps({ 'aria-label': 'Browser options' }).props.hidden, false)
     await act(async () => controls.props.onClick())
-    assert.equal(view.root.findByProps({ 'aria-label': 'Browser controls panel' }).props.hidden, true)
+    assert.equal(view.root.findByProps({ 'aria-label': 'Browser options' }).props.hidden, true)
     assert.equal(sizes.length, 1)
     assert.equal(clients.length, connections)
     assert.equal(view.root.findByType('textarea').props.disabled, true)
@@ -175,12 +189,12 @@ test('private fit fences input; input failure survives a late renewal and releas
     assert.equal(clients.length, connections) // Fit does not remount media.
     await act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
     assert.equal(keyboardFocus, 1)
-    assert.equal(view.root.findByProps({ 'aria-label': 'Browser controls panel' }).props.hidden, true)
+    assert.equal(view.root.findByProps({ 'aria-label': 'Browser options' }).props.hidden, true)
     const textEvent = { nativeEvent: { isComposing: false }, target: { value: 'Hello' } }
     await act(async () => view.root.findByType('textarea').props.onChange(textEvent))
     assert.deepEqual(inputs.at(-1), { kind: 'text', text: 'Hello', focus_token: 'focus' })
     assert.equal(textEvent.target.value, '')
-    assert.equal(view.root.findByProps({ 'aria-label': 'Browser controls panel' }).props.hidden, true)
+    assert.equal(view.root.findByProps({ 'aria-label': 'Browser options' }).props.hidden, true)
     // Known field rejections remain recoverable and expose only safe diagnostics.
     for (const code of ['browser_stale_or_unsupported_focus', 'untrusted response with private text']) {
       rejectionCode = code
@@ -188,13 +202,13 @@ test('private fit fences input; input failure survives a late renewal and releas
       const count = inputs.length
       await act(async () => view.root.findByType('textarea').props.onChange({ nativeEvent: { isComposing: false }, target: { value: 'x' } }))
       assert.equal(inputs.length, count + 1) // No replay.
-      const message = view.root.findByProps({ role: 'alert' }).children.join('')
+      const message = JSON.stringify(view.toJSON())
       if (code.startsWith('browser_')) assert.match(message, /browser_stale_or_unsupported_focus/)
       else assert.equal(message.includes(code), false)
       assert.equal(view.root.findByType('textarea').props.disabled, false)
       await act(async () => view.root.findByType('textarea').props.onChange({ nativeEvent: { isComposing: false }, target: { value: 'y' } }))
       assert.equal(inputs.length, count + 1) // Cleared focus: rejected locally.
-      assert.match(view.root.findByProps({ role: 'alert' }).children.join(''), /viewer_focus_required/)
+      assert.match(JSON.stringify(view.toJSON()), /viewer_focus_required/)
       rejectInput = false
       await act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
     }
@@ -204,11 +218,15 @@ test('private fit fences input; input failure survives a late renewal and releas
     await act(async () => view.root.findByType('canvas').props.onClick({ clientX: 10, clientY: 10 }))
     const failure = view.root.findByProps({ role: 'alert' }).children.join('')
     assert.match(failure, /input was not confirmed/)
-    assert.match(failure, /browser_input_uncertain; click; screenshots; \d+ ms/)
+    assert.match(JSON.stringify(view.toJSON()), /browser_input_uncertain; click; screenshots; \d+ ms/)
     assert.equal(heartbeat, undefined)
     await act(async () => renewReply(Response.json({ ...metadata, override_id: 'override', control_state: 'human_private', revision: 2, can_view: false })))
     assert.equal(view.root.findByProps({ role: 'alert' }).children.join(''), failure)
     assert.equal(view.root.findByType('textarea').props.disabled, true)
+    await act(async () => { StateSocket.change(); clients.at(-1)!.show() })
+    assert.equal(view.root.findByProps({ role: 'alert' }).children.join(''), failure, 'passive frame must not erase unconfirmed input')
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Dismiss message'))!.props.onClick())
+    assert.equal(view.root.findByType('textarea').props.disabled, true, 'dismissing presentation must not restore input')
     await act(async () => view.unmount())
     assert.deepEqual(operations, ['acquire', 'renew', 'release'])
     assert.equal(clients.every(client => client.closed), true)
@@ -359,14 +377,14 @@ test('passive pane fits without acquisition; failed fitting preserves media and 
     await act(async () => clients[0].show());
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
     assert.equal(writes.length, 0);
-    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick());
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit to this device'))!.props.onClick());
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
     await act(async () => { clients[0].frame!.viewport_id = 'size'; clients[0]['status']('connected', clients[0].frame!.targets); });
     assert.equal(writes.length, 1);
     assert.equal(clients[0].closed, false);
     assert.equal(view.root.findByType('textarea').props.disabled, true);
     fail = true; width = 700;
-    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick());
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit to this device'))!.props.onClick());
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)));
     assert.equal(writes.length, 2);
     assert.equal(writes.every(url => url.endsWith('/viewport')), true);
@@ -641,9 +659,13 @@ test('native window controls retain private media and a failed hide preserves Re
   try {
     await act(async()=>{view=create(createElement(BrowserViewer,{sessionId:'browser'}),{createNodeMock:()=>({value:''})})});
     assert.deepEqual(writes,[]);
+    await act(async()=>view.root.findByProps({'aria-label':'More browser options'}).props.onClick());
+    await click('Show on Bud’s machine…');
     await click('Show browser window');
     assert.deepEqual(writes,['show_window']);
     const connected = clients;
+    await act(async()=>view.root.findByProps({'aria-label':'More browser options'}).props.onClick());
+    await click('Show on Bud’s machine…');
     await click('Hide browser window');
     assert.equal(clients,connected);
     assert.ok(view.root.findAllByType('button').some(b=>b.children.includes('Return to agent')));
@@ -715,7 +737,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
     await act(async () => clients.at(-1)!.show())
     await take()
     await act(async () => clients.at(-1)!.show())
-    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
+    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit to this device'))!.props.onClick())
     await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
     assert.equal(sizes.length, 1) // Private fit acknowledged; waiting for the matching frame.
     assert.equal(view.root.findByType('textarea').props.disabled, true)
@@ -730,8 +752,7 @@ test('aborted private fit cannot leave input silently blocked after re-taking co
     await take()
     assert.deepEqual(operations, ['acquire', 'release', 'acquire'])
     await act(async () => clients.at(-1)!.show())
-    await act(async () => view.root.findAllByType('button').find(b => b.children.includes('Fit browser to this device'))!.props.onClick())
-    await act(async () => new Promise(resolve => setTimeout(resolve, 180)))
+    assert.equal(view.root.findAllByType('button').some(b => b.children.includes('Fit to this device')), false)
     assert.equal(sizes.length, 1)
     assert.equal(view.root.findByType('textarea').props.disabled, false)
     await click()

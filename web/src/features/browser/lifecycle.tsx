@@ -47,7 +47,7 @@ export function BrowserLifecycle({ budId, stateFeed: sharedFeed }: { budId: stri
   };
   if (!resource) return null;
   const pending = resource.desired_state.endsWith("_pending");
-  const button = "rounded border border-border px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
+  const button = "min-h-11 rounded-lg px-3 py-2 text-sm hover:bg-secondary disabled:opacity-50";
   return <section className="mt-4 space-y-2 border-t border-border pt-3" aria-label="Shared browser data">
     <p className="text-xs text-muted-foreground">Website sign-ins are shared across this Bud’s threads and saved on this machine.</p>
     {pending ? <p role="status" className="text-sm">{resource.desired_state === "reset_pending" ? "Reset" : "Stop"} pending — waiting for Bud to confirm.</p>
@@ -55,9 +55,9 @@ export function BrowserLifecycle({ budId, stateFeed: sharedFeed }: { budId: stri
         <p className="text-sm">{confirm === "reset" ? "Delete all saved website sign-ins, history and browser data on this Bud? This closes every thread’s browser tabs." : "Stop the browser for every thread? Saved website sign-ins and browser data will be kept."}</p>
         <button className={button} disabled={busy} onClick={() => void send()}>Confirm {confirm}</button>{" "}
         <button className={button} disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
-      </> : <div className="flex flex-wrap gap-2">
-        <button className={button} disabled={resource.desired_state === "stopped"} onClick={() => setConfirm("stop")}>Stop Bud browser</button>
-        <button className={button} onClick={() => setConfirm("reset")}>Reset browser data</button>
+      </> : <div className="flex flex-col items-start gap-1">
+        <button className={button} disabled={resource.desired_state === "stopped"} onClick={() => setConfirm("stop")}>Stop browser on this Bud</button>
+        <button className={button} onClick={() => setConfirm("reset")}>Reset saved browser data</button>
       </div>}
     {resource.desired_state === "stopped" && <p className="text-xs">Browser stopped. Ask Bud to open it again when ready.</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

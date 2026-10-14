@@ -84,7 +84,7 @@ test('mobile fits only explicitly, covers until matching drawn frame, and does n
  const settle=async()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,180))});
  try{
   await act(async()=>{view=create(createElement(BrowserViewer,{...props,active:true}),{createNodeMock:e=>e.type==='canvas'?canvas:e.type==='textarea'?{value:'',blur(){}}:e.type==='div'?{getBoundingClientRect:()=>({width,height})}:null})});
-  const fit=()=>view.root.findAllByType('button').find(b=>b.children.includes('Fit browser to this device'))!;
+  const fit=()=>view.root.findAllByType('button').find(b=>b.children.includes('Fit to this device'))!;
   assert.equal(fit().props.disabled,true);
   assert.equal(writes.length,0);
   await act(async()=>clients.at(-1)!.show());await settle();
@@ -221,7 +221,7 @@ test('rapid mobile gestures dispatch behind an in-flight wheel without queuing c
   await act(async()=>{pointer('pointerdown',400);advance(12);pointer('pointerup',300)});
   const dispatched=inputs.length;
   await act(async()=>pending.shift()!(Response.json({error:'browser_input_uncertain'},{status:409})));
-  assert.match(view!.root.findByProps({role:'alert'}).children.join(''), /browser_input_uncertain; scroll; screencast; \d+ ms/);
+  assert.match(JSON.stringify(view!.toJSON()), /browser_input_uncertain; scroll; screencast; \d+ ms/);
   assert.equal(view!.root.findByType('textarea').props.disabled,true);
   await act(async()=>advance(320));
   assert.equal(inputs.length,dispatched,'uncertain input stops momentum without replay');

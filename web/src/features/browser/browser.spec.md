@@ -17,6 +17,8 @@ control, input and media; private input is not a transcript event.
 
 - `media.ts`: bounded imperative canvas/socket lifecycle and frame acknowledgement;
   frame bodies stay outside React and conversation state.
+- `controls.tsx`: persistent Take control/Return and More toolbar, contextual page/window options, keyboard-trapped desktop popover/mobile sheet and on-demand browser settings. It delegates authority to the mounted viewer.
+- `controls.test.tsx`: capability hiding, passive menu navigation, exact target selection, management reader lifetime, tab-close confirmation and Escape/Tab/outside focus behavior.
 - `viewer.tsx`: control status, explicit take/return/release, target selection and
   bounded serial input. Remounts by owner/session; uncertain input is not replayed.
   Known control failures display actionable text and the canonical code/operation;
@@ -61,8 +63,8 @@ modifier clicks and the explicit separate-tab action retain the standalone route
 Desktop shares chat's split divider; narrow layouts use the existing peer panes.
 The route remounts by authenticated owner/thread. Viewer identity survives metadata
 polling and divider changes. Dismissal/tab switching unmounts only this viewer,
-stops media/queued input and best-effort releases control; it never returns to the
-agent. A late acquisition acknowledgement after unmount also requests release.
+stops media/queued input and best-effort releases the exact override, yielding
+authority to the agent. A late acquisition acknowledgement after unmount also requests release.
 
 Fit is an explicit one-shot action. The private path uses advertised
 `can_resize_viewport`, and measures the control-free surface. Bounds: width
@@ -90,7 +92,7 @@ visual, accessibility and hosted-network acceptance.
 ## Failure lifecycle
 
 Private media loss stops input and heartbeat immediately, with best-effort release
-that never returns to the agent. Input/resize failures take precedence over secondary
+of the exact override and passive recovery. Input/resize failures take precedence over secondary
 media failures; late renewals cannot clear the error or restore ownership. Metadata
 failures also preserve the original error. Explicit control actions reset recovery
 state. Locally rejected stale input does not revoke control. Mounted tests cover
@@ -98,9 +100,10 @@ unknown input with a late successful heartbeat and verify renewal stops.
 
 ## Full-pane overlay controls
 
-The measured surface is absolutely positioned to fill the viewer. All controls,
-handoff text and errors live in a hover/click overlay with keyboard
-toggle, Escape dismissal and bounded scrolling. Menu content never determines remote
+The measured surface is absolutely positioned to fill the viewer. The toolbar and contextual options remain separate from
+the capture surface. Options open only on explicit activation, with Escape/outside
+dismissal, bounded scrolling and keyboard focus cycling. Handoff/status messages
+are inline rather than permanent options-panel paragraphs. Menu content never determines remote
 viewport geometry. Control replies preserve omitted handoff metadata; polling can
 explicitly clear it. No media remount or fit is caused by toggling the menu.
 
@@ -120,8 +123,8 @@ text, paste and IME use the existing private-input queue without opening the men
 Focus is synchronous with preventScroll and only taken while input is enabled.
 No global keyboard capture; the bridge is disabled on control/media loss.
 
-The menu's visual gap is padding in its pointer-active wrapper, so the button and
-panel form one continuous hover target. The rest of the overlay remains click-through.
+The toolbar occupies only its own pointer-active bounds. Options use an explicit
+backdrop while open; ordinary viewing has no hover-open menu or full-page dim layer.
 
 ## Remote history back
 
@@ -154,14 +157,47 @@ Visible open workspaces use ensure before reconnecting media. A 404 or logical
 close stops recovery and clears sensitive state. Capture failure alone cannot
 recreate Chrome or release private protection.
 
-## Hover takeover
+## Primary browser controls
 
-A connected view-only browser shows a centered Take control button over a light
-dim layer on pane hover (also revealed for keyboard focus). It calls the existing
-authorized acquire flow only on activation, disappears during private control,
-and never affects measured viewport dimensions. The controls menu stays above
-the layer and retains takeover access for touch/disconnected views. No new API,
-authority, or per-frame React state.
+The compact toolbar sits at the lower right with a safe-area bottom inset. Its
+parent is transparent and borderless; individual buttons share compact
+dimensions, header-style two-pixel black borders and offset shadows, with neutral options and Bud-accent
+take/return actions. Desktop
+options open upward; mobile keeps its bottom sheet. Status/error notices sit above
+the page at the upper right, and the mobile keyboard fallback sits above the lower
+left Back control to avoid overlapping the toolbar. All remain absolute overlays.
+Human-control status lives in the toolbar; it does not add a standing explanatory
+overlay over the page. Status overlays appear only for actual help, recovery or errors.
+Take control is always reachable from the compact toolbar, including touch and
+keyboard. A smaller Return to agent button uses the send button's opaque Bud-accent
+fill, black text and offset shadow. It replaces Take control while this
+viewer owns control, without a duplicate You have control label. Eligibility
+uses current service capability/authority and runtime status; a passive viewer
+cannot displace another viewer. Pending transitions disable duplicate actions.
+`controls.tsx` hides unsupported actions and the page chooser for a single page.
+Fit remains explicit, target selection uses existing input fences, and native Show
+has its own explanatory detail. The toolbar has no pane-close button; hosted mobile
+uses native Browser/Close chrome without a second title or dismissal button.
+
+Browser settings lazily mounts the owner-authorized `BrowserLifecycle` reader.
+Closing a thread's tabs requires a separate explicit confirmation; Stop/Reset keep
+their acknowledged all-thread scope and revision ordering. Closing options disposes
+that reader; subsequent entry reads current state. No new endpoint or authority is
+introduced. Menu navigation does not resize, acquire/release, ensure or remount media.
+
+Transient private media/control loss becomes a dismissible resolved notice after
+fresh passive media arrives. Priority-two uncertain-input/resize failures remain
+visible through passive success and late renewals; dismissal changes presentation
+only. Safe diagnostic codes appear under Details. Failed view and passive Fit have
+separate explicit retry actions; no mutation is replayed. Initial opening and native
+inactive-cover copy do not describe remote authority as paused.
+
+Retry view sits beside the control action in the lower-right toolbar with matching
+border/shadow styling, rather than inside a separate notice card. It appears only
+after media becomes unavailable while viewing passively, and is disabled during
+busy recovery. Successful frame or empty-page delivery hides it again.
+
+See [controls design and implementation evidence](../../../../plan/browser-streaming/browser-controls-redesign.md).
 
 - `input-queue.ts` / `.test.ts`: coalesces adjacent pending wheels within wire/queue bounds, preserving direction, pointer and non-wheel ordering barriers. Scroll alone may rebase to newer same-document, same-size displayed frames.
 

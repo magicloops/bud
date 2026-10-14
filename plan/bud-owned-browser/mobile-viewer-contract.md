@@ -478,3 +478,25 @@ Chrome. Close returns authority to the agent; execution may wait for daemon clea
 or connectivity. Match migrations 0044–0047, new service/web, agent_default_control
 capable daemon and rebuilt mobile before device validation. See
 [plan](../browser-agent-default/README.md).
+
+
+## Browser controls redesign — October 13, 2026
+
+The hosted viewer supplies one persistent Take control/Return button and More
+options. Native keeps the Browser title and Close; hosted duplicate dismissal/title
+is removed, including unavailable states. Options use a sheet with 44px targets,
+safe-area spacing, Escape/outside dismissal and focus cycling. Page switching
+appears only during control with multiple targets; Fit stays explicit. Confirmed
+editable keyboard activation, Keyboard fallback, Back and suspension are unchanged.
+
+Scoped mobile visits do not expose native window or Bud-wide maintenance actions.
+Menu navigation grants no authority, resizes no viewport and adds no metadata loop.
+Recovered control loss becomes a dismissible notice after current passive media;
+unconfirmed input remains visible with safe diagnostics under Details and is never
+replayed. Dismissal of a message cannot restore input or ownership. The inactive
+shell cover says Opening browser before first resume and Browser view hidden later.
+
+This is a shared hosted-web update only: no native bridge, Swift, service/daemon
+or schema change. Reopen the mobile view after deployment. Automated hosted tests
+pass; physical iPhone visual/VoiceOver/safe-area acceptance remains open in
+[the plan](../browser-streaming/browser-controls-redesign.md).
