@@ -255,6 +255,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       const lifecycle = lifecycleEpoch.current;
       if (changingControl.current) return;
       if (operation === "acquire" && typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const replacingPassive = !ownsRef.current && (operation === "acquire" || operation === "show_window");
       if (operation === "renew") {
         if (renewing.current || !ownsRef.current) return;
         renewing.current = true;
@@ -270,6 +271,14 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         resetInput();
         // Any fence from an aborted fit ends here: new leases attach fresh media.
         blockInput(false);
+        if (replacingPassive) {
+          // Detach before dispatch. Late callbacks from the fenced passive
+          // socket cannot be mistaken for loss of the newly acquired override.
+          const detached = media.current;
+          media.current = null;
+          detached?.close("control_transition");
+          setConnected(false);
+        }
       }
       try {
         const revision = session.revision;
@@ -334,6 +343,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
               setOwns(ownsRef.current);
             }
           } catch { /* Keep the window-specific failure visible. */ }
+          if (replacingPassive) setMediaVersion(v => v + 1);
           return;
         }
         setError(
@@ -342,6 +352,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
             : "Could not confirm control. Check the connection and try again.",
         );
         failPrivate("", 0);
+        if (replacingPassive) setMediaVersion(v => v + 1);
       } finally {
         if (operation === "renew") renewing.current = false;
         if (operation !== "renew") {
@@ -456,8 +467,13 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         if (state === "empty") { resetInput(); blockInput(false); setResizing(false); }
         if (state === "connected" && client.frame) frameReady.current?.(client.frame);
         if (state === "unavailable") {
-          ensureNeeded.current = true;
-          refreshState.current();
+          // Acquisition intentionally fences passive media. It is not evidence
+          // of runtime loss and must not tear down the new private attachment
+          // through an unnecessary ensure/ensuring cycle.
+          if (!changingControl.current) {
+            ensureNeeded.current = true;
+            refreshState.current();
+          }
           resetInput();
           blockInput(false); // Reconnection requires a fresh frame before input anyway.
           setTargets([]);

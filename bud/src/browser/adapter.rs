@@ -46,6 +46,9 @@ pub(super) struct CaptureTiming {
     pub session_ms: u64,
     pub document_ms: u64,
     pub layout_ms: u64,
+    pub focus_ms: u64,
+    pub repair_ms: u64,
+    pub repairs: u8,
     pub screenshot_ms: [u64; 4],
     pub attempts: usize,
     pub assembly_ms: u64,
@@ -179,6 +182,10 @@ impl ProcessHandle {
 pub struct Browser {
     cdp: Cdp,
     screenshot: Option<(Cdp, HashMap<String, String>)>,
+    // Set before enabling focus, including when that acknowledgement is lost.
+    // No replacement capture/private source starts before confirmed cleanup.
+    capture_focus: Option<String>,
+    capture_repair_failed: bool,
     semantic: super::semantic::Semantic,
     semantic_dirty: bool,
     process: Arc<Mutex<Process>>,
@@ -412,6 +419,8 @@ impl Browser {
         Ok(Self {
             cdp,
             screenshot: None,
+            capture_focus: None,
+            capture_repair_failed: false,
             semantic,
             semantic_dirty: false,
             process: Arc::new(Mutex::new(Process {
@@ -720,6 +729,7 @@ impl Browser {
 
     pub(super) async fn hide_before_return(&mut self) -> Result<()> {
         self.retire_stream().await?;
+        self.finish_capture_focus().await?;
         if self.process.lock().unwrap().background_windows {
             self.native_window(None, false).await?;
         }
@@ -967,11 +977,7 @@ impl Browser {
 
     // Only screenshots may recover on a new connection. Mutating commands retain
     // their fail-closed channel, and normal capture guards/serialization still apply.
-    async fn screenshot(
-        &mut self,
-        target: &str,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    async fn screenshot_session(&mut self, target: &str) -> Result<String> {
         if self
             .screenshot
             .as_ref()
@@ -1003,8 +1009,69 @@ impl Browser {
             sessions.insert(target.into(), session.clone());
             session
         };
-        cdp.call(Some(&session), "Page.captureScreenshot", params)
+        Ok(session)
+    }
+
+    async fn screenshot(
+        &mut self,
+        target: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let session = self.screenshot_session(target).await?;
+        self.screenshot
+            .as_mut()
+            .unwrap()
+            .0
+            .call(Some(&session), "Page.captureScreenshot", params)
             .await
+    }
+
+    async fn finish_capture_focus(&mut self) -> Result<()> {
+        let Some(target) = self.capture_focus.clone() else {
+            return Ok(());
+        };
+        let result = async {
+            // A timed-out capture cannot reuse its poisoned socket. A fresh
+            // attachment may disable the target's emulation while we still hold
+            // the page lock, before any replacement source can start.
+            if self
+                .screenshot
+                .as_ref()
+                .is_none_or(|(cdp, _)| cdp.interrupted())
+            {
+                self.screenshot = None;
+                let mut cdp = Cdp::connect(&self.endpoint).await?;
+                let inventory = cdp.call(None, "Target.getTargets", json!({})).await?;
+                let targets = inventory["targetInfos"]
+                    .as_array()
+                    .context("browser_invalid_targets")?;
+                if !targets.iter().any(|t| t["targetId"] == target) {
+                    return Ok(()); // Target destruction also destroys its emulation.
+                }
+                self.screenshot = Some((cdp, HashMap::new()));
+            }
+            let session = self.screenshot_session(&target).await?;
+            self.screenshot
+                .as_mut()
+                .unwrap()
+                .0
+                .call(
+                    Some(&session),
+                    "Emulation.setFocusEmulationEnabled",
+                    json!({"enabled":false}),
+                )
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if result.is_err() {
+            self.screenshot = None;
+            // Retain pending cleanup. The next admitted preparation can retry
+            // cleanup, but must not begin another focus lifetime first.
+            bail!("browser_capture_cleanup_unconfirmed");
+        }
+        self.capture_focus = None;
+        Ok(())
     }
 
     pub(super) async fn capture_scaled_timed(
@@ -1013,8 +1080,157 @@ impl Browser {
         pixel_ratio: Option<f64>,
         timing: &mut CaptureTiming,
     ) -> Result<serde_json::Value> {
+        self.capture_attempt(target, pixel_ratio, timing, Duration::from_secs(10))
+            .await
+    }
+
+    /// Passive media supplies its live authority check; other capture callers
+    /// retain ordinary errors without native window repair.
+    pub(super) async fn capture_scaled_timed_with_repair(
+        &mut self,
+        target: &str,
+        pixel_ratio: Option<f64>,
+        timing: &mut CaptureTiming,
+        authorized: impl Fn() -> bool,
+    ) -> Result<serde_json::Value> {
+        let first = self
+            .capture_attempt(target, pixel_ratio, timing, Duration::from_secs(2))
+            .await;
+        if first.is_ok() {
+            self.capture_repair_failed = false;
+        }
+        if !first
+            .as_ref()
+            .is_err_and(|error| error.is::<tokio::time::error::Elapsed>())
+            || timing.stage != "screenshot"
+            || !authorized()
+            || self.capture_repair_failed
+        {
+            return first;
+        }
+        let started = Instant::now();
+        timing.stage = "repair_window";
+        let repaired = self.repair_minimized_capture(target, &authorized).await;
+        timing.repair_ms = started.elapsed().as_millis() as u64;
+        if repaired.is_err() {
+            self.capture_repair_failed = true;
+        }
+        if !repaired? {
+            timing.stage = "screenshot";
+            return first;
+        }
+        timing.repairs = 1;
+        tracing::info!(component="browser_media", event="capture_window_repaired",
+            session_id=%self.workspace, repair_ms=timing.repair_ms,
+            "Parked minimized browser window after capture timeout");
+        if !authorized() {
+            self.capture_repair_failed = true;
+            bail!("browser_media_revoked");
+        }
+        let retry = self
+            .capture_attempt(target, pixel_ratio, timing, Duration::from_secs(2))
+            .await;
+        // Reconnect cannot turn a persistent renderer failure into repeated
+        // window flashes. Only a successful passive capture rearms repair.
+        self.capture_repair_failed = retry.is_err();
+        retry
+    }
+
+    async fn repair_minimized_capture(
+        &mut self,
+        target: &str,
+        authorized: &impl Fn() -> bool,
+    ) -> Result<bool> {
+        if !self.process.lock().unwrap().background_windows {
+            return Ok(false);
+        }
+        let Some((idle, _)) = self.process.lock().unwrap().idle_tab.clone() else {
+            return Ok(false);
+        };
+        let window = self.window_id(target).await?;
+        // Resolve both live window IDs; native tab moves can stale the cache.
+        if self.window_id(&idle).await? != window {
+            return Ok(false);
+        }
+        let bounds = self
+            .cdp
+            .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+            .await?;
+        if bounds["bounds"]["windowState"] != "minimized" || !authorized() {
+            return Ok(false);
+        }
+        // The user accepted a brief restoration here. Always attempt to park
+        // the same window again, even if tab selection fails or authority changes.
+        let selected = async {
+            self.window_state(window, "normal").await?;
+            if !authorized() {
+                bail!("browser_media_revoked");
+            }
+            self.cdp
+                .call(None, "Target.activateTarget", json!({"targetId":idle}))
+                .await?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        let minimized = self.window_state(window, "minimized").await;
+        selected?;
+        minimized?;
+        self.process.lock().unwrap().native_shown = false;
+        Ok(true)
+    }
+
+    async fn capture_attempt(
+        &mut self,
+        target: &str,
+        pixel_ratio: Option<f64>,
+        timing: &mut CaptureTiming,
+        screenshot_timeout: Duration,
+    ) -> Result<serde_json::Value> {
+        self.retire_stream().await?;
+        self.finish_capture_focus().await?;
+        // Validate ownership before attaching the dedicated capture target.
         timing.stage = "session";
-        let session = timed(&mut timing.session_ms, self.session(target)).await?;
+        let command_session = timed(&mut timing.session_ms, self.session(target)).await?;
+        let session = self.screenshot_session(target).await?;
+        self.capture_focus = Some(target.to_owned());
+        timing.stage = "focus_enable";
+        let enabled = timed(
+            &mut timing.focus_ms,
+            self.screenshot.as_mut().unwrap().0.call(
+                Some(&session),
+                "Emulation.setFocusEmulationEnabled",
+                json!({"enabled":true}),
+            ),
+        )
+        .await;
+        let result = match enabled {
+            Ok(_) => {
+                self.capture_focused(
+                    target,
+                    command_session,
+                    pixel_ratio,
+                    timing,
+                    screenshot_timeout,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        let stage = timing.stage;
+        timing.stage = "focus_cleanup";
+        timed(&mut timing.focus_ms, self.finish_capture_focus()).await?;
+        timing.stage = stage;
+        result
+    }
+
+    async fn capture_focused(
+        &mut self,
+        target: &str,
+        session: String,
+        pixel_ratio: Option<f64>,
+        timing: &mut CaptureTiming,
+        screenshot_timeout: Duration,
+    ) -> Result<serde_json::Value> {
         timing.stage = "document_before";
         let document = timed(&mut timing.document_ms, self.document(&session)).await?;
         timing.stage = "layout_before";
@@ -1051,11 +1267,13 @@ impl Browser {
             timing.stage = "screenshot";
             timing.attempts = attempt + 1;
             timing.scales[attempt] = scale;
-            let shot = timed(&mut timing.screenshot_ms[attempt], self.screenshot(target, json!({
+            // Only the dedicated screenshot call is canceled at this deadline.
+            // Focus cleanup retires its poisoned connection before any retry.
+            let shot = timed(&mut timing.screenshot_ms[attempt], tokio::time::timeout(screenshot_timeout, self.screenshot(target, json!({
                 "format":if enhanced { "png" } else { "jpeg" }, "quality":65, "captureBeyondViewport":false,
                 "clip":{"x":metrics["cssLayoutViewport"]["pageX"], "y":metrics["cssLayoutViewport"]["pageY"],
                     "width":width, "height":height, "scale":scale}
-            }))).await?;
+            })))).await??;
             image = shot["data"]
                 .as_str()
                 .context("browser_capture_failed")?
@@ -1207,6 +1425,7 @@ impl Browser {
         target: &str,
     ) -> Result<(super::screencast::SourceConfig, String)> {
         self.retire_stream().await?;
+        self.finish_capture_focus().await?;
         let session = self.session(target).await?; // repeats workspace ownership
         self.invalidate_references();
         let document = self.document(&session).await?;
@@ -1272,8 +1491,10 @@ impl Browser {
         }
         let scroll = matches!(input, HumanInput::Scroll { .. });
         let action = match input {
-            HumanInput::Click { .. } => "click", HumanInput::Scroll { .. } => "scroll",
-            HumanInput::Text { .. } => "text", HumanInput::Key { .. } => "key",
+            HumanInput::Click { .. } => "click",
+            HumanInput::Scroll { .. } => "scroll",
+            HumanInput::Text { .. } => "text",
+            HumanInput::Key { .. } => "key",
             HumanInput::Back => "back",
         };
         let diagnostic_session = self.workspace.clone();
@@ -1853,6 +2074,8 @@ impl Browser {
         Ok(Self {
             cdp,
             screenshot: None,
+            capture_focus: None,
+            capture_repair_failed: false,
             semantic,
             semantic_dirty: false,
             process: self.process.clone(),
@@ -1941,6 +2164,259 @@ fn discovery_endpoint(text: &str) -> Option<String> {
 #[cfg(test)]
 mod launch_tests {
     use super::discovery_endpoint;
+
+    #[tokio::test]
+    #[ignore = "requires local Chrome; disposable headed profile and fake capture peer"]
+    async fn persistent_capture_failure_does_not_repeat_window_repair() {
+        use super::*;
+        use futures::{SinkExt, StreamExt};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let runtime = crate::browser::addon::test_runtime(
+            std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("Chrome path"),
+        );
+        let mut root = Browser::launch_mode(&runtime, true).await.unwrap();
+        let mut browser = root.workspace("persistent-timeout").await.unwrap();
+        let target = browser.ensure_page(None).await.unwrap();
+        let image = browser.capture(&target).await.unwrap()["image"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        browser.endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        browser.screenshot = None;
+        let stalled = Arc::new(AtomicBool::new(true));
+        let switch = stalled.clone();
+        let peer = tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let (target, image, stalled) = (target.clone(), image.clone(), switch.clone());
+                tokio::spawn(async move {
+                    let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    while let Some(Ok(message)) = socket.next().await {
+                        if !message.is_text() {
+                            continue;
+                        }
+                        let request: serde_json::Value =
+                            serde_json::from_str(&message.into_text().unwrap()).unwrap();
+                        let result = match request["method"].as_str().unwrap() {
+                            "Target.attachToTarget" => json!({"sessionId":"capture"}),
+                            "Target.getTargets" => json!({"targetInfos":[{"targetId":target}]}),
+                            "Page.captureScreenshot" if stalled.load(Ordering::SeqCst) => continue,
+                            "Page.captureScreenshot" => json!({"data":image}),
+                            "Emulation.setFocusEmulationEnabled" => json!({}),
+                            method => panic!("unexpected fixture method: {method}"),
+                        };
+                        if socket
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                json!({"id":request["id"],"result":result}).to_string(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        // The original owned tab identity remains on the real command channel.
+        let target = browser.targets().await.unwrap().remove(0).target_id;
+        let result = async {
+            for repairs in [1, 0] {
+                let mut timing = CaptureTiming::default();
+                assert!(browser
+                    .capture_scaled_timed_with_repair(&target, None, &mut timing, || true)
+                    .await
+                    .is_err());
+                assert_eq!(
+                    timing.repairs, repairs,
+                    "reconnect must not repeat failed window repair"
+                );
+                assert!(browser.capture_repair_failed);
+                assert!(!browser.cdp.interrupted());
+            }
+            stalled.store(false, Ordering::SeqCst);
+            browser
+                .capture_scaled_timed_with_repair(
+                    &target,
+                    None,
+                    &mut CaptureTiming::default(),
+                    || true,
+                )
+                .await?;
+            assert!(
+                !browser.capture_repair_failed,
+                "successful capture rearms future repair"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        root.close().await.unwrap();
+        peer.abort();
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Chrome; disposable headed profile only"]
+    async fn timed_out_minimized_capture_parks_idle_and_retries_once() {
+        use super::*;
+        let runtime = crate::browser::addon::test_runtime(
+            std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("Chrome path"),
+        );
+        let mut root = Browser::launch_mode(&runtime, true).await.unwrap();
+        let result = async {
+            let mut browser = root.workspace("timeout-repair").await?;
+            let target = browser.ensure_page(None).await?;
+            let session = browser.session(&target).await?;
+            browser.cdp.call(Some(&session), "Page.navigate", json!({
+                "url":"data:text/html,<input value='preserved'><h1>Timeout repair fixture</h1>"
+            })).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let document = browser.document(&session).await?;
+            let window = browser.window_id(&target).await?;
+            let mut repaired = 0;
+            for ratio in [None, Some(2.0), None] {
+                browser.window_state(window, "normal").await?;
+                browser
+                    .cdp
+                    .call(Some(&session), "Page.bringToFront", json!({}))
+                    .await?;
+                browser.window_state(window, "minimized").await?;
+                let mut timing = CaptureTiming::default();
+                let image = browser
+                    .capture_scaled_timed_with_repair(&target, ratio, &mut timing, || true)
+                    .await?;
+                eprintln!("timeout repair capture: {timing:?}");
+                repaired += timing.repairs;
+                assert!(timing.repairs <= 1);
+                assert!(image["image"].is_string());
+                assert_eq!(image["document_id"], document);
+                assert!(browser.capture_focus.is_none());
+                assert!(!browser.cdp.interrupted());
+                let bounds = browser
+                    .cdp
+                    .call(None, "Browser.getWindowBounds", json!({"windowId":window}))
+                    .await?;
+                assert_eq!(bounds["bounds"]["windowState"], "minimized");
+                let value = browser.cdp.call(Some(&session), "Runtime.evaluate", json!({
+                    "expression":"document.querySelector('input').value","returnByValue":true
+                })).await?;
+                assert_eq!(value["result"]["value"], "preserved");
+            }
+            assert!(repaired > 0, "fixture must exercise actual timeout repair");
+            // Never restore a visible window, or a revoked capture's minimized window.
+            browser.window_state(window, "normal").await?;
+            assert!(!browser.repair_minimized_capture(&target, &|| true).await?);
+            browser.window_state(window, "minimized").await?;
+            assert!(!browser.repair_minimized_capture(&target, &|| false).await?);
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        root.close().await.unwrap();
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Chrome; disposable headed profiles only"]
+    async fn passive_focus_scope_captures_hidden_tab_and_cleans_interruption() {
+        use super::*;
+        let runtime = crate::browser::addon::test_runtime(
+            std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("Chrome path"),
+        );
+        let mut root = Browser::launch_mode(&runtime, true).await.unwrap();
+        let result = async {
+            let mut browser = root.workspace("passive").await?;
+            let mut other = root.workspace("other").await?;
+            let target = browser.ensure_page(None).await?;
+            let foreign = other.ensure_page(None).await?;
+            let session = browser.session(&target).await?;
+            browser.cdp.call(Some(&session), "Page.navigate", json!({
+                "url":"data:text/html,<input value='preserved'><h1>Passive fixture</h1>"
+            })).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            browser.cdp.call(Some(&session), "Runtime.evaluate", json!({
+                "expression":"document.querySelector('input').focus();document.querySelector('input').setSelectionRange(1,3)"
+            })).await?;
+            // Use the existing idle-tab policy. Manual selection of a work tab
+            // while minimized is a separately recorded Chrome limitation.
+            let window = browser.window_id(&target).await?;
+            browser.select_idle_tab().await?;
+            browser.window_state(window, "minimized").await?;
+            assert!(!browser.process.lock().unwrap().native_shown);
+            let state = |expression| json!({"expression":expression,"returnByValue":true});
+            for ratio in [None, Some(2.0), None] {
+                let started = Instant::now();
+                let mut timing = CaptureTiming::default();
+                let image = browser.capture_scaled_timed(&target, ratio, &mut timing).await;
+                eprintln!("passive capture {ratio:?}: {timing:?}");
+                let image = image?;
+                assert!(image["image"].is_string());
+                assert!(started.elapsed() < Duration::from_secs(3), "warm capture stalled");
+                assert!(browser.capture_focus.is_none());
+                let after = browser.cdp.call(Some(&session), "Runtime.evaluate", state(
+                    "[document.hasFocus(),document.activeElement.tagName,document.querySelector('input').value,document.querySelector('input').selectionStart,document.querySelector('input').selectionEnd]"
+                )).await?;
+                // Disabling emulation may emit blur/visibility changes. It must
+                // stop synthetic focus without losing the selected field/caret.
+                assert_eq!(after["result"]["value"], json!([false,"INPUT","preserved",1,3]));
+                let bounds = browser.cdp.call(None, "Browser.getWindowBounds", json!({"windowId":window})).await?;
+                assert_eq!(bounds["bounds"]["windowState"], "minimized");
+            }
+            assert!(browser.capture(&foreign).await.is_err());
+            assert!(browser.capture_focus.is_none());
+            assert_eq!(other.targets().await?[0].target_id, foreign);
+
+            // Select the idle tab to make cleanup observable independently of
+            // native Chrome focus behavior when its selected tab is minimized.
+            let idle = browser.process.lock().unwrap().idle_tab.as_ref().unwrap().0.clone();
+            browser.cdp.call(None, "Target.activateTarget", json!({"targetId":idle})).await?;
+
+            // An ordinary rejected screenshot still permits confirmed cleanup.
+            let capture_session = browser.screenshot_session(&target).await?;
+            browser.capture_focus = Some(target.clone());
+            browser.screenshot.as_mut().unwrap().0.call(Some(&capture_session),
+                "Emulation.setFocusEmulationEnabled", json!({"enabled":true})).await?;
+            assert!(browser.screenshot(&target, json!({"format":"jpeg", "clip":{
+                "x":0,"y":0,"width":0,"height":10,"scale":1
+            }})).await.is_err());
+            assert!(!browser.screenshot.as_ref().unwrap().0.interrupted(), "ordinary rejection must remain definitive");
+            browser.finish_capture_focus().await?;
+
+            // Simulate an interrupted capture-channel read after enabling focus.
+            browser.capture_focus = Some(target.clone());
+            browser.screenshot.as_mut().unwrap().0.call(Some(&capture_session),
+                "Emulation.setFocusEmulationEnabled", json!({"enabled":true})).await?;
+            assert!(tokio::time::timeout(Duration::from_millis(50),
+                browser.screenshot.as_mut().unwrap().0.call(Some(&capture_session),
+                    "Runtime.evaluate", json!({"expression":"new Promise(()=>{})","awaitPromise":true}))
+            ).await.is_err());
+            assert!(browser.screenshot.as_ref().unwrap().0.interrupted());
+            // Private preparation must finish old cleanup first.
+            let (config, _) = browser.prepare_stream(&target).await?;
+            assert!(browser.capture_focus.is_none());
+            let after = browser.cdp.call(Some(&session), "Runtime.evaluate", state("document.hasFocus()")).await?;
+            assert_eq!(after["result"]["value"], false);
+            let mut source = super::super::screencast::Source::start(config).await?;
+            source.stop().await?;
+            browser.hide_before_return().await?;
+            assert!(!browser.cdp.interrupted());
+            browser.capture(&target).await?;
+            let capture_session = browser.screenshot_session(&target).await?;
+            browser.capture_focus = Some(target.clone());
+            browser.screenshot.as_mut().unwrap().0.call(Some(&capture_session),
+                "Emulation.setFocusEmulationEnabled", json!({"enabled":true})).await?;
+            browser.cdp.call(None, "Target.closeTarget", json!({"targetId":target})).await?;
+            // A vanished attachment may reject disable; retry only cleanup on a
+            // fresh connection, confirming destruction before forgetting it.
+            if browser.finish_capture_focus().await.is_err() {
+                assert!(browser.capture_focus.is_some());
+                browser.finish_capture_focus().await?;
+            }
+            assert!(browser.capture_focus.is_none());
+            Ok::<_, anyhow::Error>(())
+        }.await;
+        root.close().await.unwrap();
+        result.unwrap();
+    }
 
     #[tokio::test]
     async fn owned_process_escalates_and_preserves_unrelated_process() {

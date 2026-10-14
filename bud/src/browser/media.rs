@@ -62,23 +62,33 @@ pub(super) fn start(args: MediaStart) {
         let mut target_count: Option<usize> = None;
         let mut close_code: Option<u16> = None;
         let current_connection = connection.clone();
+        // Subscribe before admission checks; a fence racing startup remains visible.
+        let mut authority_changed = slot.authority.lock().unwrap().subscribe();
         let mut refresh = slot.refresh.subscribe();
         let run = async {
+            if current_connection.borrow().as_deref() != Some(&device) {
+                anyhow::bail!("browser_media_revoked");
+            }
             let config = WebSocketConfig {
                 max_message_size: Some(4096),
                 max_frame_size: Some(4096),
                 max_write_buffer_size: 2 * 1024 * 1024,
                 ..Default::default()
             };
-            let (mut socket, _) = tokio::time::timeout(
-                Duration::from_secs(5),
-                connect_async_with_config(endpoint, Some(config), false),
-            )
-            .await??;
-            phase = "authenticate";
-            socket
-                .send(Message::Text(json!({"ticket":ticket}).to_string()))
-                .await?;
+            let mut socket = tokio::select! {
+                biased;
+                _ = connection.changed() => anyhow::bail!("browser_media_revoked"),
+                _ = authority_revoked(&slot.authority, &mut authority_changed,
+                    epoch, controller.as_deref(), media_fence) => anyhow::bail!("browser_media_revoked"),
+                result = async {
+                    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5),
+                        connect_async_with_config(endpoint, Some(config), false)).await??;
+                    phase = "authenticate";
+                    tokio::time::timeout(Duration::from_secs(3),
+                        socket.send(Message::Text(json!({"ticket":ticket}).to_string()))).await??;
+                    Ok::<_, anyhow::Error>(socket)
+                } => result?,
+            };
             let mut next_capture = tokio::time::Instant::now();
             loop {
                 // Idle sockets still process pings and revocation, without touching Chrome.
@@ -95,6 +105,8 @@ pub(super) fn start(args: MediaStart) {
                 let message = tokio::select! {
                     biased;
                     _ = connection.changed() => anyhow::bail!("browser_media_revoked"),
+                    _ = authority_revoked(&slot.authority, &mut authority_changed,
+                        epoch, controller.as_deref(), media_fence) => anyhow::bail!("browser_media_revoked"),
                     changed = refresh.changed(), if operation_driven => {
                         changed?;
                         refresh.borrow_and_update();
@@ -229,9 +241,27 @@ pub(super) fn start(args: MediaStart) {
                         refresh.borrow_and_update();
                         let capture_started = Instant::now();
                         let mut timing = super::adapter::CaptureTiming::default();
-                        let captured = browser
-                            .capture_scaled_timed(&target, request.pixel_ratio, &mut timing)
-                            .await;
+                        let captured = if controller.is_some() {
+                            browser
+                                .capture_scaled_timed(&target, request.pixel_ratio, &mut timing)
+                                .await
+                        } else {
+                            browser
+                                .capture_scaled_timed_with_repair(
+                                    &target,
+                                    request.pixel_ratio,
+                                    &mut timing,
+                                    || {
+                                        current_connection.borrow().as_deref() == Some(&device)
+                                            && slot.authority.lock().unwrap().media_allowed(
+                                                epoch,
+                                                None,
+                                                media_fence,
+                                            )
+                                    },
+                                )
+                                .await
+                        };
                         let capture_ms = capture_started.elapsed().as_millis() as u64;
                         let hold_ms = hold_started.elapsed().as_millis() as u64;
                         if hold_ms >= 250 || wait_ms >= 250 {
@@ -359,8 +389,36 @@ pub(super) fn start(args: MediaStart) {
             close_code,
             "Browser media ended"
         );
-        slot.media.store(false, Ordering::SeqCst);
+        // Only the drop guard releases admission, after all source cleanup. An
+        // extra early store could let its later drop clear a replacement's flag.
     });
+}
+
+async fn authority_revoked(
+    authority: &std::sync::Mutex<super::control::Authority>,
+    changed: &mut watch::Receiver<()>,
+    epoch: u64,
+    controller: Option<&str>,
+    fence: Option<u64>,
+) {
+    loop {
+        let deadline = {
+            let mut authority = authority.lock().unwrap();
+            if !authority.media_allowed(epoch, controller, fence) {
+                return;
+            }
+            authority.deadline()
+        };
+        tokio::select! {
+            result = changed.changed() => { if result.is_err() { return; } }
+            _ = async {
+                match deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+                    None => std::future::pending().await,
+                }
+            } => {}
+        }
+    }
 }
 
 /// Runs a closure when dropped, including during unwinding.
@@ -387,6 +445,7 @@ fn media_error_code(error: &anyhow::Error) -> &'static str {
         "browser_command_rejected" => "browser_command_rejected",
         "browser_channel_interrupted" => "browser_channel_interrupted",
         "browser_channel_closed" => "browser_channel_closed",
+        "browser_capture_cleanup_unconfirmed" => "browser_capture_cleanup_unconfirmed",
         "browser_interrupted" => "browser_interrupted",
         "browser_target_not_found" => "browser_target_not_found",
         "browser_media_revoked" => "browser_media_revoked",
@@ -437,6 +496,116 @@ mod busy_tests {
     use std::sync::atomic::AtomicBool;
 
     #[tokio::test]
+    #[ignore = "requires local Chrome; disposable headless profile only"]
+    async fn live_takeover_admits_replacement_while_passive_peer_stays_open() {
+        use super::super::{
+            control::ControlCommand,
+            manager::{Action, BrowserManager, Request},
+        };
+        let request = |sequence, epoch, command| Request {
+            browser_color: None,
+            browser_viewport: None,
+            repl_images: None,
+            request_id: format!("request-{sequence}"),
+            device_session_id: "device".into(),
+            session_id: "browser".into(),
+            generation: "generation".into(),
+            thread_id: "thread".into(),
+            owner_user_id: "owner".into(),
+            browser_id: "resource".into(),
+            browser_epoch: epoch,
+            private_content: false,
+            browser_paused: false,
+            control_epoch: epoch,
+            sequence,
+            expires_at_ms: crate::util::now_millis() + 30_000,
+            invocation_id: "invocation".into(),
+            invocation_fence: 1,
+            command,
+        };
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(
+            std::env::var_os("BUD_BROWSER_EXECUTABLE").expect("Chrome path"),
+        )));
+        manager.connect("device".into());
+        assert!(
+            manager
+                .execute(request(1, 1, Action::Open { url: None }))
+                .await
+                .ok
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let attach = |controller| Action::MediaAttach {
+            endpoint: format!("ws://{}/", listener.local_addr().unwrap()),
+            ticket: "takeover-fixture-ticket-0123456789".into(),
+            controller_id: controller,
+            operation_driven: Some(true),
+        };
+        assert!(manager.execute(request(2, 1, attach(None))).await.ok);
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut old_peer = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        old_peer.next().await.unwrap().unwrap(); // Authentication, no demand/EOF.
+        assert!(
+            manager
+                .execute(request(
+                    3,
+                    2,
+                    Action::Control {
+                        control: ControlCommand::Pause
+                    }
+                ))
+                .await
+                .ok
+        );
+        assert!(
+            manager
+                .execute(request(
+                    4,
+                    3,
+                    Action::Control {
+                        control: ControlCommand::Acquire {
+                            controller_id: "controller".into(),
+                            lease_expires_at_ms: crate::util::now_millis() + 6000,
+                        }
+                    }
+                ))
+                .await
+                .ok
+        );
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                let reply = manager
+                    .execute(request(5, 3, attach(Some("controller".into()))))
+                    .await;
+                if reply.ok {
+                    break;
+                }
+                assert_eq!(reply.error, Some("browser_media_busy"));
+                tokio::task::yield_now().await;
+            }
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut private_peer = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            private_peer.next().await.unwrap().unwrap();
+        })
+        .await
+        .expect("local fence must admit replacement within 500 ms");
+        drop(old_peer);
+        assert!(
+            manager
+                .execute(request(
+                    6,
+                    4,
+                    Action::Control {
+                        control: ControlCommand::End
+                    }
+                ))
+                .await
+                .ok
+        );
+        assert!(manager.execute(request(7, 4, Action::Close)).await.ok);
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn busy_flag_clears_when_the_media_task_panics() {
         let busy = Arc::new(AtomicBool::new(true));
         let flag = busy.clone();
@@ -446,5 +615,99 @@ mod busy_tests {
         });
         assert!(task.await.is_err(), "task must have panicked");
         assert!(!busy.load(Ordering::SeqCst), "busy flag stuck after panic");
+    }
+
+    #[tokio::test]
+    async fn local_fence_releases_idle_media_without_peer_eof() {
+        use super::super::control::{Authority, ControlCommand};
+        let authority = Arc::new(std::sync::Mutex::new(Authority::default()));
+        let mut changed = authority.lock().unwrap().subscribe();
+        let fence = authority.lock().unwrap().media_fence();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let (accepted, ready) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let _socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            accepted.send(()).unwrap();
+            std::future::pending::<()>().await; // Never acknowledges or sends EOF.
+        });
+        let (mut socket, _) = tokio_tungstenite::connect_async(endpoint).await.unwrap();
+        ready.await.unwrap();
+        let busy = Arc::new(AtomicBool::new(true));
+        let flag = busy.clone();
+        let watched = authority.clone();
+        let task = tokio::spawn(async move {
+            let _guard = OnDrop::new(move || flag.store(false, Ordering::SeqCst));
+            tokio::select! {
+                biased;
+                _ = authority_revoked(&watched, &mut changed, 0, None, Some(fence)) => {},
+                _ = socket.next() => panic!("peer unexpectedly completed"),
+            }
+        });
+        // Ordinary agent epoch changes keep passive media alive.
+        authority.lock().unwrap().epoch = 1;
+        tokio::task::yield_now().await;
+        assert!(busy.load(Ordering::SeqCst));
+        // Also covers fencing before the idle future is first polled.
+        authority
+            .lock()
+            .unwrap()
+            .transition(2, &ControlCommand::Pause)
+            .unwrap();
+        {
+            let mut current = authority.lock().unwrap();
+            current
+                .transition(
+                    3,
+                    &ControlCommand::Acquire {
+                        controller_id: "controller".into(),
+                        lease_expires_at_ms: crate::util::now_millis() + 6000,
+                    },
+                )
+                .unwrap();
+            current.transition(4, &ControlCommand::End).unwrap();
+            current.resume_after_stop(4);
+        }
+        // Even a fully coalesced takeover/return must retire the old socket.
+        tokio::time::timeout(Duration::from_millis(500), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !busy.swap(true, Ordering::SeqCst),
+            "replacement must be admitted"
+        );
+        tokio::task::yield_now().await;
+        assert!(
+            busy.load(Ordering::SeqCst),
+            "old cleanup cleared new admission"
+        );
+        peer.abort();
+    }
+
+    #[tokio::test]
+    async fn private_idle_media_expires_without_a_remote_message() {
+        use super::super::control::{Authority, ControlCommand};
+        let mut authority = Authority::default();
+        authority.transition(1, &ControlCommand::Pause).unwrap();
+        authority
+            .transition(
+                2,
+                &ControlCommand::Acquire {
+                    controller_id: "controller".into(),
+                    lease_expires_at_ms: crate::util::now_millis() + 100,
+                },
+            )
+            .unwrap();
+        let mut changed = authority.subscribe();
+        let authority = std::sync::Mutex::new(authority);
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            authority_revoked(&authority, &mut changed, 2, Some("controller"), None),
+        )
+        .await
+        .unwrap();
+        assert!(authority.lock().unwrap().end_pending);
     }
 }
