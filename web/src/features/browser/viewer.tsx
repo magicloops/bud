@@ -1,9 +1,9 @@
 import { BrowserStateFeed, observeBrowserState } from './state-feed';
 import { installBrowserTouch } from "./touch";
-import { BrowserLifecycle } from "./lifecycle";
+import { BrowserControls } from "./controls";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetchJson, buildAbsoluteApiUrl, isApiError } from "@/lib/transport";
-import { ArrowLeft, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { enqueueInput, inputMatchesFrame, type QueuedInput } from "./input-queue";
 import { ViewportFitter } from "./viewport-fit";
 import { BrowserCanvas, type BrowserFrame } from "./media";
@@ -90,6 +90,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     return () => onControlErrorChange?.(null);
   }, [error,statusError,sessionId,onControlErrorChange]);
   const [notice, setNotice] = useState("");
+  const [controlEndedNotice, setControlEndedNotice] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [missing, setMissing] = useState(false);
   useEffect(() => {
@@ -104,10 +105,12 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const [ensuring, setEnsuring] = useState(true);
   const [ensureFailed, setEnsureFailed] = useState(false);
   const [ensureRetry, setEnsureRetry] = useState(0);
-  const menuButton = useRef<HTMLButtonElement>(null);
+  const controlLossNotice = useRef(false);
+  const [retryView, setRetryView] = useState(false);
   const [fitRequest, setFitRequest] = useState(0);
   const consumedFit = useRef(0);
   const [resizing, setResizing] = useState(false);
+  const [fitFailed, setFitFailed] = useState(false);
   // Input stays fenced after a fit until a frame proves the new geometry. The
   // ref is authoritative for dispatch; the state keeps the UI from looking live.
   const resizeBlocked = useRef(false);
@@ -119,6 +122,12 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const changingControl = useRef(false);
   const controlVersion = useRef(0);
   const failurePriority = useRef(0);
+  const requestFit = () => {
+    // A deliberate Fit retry can clear its own message, never uncertain input.
+    if (fitFailed && failurePriority.current < 2) setError("");
+    setFitRequest(value => value + 1);
+  };
+
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [connected, setConnected] = useState(false);
@@ -159,6 +168,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       setError(message);
     }
     const wasOwner = ownsRef.current;
+    if (wasOwner && priority <= 1) controlLossNotice.current = true;
     ownsRef.current = false;
     if (mounted.current) setOwns(false);
     resetInput();
@@ -266,6 +276,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         failurePriority.current = 0;
         setError("");
         setNotice("");
+        setControlEndedNotice(false);
+        setFitFailed(false);
+        controlLossNotice.current = false;
         setWorking(true);
         setReturning(operation === "return");
         resetInput();
@@ -313,6 +326,10 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           overrideId.current = acquired ? data.override_id ?? null : null;
           ownsRef.current = acquired;
           setOwns(acquired);
+          if (acquired) {
+            controlLossNotice.current = false;
+            setControlEndedNotice(false);
+          }
           if (!keptPrivateMedia) setMediaVersion((v) => v + 1);
         }
       } catch (failure) {
@@ -415,6 +432,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }, [onReturnActionChange, canReturn, sessionId, working, resizing, returning]);
   useEffect(() => {
     if (!ended) return;
+    setMenuOpen(false);
     ownsRef.current = false;
     setOwns(false);
     resetInput();
@@ -463,6 +481,15 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       (state, list) => {
         if (!mounted.current || media.current !== client) return;
         setConnected(state === "connected");
+        setRetryView(state === "unavailable");
+        if ((state === "connected" || state === "empty") && !ownsRef.current && !changingControl.current && controlLossNotice.current) {
+          controlLossNotice.current = false;
+          if (failurePriority.current <= 1) {
+            failurePriority.current = 0;
+            setError("");
+            setControlEndedNotice(true);
+          }
+        }
         setEmpty(state === "empty");
         if (state === "empty") { resetInput(); blockInput(false); setResizing(false); }
         if (state === "connected" && client.frame) frameReady.current?.(client.frame);
@@ -505,6 +532,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     const permitted = owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport;
     if (!active || ended || fitRequest === consumedFit.current || !permitted || !connected || !selectedTarget || !surface.current) return;
     consumedFit.current = fitRequest;
+    setFitFailed(false);
     // Do not turn a keyboard-reduced surface into a new remote layout.
     if (typeof window !== "undefined" && window.visualViewport && window.visualViewport.height < window.innerHeight * .75) {
       setError("Dismiss the keyboard before fitting the browser to this device.");
@@ -555,6 +583,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         if (owns) failPrivate("Page resizing was not confirmed. Control is returning to the agent.", 2);
         else {
           blockInput(false);
+          setFitFailed(true);
           setError("Browser sizing was not confirmed. The browser may be busy or the page changed. You can try Fit again.");
         }
       }
@@ -741,19 +770,20 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
       return frame ? `${frame.target_id}:${frame.document_id}:${frame.viewport_id}:${inputEpoch.current}:${element.clientWidth}:${element.clientHeight}` : "";
     });
   }, [mobile, active, ended]);
+  const visibleNotice = notice || (!owns && !working && controlEndedNotice ? "Control ended. You’re watching Bud again." : "");
   if (ended) {
     return (
       <main className={`flex min-h-0 flex-col items-start justify-center gap-3 overflow-y-auto bg-background p-6 text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
         <h1 className="font-semibold">{missing ? "Browser session unavailable" : ensuring ? "Restoring browser…" : "Browser unavailable"}</h1>
         {(error || statusError) && <p role="alert" className="text-sm text-destructive">{error || statusError}</p>}
         {!missing && session?.state !== "closing" && session?.state !== "closed" && <button className={button} disabled={ensuring || working} onClick={() => setEnsureRetry(v => v + 1)}>Retry</button>}
-        {embedded ? <button className={button} onClick={onDismiss}>Dismiss browser pane</button>
+        {embedded ? !mobile && <button className={button} onClick={onDismiss}>Dismiss browser pane</button>
           : <a className={button} href={session ? `/${session.bud_id}/${session.thread_id}` : "/"}>Conversation</a>}
       </main>
     );
   }
   return (
-    <main className={`group/browser-pane relative min-h-0 min-w-0 w-full overflow-hidden bg-background text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
+    <main className={`@container/browser-pane group/browser-pane relative min-h-0 min-w-0 w-full overflow-hidden bg-background text-foreground ${embedded ? "h-full" : "h-dvh"}`}>
       <div ref={surface} data-browser-surface className="absolute inset-0 overflow-hidden bg-secondary">
         {mobile && resizing && <div role="status" className="absolute inset-0 z-10 flex items-center justify-center bg-secondary text-sm">Fitting browser…</div>}
         {empty && <div role="status" className="absolute inset-0 flex items-center justify-center p-6 text-sm text-muted-foreground">
@@ -762,9 +792,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
         {!connected && !empty && !(savedOnly && savedFrame) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-sm">
           <p>
-            {ensuring ? "Restoring browser…" : owns
+            {ensuring ? "Opening browser…" : owns
               ? "Connecting to browser…"
-              : session?.can_view ? "Reconnecting to browser…" : loadingSaved ? "Loading last agent view…" : "No saved agent view is available. Waiting for live agent view."}
+              : session?.can_view ? retryView ? "Reconnecting to browser…" : "Opening browser…" : loadingSaved ? "Loading last agent view…" : "No saved agent view is available. Waiting for live agent view."}
           </p>
           </div>
         )}
@@ -793,18 +823,6 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           </p>
         </>}
       </div>
-      {!owns && connected && session?.can_view && (
-        <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center bg-black/15 opacity-0 transition-opacity duration-150 [@media(hover:hover)]:group-hover/browser-pane:opacity-100 focus-within:opacity-100 motion-reduce:transition-none">
-          <button
-            type="button"
-            className={`${button} pointer-events-none bg-background/95 px-5 py-3 font-medium shadow-lg backdrop-blur [@media(hover:hover)]:group-hover/browser-pane:pointer-events-auto focus:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring`}
-            disabled={working || resizing}
-            onClick={() => { setMenuOpen(false); void control("acquire"); }}
-          >
-            {working ? "Taking control…" : "Take control"}
-          </button>
-        </div>
-      )}
         <textarea
           ref={typing}
           rows={1}
@@ -856,7 +874,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           }}
         />
       {mobile && owns && <button type="button" aria-label="Show keyboard"
-        className={`${button} absolute bottom-3 left-16 z-10 bg-background/95 shadow-md`}
+        className={`${button} absolute bottom-20 left-3 z-10 bg-background/95 shadow-md`}
         disabled={!stateCurrent.current || !active || !connected || working || resizing || blocked}
         onClick={() => {
           if (!focus.current) {
@@ -881,140 +899,34 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
           </button>
         </div>
       )}
-      <div className="pointer-events-none absolute bottom-3 right-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-end"
-        onMouseEnter={() => setMenuOpen(true)}
-        onMouseLeave={event => { if (!event.currentTarget.contains(document.activeElement)) setMenuOpen(false); }}
-        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false); }}
-        onKeyDown={event => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            menuButton.current?.focus();
-            setMenuOpen(false);
-          }
-        }}>
-        <button ref={menuButton} type="button" aria-label="Browser controls" aria-expanded={menuOpen}
-          aria-controls={`browser-controls-${sessionId}`}
-          className={`${button} pointer-events-auto ml-auto flex shrink-0 items-center gap-2 bg-background/95 shadow-md backdrop-blur`}
-          onClick={() => setMenuOpen(value => !value)}>
-          <SlidersHorizontal size={18} aria-hidden="true" />
-          {error && <span className="text-destructive">Attention</span>}
-        </button>
-        <div hidden={!menuOpen} className="pointer-events-auto min-h-0 w-96 max-w-full overflow-y-auto pt-2">
-        <section id={`browser-controls-${sessionId}`} aria-label="Browser controls panel" hidden={!menuOpen}
-          className="rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur">
-
-      <header className="mb-2 flex shrink-0 flex-wrap items-center gap-2">
-        <h1 className="font-semibold">Bud browser</h1>
-        <span className="text-sm text-muted-foreground">
-          {working
-            ? "Updating control…"
-            : owns
-              ? "You have control"
-              : session?.control_state === "agent"
-                ? "View only"
-                : "Another viewer has control"}
-        </span>
-        <div className="ml-auto flex gap-2">
-          {owns ? (
-            <>
-              <button
-                className={button}
-                disabled={working || resizing}
-                onClick={() => void control("return")}
-              >
-                Return to agent
-              </button>
-            </>
-          ) : (
-            <button
-              className={button}
-              disabled={!session || working || resizing || session.state === "closing"}
-              onClick={() => void control("acquire")}
-            >
-              Take control
-            </button>
-          )}
-          {!embedded && <a
-            className={button}
-            href={session ? `/${session.bud_id}/${session.thread_id}` : "/"}
-          >
-            Conversation
-          </a>}
-          {embedded && <>
-            {!mobile && <a className={button} href={`/browser/${encodeURIComponent(sessionId)}`} target="_blank" rel="noopener noreferrer" title="Open browser viewer in new tab">↗</a>}
-            <button className={button} onClick={onDismiss} aria-label="Dismiss browser pane">✕</button>
-          </>}
-        </div>
-      </header>
-      {session?.handoff?.reason && (
-        <p className="mb-2 text-sm">{session.handoff.reason}</p>
-      )}
-      <p className="mb-3 text-sm text-muted-foreground">
-        {owns
-          ? "Browser work in every thread on this Bud is paused. Only this viewer receives private content. Return to agent resumes browser work across threads."
-          : "Take control to interact and pause browser work across this Bud. Closing or leaving this view returns control to the agent."}
-      </p>
-      {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
-      {(error || statusError) && (
-        <p role="alert" className="mb-3 text-sm text-destructive">
-          {error || statusError}
-        </p>
-      )}
-      {!mobile && session?.can_show_window && <div className="mb-3 flex flex-wrap gap-2">
-        <button className={button} disabled={working || resizing} onClick={() => void control("show_window")}>Show browser window</button>
-        {owns && <button className={button} disabled={working || resizing} onClick={() => void control("hide_window")}>Hide browser window</button>}
-        <p className="text-xs text-muted-foreground">Opens on the Bud’s machine and takes private control. Hide keeps browser work paused.</p>
+      <BrowserControls sessionId={sessionId} budId={session?.bud_id} threadId={session?.thread_id} stateFeed={stateFeed}
+        mobile={mobile} embedded={embedded} active={active} owns={owns} busy={working || resizing || !active}
+        canSelect={active && owns && connected}
+        canTake={!!session && session.can_take_control !== false && session.control_state === "agent" && session.runtime_status !== "disconnected"}
+        canFit={active && connected && !!selectedTarget && (owns ? !!session?.can_resize_viewport : session?.control_state === "agent" && !!session?.can_resize_agent_viewport)}
+        fitSupported={owns ? !!session?.can_resize_viewport : !!session?.can_resize_agent_viewport}
+        canShow={!!session?.can_show_window}
+        status={returning ? "Returning to agent…" : working ? owns ? "Updating browser…" : "Taking control…" : resizing ? "Fitting page…" : owns ? connected ? "You have control" : "Connecting…"
+          : session?.control_state === "human_private" ? "In use in another view" : savedFrame ? "Last agent view" : ensuring ? "Opening browser…" : connected || empty ? "Watching agent" : retryView ? "Reconnecting…" : "Opening browser…"}
+        targets={targets} selectedTarget={selectedTarget} open={menuOpen} onOpenChange={setMenuOpen} onDismiss={onDismiss}
+        onTake={() => void control("acquire")} onReturn={() => void control("return")}
+        retryView={retryView && !owns ? { disabled: ensuring, run: () => { blockInput(false); setMediaVersion(v => v + 1); } } : undefined}
+        onFit={requestFit}
+        onSelect={id => { resetInput(); setSelectedTarget(id); media.current?.selectTarget(id); }}
+        onShow={() => void control("show_window")} onHide={() => void control("hide_window")}
+        onCloseTabs={() => void control("close")} />
+      {(error || statusError || visibleNotice || session?.handoff?.reason) && <div
+        className="absolute top-3 right-3 z-20 max-h-[35%] w-80 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl border border-border bg-background/95 p-3 text-sm shadow-sm backdrop-blur">
+        {!(error || statusError) && session?.handoff?.reason && <p>{session.handoff.reason}</p>}
+        {(error || statusError) && <>
+          <p role="alert" className="text-destructive">{(error || statusError).replace(/ \([^()]*\)$/, "")}</p>
+          {/ \([^()]*\)$/.test(error || statusError) && <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer py-1">Details</summary><p>{(error || statusError).match(/ \(([^()]*)\)$/)?.[1]}</p></details>}
+          <button type="button" className="mt-2 min-h-11 text-xs text-muted-foreground underline" onClick={() => { setError(""); setStatusError(""); }}>Dismiss message</button>
+        </>}
+        {!(error || statusError) && visibleNotice && <div className="flex items-start gap-2"><p role="status" className="flex-1 text-xs text-muted-foreground">{visibleNotice}</p>
+          <button type="button" aria-label="Dismiss notice" className="min-h-11 px-2" onClick={() => { setNotice(""); setControlEndedNotice(false); }}>×</button></div>}
+        {fitFailed && !owns && <button type="button" className={`${button} mt-2`} disabled={!active || !connected || working || resizing || session?.control_state !== "agent" || !session?.can_resize_agent_viewport} onClick={requestFit}>Retry Fit</button>}
       </div>}
-      <div className="mb-2 flex items-center gap-2">
-        <label className="text-sm">
-          Page{" "}
-          <select
-            className="rounded border p-1"
-            disabled={!active || !owns || !connected || resizing}
-            value={selectedTarget}
-            onChange={(event) => {
-              resetInput();
-              setSelectedTarget(event.target.value);
-              media.current?.selectTarget(event.target.value);
-            }}
-          >
-            {!targets.length && <option value="">No page available</option>}
-            {targets.map((target) => (
-              <option key={target.target_id} value={target.target_id}>
-                {target.origin || "Blank page"}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!connected && !empty && (
-          <button
-            className={button}
-            onClick={() => { blockInput(false); setMediaVersion((v) => v + 1); }}
-          >
-            Reconnect view
-          </button>
-        )}
-      </div>
-      <div className="mb-2 flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-        <button type="button" className={button} disabled={resizing || !connected || !(owns ? session?.can_resize_viewport : session?.control_state === "agent" && session?.can_resize_agent_viewport)} onClick={() => setFitRequest(value => value + 1)}>Fit browser to this device</button>
-        <span>{resizing ? "Fitting page…" : !session?.can_resize_viewport ? "Update Bud to enable fitting" : ""}</span>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Basic page input is supported. File uploads, passkeys and
-        operating-system password dialogs are not supported yet.
-      </p>
-      {!mobile && <button
-        className={`${button} mt-4 self-start text-destructive`}
-        disabled={!session || working || resizing || session.state === "closing"}
-        onClick={() => void control("close")}
-      >
-        Close browser workspace
-      </button>}
-      {!mobile && <p className="mt-2 text-xs text-muted-foreground">Closing this workspace discards this thread’s tabs and REPL memory. Other threads and saved sign-ins remain.</p>}
-      {session && !mobile && <BrowserLifecycle budId={session.bud_id} stateFeed={stateFeed} />}
-        </section>
-        </div>
-      </div>
     </main>
   );
 }

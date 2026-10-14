@@ -1,8 +1,9 @@
 # Plan: Production capture and takeover reliability
 
-Status: both implementation scopes are in the working tree; automated validation
-is recorded below. The selected-minimized-tab timeout repair is implemented and
-locally validated; Render/iPhone acceptance remains open. Updated October 13, 2026.
+Status: shipped in PR #152 and daemon v0.1.29; automated validation is recorded
+below. The user confirms production takeover works, the reconnect loop is gone,
+and mobile works reasonably well. Full device failure-matrix, persisted-profile,
+idle/battery and native-window acceptance remain open. Updated October 13, 2026.
 
 ## Context
 
@@ -94,8 +95,10 @@ and replacement authentication while the old passive peer stays open, with a
   ensure/new-private cleanup on the successful path.
 - [x] Service relay/control regressions retain owner checks, epoch fencing,
   private admission and prompt override release on real viewer loss.
-- [ ] Repeat takeover on production Render from web and physical iPhone without
+- [x] Repeat takeover on production Render from web and physical iPhone without
   `attach_rejected`, `browser_control_expired` or a reconnect loop on the tested path.
+  User-reported qualitative retest after upgrading to v0.1.29; not a complete
+  log-backed network/failure matrix or formal latency measurement.
 
 ## Phase 2 — capture-scoped passive focus emulation
 

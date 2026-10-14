@@ -1,12 +1,13 @@
 # Plan: Proposal A — CDP screencast over dedicated WSS
 
-> **October 13, 2026 follow-up:** Next work is scoped in
-> [production capture and takeover reliability](production-capture-and-takeover-reliability.md):
-> first retire fenced passive media promptly and stabilize viewer takeover, then
-> test capture-scoped focus emulation for initial passive screenshots. These
-> phases now have working-tree implementations and focused automated validation.
-> A user-authorized one-time passive timeout repair now addresses the local
-> selected/minimized Chrome reproduction. Render/iPhone acceptance remains open;
+> **October 13, 2026 follow-up:** [Production reliability](production-capture-and-takeover-reliability.md)
+> shipped in PR #152 and daemon v0.1.29. The user confirms production takeover
+> works, the reconnect loop is gone, and mobile works reasonably well. These are
+> qualitative retests; the broader idle/battery/native-window and failure matrix
+> remains open. Next is the [browser controls redesign](browser-controls-redesign.md):
+> one primary Take control/Return action, contextual More options, separate
+> maintenance and clear recovery status. U1/U2 are implemented with 25 focused
+> tests passing; desktop visual and physical iPhone acceptance remain open;
 > earlier experiment history below remains intact.
 
 > **October 1, 2026 update:** Private takeover streaming now defaults on at the

@@ -25,6 +25,7 @@ it does not commit Bud to a production media transport.
 | [control-lifecycle-review.md](control-lifecycle-review.md) | Historical close-versus-pause audit; recommendations superseded by the agent-default control plan |
 | [README.md](README.md) | Parent plan: objectives, fixed boundaries, phase order, impacted contracts, progress and coordinated upgrade requirements |
 | [production-capture-and-takeover-reliability.md](production-capture-and-takeover-reliability.md) | October 13 follow-up: locally retire fenced passive tasks, stabilize takeover in the shared viewer, then test capture-scoped passive focus emulation; phased regression and Render/device acceptance |
+| [browser-controls-redesign.md](browser-controls-redesign.md) | Implemented U1/U2 viewer UX with U3 automated checks: persistent Take control/Return and More options, contextual page controls, separate maintenance, scoped status/error presentation and web/mobile acceptance without lease or transport changes |
 | [phase-1-capture-and-baseline.md](phase-1-capture-and-baseline.md) | Fixtures, reproducible baseline, dedicated CDP source, local ACKs and target/document/viewport provenance gate |
 | [phase-2-bounded-wss.md](phase-2-bounded-wss.md) | Implemented private admission, binary framing and bounded pipeline; current agent-default lifecycle and remaining acceptance register |
 | [phase-3-measurement-and-decision.md](phase-3-measurement-and-decision.md) | Network/device matrix, timing methodology, acceptance bars, resource/ownership validation and results template |
@@ -53,12 +54,16 @@ it does not commit Bud to a production media transport.
 ## Status and deferred work
 
 The [production reliability follow-up](production-capture-and-takeover-reliability.md)
-has both implementation scopes in the working tree. The v0.1.28 reproduction identifies delayed old
+shipped in PR #152 and daemon v0.1.29. The v0.1.28 reproduction identifies delayed old
 media retirement blocking private attachment and separately motivates testing
 passive screenshot focus emulation for hidden first-frame stalls. Automated
 idle-tab capture/cleanup and takeover regressions pass. The user-authorized
 passive timeout repair also passes the selected-minimized-tab reproduction;
-Render/physical-phone acceptance remains open.
+The user confirms production takeover, disappearance of the reconnect loop and
+reasonable mobile behavior. Full physical failure-matrix, idle/battery and
+native-window acceptance remain open. The [controls redesign](browser-controls-redesign.md)
+has U1/U2 implemented and U3 automated validation passing in the working tree;
+desktop visual and physical iPhone acceptance remain open.
 
 No new runtime dependencies or code in this directory. Phase 2 implementation and
 qualitative web/mobile retests are recorded; unchecked live acceptance and formal

@@ -35,7 +35,7 @@ test('reset needs confirmation, stays pending through old polls, and ignores ano
   try {
     await act(async () => { view = create(createElement(BrowserLifecycle, { budId: 'A' })) })
     await act(async () => requests[0].resolve(Response.json({ browser: status(1, 'open') })))
-    await click('Reset browser data')
+    await click('Reset saved browser data')
     assert.equal(requests.length, 1, 'confirmation must precede mutation')
     await act(async () => { StateSocket.change(); const poll = [...callbacks.values()]; callbacks.clear(); poll.forEach(fn => fn()) })
     await click('Confirm reset')
