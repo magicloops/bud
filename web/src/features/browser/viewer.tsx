@@ -131,6 +131,9 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [connected, setConnected] = useState(false);
+  // Media closes on backgrounding. Visibility must restart it even when the
+  // session generation and control state are unchanged on return.
+  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState !== "hidden");
   const [targets, setTargets] = useState<BrowserFrame["targets"]>([]);
   const [selectedTarget, setSelectedTarget] = useState("");
   const [mediaVersion, setMediaVersion] = useState(0);
@@ -170,7 +173,7 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     const wasOwner = ownsRef.current;
     if (wasOwner && priority <= 1) controlLossNotice.current = true;
     ownsRef.current = false;
-    if (mounted.current) setOwns(false);
+    if (mounted.current) { setOwns(false); setConnected(false); setEmpty(false); }
     resetInput();
     const detached = media.current;
     media.current = null;
@@ -406,17 +409,25 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
   }, [active, failPrivate]);
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
-    const leave = () => {
-      if (document.visibilityState === "hidden") {
-        lifecycleEpoch.current++;
-        failPrivate("", 0);
-        typing.current?.blur();
-      }
+    const suspend = () => {
+      setVisible(false);
+      lifecycleEpoch.current++;
+      failPrivate("", 0);
+      typing.current?.blur();
     };
-    const pagehide = () => { lifecycleEpoch.current++; failPrivate("", 0); };
-    document.addEventListener("visibilitychange", leave);
-    window.addEventListener("pagehide", pagehide);
-    return () => { document.removeEventListener("visibilitychange", leave); window.removeEventListener("pagehide", pagehide); };
+    const visibility = () => {
+      if (document.visibilityState === "hidden") suspend();
+      else setVisible(true);
+    };
+    const restore = () => { visibility(); refreshState.current(); };
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pagehide", suspend);
+    window.addEventListener("pageshow", restore);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pagehide", suspend);
+      window.removeEventListener("pageshow", restore);
+    };
   }, [failPrivate]);
   const ended = missing || ensureFailed || session?.runtime_status === "daemon_restarted" || session?.runtime_status === "ended" || session?.state === "closing" || session?.state === "closed" || session?.state === "interrupted";
   const canReturn = !missing && owns && !ended;
@@ -439,8 +450,8 @@ export function BrowserViewer({ stateFeed: sharedFeed, sessionId, mobile = false
     setTargets([]);
     setSelectedTarget("");
   }, [ended, resetInput]);
-  const canView = active && !ensuring && !ended && (session?.can_view || owns);
-  const savedOnly = active && !ensuring && !ended && !!session && !session.can_view && !owns && !working;
+  const canView = active && visible && !ensuring && !ended && (session?.can_view || owns);
+  const savedOnly = active && visible && !ensuring && !ended && !!session && !session.can_view && !owns && !working;
   const [savedFrame, setSavedFrame] = useState<SharedFrame | null>(null);
   const [loadingSaved, setLoadingSaved] = useState(false);
   useEffect(() => {
