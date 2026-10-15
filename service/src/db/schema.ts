@@ -1534,12 +1534,29 @@ export const locationObservationTable = pgTable("location_observation", {
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  // v2 visits only: shared by iOS's arrival and completed reports of one visit.
+  visitKey: text("visit_key"),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
 }, t => ({
   eventKey: unique("location_observation_event_key").on(t.rawEventId),
+  visitIdx: index("location_observation_visit_idx").on(t.createdByUserId, t.visitKey),
   ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
   eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+// Names for a visit (address and likely place), looked up on the phone. One row per
+// owner and visit key; a later lookup (by named_at) replaces an earlier one.
+export const locationVisitNameTable = pgTable("location_visit_name", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id").notNull(),
+  address: jsonb("address").$type<Record<string, string | null> | null>(),
+  place: jsonb("place").$type<Record<string, unknown> | null>(),
+  namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_name_visit_key").on(t.createdByUserId, t.visitKey),
+  eventFk: foreignKey({ name: "location_visit_name_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.

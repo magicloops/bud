@@ -24,8 +24,10 @@ need a map to read, and automations can't describe where you were.
 - **Payload:** results go into a `location.visit_named.v1` envelope keyed by
   `visit_key`, rather than holding back the visit. The visit stays durable
   even if naming fails or is offline. Fields:
-  - `address`: name, thoroughfare, locality, administrative area, postal code,
-    country code;
+  - `address`: `full`, `short`, `city`, `city_with_context`, `region` and
+    `region_code`, which is what iOS 26's `MKAddress` and
+    `MKAddressRepresentations` provide (no separate street or postal-code
+    fields);
   - `place`: name, category, coordinate, distance in metres; or null;
   - `source: "apple"`, `named_at`.
 - **Limits and caching:**
@@ -69,6 +71,33 @@ need a map to read, and automations can't describe where you were.
   - precision rules for apps (rounded keys never receive street or place).
 - **Device:** visit a known café and see the address and likely place in the
   timeline; offline naming retries later.
+
+## Implementation (October 15, 2026)
+
+On branches `feat/location-names` (service) and mobile `feature/location-names`,
+stacked on 6.1:
+- **iOS:**
+  - `VisitNamer` (actor) keeps a durable queue of completed visits and a
+    30-day cache by ~50 m cell, both in one event-store snapshot that commits
+    through the producer's `CollectionGate`.
+  - Lookups run one at a time, at most 10 per drain and 2 seconds apart, with
+    backoff from 1 minute up to 6 hours. A visit is dropped after 8 failures,
+    and empty results send nothing.
+  - Draining runs after each completed visit, at start and on foreground.
+  - `MapKitVisitNameLookup` uses `MKReverseGeocodingRequest` and the nearest
+    `MKLocalPointsOfInterestRequest` result within the accuracy (50–200 m),
+    and is created only on iOS 26.
+- **Service:**
+  - Migration 0054 adds `location_observation.visit_key` (backfilled from
+    stored v2 visits) and `location_visit_name`; a later `named_at` wins.
+  - Location queries and contact evidence include `visit_key`, `address` and
+    `place`.
+  - Apps with rounded precision get city and region only, and no place.
+- **Tests:**
+  - TimelineCore `VisitNamingTests` (fake lookup, injected clock): cache,
+    duplicates, backoff across restart, spacing, empty results, closed gate,
+    maximum attempts.
+  - Service: name parsing, PostgreSQL replacement and join, app rounding.
 
 ## Rollout
 

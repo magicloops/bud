@@ -638,3 +638,8 @@ Migration `0053_workout_domain_events.sql` makes `data_domain_event.revision_id`
 nullable and adds `workout_id` (owner-composite FK to `health_workout`, which
 gains `unique(id, created_by_user_id)`). A check requires exactly one subject;
 `unique(workout_id, event_type)` publishes each workout once.
+
+Migration `0054_location_visit_names.sql` adds `location_observation.visit_key`
+(indexed with owner) and `location_visit_name` (unique owner + visit key,
+owner-composite FK to `data_event`). It ends with a hand-written backfill that
+copies `visit_key` from stored `location.visit.v2` raw events.
