@@ -1,5 +1,5 @@
 import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-types'
-import { describeSchedule } from '@/lib/automation-schedule'
+import { describeSchedule, describeWorkoutFilter } from '@/lib/automation-schedule'
 
 export function automationReviewOperation(proposal: ApiAutomationProposal | ApiBootstrapProposal) {
   if ('kind' in proposal) return 'Process existing contacts'
@@ -31,6 +31,8 @@ export function AutomationProposalSummary({ proposal }: { proposal: ApiAutomatio
         : <p role="note" className="font-semibold">This may repeat previous actions. Approving explicitly allows repeat processing for this contact set.</p>}
     </> : definition.event_type === 'schedule'
       ? <p>Runs on a schedule: {describeSchedule(definition.schedule)}. Missed runs are not caught up.</p>
+      : definition.event_type === 'workout.completed'
+      ? <p>{describeWorkoutFilter(definition.workout_filter)}, usually within an hour or two. The initial health import doesn't trigger it, and workouts older than {Math.round(definition.max_event_age_seconds / 3600)} hours when they arrive are skipped.</p>
       : <p>When a new contact is observed. Existing contacts and initial imports are not processed.</p>}
     {proposal.model_resolution && <p className="text-sm">Currently: {proposal.model_resolution.model} · {proposal.model_resolution.reasoning_effort} reasoning</p>}
     {proposal.model_resolution?.warning && <p className="text-sm text-amber-700">{proposal.model_resolution.warning}</p>}

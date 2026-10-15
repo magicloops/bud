@@ -1460,36 +1460,6 @@ export const contactRevisionTable = pgTable("contact_revision", {
   scanFk: foreignKey({ name: "contact_revision_scan_fk", columns: [t.scanId, t.createdByUserId], foreignColumns: [contactScanTable.id, contactScanTable.createdByUserId] }),
 }));
 
-export const dataDomainEventTable = pgTable("data_domain_event", {
-  id: text("id").primaryKey(), revisionId: text("revision_id").notNull(),
-  eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
-  publicationSequence: bigint("publication_sequence", { mode: "number" }),
-  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
-  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
-}, (t) => ({
-  ownerKey: unique("data_domain_owner_key").on(t.id, t.createdByUserId),
-  sequenceKey: unique("data_domain_sequence_key").on(t.createdByUserId, t.publicationSequence),
-  revisionKey: unique("data_domain_revision_key").on(t.revisionId, t.eventType),
-  ownerIdx: index("data_domain_owner_idx").on(t.createdByUserId, t.status, t.id),
-  revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
-}));
-
-
-export const locationObservationTable = pgTable("location_observation", {
-  id: text("id").primaryKey(), rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
-  kind: text("kind").notNull(), latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
-  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
-  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
-  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
-  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
-}, t => ({
-  eventKey: unique("location_observation_event_key").on(t.rawEventId),
-  ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
-  eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
-  epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
-}));
-
 // HealthKit samples, one row per owner and HealthKit UUID across devices/epochs.
 // Re-imports update the row; deletions live in health_sample_deletion so arrival
 // order cannot resurrect a deleted sample.
@@ -1506,6 +1476,7 @@ export const healthWorkoutTable = pgTable("health_workout", {
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
 }, t => ({
   sampleKey: unique("health_workout_sample_key").on(t.createdByUserId, t.hkUuid),
+  ownerKey: unique("health_workout_owner_key").on(t.id, t.createdByUserId),
   ownerTimeIdx: index("health_workout_owner_time_idx").on(t.createdByUserId, t.startAt, t.id),
   eventFk: foreignKey({ name: "health_workout_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   epochFk: foreignKey({ name: "health_workout_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
@@ -1535,6 +1506,40 @@ export const healthSampleDeletionTable = pgTable("health_sample_deletion", {
   sampleKey: unique("health_sample_deletion_sample_key").on(t.createdByUserId, t.hkUuid),
   eventFk: foreignKey({ name: "health_sample_deletion_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   kindCheck: check("health_sample_deletion_kind_check", sql`${t.sampleKind} in ('workout','sleep_segment')`),
+}));
+
+// Exactly one subject: a contact revision (contact.added) or a workout (workout.completed).
+export const dataDomainEventTable = pgTable("data_domain_event", {
+  id: text("id").primaryKey(), revisionId: text("revision_id"), workoutId: text("workout_id"),
+  eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
+  publicationSequence: bigint("publication_sequence", { mode: "number" }),
+  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  ownerKey: unique("data_domain_owner_key").on(t.id, t.createdByUserId),
+  sequenceKey: unique("data_domain_sequence_key").on(t.createdByUserId, t.publicationSequence),
+  revisionKey: unique("data_domain_revision_key").on(t.revisionId, t.eventType),
+  ownerIdx: index("data_domain_owner_idx").on(t.createdByUserId, t.status, t.id),
+  revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
+  workoutKey: unique("data_domain_workout_key").on(t.workoutId, t.eventType),
+  workoutFk: foreignKey({ name: "data_domain_workout_fk", columns: [t.workoutId, t.createdByUserId], foreignColumns: [healthWorkoutTable.id, healthWorkoutTable.createdByUserId] }),
+  subjectCheck: check("data_domain_subject_check", sql`(${t.revisionId} is null) <> (${t.workoutId} is null)`),
+}));
+
+
+export const locationObservationTable = pgTable("location_observation", {
+  id: text("id").primaryKey(), rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
+  kind: text("kind").notNull(), latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  eventKey: unique("location_observation_event_key").on(t.rawEventId),
+  ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
+  eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.

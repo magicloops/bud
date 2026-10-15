@@ -1646,3 +1646,10 @@ nights marked partial). Both execute through `AgentDataQueries` with the `health
 scope and the matching grant `health_types`. Provider-strict nulls for
 `activity_type` and `timezone` are dropped like the paging keys.
 `data_request_api_key` requires `health_types` (empty unless `health.read`).
+
+## Workout automation tools
+
+The automation definition accepts `event_type: workout.completed` with
+`workout_filter` and `max_event_age_seconds` (agent defaults: any activity, no
+minimum, 6 hours, Health access). Provider-strict nulls for the other triggers'
+fields are dropped.

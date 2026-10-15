@@ -427,3 +427,29 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
   isolation, night grouping, source choice and timezones.
 - `example-app` shows the last 14 nights of sleep and 30 days of workouts when
   the app key includes them.
+
+## Workout trigger (phase 5)
+
+- `data_domain_event` has exactly one subject: `revision_id` (contact) or
+  `workout_id` (migration 0053, FK to `health_workout`).
+- `health.ts` publishes `workout.completed` under the processor's owner lock,
+  with the shared publication sequence, when a workout row is first inserted from
+  incremental collection and no deletion exists. Baseline imports, re-uploads
+  (update, not insert) and already-deleted samples publish nothing.
+- The `workout.completed` definition has a `workout_filter`
+  (`activity_types`, empty = any; `min_duration_minutes`), a
+  `max_event_age_seconds` (300 s–7 days, default 6 h from the agent tool) and
+  requires `health.read`.
+- `automation-matcher.ts` dispatches by event type, and only rules for that type
+  see an event. For workouts it records suppressed deliveries for
+  `sample_deleted`, `workout_filter_mismatch` and `event_too_old` (age from the
+  workout's end against the database clock). The deletion lookup is a separate
+  query, because Drizzle does not table-qualify columns inside selected `sql`.
+- Admission requires the grant's `workouts` health type, a non-deleted workout
+  and an unrevoked source, and builds the run input text. Policy checks re-verify
+  the type and lineage. `automation-workout-context.ts` adds first-start evidence:
+  the workout record, plus location observations within 10 minutes of it when
+  both the rule and grant include `location.read`.
+- `automation-workout.test.ts`: isolated-schema PostgreSQL fixture for
+  publication rules, filters, age, deletion before and after matching,
+  admission, policy, evidence and withdrawn health types.

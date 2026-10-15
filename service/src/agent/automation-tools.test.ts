@@ -78,5 +78,16 @@ test("schedule drafts and replacements accept provider nulls for the other trigg
   assert.throws(() => parseAutomationToolInput("automations_update_draft", { automation_id: "rule", expected_version: 1,
     definition: { ...definition, schedule: null } }), "a schedule replacement still requires its schedule");
   const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
-  assert.deepEqual((create.parameters.properties!.event_type as { enum: string[] }).enum, ["contact.added", "schedule"]);
+  assert.deepEqual((create.parameters.properties!.event_type as { enum: string[] }).enum, ["contact.added", "schedule", "workout.completed"]);
+});
+
+test("workout drafts accept provider nulls for other triggers and expose their own settings", () => {
+  const parsed = parseAutomationToolInput("automations_create_draft", { name: "After runs", instruction: "Log the run",
+    event_type: "workout.completed", workout_filter: { activity_types: ["running"], min_duration_minutes: 15 },
+    max_event_age_seconds: null, schedule: null, sources: null });
+  assert.deepEqual(parsed, { name: "After runs", instruction: "Log the run", event_type: "workout.completed",
+    workout_filter: { activity_types: ["running"], min_duration_minutes: 15 } });
+  const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
+  assert.ok((create.parameters.properties!.event_type as { enum: string[] }).enum.includes("workout.completed"));
+  assert.ok(create.parameters.properties!.workout_filter);
 });

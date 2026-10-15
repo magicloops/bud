@@ -63,3 +63,15 @@ test("grant coverage is unnecessary without scopes and otherwise pins version, s
   assert.ok(!grantCoversDefinition({ ...grant, scopes: [] }, scoped));
   assert.throws(() => requireContactDefinition(empty), { code: "automation_trigger_unsupported" });
 });
+
+test("workout rules need health access, a bounded filter and a maximum event age", () => {
+  const { sources: _omitted, ...base } = definition;
+  const workout = { ...base, event_type: "workout.completed", workout_filter: { activity_types: ["running"], min_duration_minutes: 20 },
+    max_event_age_seconds: 21600, data_access: { scopes: ["health.read", "location.read"], history_days: 30 } };
+  assert.equal(parseAutomationInput(automationDefinitionSchema, workout).event_type, "workout.completed");
+  for (const patch of [{ data_access: { scopes: ["location.read"], history_days: 30 } }, { max_event_age_seconds: 60 },
+    { workout_filter: { activity_types: ["Running!"], min_duration_minutes: 0 } }, { workout_filter: { activity_types: [], min_duration_minutes: -1 } },
+    { workout_filter: { activity_types: ["running", "running"], min_duration_minutes: 0 } }, { workout_filter: undefined },
+    { sources: { source_ids: [] } }, { schedule: { local_time: "09:00", weekdays: [1], timezone: "UTC" } }])
+    assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...workout, ...patch }), { code: "invalid_automation" });
+});

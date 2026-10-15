@@ -14,7 +14,10 @@
   Location append durability remains open.
 - **Phase 4 implemented October 14, 2026** (branches `feat/health-data-queries`
   here, stacked on #154, and mobile `feature/health-data-screens`, stacked on
-  mobile #65). See "Phase 4 implementation" below. Phases 5–8 are not started.
+  mobile #65). See "Phase 4 implementation" below.
+- **Phase 5 implemented October 15, 2026** (branches `feat/workout-trigger`
+  here and mobile `feature/workout-trigger`). See "Phase 5 implementation" below.
+  Phases 6–8 are not started.
 - Builds on [personal data ingestion and agent triggers](../design/personal-data-ingestion-and-agent-triggers.md)
   and its [implementation spec](personal-data-ingestion-and-agent-triggers/implementation-spec.md).
   Replaces the two deferred items in [TODO.md](../TODO.md) ("HealthKit durability…"
@@ -376,6 +379,41 @@ Follow-ups, not blocking:
 - Location append durability.
 - Location and workout triggers (phases 5–6). Full contacts parity is not
   reached until then.
+
+## Phase 5 implementation
+
+Implemented as planned, with these choices:
+- **Domain events** use typed subject columns (`revision_id` or `workout_id`)
+  instead of a generic `subject_kind`/`subject_id`, so both keep database
+  foreign keys. Exactly one is set.
+- **Publication** happens when a workout row is first inserted from incremental
+  collection with no deletion recorded. It is never published for the baseline,
+  re-uploads or already-deleted samples, and each workout is published once.
+- **Matching:**
+  - Filters are activity types (none = any) and a minimum duration.
+  - `max_event_age_seconds` is measured from the workout's end, against the
+    database clock.
+  - Workouts deleted after publication are suppressed at matching, or fail at
+    admission.
+- **Permissions:** runs need the grant's `workouts` health type, checked at
+  admission and on every policy check.
+- **Evidence:** the agent receives the workout record, plus location samples
+  within 10 minutes of it when both the rule and the grant allow location. There
+  is still no workout route.
+- No trigger registry yet: the matcher, admission, policy and evidence each
+  dispatch on event type in a few lines.
+
+Validation:
+- Service: full suite, plus the PostgreSQL workout fixture (run repeatedly)
+  and the personal-data suites.
+- Web: build and tests, including a render test for the workout review.
+- iOS: unit suite.
+
+End-to-end runs from a real watch workout are not yet checked.
+
+Rollout: migration 0053 runs in Render's pre-deploy step; deploy the service
+and web, then the iOS build. Older iOS builds can't decode the automation list
+once a workout rule exists, as with schedules.
 
 ## Decisions
 

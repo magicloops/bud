@@ -90,6 +90,9 @@ export class AutomationManagement {
         const defaults = (eventType: AutomationDefinition["event_type"]): AutomationDefinition => eventType === "schedule"
           ? { ...common, event_type: "schedule", schedule: { local_time: "09:00", weekdays: [1, 2, 3, 4, 5, 6, 7], timezone: "UTC" },
             data_access: { scopes: [], history_days: historyDays } }
+          : eventType === "workout.completed"
+          ? { ...common, event_type: "workout.completed", workout_filter: { activity_types: [], min_duration_minutes: 0 },
+            max_event_age_seconds: 21_600, data_access: { scopes: ["health.read"], history_days: historyDays } }
           : { ...common, event_type: "contact.added", sources: { source_ids: [] },
             data_access: { scopes: ["contacts.read"], history_days: historyDays } };
         const definition = resolveAgentAutomationDraft(args, defaults);

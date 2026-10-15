@@ -424,9 +424,13 @@ export type ApiPendingQuestion = {
 /** Local wall-clock time on ISO weekdays (1 = Monday … 7 = Sunday) in an IANA zone. */
 export type ApiAutomationSchedule = { local_time: string; weekdays: number[]; timezone: string }
 
+/** Empty activity_types means any workout. */
+export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes: number }
+
 export type ApiAutomationTrigger =
   | { event_type: 'contact.added'; sources: { source_ids: string[] } }
   | { event_type: 'schedule'; schedule: ApiAutomationSchedule }
+  | { event_type: 'workout.completed'; workout_filter: ApiWorkoutFilter; max_event_age_seconds: number }
 
 export type ApiAutomationDefinition = ApiAutomationTrigger & {
   name: string

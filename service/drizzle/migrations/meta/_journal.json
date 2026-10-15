@@ -372,6 +372,13 @@
       "when": 1792040176213,
       "tag": "0052_health_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792049569609,
+      "tag": "0053_workout_domain_events",
+      "breakpoints": true
     }
   ]
 }

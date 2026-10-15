@@ -7,7 +7,7 @@ import { InvocationRepository } from "../agent/invocation-repository.js";
 import { automationTable as rules, automationRevisionTable as revisions, automationDeliveryTable as deliveries,
   dataOwnerStateTable as owners, agentDataGrantTable as grants, dataDomainEventTable as events,
   contactRevisionTable as evidence, contactTable as contacts, contactSourceTable as sources,
-  dataCollectionEpochTable as epochs, dataInstallationTable as installations,
+  dataCollectionEpochTable as epochs, dataInstallationTable as installations, healthWorkoutTable as workouts,
   threadTable as threads, budTable as buds } from "../db/schema.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, parseAutomationInput,
   type AutomationDefinition } from "./automation-contracts.js";
@@ -83,7 +83,7 @@ export class AutomationAdmission {
           eq(threads.createdByUserId, owner), isNull(threads.deletedAt))).limit(1);
         if (!thread) return finish("failed", "automation_target_unavailable");
       }
-      const trigger = await this.triggerInput(tx, owner, delivery, definition);
+      const trigger = await this.triggerInput(tx, owner, delivery, definition, grant?.healthTypes ?? []);
       if (typeof trigger === "string") return finish("failed", trigger);
       if (policy.rule.state !== "enabled") return wait("automation_paused");
       // Owner lock serializes all admission counts, including concurrent rules.
@@ -118,8 +118,27 @@ export class AutomationAdmission {
   }
 
   /** Trigger-specific admission text and metadata, or a failure outcome code. */
-  private async triggerInput(tx: Transaction, owner: string, delivery: Delivery, definition: AutomationDefinition):
-    Promise<{ text: string; metadata: Record<string, unknown> } | string> {
+  private async triggerInput(tx: Transaction, owner: string, delivery: Delivery, definition: AutomationDefinition,
+    healthTypes: string[]): Promise<{ text: string; metadata: Record<string, unknown> } | string> {
+    if (definition.event_type === "workout.completed") {
+      if (!delivery.domainEventId) return "automation_trigger_mismatch";
+      if (!healthTypes.includes("workouts")) return "data_permission_changed";
+      const [workout] = await tx.select({ id: workouts.id, activityType: workouts.activityType, startAt: workouts.startAt,
+        endAt: workouts.endAt, durationS: workouts.durationS }).from(events)
+        .innerJoin(workouts, and(eq(workouts.id, events.workoutId), eq(workouts.createdByUserId, owner)))
+        .innerJoin(epochs, and(eq(epochs.id, workouts.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))
+        .innerJoin(installations, and(eq(installations.id, epochs.installationId), eq(installations.createdByUserId, owner), isNull(installations.revokedAt)))
+        .where(and(eq(events.id, delivery.domainEventId), eq(events.createdByUserId, owner),
+          sql`not exists (select 1 from health_sample_deletion d where d.created_by_user_id = ${owner} and d.hk_uuid = ${workouts.hkUuid})`)).limit(1);
+      if (!workout) return "workout_evidence_unavailable";
+      return {
+        text: `A workout was recorded: ${workout.activityType.replaceAll("_", " ")}, ${Math.round(workout.durationS / 60)} minutes, ` +
+          `from ${workout.startAt.toISOString()} to ${workout.endAt.toISOString()}.\nWorkout ID: ${workout.id}\n` +
+          "The workout record follows. HealthKit delivers new workouts about hourly, so this may arrive after the workout ended. " +
+          "Do not repeat completed actions if the same workout is delivered again.",
+        metadata: { domain_event_id: delivery.domainEventId, workout_id: workout.id },
+      };
+    }
     if (definition.event_type === "schedule") {
       if (!delivery.scheduledFor) return "automation_trigger_mismatch";
       const [previous] = await tx.select({ at: deliveries.scheduledFor }).from(deliveries).where(and(
