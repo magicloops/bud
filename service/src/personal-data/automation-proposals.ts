@@ -8,7 +8,7 @@ import { automationProposalTable as proposals, automationTable as rules, automat
   dataOwnerStateTable as owners, agentInvocationTable as invocations, agentInvocationActionTable as actions,
   threadTable as threads, budTable as buds } from "../db/schema.js";
 import { Automations } from "./automations.js";
-import { automationDefinitionSchema, parseAutomationInput } from "./automation-contracts.js";
+import { automationDefinitionSchema, grantCoversDefinition, parseAutomationInput } from "./automation-contracts.js";
 import { AUTOMATION_PROPOSAL_LIMITS as limits, automationProposalRequestSchema, automationProposalDecisionSchema,
   automationProposalCancelSchema, parseAutomationProposalInput } from "./automation-proposal-contracts.js";
 import { DataRequestError } from "./contracts.js";
@@ -147,7 +147,7 @@ export class AutomationProposals {
     if (rule.version !== value.expected_version) throw conflict();
     const definition = parseAutomationInput(automationDefinitionSchema, rule.draft);
     const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, context.owner));
-    if (!grant || !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)) || definition.data_access.history_days > grant.historyDays)
+    if (!grantCoversDefinition(grant, definition))
       throw new DataRequestError(403, "data_permission_required", "Approve the requested data access before requesting activation");
     const pending = await tx.select().from(proposals).where(and(eq(proposals.createdByUserId, context.owner), eq(proposals.status, "pending")))
       .orderBy(proposals.id).limit(limits.pending_per_owner);
@@ -157,7 +157,7 @@ export class AutomationProposals {
     const now = this.now();
     const [row] = await tx.insert(proposals).values({ id: `ap_${ulid()}`, automationId: rule.id, invocationId: invocation.id,
       threadId: invocation.threadId, budId: invocation.budId, callId: context.callId, definition,
-      draftVersion: rule.version, grantVersion: grant.version, createdByUserId: context.owner, tenantId: invocation.tenantId,
+      draftVersion: rule.version, grantVersion: grant?.version ?? 0, createdByUserId: context.owner, tenantId: invocation.tenantId,
       createdAt: now, updatedAt: now, expiresAt: new Date(now.getTime() + limits.expiry_seconds * 1000) }).returning();
     return serializeAutomationProposal(row);
   }

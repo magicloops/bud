@@ -1,6 +1,7 @@
 import { getCatalogEntry } from "../llm/model-catalog.js";
 import { z } from "zod";
-import { automationDefinitionSchema, type AutomationDefinition } from "./automation-contracts.js";
+import { automationDefinitionSchema, contactAddedDefinitionSchema, scheduleDefinitionSchema,
+  type AutomationDefinition, type AutomationEventType } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 
 export const AUTOMATION_PROPOSAL_LIMITS = {
@@ -13,8 +14,12 @@ const identifier = z.string().min(1).max(128);
 const version = z.number().int().nonnegative().safe();
 
 /** Omitted model settings persist inherited intent, not an invocation snapshot. */
-export const automationAgentDraftSchema = automationDefinitionSchema.omit({ origin_thread_id: true }).partial()
-  .required({ name: true, instruction: true });
+/** Omitting event_type means a new-contact rule; schedule rules name their type and schedule. */
+export const automationAgentDraftSchema = z.union([
+  contactAddedDefinitionSchema.omit({ origin_thread_id: true }).partial().required({ name: true, instruction: true }),
+  scheduleDefinitionSchema.omit({ origin_thread_id: true }).partial()
+    .required({ event_type: true, name: true, instruction: true, schedule: true }),
+]);
 
 /** Grant version, effective definition and execution identities are server-bound. */
 export const automationProposalRequestSchema = z.object({
@@ -44,8 +49,10 @@ export function parseAutomationProposalInput<T>(schema: z.ZodType<T, z.ZodTypeDe
 }
 
 /** Shape normalization only. Repository ownership/model/grant checks remain mandatory. */
-export function resolveAgentAutomationDraft(input: unknown, defaults: AutomationDefinition): AutomationDefinition {
+export function resolveAgentAutomationDraft(input: unknown,
+  defaultsFor: (eventType: AutomationEventType) => AutomationDefinition): AutomationDefinition {
   const requested = parseAutomationProposalInput(automationAgentDraftSchema, input);
+  const defaults = defaultsFor(requested.event_type ?? "contact.added");
   if (requested.model !== undefined && !requested.model) throw new DataRequestError(400, "invalid_automation_model", "Choose a supported model or omit the override");
   if (requested.reasoning_effort !== undefined && !requested.model && requested.model_mode !== "inherit")
     throw new DataRequestError(400, "invalid_automation_model", "Reasoning overrides require an explicit model. Omit both to follow the conversation.");

@@ -165,6 +165,13 @@ reserves clearly unavailable Location, Health and Photos browsers.
 
 Authenticated `/automations`, linked directly from Settings. Validated `rule` search selects an exact rule (or new draft) and preserves selection across reload/back navigation. Trigger attribution links open its editor and activity. Detail reads still resolve through the existing owner-authorized API; no new management authority is introduced. The screen is titled Automations, with source/access/execution limits grouped under Advanced settings while activation review retains all effective values. Lists owner-scoped rules and edits shared drafts with owned Bud/model/thread/source selectors, requested scopes/history and work limits. Preserves unavailable stored model choices; never substitutes on save. New drafts retain one creation key and freeze uncertain request bodies for explicit retry. Editor remounts on owner/rule changes and guards responses after unmount. Optimistic conflicts require reloading saved state. Shows active definition separately, pause with separate queued/active cancellation choices, and bounded delivery history with canonical invocation state and conversation links. Activation review displays the saved instruction, target, scope/history and limits, requires acknowledgement and matching saved draft, and follows the server activation capability. Existing-contact controls preview the saved draft or active revision, require explicit processing/rerun/standing-work consent, and preserve uncertain capture bodies for retry. Bounded request history and progress recover cross-device receipts, show canonical group states and conversation links, and support cancellation without implying remote commands stopped. Browser interaction and mobile parity remain in progress. Builds verified; browser interaction validation remains open.
 
+Rules choose a trigger (new contact or, when `features.automation_triggers`
+includes it, a schedule with local time, weekdays and IANA timezone defaulting to
+the browser's). Switching type drops the other type's fields so the strict server
+schema accepts the draft. Schedule rules request any subset of data scopes, show
+`next_run_at` in the list and `scheduled_for` in delivery history, and hide
+existing-contact processing. `lib/automation-schedule.ts` formats schedules.
+
 Automation reviews also appear in the shared inventory under Needs your review.
 Validated `proposal` search selects the exact owner-authorized immutable review,
 independent of rule pagination. Pending inventory refreshes serially; the shared

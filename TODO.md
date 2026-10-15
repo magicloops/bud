@@ -24,8 +24,7 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Personal data — deferred deliverables
 
-- [ ] HealthKit durability, additional samples, source precedence, lookback/backlog and summary windows; retain the existing mobile producers until this follow-up.
-- [ ] Geographic regions, named places and more timely arrival triggers; current location remains best-effort evidence with uncertainty and no repeated completed actions.
+- [ ] Location and health for agents, automations and apps: general trigger pipeline, scheduled automations, HealthKit durability and queries, workout triggers, places and timely arrival triggers. Phased in [location and health agent data](plan/location-and-health-agent-data.md).
 - [ ] Viewer-authenticated app-data broker; development apps currently use explicitly approved owner-scoped backend keys.
 - [ ] Dedicated revocable upload-only credentials if background transfer delays outlast bearer validity.
 - [ ] Decide shipped sign-out queue disposal (likely discard); retain account/environment-isolated queues during development for testing.

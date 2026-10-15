@@ -622,3 +622,8 @@ not content. No table/column changes, backfill or ownership stamping changes;
 Drizzle cannot represent this trigger DDL in schema.ts. Local exact SQL applied
 transactionally after canceling unrelated db:push constraint churn. See the
 client-state-performance implementation debug note. Deploy via db:migrate.
+
+Migration `0051_schedule_automation_deliveries.sql` lets `automation_delivery`
+reference either a published domain event or a schedule window (`scheduled_for`),
+never both. `unique(automation_id, scheduled_for)` spans revisions, so editing a
+schedule cannot run the same window twice. Contact deliveries are unchanged.

@@ -1625,3 +1625,14 @@ unknown-outcome summaries retain service guidance. Handoff keeps its existing
 reason. No additional model request, daemon change or migration is needed.
 Drain active old-schema turns before deploying; historical rows are unchanged.
 See [implementation and rollout](../../../plan/browser-operation-summaries.md).
+
+## Scheduled automation tools
+
+`automation-tools.ts` accepts `event_type: contact.added | schedule`. Schedule
+drafts carry `schedule { local_time, weekdays, timezone }` instead of `sources`
+and may request no data scopes; omitted `event_type` still means a new-contact
+rule. `parseAutomationToolInput` drops provider-strict nulls for the other
+trigger's fields, including inside an update's replacement definition. Scheduled
+runs reach the model as an origin-tagged automation input naming the window and
+the previous run; data tools stay limited to the rule's approved scopes (none
+when it requested none). No daemon change.

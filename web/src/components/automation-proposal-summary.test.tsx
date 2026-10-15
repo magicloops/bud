@@ -85,3 +85,14 @@ test('inherited review shows effective model and retirement warning without stal
   assert.match(markup, /gpt-5.5 unavailable/)
   assert.doesNotMatch(markup, /high reasoning/)
 })
+
+test('schedule review shows its local schedule and that no personal data is requested', () => {
+  const { sources: _sources, ...base } = proposal.definition as typeof proposal.definition & { sources: unknown }
+  const scheduled: ApiAutomationProposal = { ...proposal, definition: { ...base, event_type: 'schedule',
+    schedule: { local_time: '08:30', weekdays: [1, 2, 3, 4, 5], timezone: 'America/Los_Angeles' },
+    data_access: { scopes: [], history_days: 30 } } }
+  const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: scheduled }))
+  for (const text of ['Weekdays at 08:30 (America/Los_Angeles)', 'Missed runs are not caught up', 'No personal data'])
+    assert.ok(markup.includes(text), text)
+  assert.doesNotMatch(markup, /Contact sources|When a new contact is observed/)
+})

@@ -1,19 +1,26 @@
 import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { BootstrapAdmission } from "./bootstrap-admission.js";
+import { AutomationScheduler } from "./automation-scheduler.js";
 
-type Work = { matchNext(): Promise<boolean>; admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
+type Work = { matchNext(): Promise<boolean>; scheduleDue?(): Promise<boolean>; admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
+
+function defaultWork(): Work {
+  const scheduler = new AutomationScheduler();
+  return {
+    matchNext: () => new AutomationMatcher().matchNext(),
+    scheduleDue: () => scheduler.scheduleDue(),
+    admitLive: () => new AutomationAdmission().admitNext(),
+    admitBootstrap: () => new BootstrapAdmission().admitNext(),
+  };
+}
 
 /** Serial bounded polling; persistence, not timers, owns work and retry state. */
 export class AutomationWorker {
   private stopped = true;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private active: Promise<void> | undefined;
-  constructor(private readonly work: Work = {
-    matchNext: () => new AutomationMatcher().matchNext(),
-    admitLive: () => new AutomationAdmission().admitNext(),
-    admitBootstrap: () => new BootstrapAdmission().admitNext(),
-  }, private readonly reportError: (code: string) => void = () => {},
+  constructor(private readonly work: Work = defaultWork(), private readonly reportError: (code: string) => void = () => {},
   private readonly rounds = 25, private readonly intervalMs = 1000) {
     if (!Number.isInteger(rounds) || rounds < 1 || rounds > 100 || !Number.isInteger(intervalMs) || intervalMs < 1)
       throw new Error("invalid_automation_worker_settings");

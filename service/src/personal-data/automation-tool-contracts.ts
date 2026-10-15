@@ -23,12 +23,32 @@ export function isAutomationToolName(name: string): name is AutomationToolName {
   return Object.hasOwn(AUTOMATION_TOOL_SCHEMAS, name);
 }
 
-/** Normalize only optional top-level nulls inserted by provider strict mode. */
+/** Keys that are optional in at least one object variant of the schema. */
+function optionalKeys(schema: z.ZodTypeAny): Set<string> {
+  if (schema instanceof z.ZodObject) return new Set(Object.entries(schema.shape as Record<string, z.ZodTypeAny>)
+    .filter(([, field]) => field.isOptional()).map(([key]) => key));
+  if (schema instanceof z.ZodUnion || schema instanceof z.ZodDiscriminatedUnion)
+    return new Set((schema.options as z.ZodTypeAny[]).flatMap(option => [...optionalKeys(option)]));
+  return new Set();
+}
+
+function dropNulls(input: unknown, keys: Set<string>) {
+  return input && typeof input === "object" && !Array.isArray(input) ? Object.fromEntries(
+    Object.entries(input).filter(([key, value]) => !(value === null && keys.has(key)))) : input;
+}
+
+// Provider strict mode sends null for optional fields, including inside a
+// replacement definition (e.g. `schedule: null` on a new-contact rule).
+const definitionOptionalKeys = new Set([...optionalKeys(automationDefinitionSchema), "sources", "schedule"]);
+
+/** Normalize only optional nulls inserted by provider strict mode. */
 export function parseAutomationToolInput<T extends AutomationToolName>(name: T, input: unknown): z.infer<(typeof AUTOMATION_TOOL_SCHEMAS)[T]> {
-  const shape = AUTOMATION_TOOL_SCHEMAS[name];
-  const value = input && typeof input === "object" && !Array.isArray(input) ? Object.fromEntries(
-    Object.entries(input).filter(([key, value]) => !(value === null && Object.hasOwn(shape.shape, key) &&
-      (shape.shape as Record<string, z.ZodTypeAny>)[key].isOptional()))) : input;
+  const shape: z.ZodTypeAny = AUTOMATION_TOOL_SCHEMAS[name];
+  const keys = optionalKeys(shape);
+  if (name === "automations_create_draft") keys.add("schedule");
+  let value = dropNulls(input, keys);
+  if (name === "automations_update_draft" && value && typeof value === "object" && "definition" in value)
+    value = { ...value, definition: dropNulls((value as { definition: unknown }).definition, definitionOptionalKeys) };
   const result = shape.safeParse(value);
   if (!result.success) throw new DataRequestError(400, "invalid_automation_tool", "Check the automation tool arguments");
   return result.data as z.infer<(typeof AUTOMATION_TOOL_SCHEMAS)[T]>;

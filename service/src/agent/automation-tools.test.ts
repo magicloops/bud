@@ -62,3 +62,21 @@ test("model parsing preserves automation arguments and catalog exposure is opt-i
   assert.throws(() => runner.extractToolCalls({ id: "response", content: [], stopReason: "tool_use", toolCalls: [{ id: "call",
     name: "automations_request_activation", input: { automation_id: "rule", expected_version: 0, decision: "approve" } }] }));
 });
+
+test("schedule drafts and replacements accept provider nulls for the other trigger's fields", () => {
+  const schedule = { local_time: "18:00", weekdays: [1, 2, 3, 4, 5], timezone: "America/Chicago" };
+  assert.deepEqual(parseAutomationToolInput("automations_create_draft", { name: "Evening", instruction: "Summarize my day",
+    event_type: "schedule", schedule, sources: null, model: null }), { name: "Evening", instruction: "Summarize my day", event_type: "schedule", schedule });
+  assert.deepEqual(parseAutomationToolInput("automations_create_draft", { name: "Contacts", instruction: "Read evidence", schedule: null }),
+    { name: "Contacts", instruction: "Read evidence" });
+  const definition = { event_type: "schedule", name: "Evening", instruction: "Summarize my day", schedule, sources: null, bud_id: "bud",
+    model_mode: "inherit", model: null, reasoning_effort: null, origin_thread_id: null, target: { mode: "new_thread" },
+    data_access: { scopes: [], history_days: 30 }, latest_start_seconds: 3600, max_invocations_per_day: 2 };
+  const parsed = parseAutomationToolInput("automations_update_draft", { automation_id: "rule", expected_version: 1, definition });
+  assert.equal(parsed.definition.event_type, "schedule");
+  assert.equal(Object.hasOwn(parsed.definition, "sources"), false);
+  assert.throws(() => parseAutomationToolInput("automations_update_draft", { automation_id: "rule", expected_version: 1,
+    definition: { ...definition, schedule: null } }), "a schedule replacement still requires its schedule");
+  const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
+  assert.deepEqual((create.parameters.properties!.event_type as { enum: string[] }).enum, ["contact.added", "schedule"]);
+});

@@ -456,3 +456,10 @@ and partial patches. Tests cover activity noise, completion, ties and stale merg
 uses only the structured payload. Locally synthesized pending rows share that
 shape; historical normalization belongs to the service. Null payloads and missing
 names remain unknown without client-side JSON-content or metadata fallbacks.
+
+### `automation-schedule.ts`
+
+Weekday labels, device-timezone default schedule and `describeSchedule` /
+`describeTrigger` text ("Weekdays at 08:30 (America/Los_Angeles)") shared by the
+automations page and review summary. Types live in `api-types.ts`
+(`ApiAutomationSchedule`, `ApiAutomationTrigger`).

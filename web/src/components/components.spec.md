@@ -117,6 +117,8 @@ modes and exclusion policies. No activation endpoint is used for these reviews.
 ### `automation-proposal-summary.tsx` / `automation-proposal-summary.test.tsx`
 
 Pure saved-definition review presentation, shared with the interactive review.
+Schedule reviews show the local schedule, no-catch-up behavior and "No personal data"
+when no scopes are requested; contact sources appear only for new-contact rules.
 Server-rendered tests verify full instruction, target, scope/history and limit
 visibility without an approval checkbox or automatic actions.
 Run the JSX render tests from web with `pnpm exec tsx --tsconfig tsconfig.app.json

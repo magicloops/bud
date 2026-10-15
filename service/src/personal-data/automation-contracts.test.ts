@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { automationDefinitionSchema, automationActivationSchema, automationBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
+import { automationDefinitionSchema, automationActivationSchema, automationBootstrapSchema, grantCoversDefinition,
+  parseAutomationInput, requireContactDefinition } from "./automation-contracts.js";
 
 const definition = { event_type: "contact.added", name: "Remember new contacts", instruction: "Summarize the contact and available location evidence.",
   sources: { source_ids: [] }, bud_id: "bud", model: "selected-model", reasoning_effort: "low",
@@ -28,4 +29,37 @@ test("activation and explicit historical reruns require separate acknowledgement
   assert.ok(!automationBootstrapSchema.safeParse({ ...bootstrap, exclude_previously_delivered: false }).success);
   assert.ok(automationBootstrapSchema.safeParse({ ...bootstrap, exclude_previously_delivered: false, acknowledge_repeated_actions: true }).success);
   assert.ok(!automationBootstrapSchema.safeParse({ ...bootstrap, max_contacts: 1001 }).success);
+});
+
+const schedule = { ...definition, event_type: "schedule", sources: undefined,
+  schedule: { local_time: "08:30", weekdays: [1, 2, 3, 4, 5], timezone: "America/Los_Angeles" },
+  data_access: { scopes: [], history_days: 30 } };
+
+test("schedule rules carry a schedule instead of sources and may request no data", () => {
+  const { sources: _omitted, ...value } = schedule;
+  const parsed = parseAutomationInput(automationDefinitionSchema, value);
+  assert.equal(parsed.event_type, "schedule");
+  assert.ok(automationDefinitionSchema.safeParse({ ...value, data_access: { scopes: ["location.read"], history_days: 7 } }).success);
+  for (const patch of [{ sources: { source_ids: [] } }, { schedule: undefined },
+    { schedule: { ...value.schedule, local_time: "24:00" } }, { schedule: { ...value.schedule, weekdays: [] } },
+    { schedule: { ...value.schedule, weekdays: [0] } }, { schedule: { ...value.schedule, weekdays: [1, 1] } },
+    { schedule: { ...value.schedule, timezone: "Nowhere/Invalid" } }, { schedule: { ...value.schedule, cron: "* * * * *" } }]) {
+    assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...value, ...patch }), { code: "invalid_automation" });
+  }
+  // A new-contact rule cannot carry a schedule.
+  assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...definition, schedule: value.schedule }), { code: "invalid_automation" });
+});
+
+test("grant coverage is unnecessary without scopes and otherwise pins version, scopes and history", () => {
+  const { sources: _omitted, ...value } = schedule;
+  const empty = parseAutomationInput(automationDefinitionSchema, value);
+  const scoped = parseAutomationInput(automationDefinitionSchema, definition);
+  assert.ok(grantCoversDefinition(undefined, empty));
+  assert.ok(!grantCoversDefinition(undefined, scoped));
+  const grant = { version: 3, scopes: ["contacts.read"], historyDays: 90 };
+  assert.ok(grantCoversDefinition(grant, scoped, 3));
+  assert.ok(!grantCoversDefinition(grant, scoped, 2));
+  assert.ok(!grantCoversDefinition({ ...grant, historyDays: 30 }, scoped));
+  assert.ok(!grantCoversDefinition({ ...grant, scopes: [] }, scoped));
+  assert.throws(() => requireContactDefinition(empty), { code: "automation_trigger_unsupported" });
 });

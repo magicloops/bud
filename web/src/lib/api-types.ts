@@ -421,11 +421,16 @@ export type ApiPendingQuestion = {
   created_at: string
 }
 
-export type ApiAutomationDefinition = {
-  event_type: 'contact.added'
+/** Local wall-clock time on ISO weekdays (1 = Monday … 7 = Sunday) in an IANA zone. */
+export type ApiAutomationSchedule = { local_time: string; weekdays: number[]; timezone: string }
+
+export type ApiAutomationTrigger =
+  | { event_type: 'contact.added'; sources: { source_ids: string[] } }
+  | { event_type: 'schedule'; schedule: ApiAutomationSchedule }
+
+export type ApiAutomationDefinition = ApiAutomationTrigger & {
   name: string
   instruction: string
-  sources: { source_ids: string[] }
   bud_id: string
   model_mode?: 'inherit' | 'explicit'
   origin_thread_id?: string | null
