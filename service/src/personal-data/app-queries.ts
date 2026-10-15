@@ -13,7 +13,8 @@ const schemas = {
   contacts_history: z.object({ ...page, contact_id: contactId }).strict(),
   timeline_query: z.object({ ...page, from: z.string(), to: z.string() }).strict(),
   location_context: z.object({ contact_id: contactId, from: z.string(), to: z.string() }).strict(),
-  health_workouts: z.object({ ...page, from: z.string(), to: z.string(), activity_type: z.string().max(64).optional() }).strict(),
+  health_workouts: z.object({ ...page, from: z.string(), to: z.string(), activity_type: z.string().max(64).optional(),
+    order: z.enum(["asc", "desc"]).optional() }).strict(),
   health_sleep: z.object({ from: z.string(), to: z.string(), timezone: z.string().max(64).optional() }).strict(),
 };
 type Query = keyof typeof schemas;
@@ -62,7 +63,7 @@ export class AppDataQueries {
       if (healthWindow(query, 366).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");
       data = healthType === "workouts"
         ? await this.health.workouts(authority.owner, query, { cursorBinding: policy.cursorBinding })
-        : await this.health.sleep(authority.owner, query);
+        : await this.health.sleep(authority.owner, query, { notBefore: since });
     } else {
       const query = args as z.infer<typeof schemas.timeline_query>;
       if (locationWindow(query).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");

@@ -133,9 +133,9 @@ test("health tools need the health scope and the matching health type, within ap
   await assert.rejects(f.adapter.execute("alice", "health_workouts", window), { code: "data_permission_required" });
   f.grantHealth();
   await f.adapter.execute("alice", "health_workouts", { ...window, activity_type: "running", limit: 10 });
-  assert.deepEqual(f.calls.at(-1), { method: "workouts", args: ["alice", { ...window, limit: 10, cursor: undefined, activity_type: "running" }] });
+  assert.deepEqual(f.calls.at(-1), { method: "workouts", args: ["alice", { ...window, limit: 10, cursor: undefined, activity_type: "running", order: undefined }] });
   await f.adapter.execute("alice", "health_sleep", { ...window, timezone: "America/New_York" });
-  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["alice", { ...window, timezone: "America/New_York" }] });
+  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["alice", { ...window, timezone: "America/New_York" }, { notBefore: new Date("2026-08-05T12:00:00Z") }] });
   f.setHealthTypes(["workouts"]);
   await assert.rejects(f.adapter.execute("alice", "health_sleep", window), { code: "data_permission_required" });
   await assert.rejects(f.adapter.execute("alice", "health_workouts", { ...window, from: "2026-07-01T00:00:00Z" }), { code: "history_outside_grant" });

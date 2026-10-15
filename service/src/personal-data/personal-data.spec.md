@@ -397,10 +397,18 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
   hides it. v1 health envelopes stay raw and unsupported. Previously unsupported
   v2 jobs are requeued by the existing recovery pass.
 - `HealthQueries.workouts`: bounded (366-day) start-time window, optional
-  activity filter, owner/window/filter-bound cursors.
-- `HealthQueries.sleep` (92 days): groups segments into nights by the local date
-  12 hours before each segment start in the requested IANA zone. Per night it
-  uses one source (stage detail first, then most sleep) and lists the others.
+  activity filter, `order` asc (default) or desc, cursors bound to
+  owner/window/filter/order.
+- `HealthQueries.sleep` (92 days) returns complete nights for every local date
+  from `from` to `to`; night D runs from noon on D to noon on D + 1 in the IANA
+  zone.
+  - Segments overlapping a night are clipped to it. A boundary sweep merges
+    overlaps within a source, counting each instant once under its most specific
+    stage.
+  - Nights cut by `notBefore` (agent/app approved history) or still in progress
+    are `complete: false` with `partial_reasons`.
+  - Source choice follows `SLEEP_SELECTION_RULE`; every source's totals are
+    listed in `sources`. Empty dates go in `nights_without_records`.
 - Both return coverage with `last_received_at` and `read_access: unknown`.
   `HealthQueries.status` adds last-received times to `/api/data/status`.
 - Agent grant: `health.read` scope plus `health_types` (`workouts`, `sleep`;

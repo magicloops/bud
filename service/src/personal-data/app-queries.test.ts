@@ -96,7 +96,7 @@ test("app health queries need health.read and the specific health type", async (
   f.authority.policy = { ...f.authority.policy, scopes: ["health.read"], contact_fields: [], location_precision: "none", health_types: ["sleep"] };
   await assert.rejects(f.query.execute("key", "health_workouts", window), { code: "app_data_scope_required" });
   await f.query.execute("key", "health_sleep", { ...window, timezone: "Europe/London" });
-  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["owner-a", { ...window, timezone: "Europe/London" }] });
+  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["owner-a", { ...window, timezone: "Europe/London" }, { notBefore: new Date("2026-08-05T12:00:00Z") }] });
   await assert.rejects(f.query.execute("key", "health_sleep", { ...window, from: "2026-07-01T00:00:00Z" }), { code: "history_outside_grant" });
   await assert.rejects(f.query.execute("key", "health_sleep", { ...window, owner: "other" }), { code: "invalid_app_data_query" });
 });

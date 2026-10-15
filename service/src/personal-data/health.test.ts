@@ -76,7 +76,13 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
     night("s2", "asleep_deep", "2026-09-01T07:00:00.000Z", "2026-09-01T08:00:00.000Z"),
     night("s3", "asleep_rem", "2026-09-01T08:00:00.000Z", "2026-09-01T11:00:00.000Z"),
     night("s4", "awake", "2026-09-01T11:00:00.000Z", "2026-09-01T11:10:00.000Z"),
-    night("p1", "asleep_unspecified", "2026-09-01T03:00:00.000Z", "2026-09-01T12:00:00.000Z", "com.apple.health.phone"),
+    night("p1", "asleep_unspecified", "2026-09-01T03:00:00.000Z", "2026-09-01T11:00:00.000Z", "com.apple.health.phone"),
+    // Tuesday night, one source with overlapping unspecified and core samples over the same 8 hours.
+    night("o1", "asleep_unspecified", "2026-09-02T03:00:00.000Z", "2026-09-02T11:00:00.000Z", "com.example.ring"),
+    night("o2", "asleep_core", "2026-09-02T03:00:00.000Z", "2026-09-02T11:00:00.000Z", "com.example.ring"),
+    // Wednesday night: a staged hour against eight unspecified hours from another source.
+    night("h1", "asleep_core", "2026-09-03T03:00:00.000Z", "2026-09-03T04:00:00.000Z"),
+    night("h2", "asleep_unspecified", "2026-09-03T03:00:00.000Z", "2026-09-03T11:00:00.000Z", "com.apple.health.phone"),
   ]);
   await upload(owner, [["health.workout.v2", workout({ hk_uuid: "33333333-3333-4333-8333-333333333333" })],
     // A re-import updates the existing row without duplicating it or changing its first import mode.
@@ -98,18 +104,45 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
   const second = await queries.workouts(owner, { ...window, limit: 1, cursor: first.next_cursor! });
   assert.equal(second.items[0].activity_type, "walking");
   await assert.rejects(queries.workouts(owner, { ...window, activity_type: "walking", cursor: first.next_cursor! }), { code: "invalid_cursor" });
+  const newest = await queries.workouts(owner, { ...window, order: "desc", limit: 1 });
+  assert.equal(newest.items[0].activity_type, "walking");
+  assert.equal((await queries.workouts(owner, { ...window, order: "desc", limit: 1, cursor: newest.next_cursor! })).items[0].activity_type, "running");
+  await assert.rejects(queries.workouts(owner, { ...window, order: "desc", cursor: first.next_cursor! }), { code: "invalid_cursor" });
   await assert.rejects(queries.workouts(owner, { from: "2025-01-01T00:00:00Z", to: "2026-09-05T00:00:00Z" }), { code: "invalid_time_window" });
   assert.equal((await queries.workouts(other, window)).items.length, 1, "owners are isolated");
 
   const sleep = await queries.sleep(owner, { ...window, timezone: "America/New_York" });
-  assert.equal(sleep.items.length, 1);
-  const [monday] = sleep.items;
-  assert.equal(monday.night_of, "2026-08-31");
-  assert.equal(monday.source.bundle_id, "com.apple.health.watch", "the source with stage detail wins");
-  assert.deepEqual(monday.other_sources.map(source => source.bundle_id), ["com.apple.health.phone"]);
+  const byNight = new Map(sleep.items.map(item => [item.night_of, item]));
+  assert.deepEqual([...byNight.keys()], ["2026-08-31", "2026-09-01", "2026-09-02"]);
+  assert.ok(sleep.nights_without_records.includes("2026-08-25"));
+  assert.match(sleep.selection_rule, /most sleep/);
+  const monday = byNight.get("2026-08-31")!;
+  assert.equal(monday.complete, true);
+  assert.equal(monday.source.bundle_id, "com.apple.health.watch", "a staged source within 10% of the most sleep wins");
+  assert.deepEqual(monday.sources.map(source => [source.bundle_id, source.asleep_minutes, source.has_stages, source.selected]),
+    [["com.apple.health.watch", 480, true, true], ["com.apple.health.phone", 480, false, false]]);
   assert.equal(monday.asleep_minutes, 480);
-  assert.deepEqual(monday.stage_minutes, { awake: 10, asleep_core: 240, asleep_deep: 60, asleep_rem: 180 });
+  assert.deepEqual(monday.stage_minutes, { asleep_core: 240, asleep_deep: 60, asleep_rem: 180, awake: 10 });
   assert.equal(new Date(monday.sleep_end!).toISOString(), "2026-09-01T11:00:00.000Z");
+  // Overlapping samples are merged: 8 hours of sleep, never 16, under the more specific stage.
+  const tuesday = byNight.get("2026-09-01")!;
+  assert.equal(tuesday.asleep_minutes, 480);
+  assert.deepEqual(tuesday.stage_minutes, { asleep_core: 480 });
+  // One staged hour does not beat eight unspecified hours.
+  const wednesday = byNight.get("2026-09-02")!;
+  assert.equal(wednesday.source.bundle_id, "com.apple.health.phone");
+  assert.equal(wednesday.asleep_minutes, 480);
+  // Nights are selected by their evening date, so a midnight start excludes the night before it.
+  const fromMidnight = await queries.sleep(owner, { from: "2026-09-01T04:00:00Z", to: "2026-09-01T20:00:00Z", timezone: "America/New_York" });
+  assert.deepEqual(fromMidnight.items.map(item => item.night_of), ["2026-09-01"]);
+  // Approved history cuts a night: it is marked partial and only counts the visible part.
+  const limited = await queries.sleep(owner, { from: "2026-08-31T12:00:00Z", to: "2026-08-31T20:00:00Z", timezone: "America/New_York" },
+    { notBefore: new Date("2026-09-01T05:00:00Z") });
+  assert.deepEqual([limited.items[0].complete, limited.items[0].partial_reasons, limited.items[0].asleep_minutes],
+    [false, ["before_history_limit"], 360]);
+  const during = await new HealthQueries(db, () => new Date("2026-09-01T10:00:00Z"))
+    .sleep(owner, { from: "2026-08-31T12:00:00Z", to: "2026-08-31T20:00:00Z", timezone: "America/New_York" });
+  assert.deepEqual(during.items[0].partial_reasons, ["in_progress"]);
   assert.equal((await queries.sleep(owner, { ...window, timezone: "Asia/Tokyo" })).items[0].night_of, "2026-09-01");
   await assert.rejects(queries.sleep(owner, { ...window, timezone: "Mars/Base" }), { code: "invalid_timezone" });
   const status = await queries.status(other);

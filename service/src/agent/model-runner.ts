@@ -669,7 +669,7 @@ export class AgentModelRunner {
       case "health_sleep":
         return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
           args: Object.fromEntries(Object.entries(args).filter(([key, value]) =>
-            value !== null || !["search", "visibility", "limit", "cursor", "activity_type", "timezone"].includes(key))) };
+            value !== null || !["search", "visibility", "limit", "cursor", "activity_type", "timezone", "order"].includes(key))) };
       case "terminal_send":
         return {
           type: "tool_call",

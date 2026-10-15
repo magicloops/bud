@@ -9,11 +9,9 @@
   mobile). See "Phases 1–2 implementation" below for deviations.
 - **Phase 3 implemented October 14, 2026** (mobile branch
   `feature/health-capture-durability`; details in mobile
-  `plan/04-healthkit-producer.md`). Not done from the phase 3 list:
-  - installing observers at launch before the network profile bootstrap;
-  - awaiting location appends.
-
-  Both remain open.
+  `plan/04-healthkit-producer.md`). Observers already start at launch from the
+  Keychain-bound owner (`AppSessionStore`), before the network profile request.
+  Location append durability remains open.
 - **Phase 4 implemented October 14, 2026** (branches `feat/health-data-queries`
   here, stacked on #154, and mobile `feature/health-data-screens`, stacked on
   mobile #65). See "Phase 4 implementation" below. Phases 5–8 are not started.
@@ -331,6 +329,43 @@ end to end (phone → service → agent) is not yet checked.
 
 Rollout: apply migration 0052, then deploy the service and web; the mobile
 screens follow. Older mobile builds ignore the new grant fields.
+
+## Review fixes (October 15, 2026)
+
+From a code review of #154–#155 and mobile #65–#67:
+- **DST.** `localTimeToInstant` now checks every offset the zone uses within a
+  day of the wall time. An ambiguous time takes its earliest valid occurrence; a
+  skipped time shifts later by the gap. The old two-offset approximation picked
+  the later occurrence in London, Berlin and Lord Howe. Tests now cover European
+  and half-hour transitions.
+- **Sleep is reported as complete nights.** Night D runs from local noon on D to
+  noon on D + 1. Segments overlapping a night are clipped to it.
+  - Within the chosen source, overlapping samples are merged by a boundary
+    sweep, and each instant counts once under its most specific stage
+    (deep > REM > core > awake > unspecified > in bed). Two overlapping 8-hour
+    samples now give 8 hours, not 16.
+  - Nights cut by approved history (`notBefore`) or still in progress are marked
+    `complete: false` with `partial_reasons`.
+  - Source choice: the most sleep wins, and stage detail only breaks ties within
+    10%. `sources` lists every device's total with `has_stages` and `selected`,
+    and the rule is returned as `selection_rule`.
+  - `nights_without_records` lists empty dates. Date formatters are reused per
+    zone.
+- **Workouts** accept `order: desc`. Web and mobile request newest first with
+  **Load more** paging; the old screens dropped the newest records beyond 100.
+- **Mobile lifecycle.**
+  - `stop()` stops the observer queries and advances a generation. Queued and
+    in-flight collection re-checks it before every query and commit.
+  - Anchored queries page 500 samples, each page committed with its anchor. The
+    cursor records `baseline_complete`, so a baseline interrupted between pages
+    stays baseline.
+
+Follow-ups, not blocking:
+- Measure the scheduler scan duration; add bounded batches or indexed next-due
+  times only if needed.
+- Location append durability.
+- Location and workout triggers (phases 5–6). Full contacts parity is not
+  reached until then.
 
 ## Decisions
 

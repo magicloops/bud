@@ -27,7 +27,7 @@ export class AgentDataQueries {
       contacts_history: ["contact_id", "limit", "cursor"],
       location_context: ["contact_id", "from", "to"],
       timeline_query: ["from", "to", "limit", "cursor"],
-      health_workouts: ["from", "to", "activity_type", "limit", "cursor"],
+      health_workouts: ["from", "to", "activity_type", "order", "limit", "cursor"],
       health_sleep: ["from", "to", "timezone"],
     };
     if (!keys[tool] || Object.keys(input).some(key => !keys[tool].includes(key)))
@@ -69,8 +69,8 @@ export class AgentDataQueries {
       const query = { from: string("from", true)!, to: string("to", true)! };
       if (healthWindow(query, 366).from < observedSince) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved history");
       data = healthType === "workouts"
-        ? await this.health.workouts(owner, { ...query, ...page, activity_type: string("activity_type") })
-        : await this.health.sleep(owner, { ...query, timezone: string("timezone") });
+        ? await this.health.workouts(owner, { ...query, ...page, activity_type: string("activity_type"), order: string("order") })
+        : await this.health.sleep(owner, { ...query, timezone: string("timezone") }, { notBefore: observedSince });
     } else {
       const query = { from: string("from", true)!, to: string("to", true)! };
       const window = locationWindow(query);
