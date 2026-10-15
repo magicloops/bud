@@ -117,13 +117,26 @@ function localNoon(date: string, timeZone: string, addDays = 0) {
   return localTimeToInstant(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), 12, 0, timeZone);
 }
 
-/** When samples overlap, the most specific stage wins for that time. */
-const STAGE_PRECEDENCE = ["asleep_deep", "asleep_rem", "asleep_core", "awake", "asleep_unspecified", "in_bed", "unknown"];
+/** When sleep-state samples overlap, the most specific stage wins for that time.
+ * In bed is not a sleep state: it overlaps sleep and is measured separately. */
+const STAGE_PRECEDENCE = ["asleep_deep", "asleep_rem", "asleep_core", "awake", "asleep_unspecified", "unknown"];
 export const SLEEP_SELECTION_RULE = "Per night, the source with the most sleep is used; among sources within 10% of that, "
   + "one with sleep stages is preferred. Overlapping samples within a source are merged, with the most specific stage winning.";
 
 type Interval = { start: number; end: number; stage: string };
-/** Sweep over boundaries so every instant is counted once, under its winning stage. */
+/** Total length of the union of intervals. */
+function unionMinutes(intervals: Interval[]) {
+  let total = 0, end = Number.NEGATIVE_INFINITY;
+  for (const row of [...intervals].sort((a, b) => a.start - b.start)) {
+    if (row.end <= end) continue;
+    total += row.end - Math.max(row.start, end);
+    end = row.end;
+  }
+  return total / 60_000;
+}
+
+/** Sweep over boundaries so every instant is counted once, under its winning sleep
+ * stage. Time in bed is the union of in-bed samples, independent of sleep stages. */
 function summarizeIntervals(intervals: Interval[]) {
   const points = [...new Set(intervals.flatMap(row => [row.start, row.end]))].sort((a, b) => a - b);
   const minutes: Record<string, number> = {};
@@ -136,6 +149,8 @@ function summarizeIntervals(intervals: Interval[]) {
     minutes[stage] = (minutes[stage] ?? 0) + (to - from) / 60_000;
     if (ASLEEP.includes(stage)) { sleepStart ??= from; sleepEnd = to; }
   }
+  const inBed = unionMinutes(intervals.filter(row => row.stage === "in_bed"));
+  if (inBed) minutes.in_bed = inBed;
   const asleep = ASLEEP.reduce((sum, stage) => sum + (minutes[stage] ?? 0), 0);
   return { minutes, asleep, sleepStart, sleepEnd, hasStages: DETAILED.some(stage => minutes[stage]) };
 }

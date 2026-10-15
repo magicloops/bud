@@ -28,9 +28,15 @@ function HealthView() {
   const [error, setError] = useState(false)
   const [refresh, setRefresh] = useState(0)
   const workoutQuery = useRef('')
+  // Each load is a generation. Refresh cancels an in-flight Load more, and a stale
+  // page never touches rows, cursor, error or loading state of the newer load.
+  const generation = useRef(0)
+  const moreController = useRef<AbortController | null>(null)
   useEffect(() => {
     const controller = new AbortController()
-    setError(false); setWorkouts(null); setSleep(null)
+    generation.current += 1
+    moreController.current?.abort(); moreController.current = null
+    setError(false); setWorkouts(null); setSleep(null); setLoadingMore(false)
     const now = Date.now(), timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const window = (days: number) => new URLSearchParams({ from: new Date(now - days * DAY).toISOString(), to: new Date(now).toISOString() })
     workoutQuery.current = `${window(30)}&order=desc&limit=50`
@@ -39,17 +45,24 @@ function HealthView() {
       apiFetchJson<{ items: Night[]; coverage: Coverage }>(`/api/data/health/sleep?${window(14)}&timezone=${encodeURIComponent(timezone)}`, { signal: controller.signal }),
     ]).then(([nextWorkouts, nextSleep]) => { if (!controller.signal.aborted) { setWorkouts(nextWorkouts); setSleep(nextSleep) } })
       .catch(() => { if (!controller.signal.aborted) setError(true) })
-    return () => controller.abort()
+    return () => { controller.abort(); moreController.current?.abort() }
   }, [refresh])
   // Newest first; Load more continues the same query with its cursor.
   const loadMore = async () => {
     if (!workouts?.next_cursor || loadingMore) return
+    const owner = generation.current, query = workoutQuery.current, cursor = workouts.next_cursor
+    const controller = new AbortController()
+    moreController.current = controller
     setLoadingMore(true)
     try {
       const next = await apiFetchJson<{ items: Workout[]; next_cursor: string | null; coverage: Coverage }>(
-        `/api/data/health/workouts?${workoutQuery.current}&cursor=${encodeURIComponent(workouts.next_cursor)}`)
-      setWorkouts(current => current && { ...next, items: [...current.items, ...next.items] })
-    } catch { setError(true) } finally { setLoadingMore(false) }
+        `/api/data/health/workouts?${query}&cursor=${encodeURIComponent(cursor)}`, { signal: controller.signal })
+      if (generation.current === owner) setWorkouts(current => current && { ...next, items: [...current.items, ...next.items] })
+    } catch { if (generation.current === owner && !controller.signal.aborted) setError(true) }
+    finally {
+      if (generation.current === owner) setLoadingMore(false)
+      if (moreController.current === controller) moreController.current = null
+    }
   }
   const received = (coverage?: Coverage) => coverage?.last_received_at ? `Last received ${new Date(coverage.last_received_at).toLocaleString()}` : 'Nothing received yet'
   return <main className="settings-surface min-h-screen bg-background p-4 sm:p-6 text-foreground">

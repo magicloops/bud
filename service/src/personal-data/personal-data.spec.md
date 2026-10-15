@@ -404,7 +404,8 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
   zone.
   - Segments overlapping a night are clipped to it. A boundary sweep merges
     overlaps within a source, counting each instant once under its most specific
-    stage.
+    sleep stage. Time in bed (`in_bed_minutes`, `stage_minutes.in_bed`) is the
+    union of in-bed samples, measured independently of sleep stages.
   - Nights cut by `notBefore` (agent/app approved history) or still in progress
     are `complete: false` with `partial_reasons`.
   - Source choice follows `SLEEP_SELECTION_RULE`; every source's totals are

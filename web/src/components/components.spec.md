@@ -251,7 +251,9 @@ Render tests cover inherited presentation without stale explicit reasoning.
 
 Owner view at `/data/health`: last 14 nights of sleep (browser timezone; asleep
 and stage minutes, the chosen source and other recording sources) and 30 days of
-workouts, each with last-received coverage. States that HealthKit hides denied
+workouts (newest first, Load more), each with last-received coverage. Each load
+is a generation: Refresh aborts an in-flight Load more, and stale pages never
+change rows, cursor, error or loading state. States that HealthKit hides denied
 access. `data-screen.tsx` adds a Health source summary, a Browse health link and
 agent Health toggles (per type, shown only when the service advertises
 `supported_health_types`). App access requests and agent summaries show health

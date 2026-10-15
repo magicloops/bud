@@ -360,6 +360,16 @@ From a code review of #154–#155 and mobile #65–#67:
     cursor records `baseline_complete`, so a baseline interrupted between pages
     stays baseline.
 
+Second review round:
+- **Time in bed** is the union of in-bed samples, measured separately; in bed no
+  longer competes with sleep stages. Nine hours in bed around eight hours asleep
+  now reports 540 minutes in bed, not 60.
+- **Web Load more** is tied to the load that started it. Refresh aborts an
+  in-flight page, and a stale page cannot change rows, cursor, error or loading
+  state.
+- **Mobile commit/stop race:** `CollectionGate` makes the store's commit and
+  `stop()` share one lock (see mobile `plan/04-healthkit-producer.md`).
+
 Follow-ups, not blocking:
 - Measure the scheduler scan duration; add bounded batches or indexed next-due
   times only if needed.

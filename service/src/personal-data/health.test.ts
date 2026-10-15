@@ -83,6 +83,10 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
     // Wednesday night: a staged hour against eight unspecified hours from another source.
     night("h1", "asleep_core", "2026-09-03T03:00:00.000Z", "2026-09-03T04:00:00.000Z"),
     night("h2", "asleep_unspecified", "2026-09-03T03:00:00.000Z", "2026-09-03T11:00:00.000Z", "com.apple.health.phone"),
+    // Thursday night: nine hours in bed (two overlapping in-bed samples) around eight hours asleep.
+    night("b1", "in_bed", "2026-09-04T02:30:00.000Z", "2026-09-04T08:00:00.000Z", "com.example.bed"),
+    night("b2", "in_bed", "2026-09-04T07:00:00.000Z", "2026-09-04T11:30:00.000Z", "com.example.bed"),
+    night("b3", "asleep_core", "2026-09-04T03:00:00.000Z", "2026-09-04T11:00:00.000Z", "com.example.bed"),
   ]);
   await upload(owner, [["health.workout.v2", workout({ hk_uuid: "33333333-3333-4333-8333-333333333333" })],
     // A re-import updates the existing row without duplicating it or changing its first import mode.
@@ -113,7 +117,7 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
 
   const sleep = await queries.sleep(owner, { ...window, timezone: "America/New_York" });
   const byNight = new Map(sleep.items.map(item => [item.night_of, item]));
-  assert.deepEqual([...byNight.keys()], ["2026-08-31", "2026-09-01", "2026-09-02"]);
+  assert.deepEqual([...byNight.keys()], ["2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03"]);
   assert.ok(sleep.nights_without_records.includes("2026-08-25"));
   assert.match(sleep.selection_rule, /most sleep/);
   const monday = byNight.get("2026-08-31")!;
@@ -132,6 +136,10 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
   const wednesday = byNight.get("2026-09-02")!;
   assert.equal(wednesday.source.bundle_id, "com.apple.health.phone");
   assert.equal(wednesday.asleep_minutes, 480);
+  // Time in bed is the union of in-bed samples, independent of sleep stages.
+  const thursday = byNight.get("2026-09-03")!;
+  assert.deepEqual([thursday.in_bed_minutes, thursday.asleep_minutes, thursday.stage_minutes],
+    [540, 480, { asleep_core: 480, in_bed: 540 }]);
   // Nights are selected by their evening date, so a midnight start excludes the night before it.
   const fromMidnight = await queries.sleep(owner, { from: "2026-09-01T04:00:00Z", to: "2026-09-01T20:00:00Z", timezone: "America/New_York" });
   assert.deepEqual(fromMidnight.items.map(item => item.night_of), ["2026-09-01"]);
