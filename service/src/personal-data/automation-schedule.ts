@@ -28,14 +28,16 @@ function offsetMs(instant: number, timeZone: string) {
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(instant / 1000) * 1000;
 }
 
-/** A nonexistent local time (spring forward) resolves to the shifted instant;
- * an ambiguous one (fall back) resolves to its earlier occurrence. */
+/** Every offset the zone uses within a day of `wall` is a candidate; a candidate is
+ * valid when that instant reads back as the same wall time. An ambiguous time (fall
+ * back) resolves to its earlier valid occurrence. A nonexistent time (spring forward)
+ * has none, and resolves with the pre-transition offset, i.e. shifted later by the gap. */
 export function localTimeToInstant(year: number, month: number, day: number, hour: number, minute: number, timeZone: string) {
   const wall = Date.UTC(year, month - 1, day, hour, minute);
-  const first = wall - offsetMs(wall, timeZone);
-  const second = wall - offsetMs(first, timeZone);
-  const earlier = Math.min(first, second);
-  return new Date(localParts(earlier, timeZone).hour === hour ? earlier : Math.max(first, second));
+  const offsets = new Set([-26, -12, 0, 12, 26].map(hours => offsetMs(wall + hours * 3600_000, timeZone)));
+  const candidates = [...offsets].map(offset => wall - offset);
+  const valid = candidates.filter(instant => wall - offsetMs(instant, timeZone) === instant);
+  return new Date(valid.length ? Math.min(...valid) : Math.max(...candidates));
 }
 
 function windowOn(schedule: AutomationSchedule, wall: number) {

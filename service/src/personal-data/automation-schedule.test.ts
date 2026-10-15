@@ -17,6 +17,19 @@ test("a skipped spring-forward time shifts later and an ambiguous fall-back time
   assert.equal(localTimeToInstant(2026, 11, 1, 1, 30, "America/New_York").toISOString(), "2026-11-01T05:30:00.000Z");
 });
 
+test("ambiguous times use the earlier occurrence and skipped times shift by the gap, across zones", () => {
+  // Fall back: London/Berlin 2026-10-25, Lord Howe (half-hour change) 2026-04-05.
+  assert.equal(localTimeToInstant(2026, 10, 25, 1, 30, "Europe/London").toISOString(), "2026-10-25T00:30:00.000Z");
+  assert.equal(localTimeToInstant(2026, 10, 25, 2, 30, "Europe/Berlin").toISOString(), "2026-10-25T00:30:00.000Z");
+  assert.equal(localTimeToInstant(2026, 4, 5, 1, 45, "Australia/Lord_Howe").toISOString(), "2026-04-04T14:45:00.000Z");
+  // Spring forward: the nonexistent time lands after the gap.
+  assert.equal(localTimeToInstant(2026, 3, 29, 1, 30, "Europe/London").toISOString(), "2026-03-29T01:30:00.000Z");
+  assert.equal(localTimeToInstant(2026, 10, 4, 2, 15, "Australia/Lord_Howe").toISOString(), "2026-10-03T15:45:00.000Z");
+  // Unaffected times either side of a transition.
+  assert.equal(localTimeToInstant(2026, 10, 24, 9, 0, "Europe/London").toISOString(), "2026-10-24T08:00:00.000Z");
+  assert.equal(localTimeToInstant(2026, 10, 26, 9, 0, "Europe/London").toISOString(), "2026-10-26T09:00:00.000Z");
+});
+
 test("the latest window is at or before now and respects weekdays", () => {
   const schedule = daily("09:00", "America/Los_Angeles");
   assert.equal(latestWindowAtOrBefore(schedule, new Date("2026-07-15T16:00:00Z"))!.toISOString(), "2026-07-15T16:00:00.000Z");
