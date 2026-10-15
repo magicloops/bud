@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Paperclip, X } from 'lucide-react'
+import { FileText, FolderOpen, Paperclip, X } from 'lucide-react'
 import { apiFetch, apiFetchJson } from '@/lib/transport'
+import { FileLibrary } from './library'
 
 export type Attachment = { file_id: string; name: string; mime_type: string; size_bytes: number }
 type DraftItem = { key: string; source?: File; file?: Attachment; name: string; size: number; error?: string; controller?: AbortController }
@@ -41,6 +42,13 @@ export function useFileDraft() {
     void (async () => { for (const item of added) if (!item.error && current.current.some(value => value.key === item.key)) await upload(item) })()
   }
   return { items, add, ready: items.flatMap(item => item.file ? [item.file] : []),
+    select(file: Attachment) {
+      if (current.current.some(item => item.file?.file_id === file.file_id)) return
+      if (current.current.length >= 10) return 'Maximum 10 attachments.'
+      if (current.current.reduce((sum, item) => sum + item.size, 0) + file.size_bytes > 100 * 1024 * 1024) return 'Maximum attachment total is 100 MB.'
+      update([...current.current, { key: crypto.randomUUID(), file, name: file.name, size: file.size_bytes }])
+    },
+    forget(id: string) { update(current.current.filter(item => item.file?.file_id !== id)) },
     blocked: items.some(item => !item.file),
     remove(key: string) { current.current.find(item => item.key === key)?.controller?.abort(); update(current.current.filter(item => item.key !== key)) },
     retry(key: string) { const item = current.current.find(item => item.key === key); if (item && !item.controller && item.size > 0 && item.size <= 25 * 1024 * 1024 && current.current.reduce((sum, value) => sum + value.size, 0) <= 100 * 1024 * 1024) void upload(item) },
@@ -49,16 +57,26 @@ export function useFileDraft() {
 }
 export type FileDraft = ReturnType<typeof useFileDraft>
 
+const attachmentActionClassName = 'inline-flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground disabled:opacity-50'
+
 export function AttachmentComposer({ draft, disabled }: { draft: FileDraft; disabled: boolean }) {
   const input = useRef<HTMLInputElement>(null)
-  return <div className="space-y-2 px-4 pt-3">
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  return <div className="space-y-2 pl-4 pr-3 pt-3 md:pr-[var(--composer-controls-right,0.75rem)]">
     <input ref={input} type="file" multiple hidden onChange={event => {
       draft.add(Array.from(event.target.files ?? [])); event.target.value = ''
     }} />
-    <button type="button" disabled={disabled || draft.items.length >= 10} onClick={() => input.current?.click()}
-      className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">
-      <Paperclip size={15} /> Attach files
-    </button>
+    <div className="flex items-center justify-between gap-4">
+      <button type="button" disabled={disabled || draft.items.length >= 10} onClick={() => input.current?.click()}
+        className={attachmentActionClassName}>
+        <Paperclip size={15} /> Attach files
+      </button>
+      <button type="button" disabled={disabled} onClick={() => setLibraryOpen(true)}
+        className={attachmentActionClassName}>
+        <FolderOpen size={15} /> Your files
+      </button>
+    </div>
+    {libraryOpen && <FileLibrary draft={draft} onClose={() => setLibraryOpen(false)} />}
     {draft.items.length > 0 && <ul className="flex flex-wrap gap-2" aria-label="Attachments">
       {draft.items.map(item => <li key={item.key} className="flex max-w-full items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-xs">
         <FileText size={16} className="shrink-0" />

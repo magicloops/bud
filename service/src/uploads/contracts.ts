@@ -12,6 +12,8 @@ export const fileIntent = z.object({
   size_bytes: z.number().int().min(1).max(MAX_FILE_BYTES),
 }).strict();
 export type FileIntent = z.infer<typeof fileIntent>;
+export const fileSearch = z.object({ query: z.string().trim().max(200).default(''),
+  cursor: fileId.optional(), limit: z.coerce.number().int().min(1).max(50).default(20) }).strict();
 export type FileAttachment = { file_id: string; name: string; mime_type: string; size_bytes: number };
 export class FileError extends Error {
   constructor(readonly code: string, readonly status = 400) { super(code); }

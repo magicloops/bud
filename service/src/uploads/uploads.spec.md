@@ -1,14 +1,14 @@
-# User file uploads
+# User file uploads and reusable library
 
 Private, immutable user-owned originals independent of a Bud or chat. The viewer
-is resolved by `requireViewer` before upload/read/delete. Repository queries
+is resolved by `requireViewer` before upload/list/read/delete. Repository queries
 include `created_by_user_id`; foreign IDs return 404, anonymous requests 401.
 `user_file` stamps the viewer and includes nullable `tenant_id`. Chat messages
 inherit the owning thread and keep attachment references in existing metadata.
 
 ## Files
 
-- `contracts.ts`: strict IDs, names, MIME types and size limits.
+- `contracts.ts`: strict IDs, names, MIME types, search/cursors and size limits.
 - `schema.ts`: re-exports the canonical Drizzle table from db/schema.ts.
 - `objects.ts`: immutable originals on private disk; production mount validation,
   streaming size/SHA-256 verification, atomic publication, capacity reservations,
@@ -16,20 +16,20 @@ inherit the owning thread and keep attachment references in existing metadata.
 - `objects.test.ts`: production configuration/mount rejection, atomic visibility,
   permissions, reopen persistence, interruption, disk capacity and staging cleanup.
 - `repository.ts`: owner SQL, serialized quota reservations, upload state CAS,
-  attachment admission, extraction cache and deletion.
+  attachment admission, extraction cache, paginated library search and deletion.
 - `routes.ts`: authenticated REST, cookie Origin enforcement, streaming upload
   concurrency/time bounds and expired/failed/deleted object cleanup; storage is
   validated at registration before the service starts listening.
 - `documents.ts` / `document-worker.mjs`: at most two short-lived PDF/DOCX/text
   extraction or image/PDF rendering workers; 20s timeout, 192MiB V8 heap, 200 pages,
   1M extracted characters. Native allocations are not an OS memory sandbox.
-- `agent.ts`: files_read, current thread/Bud/invocation authorization,
+- `agent.ts`: files_read/files_search, current thread/Bud/invocation authorization,
   bounded excerpts, untrusted-document labeling and provider-only page hydration.
 - `page-references.ts`: shared newest-two-page selection for hydration, context
   token estimates and invalidation of measured request baselines.
 - `browser-files.ts`: 30-second single-use transfer grants, revoked at dispatch
   completion; current invocation/browser evidence checks before/after byte reads.
-- `uploads.test.ts`: storage, PDF, owner isolation, current-chat agent scope,
+- `uploads.test.ts`: storage, PDF, owner isolation, pagination/search, agent scope,
   deletion, grants/replay and image-accounting fixtures (DB opt-in).
 
 ## HTTP contracts
@@ -37,12 +37,15 @@ inherit the owning thread and keep attachment references in existing metadata.
 - POST `/api/uploads`: `{name,mime_type,size_bytes}` reserves an immutable ID.
 - PUT `/api/uploads/:file_id/content`: octet-stream, exact declared byte count;
   only pending uploads can start. Ready replies contain attachment metadata.
+- GET `/api/uploads?query=&cursor=&limit=20`: `{files,next_cursor}`; newest IDs
+  first, max 50. Literal substring matching on names and previously extracted
+  text. New/unread files are searchable by name; search does not parse files.
 - GET `/api/uploads/:file_id`: ready metadata.
 - GET `/api/uploads/:file_id/content`: authorized original attachment download.
 - DELETE `/api/uploads/:file_id`: durable revocation, extraction removal and
   best-effort object deletion, retried by cleanup. Transcript excerpts remain.
 - GET `/api/uploads/browser-transfer`: one-use private Bearer grant; no public
-  URL credentials. It is a daemon transfer, not an authenticated user read.
+  URL credentials. It is a daemon transfer, not an authenticated library read.
 
 Attachment metadata is `{file_id,name,mime_type,size_bytes}`. Limits: 25MiB/file,
 10 files/100MiB per message, 1GiB/1000 ready or recent pending files per user.
@@ -50,8 +53,8 @@ Incomplete uploads expire after one hour. Removing a composer chip only detaches
 
 ## Agent and browser flow
 
-`files_read` lists current attachments or reads an owned ID attached to this
-conversation, with 16,000-character excerpts
+`files_search` discovers the owner's library when relevant; `files_read` lists
+current attachments or reads any owned library ID, with 16,000-character excerpts
 and explicit coverage warnings. PDFs with empty text require visual inspection.
 Page JPEG bytes are inserted only at the provider boundary, at most two recent
 pages, and never in transcript/ledger diagnostics. Text-only models receive an

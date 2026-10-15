@@ -437,6 +437,7 @@ export class AgentConversationLoader {
       switch (payload.tool) {
         case "browser_exec":
         case "browser_request_handoff":
+        case "files_search":
         case "files_read":
         case "web_search":
         case "web_read":

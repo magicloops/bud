@@ -634,7 +634,7 @@ composite owner FKs to `data_event` and `data_collection_epoch`) and
 `health_sample_deletion` (unique owner + UUID). `agent_data_grant.health_types`
 defaults to both workouts and sleep; agents still need the `health.read` scope.
 
-## User file storage
+## User file library
 
 `userFileTable` owns immutable originals by required `created_by_user_id` (auth.user
 FK), nullable tenant, opaque ULID, filename/MIME/size/hash, upload/processing state,
