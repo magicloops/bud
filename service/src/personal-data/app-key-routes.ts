@@ -91,6 +91,8 @@ export async function registerAppKeyRoutes(server: FastifyInstance, dependencies
       backend.get("/api/app-data/location", async request => queries.execute(credentials.get(request), "timeline_query", query(request)));
       backend.get<{ Params: { id: string } }>("/api/app-data/contacts/:id/location-context", async request =>
         queries.execute(credentials.get(request), "location_context", { ...query(request), contact_id: request.params.id }));
+      backend.get("/api/app-data/health/workouts", async request => queries.execute(credentials.get(request), "health_workouts", query(request)));
+      backend.get("/api/app-data/health/sleep", async request => queries.execute(credentials.get(request), "health_sleep", query(request)));
     });
     // Possession proof only retrieves ciphertext or acknowledges that same key.
     // These endpoints cannot create requests, make human decisions or read data.

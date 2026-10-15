@@ -3,6 +3,7 @@ import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations } from "../db/schema.js";
 import { parseLocationPayload, LOCATION_TYPES } from "./location.js";
+import { HEALTH_TYPES, processHealthEvent } from "./health.js";
 import { canonicalJson } from "./contracts.js";
 import { parseContactPayload, verifyContactScan, type ContactManifest, type ContactRecord } from "./contacts.js";
 
@@ -23,7 +24,7 @@ export class ContactProcessor {
    * retained for the lifecycle interface; recovery also includes source repair. */
   async requeueSupportedLocations(ownerFilter?: string): Promise<boolean> {
     const supported = and(eq(jobs.status, "unsupported"), eq(events.schemaVersion, 1),
-      inArray(events.eventType, [...LOCATION_TYPES, ...CONTACT_TYPES]), ownerFilter ? eq(jobs.createdByUserId, ownerFilter) : undefined);
+      inArray(events.eventType, [...LOCATION_TYPES, ...CONTACT_TYPES, ...HEALTH_TYPES]), ownerFilter ? eq(jobs.createdByUserId, ownerFilter) : undefined);
     const [candidate] = await this.database.select({ owner: jobs.createdByUserId }).from(jobs)
       .innerJoin(events, and(eq(events.id, jobs.eventId), eq(events.createdByUserId, jobs.createdByUserId)))
       .where(supported).orderBy(jobs.id).limit(1);
@@ -60,6 +61,11 @@ export class ContactProcessor {
         if (location) await tx.insert(locations).values({ id: ulid(), rawEventId: event.id, epochId: event.epochId,
           ...location, occurredAt: event.occurredAt, receivedAt: event.receivedAt, createdByUserId: candidate.owner }).onConflictDoNothing();
         await tx.update(jobs).set({ status: location ? "processed" : "invalid", errorCode: location ? null : "invalid_location", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
+        return true;
+      }
+      if (event.schemaVersion === 1 && HEALTH_TYPES.includes(event.eventType)) {
+        const valid = await processHealthEvent(tx, candidate.owner, event);
+        await tx.update(jobs).set({ status: valid ? "processed" : "invalid", errorCode: valid ? null : "invalid_health_payload", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
         return true;
       }
       const payload = event.schemaVersion === 1 ? parseContactPayload(event.eventType, event.rawEnvelope.payload, { allowExpanded: true }) : null;

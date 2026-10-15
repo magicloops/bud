@@ -665,9 +665,11 @@ export class AgentModelRunner {
       case "contacts_history":
       case "location_context":
       case "timeline_query":
+      case "health_workouts":
+      case "health_sleep":
         return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
           args: Object.fromEntries(Object.entries(args).filter(([key, value]) =>
-            value !== null || !["search", "visibility", "limit", "cursor"].includes(key))) };
+            value !== null || !["search", "visibility", "limit", "cursor", "activity_type", "timezone"].includes(key))) };
       case "terminal_send":
         return {
           type: "tool_call",

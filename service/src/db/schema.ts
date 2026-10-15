@@ -1490,11 +1490,59 @@ export const locationObservationTable = pgTable("location_observation", {
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
 }));
 
+// HealthKit samples, one row per owner and HealthKit UUID across devices/epochs.
+// Re-imports update the row; deletions live in health_sample_deletion so arrival
+// order cannot resurrect a deleted sample.
+export const healthWorkoutTable = pgTable("health_workout", {
+  id: text("id").primaryKey(), hkUuid: text("hk_uuid").notNull(),
+  rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }).notNull(), endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+  durationS: doublePrecision("duration_s").notNull(), activityType: text("activity_type").notNull(),
+  activityTypeRaw: integer("activity_type_raw"), totalEnergyKcal: doublePrecision("total_energy_kcal"),
+  totalDistanceM: doublePrecision("total_distance_m"), indoor: boolean("indoor"),
+  sourceName: text("source_name").notNull(), sourceBundleId: text("source_bundle_id").notNull(),
+  deviceName: text("device_name"), deviceModel: text("device_model"), importMode: text("import_mode").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  sampleKey: unique("health_workout_sample_key").on(t.createdByUserId, t.hkUuid),
+  ownerTimeIdx: index("health_workout_owner_time_idx").on(t.createdByUserId, t.startAt, t.id),
+  eventFk: foreignKey({ name: "health_workout_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  epochFk: foreignKey({ name: "health_workout_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+export const healthSleepSegmentTable = pgTable("health_sleep_segment", {
+  id: text("id").primaryKey(), hkUuid: text("hk_uuid").notNull(),
+  rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }).notNull(), endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+  stage: text("stage").notNull(), value: integer("value").notNull(),
+  sourceName: text("source_name").notNull(), sourceBundleId: text("source_bundle_id").notNull(),
+  deviceName: text("device_name"), deviceModel: text("device_model"), importMode: text("import_mode").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  sampleKey: unique("health_sleep_segment_sample_key").on(t.createdByUserId, t.hkUuid),
+  ownerTimeIdx: index("health_sleep_segment_owner_time_idx").on(t.createdByUserId, t.startAt, t.id),
+  eventFk: foreignKey({ name: "health_sleep_segment_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  epochFk: foreignKey({ name: "health_sleep_segment_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+export const healthSampleDeletionTable = pgTable("health_sample_deletion", {
+  id: text("id").primaryKey(), hkUuid: text("hk_uuid").notNull(), sampleKind: text("sample_kind").notNull(),
+  rawEventId: text("raw_event_id").notNull(), deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  sampleKey: unique("health_sample_deletion_sample_key").on(t.createdByUserId, t.hkUuid),
+  eventFk: foreignKey({ name: "health_sample_deletion_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  kindCheck: check("health_sample_deletion_kind_check", sql`${t.sampleKind} in ('workout','sleep_segment')`),
+}));
+
 // One explicit owner-wide agent grant. App grants remain separate consumers.
 export const agentDataGrantTable = pgTable("agent_data_grant", {
   createdByUserId: text("created_by_user_id").primaryKey().references(() => authUserTable.id), tenantId: text("tenant_id"),
   scopes: jsonb("scopes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   contactFields: jsonb("contact_fields").$type<string[]>().notNull().default(sql`'["names","organization","phones","emails"]'::jsonb`),
+  healthTypes: jsonb("health_types").$type<string[]>().notNull().default(sql`'["workouts","sleep"]'::jsonb`),
   version: integer("version").notNull().default(0), historyDays: integer("history_days").notNull().default(90),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedByUserId: text("updated_by_user_id").notNull().references(() => authUserTable.id),

@@ -353,6 +353,8 @@ export function toolNameForConversation(
     case "contacts_history":
     case "location_context":
     case "timeline_query":
+    case "health_workouts":
+    case "health_sleep":
       return tool;
     case "terminal.send":
       return "terminal_send";
@@ -436,6 +438,8 @@ export function buildToolArgs(
     case "contacts_history":
     case "location_context":
     case "timeline_query":
+    case "health_workouts":
+    case "health_sleep":
       return directive.args;
     case "terminal.send":
       return {

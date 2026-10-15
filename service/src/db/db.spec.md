@@ -627,3 +627,9 @@ Migration `0051_schedule_automation_deliveries.sql` lets `automation_delivery`
 reference either a published domain event or a schedule window (`scheduled_for`),
 never both. `unique(automation_id, scheduled_for)` spans revisions, so editing a
 schedule cannot run the same window twice. Contact deliveries are unchanged.
+
+Migration `0052_health_samples.sql` adds `health_workout`,
+`health_sleep_segment` (unique owner + HealthKit UUID, owner/start index,
+composite owner FKs to `data_event` and `data_collection_epoch`) and
+`health_sample_deletion` (unique owner + UUID). `agent_data_grant.health_types`
+defaults to both workouts and sleep; agents still need the `health.read` scope.

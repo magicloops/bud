@@ -20,7 +20,11 @@ test('example serves bounded query routes and fixed assets without exposing back
   const query = await fetch(`${origin}/api/contacts?search=Ada`);
   assert.equal(query.status, 200);
   assert.deepEqual(calls, [['public-key-id', 'contacts', { search: 'Ada', limit: 20 }]]);
-  for (const path of ['/server.mjs', '/../app-key-backend.mjs', '/api/location', '/api/contacts?owner=other']) {
+  const sleep = await fetch(`${origin}/api/health/sleep?from=a&to=b&timezone=UTC`);
+  assert.equal(sleep.status, 200);
+  assert.deepEqual(calls.at(-1), ['public-key-id', 'health/sleep', { from: 'a', to: 'b', timezone: 'UTC' }]);
+  calls.length = 1;
+  for (const path of ['/server.mjs', '/../app-key-backend.mjs', '/api/location', '/api/contacts?owner=other', '/api/health/heart', '/api/health/sleep?activity=1']) {
     const response = await fetch(origin + path);
     assert.ok([400, 404].includes(response.status));
   }

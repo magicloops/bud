@@ -385,3 +385,36 @@ supported types to clients.
   admission/policy/ceiling, previous-window text and pinned-grant failure.
 
 Plan: [location and health agent data](../../../plan/location-and-health-agent-data.md).
+
+## Health (phase 4)
+
+- `health.ts`: validates `health.workout.v2`, `health.sleep_segment.v2` and
+  `health.sample_deleted.v1` payloads (HealthKit UUID, times, import mode, source,
+  device, kind fields) and projects them inside the processor's owner-locked job
+  transaction. One row per owner and HealthKit UUID across devices and epochs;
+  re-imports update the row but keep the first `import_mode`. Deletions live in
+  `health_sample_deletion`, so a deletion that arrives before its sample still
+  hides it. v1 health envelopes stay raw and unsupported. Previously unsupported
+  v2 jobs are requeued by the existing recovery pass.
+- `HealthQueries.workouts`: bounded (366-day) start-time window, optional
+  activity filter, owner/window/filter-bound cursors.
+- `HealthQueries.sleep` (92 days): groups segments into nights by the local date
+  12 hours before each segment start in the requested IANA zone. Per night it
+  uses one source (stage detail first, then most sleep) and lists the others.
+- Both return coverage with `last_received_at` and `read_access: unknown`.
+  `HealthQueries.status` adds last-received times to `/api/data/status`.
+- Agent grant: `health.read` scope plus `health_types` (`workouts`, `sleep`;
+  default both, migration 0052). Tools `health_workouts` / `health_sleep` need
+  the scope and the matching type, stay within approved history, and honor
+  automation ceilings. Automation definitions may request `health.read`.
+- App policies add `health_types` (defaulting to `[]`, so stored policies parse
+  and hash identically); it must be non-empty exactly when `health.read` is
+  requested. Routes `/api/app-data/health/{workouts,sleep}`; the backend helper
+  allows those resources and the `timezone`/`activity_type` parameters.
+- First-party routes `/api/data/health/workouts` and `/api/data/health/sleep`;
+  `features.health_queries` is true.
+- `health.test.ts`: payload validation plus an isolated-schema PostgreSQL
+  fixture for processing, UUID dedupe, out-of-order deletion, cursors, owner
+  isolation, night grouping, source choice and timezones.
+- `example-app` shows the last 14 nights of sleep and 30 days of workouts when
+  the app key includes them.

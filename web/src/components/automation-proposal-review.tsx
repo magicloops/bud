@@ -81,7 +81,7 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
       <h3 className="font-semibold">{proposal.definition.name}</h3>
       <p className="line-clamp-2 text-sm whitespace-pre-wrap">{proposal.definition.instruction}</p>
       <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : 'New contacts only'} · {automationReviewDestination(proposal)} · Up to {proposal.definition.max_invocations_per_day}/day</p>
-      <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.includes('location.read') ? 'Contacts and collected location' : 'Contacts'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
+      <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.length ? proposal.definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : scope === 'health.read' ? 'Health' : 'Collected location').join(', ') : 'No personal data'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
       <div className="review-actions">
       {proposal.status === 'pending' && !uncertain && <button className="review-deny" disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button>}
       <ReviewDetails title="Automation details">

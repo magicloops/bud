@@ -13,7 +13,10 @@
   - installing observers at launch before the network profile bootstrap;
   - awaiting location appends.
 
-  Both remain open. Phases 4–8 are not started.
+  Both remain open.
+- **Phase 4 implemented October 14, 2026** (branches `feat/health-data-queries`
+  here, stacked on #154, and mobile `feature/health-data-screens`, stacked on
+  mobile #65). See "Phase 4 implementation" below. Phases 5–8 are not started.
 - Builds on [personal data ingestion and agent triggers](../design/personal-data-ingestion-and-agent-triggers.md)
   and its [implementation spec](personal-data-ingestion-and-agent-triggers/implementation-spec.md).
   Replaces the two deferred items in [TODO.md](../TODO.md) ("HealthKit durability…"
@@ -304,6 +307,30 @@ generalization.
    required.
 
 The web client ships with the service.
+
+## Phase 4 implementation
+
+Implemented as planned. Additional details:
+- Samples are unique per owner and HealthKit UUID, not per installation.
+  HealthKit syncs the same UUIDs across a user's devices, so the same workout
+  seen from two iPhones is one record.
+- **Deletions** are a separate table, so arrival order doesn't matter.
+- **Night labels:** a night is labeled by the local date 12 hours before each
+  segment starts.
+- **Overlapping sources:** when several sources record the same night, the one
+  with stage detail wins, then the one with the most sleep. Full cross-source
+  merging is deferred.
+- **Automations** may request `health.read`, so scheduled rules can produce
+  health digests.
+- **App access:** policies stored before this change parse with
+  `health_types: []`.
+
+Validation: the full service suite and the PostgreSQL suites pass, the web build
+and tests pass, and the iOS build and targeted tests pass. Real HealthKit data
+end to end (phone → service → agent) is not yet checked.
+
+Rollout: apply migration 0052, then deploy the service and web; the mobile
+screens follow. Older mobile builds ignore the new grant fields.
 
 ## Decisions
 

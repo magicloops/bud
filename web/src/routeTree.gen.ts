@@ -16,6 +16,7 @@ import { Route as AutomationsRouteImport } from './routes/automations'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BudIdIndexRouteImport } from './routes/$budId/index'
+import { Route as DataHealthRouteImport } from './routes/data_.health'
 import { Route as DataContactsRouteImport } from './routes/data_.contacts'
 import { Route as BrowserSessionIdRouteImport } from './routes/browser.$sessionId'
 import { Route as AuthMobileRouteImport } from './routes/auth.mobile'
@@ -58,6 +59,11 @@ const BudIdIndexRoute = BudIdIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => BudIdRoute,
+} as any)
+const DataHealthRoute = DataHealthRouteImport.update({
+  id: '/data_/health',
+  path: '/data/health',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const DataContactsRoute = DataContactsRouteImport.update({
   id: '/data_/contacts',
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/browser/$sessionId': typeof BrowserSessionIdRoute
   '/data/contacts': typeof DataContactsRoute
+  '/data/health': typeof DataHealthRoute
   '/$budId/': typeof BudIdIndexRoute
   '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/browser/$sessionId': typeof BrowserSessionIdRoute
   '/data/contacts': typeof DataContactsRoute
+  '/data/health': typeof DataHealthRoute
   '/$budId': typeof BudIdIndexRoute
   '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
@@ -139,6 +147,7 @@ export interface FileRoutesById {
   '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/browser/$sessionId': typeof BrowserSessionIdRoute
   '/data_/contacts': typeof DataContactsRoute
+  '/data_/health': typeof DataHealthRoute
   '/$budId/': typeof BudIdIndexRoute
   '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
     | '/auth/mobile'
     | '/browser/$sessionId'
     | '/data/contacts'
+    | '/data/health'
     | '/$budId/'
     | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
@@ -172,6 +182,7 @@ export interface FileRouteTypes {
     | '/auth/mobile'
     | '/browser/$sessionId'
     | '/data/contacts'
+    | '/data/health'
     | '/$budId'
     | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
@@ -188,6 +199,7 @@ export interface FileRouteTypes {
     | '/auth/mobile'
     | '/browser/$sessionId'
     | '/data_/contacts'
+    | '/data_/health'
     | '/$budId/'
     | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
@@ -203,6 +215,7 @@ export interface RootRouteChildren {
   AuthMobileRoute: typeof AuthMobileRouteWithChildren
   BrowserSessionIdRoute: typeof BrowserSessionIdRoute
   DataContactsRoute: typeof DataContactsRoute
+  DataHealthRoute: typeof DataHealthRoute
   DevicesClaimFlowIdRoute: typeof DevicesClaimFlowIdRoute
 }
 
@@ -256,6 +269,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$budId/'
       preLoaderRoute: typeof BudIdIndexRouteImport
       parentRoute: typeof BudIdRoute
+    }
+    '/data_/health': {
+      id: '/data_/health'
+      path: '/data/health'
+      fullPath: '/data/health'
+      preLoaderRoute: typeof DataHealthRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/data_/contacts': {
       id: '/data_/contacts'
@@ -345,6 +365,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthMobileRoute: AuthMobileRouteWithChildren,
   BrowserSessionIdRoute: BrowserSessionIdRoute,
   DataContactsRoute: DataContactsRoute,
+  DataHealthRoute: DataHealthRoute,
   DevicesClaimFlowIdRoute: DevicesClaimFlowIdRoute,
 }
 export const routeTree = rootRouteImport

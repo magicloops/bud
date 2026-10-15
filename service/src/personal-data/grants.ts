@@ -2,13 +2,15 @@ import { eq } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
 import { agentDataGrantTable as grants, dataOwnerStateTable as owners } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
+import { HEALTH_DATA_TYPES } from "./health.js";
 
-export type DataScope = "contacts.read" | "location.read";
-export const DATA_SCOPES: DataScope[] = ["contacts.read", "location.read"];
+export type DataScope = "contacts.read" | "location.read" | "health.read";
+export const DATA_SCOPES: DataScope[] = ["contacts.read", "location.read", "health.read"];
 const LEGACY_FIELDS = ["names", "organization", "phones", "emails"];
 const CONTACT_FIELDS = [...LEGACY_FIELDS, "postal_addresses", "urls"];
 export type AgentDataGrant = { scopes: string[]; version: number; history_days: number; updated_at: Date | null;
-  consumer: string; fields: string[]; supported_contact_fields?: string[]; location_precision: string };
+  consumer: string; fields: string[]; supported_contact_fields?: string[]; location_precision: string;
+  health_types: string[]; supported_health_types?: string[] };
 export class DataGrants {
   constructor(private readonly database: Omit<Database, "$client"> = db) {}
   /** Verify the deployed field-permission migration without reading personal data. */
@@ -19,7 +21,8 @@ export class DataGrants {
     const [row] = await this.database.select().from(grants).where(eq(grants.createdByUserId, owner));
     return { scopes: row?.scopes ?? [], version: row?.version ?? 0, history_days: row?.historyDays ?? 90,
       updated_at: row?.updatedAt ?? null, consumer: "your_agents", fields: row?.contactFields ?? [...LEGACY_FIELDS],
-      supported_contact_fields: [...CONTACT_FIELDS], location_precision: "as_collected" };
+      supported_contact_fields: [...CONTACT_FIELDS], location_precision: "as_collected",
+      health_types: row?.healthTypes ?? [...HEALTH_DATA_TYPES], supported_health_types: [...HEALTH_DATA_TYPES] };
   }
   async update(owner: string, value: unknown) {
     if (!isRecord(value) || !Array.isArray(value.scopes) || value.scopes.some(s => !DATA_SCOPES.includes(s as DataScope))
@@ -30,6 +33,10 @@ export class DataGrants {
       || value.fields.some(field => typeof field !== "string" || !CONTACT_FIELDS.includes(field))
       || new Set(value.fields).size !== value.fields.length))
       throw new DataRequestError(400, "invalid_grant", "Provide unique supported contact fields");
+    if (value.health_types !== undefined && (!Array.isArray(value.health_types)
+      || value.health_types.some(type => typeof type !== "string" || !(HEALTH_DATA_TYPES as readonly string[]).includes(type))
+      || new Set(value.health_types).size !== value.health_types.length))
+      throw new DataRequestError(400, "invalid_grant", "Provide unique supported health types");
     await this.database.transaction(async tx => {
       await tx.insert(owners).values({ createdByUserId: owner }).onConflictDoNothing();
       await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update");
@@ -37,6 +44,7 @@ export class DataGrants {
       if ((prior?.version ?? 0) !== value.version) throw new DataRequestError(409, "grant_conflict", "Permissions changed; reload before saving");
       const next = { scopes: value.scopes as string[], version: Number(value.version) + 1, historyDays: Number(value.history_days),
         contactFields: value.fields === undefined ? prior?.contactFields ?? [...LEGACY_FIELDS] : [...value.fields as string[]],
+        healthTypes: value.health_types === undefined ? prior?.healthTypes ?? [...HEALTH_DATA_TYPES] : [...value.health_types as string[]],
         updatedAt: new Date(), updatedByUserId: owner };
       if (prior) await tx.update(grants).set(next).where(eq(grants.createdByUserId, owner));
       else await tx.insert(grants).values({ createdByUserId: owner, ...next });

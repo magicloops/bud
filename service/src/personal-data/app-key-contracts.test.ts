@@ -50,3 +50,12 @@ test("human decisions cannot change the reviewed request or implicitly approve",
     { ...decision, expected_version: -1 }, { ...decision, idempotency_key: "" }, { expected_version: 0 }])
     assert.equal(appKeyDecisionSchema.safeParse(invalid).success, false);
 });
+
+test("health access needs matching health types, and policies stored before health parse unchanged", () => {
+  assert.deepEqual(parseAppKeyInput(appDataPolicySchema, policy), { ...policy, health_types: [] });
+  const health = { scopes: ["health.read"], contact_fields: [], location_precision: "none", health_types: ["sleep"], history_days: 30 };
+  assert.deepEqual(parseAppKeyInput(appDataPolicySchema, health), health);
+  for (const invalid of [{ ...health, health_types: [] }, { ...policy, health_types: ["sleep"] },
+    { ...health, health_types: ["sleep", "sleep"] }, { ...health, health_types: ["heart_rate"] }])
+    assert.throws(() => parseAppKeyInput(appDataPolicySchema, invalid), DataRequestError);
+});

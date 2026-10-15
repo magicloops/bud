@@ -88,7 +88,7 @@ function OwnedContext({ budId, threadId }: { budId: string; threadId: string }) 
       </> : <>
         <p className="font-semibold">Applies to your Bud agents</p>
         {data ? <>
-          <p>{data.grant.scopes.length ? data.grant.scopes.map(s => s === 'contacts.read' ? 'Contacts' : 'Location at collected precision').join(' · ') : 'No personal data access allowed'}{data.grant.scopes.length ? ` · ${data.grant.history_days}-day history` : ''}</p>
+          <p>{data.grant.scopes.length ? data.grant.scopes.map(s => s === 'contacts.read' ? 'Contacts' : s === 'health.read' ? 'Health' : 'Location at collected precision').join(' · ') : 'No personal data access allowed'}{data.grant.scopes.length ? ` · ${data.grant.history_days}-day history` : ''}</p>
           {data.grant.scopes.includes('contacts.read') && <p>Contact fields: {data.grant.fields === undefined ? 'Legacy field coverage' : data.grant.fields.join(', ').replaceAll('_', ' ') || 'None'}</p>}
           <p>{data.status.sources.length} upload sources · Server receipts do not indicate phone connectivity.</p>
           {data.status.sources.map((source, i) => <p key={source.installation_id} className="text-xs text-muted-foreground">Source {i + 1}: {source.last_received_at ? `Received ${new Date(source.last_received_at).toLocaleString()}` : 'No upload received'}</p>)}

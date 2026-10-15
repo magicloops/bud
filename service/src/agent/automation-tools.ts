@@ -28,7 +28,7 @@ const definition: CanonicalTool["parameters"] = {
       } },
     ] },
     data_access: { type: "object", additionalProperties: false, required: ["scopes", "history_days"], properties: {
-      scopes: { type: "array", minItems: 0, maxItems: 2, uniqueItems: true, items: { type: "string", enum: ["contacts.read", "location.read"] }, description: "contact.added must include contacts.read. schedule may request any subset, including none. These are requested limits, not a grant." },
+      scopes: { type: "array", minItems: 0, maxItems: 3, uniqueItems: true, items: { type: "string", enum: ["contacts.read", "location.read", "health.read"] }, description: "contact.added must include contacts.read. schedule may request any subset, including none. health.read covers the health types the user allows (workouts, sleep). These are requested limits, not a grant." },
       history_days: { type: "integer", minimum: 1, maximum: 3650 },
     } },
     latest_start_seconds: { type: "integer", minimum: 60, maximum: 86400 },

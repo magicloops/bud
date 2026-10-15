@@ -9,6 +9,7 @@ function fixture() {
   let scopes: DataScope[] = ["contacts.read", "location.read"];
   let version = 1;
   let fields = ["names", "organization", "phones", "emails"];
+  let healthTypes = ["workouts", "sleep"];
   let afterRead: (() => void) | undefined;
   const query = (method: string) => async (...args: unknown[]) => {
     calls.push({ method, args }); afterRead?.(); return { items: [], next_cursor: null };
@@ -18,9 +19,12 @@ function fixture() {
   const locations = { list: query("timeline"), contactContext: query("context") } as unknown as Dependencies[1];
   const grants = { require: async (_owner: string, required: DataScope[]) => {
     if (!required.every(s => scopes.includes(s))) throw new DataRequestError(403, "data_permission_required", "Permission required");
-    return { scopes: [...scopes], version, history_days: 30, updated_at: null, consumer: "your_agents", fields: [...fields], location_precision: "as_collected" };
+    return { scopes: [...scopes], version, history_days: 30, updated_at: null, consumer: "your_agents", fields: [...fields],
+      location_precision: "as_collected", health_types: [...healthTypes] };
   } };
-  return { calls, adapter: new AgentDataQueries(contacts, locations, grants, () => new Date("2026-09-04T12:00:00Z")),
+  const health = { workouts: query("workouts"), sleep: query("sleep") } as unknown as Dependencies[4];
+  return { calls, adapter: new AgentDataQueries(contacts, locations, grants, () => new Date("2026-09-04T12:00:00Z"), health),
+    grantHealth: () => { scopes = [...scopes, "health.read"]; }, setHealthTypes: (next: string[]) => { healthTypes = next; },
     revoke: () => { scopes = []; version++; }, contactsOnly: () => { scopes = ["contacts.read"]; },
     setFields: (next: string[]) => { fields = next; version++; },
     changeFieldsDuringRead: () => { afterRead = () => { fields = []; version++; }; },
@@ -121,4 +125,23 @@ test("exact lookup uses contact/revision IDs and preserves field, history and re
   f.changeDuringRead();
   await assert.rejects(f.adapter.execute("alice", "contacts_get", { contact_id: "contact", revision_id: "revision" }),
     (error: unknown) => error instanceof DataRequestError && error.code === "grant_changed");
+});
+
+test("health tools need the health scope and the matching health type, within approved history", async () => {
+  const f = fixture();
+  const window = { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" };
+  await assert.rejects(f.adapter.execute("alice", "health_workouts", window), { code: "data_permission_required" });
+  f.grantHealth();
+  await f.adapter.execute("alice", "health_workouts", { ...window, activity_type: "running", limit: 10 });
+  assert.deepEqual(f.calls.at(-1), { method: "workouts", args: ["alice", { ...window, limit: 10, cursor: undefined, activity_type: "running" }] });
+  await f.adapter.execute("alice", "health_sleep", { ...window, timezone: "America/New_York" });
+  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["alice", { ...window, timezone: "America/New_York" }] });
+  f.setHealthTypes(["workouts"]);
+  await assert.rejects(f.adapter.execute("alice", "health_sleep", window), { code: "data_permission_required" });
+  await assert.rejects(f.adapter.execute("alice", "health_workouts", { ...window, from: "2026-07-01T00:00:00Z" }), { code: "history_outside_grant" });
+  await assert.rejects(f.adapter.execute("alice", "health_workouts", { ...window, owner: "bob" }), { code: "invalid_query" });
+  const calls = f.calls.length;
+  await assert.rejects(f.adapter.execute("alice", "health_workouts", window, { scopes: ["contacts.read"], historyDays: 30, grantVersion: 1, binding: "rule" }),
+    { code: "automation_data_scope" });
+  assert.equal(f.calls.length, calls, "an automation without health scope reads nothing");
 });

@@ -22,7 +22,7 @@ const target = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("new_thread") }).strict(),
   z.object({ mode: z.literal("existing_thread"), thread_id: z.string().uuid() }).strict(),
 ]);
-const scopes = z.array(z.enum(["contacts.read", "location.read"])).max(2)
+const scopes = z.array(z.enum(["contacts.read", "location.read", "health.read"])).max(3)
   .refine(values => new Set(values).size === values.length, "Duplicate scopes");
 const historyDays = z.number().int().min(1).max(3650);
 

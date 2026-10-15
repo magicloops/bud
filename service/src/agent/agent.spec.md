@@ -1636,3 +1636,12 @@ trigger's fields, including inside an update's replacement definition. Scheduled
 runs reach the model as an origin-tagged automation input naming the window and
 the previous run; data tools stay limited to the rule's approved scopes (none
 when it requested none). No daemon change.
+
+## Health tools
+
+`personal-data-tools.ts` adds `health_workouts` (window ≤ 366 days, optional
+`activity_type`, paging) and `health_sleep` (window ≤ 92 days, `timezone` used to
+label nights). Both execute through `AgentDataQueries` with the `health.read`
+scope and the matching grant `health_types`. Provider-strict nulls for
+`activity_type` and `timezone` are dropped like the paging keys.
+`data_request_api_key` requires `health_types` (empty unless `health.read`).

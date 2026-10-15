@@ -437,7 +437,7 @@ export type ApiAutomationDefinition = ApiAutomationTrigger & {
   model: string
   reasoning_effort: ApiReasoningLevel
   target: { mode: 'new_thread' } | { mode: 'existing_thread'; thread_id: string }
-  data_access: { scopes: Array<'contacts.read' | 'location.read'>; history_days: number }
+  data_access: { scopes: Array<'contacts.read' | 'location.read' | 'health.read'>; history_days: number }
   latest_start_seconds: number
   max_invocations_per_day: number
 }

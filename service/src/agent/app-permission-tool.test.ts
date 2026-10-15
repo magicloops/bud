@@ -12,7 +12,7 @@ import type { CanonicalTool } from "../llm/index.js";
 const logger = { info() {}, warn() {}, error() {} };
 const pair = generateKeyPairSync("rsa", { modulusLength: 3072 });
 const input = { app_label: "Contacts", purpose: "Display my contacts", data_access: {
-  scopes: ["contacts.read"], contact_fields: ["names"], location_precision: "none", history_days: 30,
+  scopes: ["contacts.read"], contact_fields: ["names"], location_precision: "none", health_types: [], history_days: 30,
 }, destination: { proxied_site_id: "site", public_key: pair.publicKey.export({ type: "spki", format: "pem" }).toString() } };
 const environment = buildAgentEnvironmentSnapshot({ budId: "bud", online: false });
 const call = { id: "permission-call", name: "data_request_api_key", input };

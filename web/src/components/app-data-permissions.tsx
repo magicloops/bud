@@ -8,7 +8,7 @@ const time = (value: string) => new Date(value).toLocaleString()
 export type AppPermission = {
   request_id: string; app_label: string; purpose: string; status: string; version: number
   bud_id: string; thread_id: string; expires_at: string
-  data_access: { scopes: string[]; contact_fields: string[]; location_precision: string; history_days: number }
+  data_access: { scopes: string[]; contact_fields: string[]; location_precision: string; health_types?: string[]; history_days: number }
   destination: { proxied_site_id: string; recipient_fingerprint: string }
   key: { key_id: string; version: number; status: string; setup_expires_at: string; last_used_at: string | null } | null
 }
@@ -97,7 +97,7 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
   const details = <PermissionDetails title={request.app_label} inline={inline}>
     <p className="whitespace-pre-wrap break-words">{request.purpose}</p>
     <p>Data: {request.data_access.scopes.join(', ')} · History: {request.data_access.history_days} days</p>
-    <p>Contact fields: {request.data_access.contact_fields.join(', ') || 'None'} · Location: {request.data_access.location_precision.replaceAll('_', ' ')}</p>
+    <p>Contact fields: {request.data_access.contact_fields.join(', ') || 'None'} · Location: {request.data_access.location_precision.replaceAll('_', ' ')} · Health: {request.data_access.health_types?.join(', ') || 'None'}</p>
     <p className="text-sm break-all">Private app: {request.destination.proxied_site_id}</p>
     <details className="app-access-details text-sm"><summary>Installation identity</summary><p className="break-all">{request.destination.recipient_fingerprint}</p></details>
     <Link to="/$budId/$threadId" params={{ budId: request.bud_id, threadId: request.thread_id }} className="inline-block underline">Open requesting conversation</Link>
@@ -107,7 +107,7 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
     </PermissionDetails>
   return <article className={`rounded border p-3 space-y-2 ${!inline && !pending ? 'app-access-row' : ''}`}>
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{request.app_label}</h3><span className="text-sm text-muted-foreground">{appPermissionStatus(request)}</span>{request.key?.last_used_at && <span className="text-xs text-muted-foreground">Used {time(request.key.last_used_at)}</span>}</div>
-    {pending && <p className="text-sm">Read {request.data_access.contact_fields.join(', ').replaceAll('_', ' ') || request.data_access.scopes.join(', ')} · {request.data_access.history_days} days{request.data_access.scopes.includes('location.read') ? ` · Location: ${request.data_access.location_precision.replaceAll('_', ' ')}` : ''}</p>}
+    {pending && <p className="text-sm">Read {request.data_access.contact_fields.join(', ').replaceAll('_', ' ') || request.data_access.scopes.join(', ')} · {request.data_access.history_days} days{request.data_access.scopes.includes('location.read') ? ` · Location: ${request.data_access.location_precision.replaceAll('_', ' ')}` : ''}{request.data_access.health_types?.length ? ` · Health: ${request.data_access.health_types.join(', ')}` : ''}</p>}
     {(!inline || !pending) && details}
     {pending && <div className="review-actions">
       <button className="review-deny" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>

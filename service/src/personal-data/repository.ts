@@ -3,6 +3,7 @@ import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as ownerState, dataInstallationTable as installation, dataCollectionEpochTable as epoch, dataEventTable as event, dataProcessingJobTable as job, contactScanTable as scan, contactSourceTable as contactSource } from "../db/schema.js";
 import { DataRequestError, type BatchResult, type IngestContext, type ParsedBatch } from "./contracts.js";
+import { HealthQueries } from "./health.js";
 
 export interface IngestRepository {
   persist(context: IngestContext, batch: ParsedBatch): Promise<BatchResult>;
@@ -100,6 +101,7 @@ export class PostgresIngestRepository implements IngestRepository {
     return { sources, contact_sources: contactSources.slice(0, 200), contact_sources_truncated: contactSources.length > 200,
       scans, pending_processing_count: counts.count, failed_processing_count: counts.failed,
       reconciliation_scan_count: scanCounts.repair,
-      projection_status: counts.failed || scanCounts.repair ? "needs_reconciliation" : counts.count || scanCounts.pending ? "processing" : "ready" };
+      projection_status: counts.failed || scanCounts.repair ? "needs_reconciliation" : counts.count || scanCounts.pending ? "processing" : "ready",
+      health: await new HealthQueries(this.database).status(userId) };
   }
 }

@@ -20,12 +20,12 @@ export function createContactApp({ appData, keyId }) {
         const [name, type] = assets[url.pathname];
         return send(200, type, await readFile(new URL(name, import.meta.url)));
       }
-      const match = /^\/api\/(contacts(?:\/[0-9A-HJKMNP-TV-Z]{26}(?:\/(?:history|location-context))?)?)$/.exec(url.pathname);
+      const match = /^\/api\/(contacts(?:\/[0-9A-HJKMNP-TV-Z]{26}(?:\/(?:history|location-context))?)?|health\/(?:workouts|sleep))$/.exec(url.pathname);
       if (!match) return send(404, 'application/json', '{"error":"not_found"}');
       const parameters = Object.fromEntries(url.searchParams);
-      if (url.search.length > 2048 || Object.keys(parameters).some(key => !['search', 'cursor', 'from', 'to'].includes(key)))
+      if (url.search.length > 2048 || Object.keys(parameters).some(key => !['search', 'cursor', 'from', 'to', 'timezone'].includes(key)))
         return send(400, 'application/json', '{"error":"invalid_query"}');
-      if (!match[1].includes('/') || match[1].endsWith('/history')) parameters.limit = 20;
+      if (!match[1].includes('/') || match[1].endsWith('/history') || match[1] === 'health/workouts') parameters.limit = 20;
       const result = await appData.query(keyId, match[1], parameters);
       send(200, 'application/json', JSON.stringify(result));
     } catch (error) {
