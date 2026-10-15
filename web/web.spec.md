@@ -54,6 +54,7 @@ web/
 | `build` | `tsc -b && vite build` | Type check & production build |
 | `lint` | `eslint .` | Run ESLint |
 | `test` | `node --experimental-strip-types --test 'src/**/*.test.ts'` | Run the current pure-helper web test suite without extra browser test dependencies |
+| `test:dev-proxy` | `tsx --test vite.config.test.ts` | Exercise the real Vite WebSocket proxy against a loopback service |
 | `test:render` | `tsx --tsconfig tsconfig.app.json --test 'src/**/*.test.tsx'` | Server-rendered content and mounted React hook/component checks using the app JSX configuration |
 | `test:watch` | `node --watch --experimental-strip-types --test 'src/**/*.test.ts'` | Re-run the current pure-helper suite while editing |
 | `preview` | `vite preview` | Preview production build |
@@ -95,6 +96,16 @@ Vite build configuration with:
 - Tailwind CSS plugin (`@tailwindcss/vite`)
 - Path aliases (`@/` → `src/`)
 - Development proxy for `/v1/events/*` mobile ingestion alongside existing API/discovery proxies
+- HTTP and WebSocket forwarding for `/ws`, including the daemon's
+  `/ws/browser-media` connection through the public HTTP development origin.
+  Service authentication and one-use media ticket validation remain authoritative.
+
+### `vite.config.test.ts`
+
+Starts the real Vite configuration with a loopback WebSocket upstream and verifies
+that `/ws/browser-media` upgrades reach the service. This catches the missing
+proxy that left viewers reconnecting while agent browser tools still worked.
+See the [investigation](../debug/browser-view-reconnecting-http-dev.md).
 
 ### `tsconfig.json`
 
@@ -128,7 +139,7 @@ Static assets served without processing.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `VITE_API_BASE_URL` | API server URL for cross-origin | unset (`same origin` when omitted) |
-| `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` and `/.well-known/*` | `http://localhost:3000` |
+| `VITE_API_PROXY_TARGET` | Dev proxy target for API, discovery, ingestion, terminal and `/ws` routes | `http://localhost:3000` |
 | `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES` | Comma-separated allowlist of hosted mobile-claim callback prefixes | `chat.bud.app://claim/` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
 
