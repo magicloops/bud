@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AppKeys } from "./app-keys.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, locationWindow } from "./location.js";
+import { HealthQueries, healthWindow } from "./health.js";
 import { DataRequestError } from "./contracts.js";
 
 const page = { limit: z.number().int().min(1).max(100).optional(), cursor: z.string().max(600).optional() };
@@ -12,6 +13,9 @@ const schemas = {
   contacts_history: z.object({ ...page, contact_id: contactId }).strict(),
   timeline_query: z.object({ ...page, from: z.string(), to: z.string() }).strict(),
   location_context: z.object({ contact_id: contactId, from: z.string(), to: z.string() }).strict(),
+  health_workouts: z.object({ ...page, from: z.string(), to: z.string(), activity_type: z.string().max(64).optional(),
+    order: z.enum(["asc", "desc"]).optional() }).strict(),
+  health_sleep: z.object({ from: z.string(), to: z.string(), timezone: z.string().max(64).optional() }).strict(),
 };
 type Query = keyof typeof schemas;
 type Location = Awaited<ReturnType<LocationQueries["list"]>>["items"][number];
@@ -21,15 +25,18 @@ export class AppDataQueries {
   constructor(private readonly keys: Pick<AppKeys, "authenticate" | "confirmCurrent"> = new AppKeys(),
     private readonly contacts: Pick<ContactQueries, "list" | "get" | "history"> = new ContactQueries(),
     private readonly locations: Pick<LocationQueries, "list" | "contactContext"> = new LocationQueries(),
-    private readonly now = () => new Date()) {}
+    private readonly now = () => new Date(),
+    private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries()) {}
 
   async execute(credential: unknown, operation: Query, input: unknown) {
     const authority = await this.keys.authenticate(credential);
     const parsed = schemas[operation]?.safeParse(input);
     if (!parsed?.success) throw new DataRequestError(400, "invalid_app_data_query", "Invalid app data query");
     const required = operation === "timeline_query" ? ["location.read"] : operation === "location_context"
-      ? ["contacts.read", "location.read"] : ["contacts.read"];
-    if (!required.every(scope => authority.policy.scopes.includes(scope as "contacts.read" | "location.read")))
+      ? ["contacts.read", "location.read"] : operation.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+    const healthType = operation === "health_workouts" ? "workouts" : operation === "health_sleep" ? "sleep" : null;
+    if (!required.every(scope => (authority.policy.scopes as string[]).includes(scope))
+      || (healthType && !authority.policy.health_types.includes(healthType)))
       throw new DataRequestError(403, "app_data_scope_required", "This app was not granted the requested data scope");
     const since = new Date(this.now().getTime() - authority.policy.history_days * 86400_000);
     const policy = { observedSince: since, cursorBinding: `app:${authority.keyId}:${authority.version}`,
@@ -51,6 +58,12 @@ export class AppDataQueries {
     } else if (operation === "contacts_history") {
       const query = args as z.infer<typeof schemas.contacts_history>;
       data = await this.contacts.history(authority.owner, query.contact_id, query, policy);
+    } else if (healthType) {
+      const query = args as z.infer<typeof schemas.health_workouts> & z.infer<typeof schemas.health_sleep>;
+      if (healthWindow(query, 366).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");
+      data = healthType === "workouts"
+        ? await this.health.workouts(authority.owner, query, { cursorBinding: policy.cursorBinding })
+        : await this.health.sleep(authority.owner, query, { notBefore: since });
     } else {
       const query = args as z.infer<typeof schemas.timeline_query>;
       if (locationWindow(query).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");

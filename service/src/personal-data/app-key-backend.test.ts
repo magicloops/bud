@@ -34,7 +34,8 @@ test("backend setup persists before receipt and recovers a lost acknowledgement 
       return Response.json({ status: "installed", key_id: issued.key_id });
     }
     assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${issued.credential}`);
-    assert.equal(url, "https://bud.example/api/app-data/contacts?search=Ada");
+    assert.ok(["https://bud.example/api/app-data/contacts?search=Ada",
+      "https://bud.example/api/app-data/health/sleep?from=a&to=b&timezone=UTC"].includes(url), url);
     return Response.json({ data: { items: [] } });
   };
   const options = { appId: "example", apiOrigin: "https://bud.example", stateRoot: root, fetch: fakeFetch };
@@ -50,6 +51,8 @@ test("backend setup persists before receipt and recovers a lost acknowledgement 
   assert.deepEqual(await restarted.install(context), { status: "installed", key_id: issued.key_id });
   assert.equal(retrieveCount, 1); assert.equal(receiptCount, 2);
   assert.deepEqual(await restarted.query(issued.key_id, "contacts", { search: "Ada" }), { data: { items: [] } });
+  assert.deepEqual(await restarted.query(issued.key_id, "health/sleep", { from: "a", to: "b", timezone: "UTC" }), { data: { items: [] } });
+  await assert.rejects(restarted.query(issued.key_id, "health/heart_rate"), /invalid_app_data_query/);
   const serialized = JSON.stringify([initialized, await restarted.install(context)]);
   assert.equal(serialized.includes(issued.credential), false);
   assert.equal(serialized.includes("PRIVATE KEY"), false);

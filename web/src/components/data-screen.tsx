@@ -14,7 +14,8 @@ type Revision = { id: string; fields: Fields; visible: boolean; observed_at: str
 type Page<T> = { items: T[]; next_cursor: string | null }
 type Status = { projection_status: string; pending_processing_count: number; failed_processing_count?: number; reconciliation_scan_count?: number;
   scans?: { scan_id: string; generation: number; status: string; waiting_reason: string | null; error_code: string | null }[];
-  sources: { installation_id: string; last_received_at: string | null }[] }
+  sources: { installation_id: string; last_received_at: string | null }[]
+  health?: { workouts_last_received_at: string | null; sleep_last_received_at: string | null } }
 const name = (fields: Fields) => [fields.given_name, fields.family_name].filter(Boolean).join(' ') || fields.organization || 'Unnamed contact'
 const time = (value: string) => new Date(value).toLocaleString()
 
@@ -80,11 +81,16 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
           </details>
         </>}
       </section>
-      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
+      <section aria-label="Health source" className="rounded border p-4 text-sm space-y-3">
+        <h2 className="text-xl font-semibold">Health</h2>
+        <p>Workouts and sleep from the phone's Health app, starting with the last 30 days. Allow Health access in the mobile app; HealthKit does not tell Bud when reading is denied.</p>
+        {status?.health && <p>Workouts: {status.health.workouts_last_received_at ? `last received ${time(status.health.workouts_last_received_at)}` : 'nothing received yet'} · Sleep: {status.health.sleep_last_received_at ? `last received ${time(status.health.sleep_last_received_at)}` : 'nothing received yet'}</p>}
+      </section>
+      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
       {error && <p role="alert">{error}</p>}
       </>}
       {browse && <>
-      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span>{['Location', 'Health', 'Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
+      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span><Link to="/data/health">Health</Link>{['Location', 'Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
       <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); setQuery(search); setCursor(null); setSelected(null); setRefresh(value => value + 1) }}>
         <input aria-label="Search contacts" placeholder="Search collected contact fields" className="min-w-0 flex-1 rounded border bg-background p-2" value={search} maxLength={200} onChange={event => setSearch(event.target.value)} />
         <button className="rounded border px-4 py-2" type="submit">Search</button>
@@ -149,7 +155,9 @@ function ContactFieldDetails({ fields }: { fields: Fields }) {
   </div>
 }
 
-type Grant = { version: number; scopes: string[]; history_days: number; fields?: string[]; supported_contact_fields?: string[] }
+type Grant = { version: number; scopes: string[]; history_days: number; fields?: string[]; supported_contact_fields?: string[]
+  health_types?: string[]; supported_health_types?: string[] }
+const healthTypeChoices = [['workouts', 'Workouts'], ['sleep', 'Sleep']] as const
 const contactFieldChoices = [['names', 'Names'], ['organization', 'Organizations'], ['phones', 'Phone numbers'],
   ['emails', 'Email addresses'], ['postal_addresses', 'Postal addresses'], ['urls', 'Websites']] as const
 function AgentDataPermissions() {
@@ -178,7 +186,8 @@ function AgentDataPermissions() {
     try {
       const result = await apiFetchJson<Grant>('/api/data/agent-grant', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: next.version, scopes: next.scopes, history_days: next.history_days,
-          ...(next.supported_contact_fields ? { fields: next.fields } : {}) }) })
+          ...(next.supported_contact_fields ? { fields: next.fields } : {}),
+          ...(next.supported_health_types ? { health_types: next.health_types } : {}) }) })
       if (mounted.current) { setGrant(result); setHistory(String(result.history_days)); setMessage('Permissions saved.') }
     } catch {
       if (mounted.current) {
@@ -199,7 +208,8 @@ function AgentDataPermissions() {
 
     <p className="text-sm text-muted-foreground">Allow your Bud agents and their selected model providers to read this data. Collection and generated-app access are separate permissions.</p>
     {grant && <>
-      {[['contacts.read', 'Contacts'], ['location.read', 'Location at collected precision']].map(([scope, label]) => <label key={scope} className="flex items-center gap-2"><input type="checkbox" disabled={saving || needsReload} checked={grant.scopes.includes(scope)} onChange={event => void save({ ...grant, scopes: event.target.checked ? [...grant.scopes, scope] : grant.scopes.filter(value => value !== scope) })} />{label}</label>)}
+      {[['contacts.read', 'Contacts'], ['location.read', 'Location at collected precision'],
+        ...(grant.supported_health_types ? [['health.read', 'Health']] : [])].map(([scope, label]) => <label key={scope} className="flex items-center gap-2"><input type="checkbox" disabled={saving || needsReload} checked={grant.scopes.includes(scope)} onChange={event => void save({ ...grant, scopes: event.target.checked ? [...grant.scopes, scope] : grant.scopes.filter(value => value !== scope) })} />{label}</label>)}
       {grant.scopes.includes('contacts.read') && <fieldset className="space-y-2 rounded border p-3" disabled={saving || needsReload}>
         <legend className="px-1 text-sm">Contact fields agents may read</legend>
         {grant.supported_contact_fields ? contactFieldChoices.filter(([field]) => grant.supported_contact_fields!.includes(field)).map(([field, label]) =>
@@ -207,6 +217,12 @@ function AgentDataPermissions() {
             onChange={event => void save({ ...grant, fields: event.target.checked ? [...(grant.fields ?? []), field] : (grant.fields ?? []).filter(value => value !== field) })} />{label}</label>)
           : <p className="text-sm">Names, organizations, phone numbers and emails. This service does not support individual field choices yet.</p>}
         <p className="text-sm text-muted-foreground">Addresses and websites are available only when collected by your phone. Postal addresses do not establish where you met.</p>
+      </fieldset>}
+      {grant.scopes.includes('health.read') && grant.supported_health_types && <fieldset className="space-y-2 rounded border p-3" disabled={saving || needsReload}>
+        <legend className="px-1 text-sm">Health data agents may read</legend>
+        {healthTypeChoices.filter(([type]) => grant.supported_health_types!.includes(type)).map(([type, label]) =>
+          <label key={type} className="flex items-center gap-2"><input type="checkbox" checked={grant.health_types?.includes(type) ?? false}
+            onChange={event => void save({ ...grant, health_types: event.target.checked ? [...(grant.health_types ?? []), type] : (grant.health_types ?? []).filter(value => value !== type) })} />{label}</label>)}
       </fieldset>}
       <label className="block">History window (days) <input className="ml-2 w-24 rounded border bg-background p-1" type="number" min={1} max={3650} disabled={saving || needsReload} value={history} onChange={event => setHistory(event.target.value)} onBlur={saveHistory} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} /></label>
     </>}

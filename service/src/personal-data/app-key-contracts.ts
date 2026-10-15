@@ -12,8 +12,10 @@ export const APP_KEY_LIMITS = {
 
 const unique = (values: string[]) => new Set(values).size === values.length;
 export const appDataPolicySchema = z.object({
-  scopes: z.array(z.enum(["contacts.read", "location.read"])).min(1).max(2).refine(unique),
+  scopes: z.array(z.enum(["contacts.read", "location.read", "health.read"])).min(1).max(3).refine(unique),
   contact_fields: z.array(z.enum(["names", "organization", "phones", "emails", "postal_addresses", "urls"])).max(6).refine(unique),
+  // Defaults keep policies stored before health existed parsing (and hashing) identically.
+  health_types: z.array(z.enum(["workouts", "sleep"])).max(2).refine(unique).default([]),
   location_precision: z.enum(["none", "rounded_2_decimals", "as_collected"]),
   history_days: z.number().int().min(1).max(APP_KEY_LIMITS.history_days),
 }).strict().superRefine((value, ctx) => {
@@ -21,6 +23,8 @@ export const appDataPolicySchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["contact_fields"], message: "Contact fields must match contacts scope" });
   if (value.scopes.includes("location.read") !== (value.location_precision !== "none"))
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["location_precision"], message: "Location precision must match location scope" });
+  if (value.scopes.includes("health.read") !== (value.health_types.length > 0))
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["health_types"], message: "Health types must match health scope" });
 });
 export type AppDataPolicy = z.infer<typeof appDataPolicySchema>;
 

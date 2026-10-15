@@ -22,6 +22,7 @@ test("v2 enrichment preserves identity/history, new additions and repair suppres
   t.after(async () => { await pool.end(); try { await admin.query(`drop schema if exists "${fixture}" cascade`); } finally { await admin.end(); } });
   await admin.query(`create schema "${fixture}"`);
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
+    "health_workout", "health_sleep_segment", "health_sample_deletion",
     "contact_source", "contact_scan", "contact_scan_record", "contact", "contact_revision", "data_domain_event", "location_observation"])
     await admin.query(`create table "${fixture}"."${table}" (like public."${table}" including all)`);
   const db = drizzle(pool, { schema: s });

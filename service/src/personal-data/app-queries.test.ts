@@ -7,7 +7,7 @@ import { DataRequestError } from "./contracts.js";
 function fixture() {
   const calls: { method: string; args: unknown[] }[] = [];
   const authority: AppKeyAuthority = { owner: "owner-a", keyId: "key-a", version: 1,
-    policy: { scopes: ["contacts.read", "location.read"], contact_fields: ["names"], location_precision: "rounded_2_decimals", history_days: 30 } };
+    policy: { scopes: ["contacts.read", "location.read"], contact_fields: ["names"], location_precision: "rounded_2_decimals", health_types: [], history_days: 30 } };
   let revokeAfterRead = false;
   let read = false;
   const observe = (method: string, args: unknown[]) => { read = true; calls.push({ method, args }); };
@@ -28,8 +28,12 @@ function fixture() {
     contactContext: async (...args: unknown[]) => { observe("context", args); return { contact_id: "contact", evidence,
       uncertainty: "Not a verified meeting or creation location", continuous_coverage: false }; },
   } as unknown as Dependencies[2];
+  const health = {
+    workouts: async (...args: unknown[]) => { observe("workouts", args); return { items: [], next_cursor: null }; },
+    sleep: async (...args: unknown[]) => { observe("sleep", args); return { items: [] }; },
+  } as unknown as Dependencies[4];
   return { authority, calls, revokeDuringRead: () => { revokeAfterRead = true; },
-    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z")) };
+    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health) };
 }
 
 test("app queries enforce scope, field/history SQL policy and key-bound pagination", async () => {
@@ -83,4 +87,16 @@ test("revocation during an app read withholds the result", async () => {
   await assert.rejects(f.query.execute("key", "contacts_search", {}),
     (error: unknown) => error instanceof DataRequestError && error.code === "app_data_key_invalid");
   assert.equal(f.calls.length, 1);
+});
+
+test("app health queries need health.read and the specific health type", async () => {
+  const f = fixture();
+  const window = { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" };
+  await assert.rejects(f.query.execute("key", "health_workouts", window), { code: "app_data_scope_required" });
+  f.authority.policy = { ...f.authority.policy, scopes: ["health.read"], contact_fields: [], location_precision: "none", health_types: ["sleep"] };
+  await assert.rejects(f.query.execute("key", "health_workouts", window), { code: "app_data_scope_required" });
+  await f.query.execute("key", "health_sleep", { ...window, timezone: "Europe/London" });
+  assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["owner-a", { ...window, timezone: "Europe/London" }, { notBefore: new Date("2026-08-05T12:00:00Z") }] });
+  await assert.rejects(f.query.execute("key", "health_sleep", { ...window, from: "2026-07-01T00:00:00Z" }), { code: "history_outside_grant" });
+  await assert.rejects(f.query.execute("key", "health_sleep", { ...window, owner: "other" }), { code: "invalid_app_data_query" });
 });

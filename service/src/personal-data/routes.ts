@@ -6,6 +6,7 @@ import { ContactProcessor } from "./contact-processor.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, type LocationQuery } from "./location.js";
 import { DataGrants } from "./grants.js";
+import { HealthQueries, type SleepQuery, type WorkoutQuery } from "./health.js";
 import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
 import { AUTOMATION_EVENT_TYPES, automationCreateSchema, automationActivateBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
@@ -23,6 +24,7 @@ type Dependencies = {
   verifyExpandedContactsSchema?: () => Promise<void>;
   queries?: ContactQueries;
   locationQueries?: LocationQueries;
+  healthQueries?: Pick<HealthQueries, "workouts" | "sleep">;
   grants?: DataGrants;
   automations?: Pick<Automations, "list" | "get" | "history" | "create" | "update" | "pause" | "activate" | "delete">;
   automationActivationEnabled?: boolean;
@@ -40,6 +42,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
   const repository = dependencies.repository ?? new PostgresIngestRepository();
   const queries = dependencies.queries ?? new ContactQueries();
   const locationQueries = dependencies.locationQueries ?? new LocationQueries();
+  const healthQueries = dependencies.healthQueries ?? new HealthQueries();
   const grants = dependencies.grants ?? new DataGrants();
   const automations = dependencies.automations ?? new Automations();
   const bootstrap = dependencies.bootstrap ?? new AutomationBootstrap();
@@ -194,13 +197,18 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       locationQueries.list(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
     app.get<{ Params: { id: string }; Querystring: Pick<LocationQuery, "from" | "to"> }>("/api/data/contacts/:id/location-context", async request =>
       locationQueries.contactContext(viewers.get(request)!.userId, request.params.id, request.query));
+    // First-party owner reads; agents and apps go through their grant-aware adapters.
+    app.get<{ Querystring: Omit<WorkoutQuery, "limit"> & { limit?: string } }>("/api/data/health/workouts", async request =>
+      healthQueries.workouts(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
+    app.get<{ Querystring: SleepQuery }>("/api/data/health/sleep", async request =>
+      healthQueries.sleep(viewers.get(request)!.userId, request.query));
     app.get("/api/data/agent-grant", async request => grants.get(viewers.get(request)!.userId));
     app.put("/api/data/agent-grant", async request => grants.update(viewers.get(request)!.userId, request.body));
     app.get("/api/data/status", async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       return {
       ingest: { envelope_versions: [1], unknown_envelopes_stored: true, limits: INGEST_LIMITS, collection_epochs: true },
-      features: { contacts: true, contacts_payload_v2: contactsV2Ready, contact_source_repair: true, location_queries: true, health_queries: false, automations: dependencies.automationActivationEnabled ?? false,
+      features: { contacts: true, contacts_payload_v2: contactsV2Ready, contact_source_repair: true, location_queries: true, health_queries: true, automations: dependencies.automationActivationEnabled ?? false,
         automation_activation: dependencies.automationActivationEnabled ?? false, app_keys: dependencies.appKeysEnabled ?? false,
         automation_triggers: AUTOMATION_EVENT_TYPES,
         automation_proposals: Boolean(dependencies.automationActivationEnabled && dependencies.automationProposalsEnabled),

@@ -39,7 +39,7 @@ export function AutomationProposalSummary({ proposal }: { proposal: ApiAutomatio
       <div><dt className="font-semibold">Conversation</dt><dd>{automationReviewDestination(proposal)}</dd></div>
       {definition.event_type === 'contact.added' && <div><dt className="font-semibold">Contact sources</dt><dd>{definition.sources.source_ids.length ? definition.sources.source_ids.join(', ') : 'All permitted contact sources'}</dd></div>}
       <div><dt className="font-semibold">Data access</dt><dd>{definition.data_access.scopes.length
-        ? `${definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : 'Location at collected precision').join(' and ')} · ${definition.data_access.history_days} days of history`
+        ? `${definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : scope === 'health.read' ? 'Health (workouts and sleep you allow)' : 'Location at collected precision').join(' and ')} · ${definition.data_access.history_days} days of history`
         : 'No personal data'}</dd></div>
       <div><dt className="font-semibold">Limits</dt><dd>Up to {definition.max_invocations_per_day} runs per 24 hours. Unstarted work expires after {definition.latest_start_seconds / 60} minutes. Waits for the selected Bud and model; retired cloud models use the current default. Offline local models do not switch to cloud.</dd></div>
     </dl>

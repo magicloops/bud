@@ -393,3 +393,7 @@ fence navigation and resync. The panel exposes loading/error and older/latest pa
 controls. The default Bud route reads one latest row. Automation filter/editor
 selectors page 50 rows and separately resolve the selected owned thread, retaining
 selection outside the current page. No automatic full-inventory pagination loop.
+
+### `data_.health.tsx`
+
+Authenticated `/data/health`, rendering `HealthScreen`.

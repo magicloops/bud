@@ -31,6 +31,7 @@ test("complete source repair skips broken scans without changing identities or e
   // without exposing these deliberately incomplete scans to that worker.
   await admin.query(`create schema "${fixtureSchema}"`);
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event",
+    "health_workout", "health_sleep_segment", "health_sample_deletion",
     "data_processing_job", "contact_source", "contact_scan", "contact_scan_record", "contact",
     "contact_revision", "data_domain_event", "location_observation"]) {
     await admin.query(`create table "${fixtureSchema}"."${table}" (like public."${table}" including all)`);

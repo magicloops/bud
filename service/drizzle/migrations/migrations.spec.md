@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0051` currently)
+- Snapshot files for each migration (`0000` through `0052` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -506,3 +506,10 @@ exactly one of them, and `unique(automation_id, scheduled_for)` prevents running
 a schedule window twice across revisions. Existing rows all carry a domain event,
 so no data change. Additive for older services, which never read schedule rows.
 Applied locally as exact SQL; isolated PostgreSQL scheduler tests pass.
+
+### `0052_health_samples.sql`
+
+Generated migration with snapshot/journal. Adds the health sample and deletion
+tables and `agent_data_grant.health_types`. Purely additive; existing rows get
+the column default. Applied locally as exact SQL; the isolated PostgreSQL health
+fixture passes.

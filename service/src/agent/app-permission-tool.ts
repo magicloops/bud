@@ -11,11 +11,12 @@ export const APP_PERMISSION_TOOL: CanonicalTool = {
       purpose: { type: "string", minLength: 1, maxLength: 2000 },
       data_access: {
         type: "object", additionalProperties: false,
-        required: ["scopes", "contact_fields", "location_precision", "history_days"],
+        required: ["scopes", "contact_fields", "location_precision", "health_types", "history_days"],
         properties: {
-          scopes: { type: "array", minItems: 1, maxItems: 2, items: { type: "string", enum: ["contacts.read", "location.read"] } },
+          scopes: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", enum: ["contacts.read", "location.read", "health.read"] } },
           contact_fields: { type: "array", maxItems: 6, items: { type: "string", enum: ["names", "organization", "phones", "emails", "postal_addresses", "urls"] }, description: "Nonempty with contacts.read; otherwise empty. Addresses and website URLs require explicit approval and may be uncollected on older sources. Postal addresses are contact records, not observed location evidence." },
           location_precision: { type: "string", enum: ["none", "rounded_2_decimals", "as_collected"], description: "Use none without location.read." },
+          health_types: { type: "array", maxItems: 2, items: { type: "string", enum: ["workouts", "sleep"] }, description: "Nonempty with health.read; otherwise empty." },
           history_days: { type: "integer", minimum: 1, maximum: 3650 },
         },
       },

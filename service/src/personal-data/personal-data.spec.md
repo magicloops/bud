@@ -385,3 +385,45 @@ supported types to clients.
   admission/policy/ceiling, previous-window text and pinned-grant failure.
 
 Plan: [location and health agent data](../../../plan/location-and-health-agent-data.md).
+
+## Health (phase 4)
+
+- `health.ts`: validates `health.workout.v2`, `health.sleep_segment.v2` and
+  `health.sample_deleted.v1` payloads (HealthKit UUID, times, import mode, source,
+  device, kind fields) and projects them inside the processor's owner-locked job
+  transaction. One row per owner and HealthKit UUID across devices and epochs;
+  re-imports update the row but keep the first `import_mode`. Deletions live in
+  `health_sample_deletion`, so a deletion that arrives before its sample still
+  hides it. v1 health envelopes stay raw and unsupported. Previously unsupported
+  v2 jobs are requeued by the existing recovery pass.
+- `HealthQueries.workouts`: bounded (366-day) start-time window, optional
+  activity filter, `order` asc (default) or desc, cursors bound to
+  owner/window/filter/order.
+- `HealthQueries.sleep` (92 days) returns complete nights for every local date
+  from `from` to `to`; night D runs from noon on D to noon on D + 1 in the IANA
+  zone.
+  - Segments overlapping a night are clipped to it. A boundary sweep merges
+    overlaps within a source, counting each instant once under its most specific
+    sleep stage. Time in bed (`in_bed_minutes`, `stage_minutes.in_bed`) is the
+    union of in-bed samples, measured independently of sleep stages.
+  - Nights cut by `notBefore` (agent/app approved history) or still in progress
+    are `complete: false` with `partial_reasons`.
+  - Source choice follows `SLEEP_SELECTION_RULE`; every source's totals are
+    listed in `sources`. Empty dates go in `nights_without_records`.
+- Both return coverage with `last_received_at` and `read_access: unknown`.
+  `HealthQueries.status` adds last-received times to `/api/data/status`.
+- Agent grant: `health.read` scope plus `health_types` (`workouts`, `sleep`;
+  default both, migration 0052). Tools `health_workouts` / `health_sleep` need
+  the scope and the matching type, stay within approved history, and honor
+  automation ceilings. Automation definitions may request `health.read`.
+- App policies add `health_types` (defaulting to `[]`, so stored policies parse
+  and hash identically); it must be non-empty exactly when `health.read` is
+  requested. Routes `/api/app-data/health/{workouts,sleep}`; the backend helper
+  allows those resources and the `timezone`/`activity_type` parameters.
+- First-party routes `/api/data/health/workouts` and `/api/data/health/sleep`;
+  `features.health_queries` is true.
+- `health.test.ts`: payload validation plus an isolated-schema PostgreSQL
+  fixture for processing, UUID dedupe, out-of-order deletion, cursors, owner
+  isolation, night grouping, source choice and timezones.
+- `example-app` shows the last 14 nights of sleep and 30 days of workouts when
+  the app key includes them.

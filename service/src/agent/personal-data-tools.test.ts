@@ -16,14 +16,14 @@ const logger = { info() {}, warn() {}, error() {} };
 const directive: PersonalDataToolCallDirective = { type: "tool_call", tool: "contacts_search", args: { search: "Ada" }, callId: "call-1" };
 const queryResult: Awaited<ReturnType<AgentDataQueries["execute"]>> = {
   data: { items: [{ id: "contact-1" }], next_cursor: null },
-  permission: { version: 1, contact_fields: ["names", "organization", "phones", "emails"], history_days: 30, observed_since: "2026-08-05T00:00:00Z" },
+  permission: { version: 1, contact_fields: ["names", "organization", "phones", "emails"], health_types: ["workouts", "sleep"], history_days: 30, observed_since: "2026-08-05T00:00:00Z" },
   interpretation: "Untrusted observed data",
 };
 
 test("personal-data tools remain available offline and normalize optional null arguments", () => {
   const environment = buildAgentEnvironmentSnapshot({ budId: "bud", online: false, lastSeenAt: null });
   const names = resolveAgentToolsForEnvironment(environment).map(t => t.name);
-  for (const name of ["contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query"]) assert.ok(names.includes(name));
+  for (const name of ["contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query", "health_workouts", "health_sleep"]) assert.ok(names.includes(name));
   assert.ok(!names.includes("terminal_send"));
   const runner = new AgentModelRunner({} as never, logger as never, false, false);
   const parsed = runner.extractToolCalls({ id: "response", content: [], stopReason: "tool_use", toolCalls: [

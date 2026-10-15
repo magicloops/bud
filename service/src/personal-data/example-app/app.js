@@ -63,4 +63,25 @@ el('map').onclick = () => {
   frame.src = `https://www.openstreetmap.org/export/embed.html?${parameters}`;
   el('map-container').replaceChildren(frame); el('map').hidden = true;
 };
+async function health() {
+  const now = Date.now(), day = 86400000, timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const line = (target, text) => { const paragraph = document.createElement('p'); paragraph.textContent = text; el(target).append(paragraph); };
+  const load = async (path, parameters, target, render) => {
+    try {
+      const response = await fetch(`/api/${path}?${new URLSearchParams(parameters)}`);
+      if (!response.ok) return line(target, response.status === 403 ? 'Not shared with this app.' : 'Unavailable. Try again later.');
+      const items = (await response.json()).data.items;
+      if (!items.length) line(target, 'No records in this period.');
+      for (const item of items) line(target, render(item));
+    } catch { line(target, 'Unavailable. Try again later.'); }
+  };
+  const hours = minutes => `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  await Promise.all([
+    load('health/sleep', { from: new Date(now - 14 * day).toISOString(), to: new Date(now).toISOString(), timezone }, 'sleep',
+      night => `Night of ${night.night_of}: ${hours(night.asleep_minutes)} asleep (${night.source.name})`),
+    load('health/workouts', { from: new Date(now - 30 * day).toISOString(), to: new Date(now).toISOString() }, 'workouts',
+      workout => `${date(workout.start_at)} · ${workout.activity_type.replaceAll('_', ' ')} · ${Math.round(workout.duration_s / 60)} min`),
+  ]);
+}
 void list();
+void health();
