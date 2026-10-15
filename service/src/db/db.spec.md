@@ -633,3 +633,8 @@ Migration `0052_health_samples.sql` adds `health_workout`,
 composite owner FKs to `data_event` and `data_collection_epoch`) and
 `health_sample_deletion` (unique owner + UUID). `agent_data_grant.health_types`
 defaults to both workouts and sleep; agents still need the `health.read` scope.
+
+Migration `0053_workout_domain_events.sql` makes `data_domain_event.revision_id`
+nullable and adds `workout_id` (owner-composite FK to `health_workout`, which
+gains `unique(id, created_by_user_id)`). A check requires exactly one subject;
+`unique(workout_id, event_type)` publishes each workout once.

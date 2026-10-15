@@ -397,3 +397,9 @@ selection outside the current page. No automatic full-inventory pagination loop.
 ### `data_.health.tsx`
 
 Authenticated `/data/health`, rendering `HealthScreen`.
+
+Automations also offer "When a workout is recorded" (when `features.automation_triggers`
+includes it). It has activity checkboxes (none = any), a minimum duration, a
+maximum age in hours, and data access that requires Health, with optional
+location during the workout. `lib/automation-schedule.ts` describes workout
+filters for the list, editor and review summary.

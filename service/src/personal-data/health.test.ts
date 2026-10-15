@@ -50,7 +50,7 @@ test("health events project once per HealthKit UUID, honor deletions in any orde
   await admin.query(`create schema "${namespace}"`);
   // Isolated copies keep fixture jobs away from the running development processor.
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
-    "health_workout", "health_sleep_segment", "health_sample_deletion"])
+    "health_workout", "health_sleep_segment", "health_sample_deletion", "data_domain_event"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
 
   const owner = "health-owner", other = "health-other";

@@ -5,6 +5,7 @@ import type { Invocation } from "../agent/invocation-repository.js";
 import { ContactQueries, LEGACY_CONTACT_FIELDS, type ContactField } from "./contact-queries.js";
 import { automationDefinitionSchema, parseAutomationInput, requireContactDefinition } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
+import { automationWorkoutContext } from "./automation-workout-context.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
@@ -13,7 +14,8 @@ export async function automationStartEvidence(tx: Transaction, invocation: Invoc
   const [scheduled] = await tx.select({ id: deliveries.id }).from(deliveries).where(and(
     eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, invocation.createdByUserId),
     isNotNull(deliveries.scheduledFor))).limit(1);
-  return scheduled ? null : automationContactContext(tx, invocation);
+  if (scheduled) return null;
+  return await automationWorkoutContext(tx, invocation) ?? automationContactContext(tx, invocation);
 }
 
 /** Caller holds owner + invocation locks and has checked current automation policy. */

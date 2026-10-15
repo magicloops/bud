@@ -4,14 +4,16 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   automationBootstrapTable as requests, automationBootstrapGroupTable as groups, automationBootstrapMemberTable as members,
   agentDataGrantTable as grants, dataDomainEventTable as events, contactRevisionTable as evidence,
   contactTable as contacts, contactSourceTable as sources, dataCollectionEpochTable as epochs,
-  dataInstallationTable as installations, agentInvocationTable as invocations, messageTable as messages } from "../db/schema.js";
+  dataInstallationTable as installations, agentInvocationTable as invocations, messageTable as messages,
+  healthWorkoutTable as workouts } from "../db/schema.js";
 import { InvocationError, type Invocation } from "../agent/invocation-repository.js";
 import { automationDefinitionSchema, grantCoversDefinition, parseAutomationInput } from "./automation-contracts.js";
 import type { AgentDataCeiling } from "./agent-queries.js";
 import { DataRequestError } from "./contracts.js";
 
 type PolicyRow = { state: string; definition: unknown; grantVersion: number; scopes: string[] | null;
-  historyDays: number | null; currentGrantVersion: number | null; domainEventId?: string | null };
+  historyDays: number | null; currentGrantVersion: number | null; domainEventId?: string | null;
+  healthTypes?: string[] | null; workoutId?: string | null };
 
 export async function loadAutomationDataCeiling(threadId: string, owner: string, turnId?: string,
   database: Pick<Database, "select"> = db): Promise<AgentDataCeiling | undefined> {
@@ -48,12 +50,22 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
   // Grants are optional: a rule without data scopes needs none.
   let [policy]: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
     grantVersion: revisions.grantVersion, scopes: grants.scopes, historyDays: grants.historyDays,
-    currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId }).from(deliveries)
+    currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId, healthTypes: grants.healthTypes,
+    workoutId: events.workoutId }).from(deliveries)
     .innerJoin(rules, and(eq(rules.id, deliveries.automationId), eq(rules.createdByUserId, owner)))
     .innerJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, deliveries.revision), eq(revisions.createdByUserId, owner)))
     .leftJoin(grants, eq(grants.createdByUserId, owner))
+    .leftJoin(events, and(eq(events.id, deliveries.domainEventId), eq(events.createdByUserId, owner)))
     .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"))).limit(1);
-  if (policy?.domainEventId) {
+  if (policy?.workoutId) {
+    // Workout deliveries need the workout, its source and the grant's workouts type.
+    const [lineage] = await database.select({ id: workouts.id }).from(workouts)
+      .innerJoin(epochs, and(eq(epochs.id, workouts.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))
+      .innerJoin(installations, and(eq(installations.id, epochs.installationId), eq(installations.createdByUserId, owner), isNull(installations.revokedAt)))
+      .where(and(eq(workouts.id, policy.workoutId), eq(workouts.createdByUserId, owner))).limit(1);
+    if (!lineage) throw new InvocationError("automation_authority_lost");
+    if (!(policy.healthTypes ?? []).includes("workouts")) throw new InvocationError("data_permission_changed");
+  } else if (policy?.domainEventId) {
     // Event deliveries keep their source lineage requirement.
     const [lineage] = await database.select({ id: events.id }).from(events)
       .innerJoin(evidence, and(eq(evidence.id, events.revisionId), eq(evidence.createdByUserId, owner)))

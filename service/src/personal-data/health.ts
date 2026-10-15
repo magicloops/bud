@@ -3,7 +3,8 @@ import { and, asc, desc, eq, gt, gte, lt, lte, max, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { healthWorkoutTable as workouts, healthSleepSegmentTable as segments,
-  healthSampleDeletionTable as deletions, dataEventTable as events } from "../db/schema.js";
+  healthSampleDeletionTable as deletions, dataEventTable as events,
+  dataOwnerStateTable as owners, dataDomainEventTable as domains } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
 import { localTimeToInstant } from "./automation-schedule.js";
 
@@ -69,7 +70,9 @@ export function parseHealthPayload(type: string, payload: unknown) {
 }
 
 /** Caller holds the owner lock. Returns false for an invalid payload. Re-imports of a
- * sample update its row; deletions are kept separately so order never matters. */
+ * sample update its row; deletions are kept separately so order never matters.
+ * A workout first stored from incremental collection publishes `workout.completed`
+ * (never for the bounded baseline, re-uploads or already-deleted samples). */
 export async function processHealthEvent(tx: Transaction, owner: string, event: DataEvent) {
   const parsed = parseHealthPayload(event.eventType, event.rawEnvelope.payload);
   if (!parsed) return false;
@@ -82,8 +85,20 @@ export async function processHealthEvent(tx: Transaction, owner: string, event: 
   // The first import mode is kept: a later re-upload must not turn a baseline sample into a new one.
   if (parsed.kind === "workout") {
     const { kind: _kind, importMode, ...fields } = parsed;
-    await tx.insert(workouts).values({ id: ulid(), ...fields, ...stored, importMode, createdByUserId: owner })
-      .onConflictDoUpdate({ target: [workouts.createdByUserId, workouts.hkUuid], set: { ...fields, ...stored } });
+    const [row] = await tx.insert(workouts).values({ id: ulid(), ...fields, ...stored, importMode, createdByUserId: owner })
+      .onConflictDoUpdate({ target: [workouts.createdByUserId, workouts.hkUuid], set: { ...fields, ...stored } })
+      .returning({ id: workouts.id, inserted: sql<boolean>`(xmax = 0)` });
+    if (row.inserted && importMode === "incremental") {
+      const [deleted] = await tx.select({ id: deletions.id }).from(deletions)
+        .where(and(eq(deletions.createdByUserId, owner), eq(deletions.hkUuid, fields.hkUuid))).limit(1);
+      if (!deleted) {
+        // Same commit-safe owner sequence as contact publication; the caller holds its lock.
+        const [sequence] = await tx.update(owners).set({ publicationSequence: sql`${owners.publicationSequence} + 1` })
+          .where(eq(owners.createdByUserId, owner)).returning({ value: owners.publicationSequence });
+        await tx.insert(domains).values({ id: ulid(), workoutId: row.id, eventType: "workout.completed",
+          publicationSequence: sequence.value, createdByUserId: owner }).onConflictDoNothing();
+      }
+    }
   } else {
     const { kind: _kind, importMode, ...fields } = parsed;
     await tx.insert(segments).values({ id: ulid(), ...fields, ...stored, importMode, createdByUserId: owner })

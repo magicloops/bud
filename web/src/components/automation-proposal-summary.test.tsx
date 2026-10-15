@@ -96,3 +96,14 @@ test('schedule review shows its local schedule and that no personal data is requ
     assert.ok(markup.includes(text), text)
   assert.doesNotMatch(markup, /Contact sources|When a new contact is observed/)
 })
+
+test('workout review describes its filter, delivery delay and age limit, with health access', () => {
+  const { sources: _sources, ...base } = proposal.definition as typeof proposal.definition & { sources: unknown }
+  const workout: ApiAutomationProposal = { ...proposal, definition: { ...base, event_type: 'workout.completed',
+    workout_filter: { activity_types: ['running', 'cycling'], min_duration_minutes: 20 }, max_event_age_seconds: 21600,
+    data_access: { scopes: ['health.read'], history_days: 30 } } }
+  const markup = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: workout }))
+  for (const text of ['After each running or cycling workout of at least 20 minutes', 'within an hour or two', 'older than 6 hours', 'Health'])
+    assert.ok(markup.includes(text), text)
+  assert.doesNotMatch(markup, /Contact sources|When a new contact is observed/)
+})
