@@ -678,8 +678,9 @@ list windows; empty-state copy is withheld until the first snapshot settles.
 
 ## Uploaded files
 
-CommandComposer accepts a FileDraft, exposes attachment controls and
+CommandComposer accepts a FileDraft, exposes attachment/library controls and
 file drop; it blocks send while uploads are unfinished and allows attachments-only
 messages. ChatTimeline renders authorized download cards from user message
-metadata. Upload state and downloads live in features/uploads.
-The reusable library and its controls are a separate stacked change.
+metadata. Storage and library behavior live in features/uploads.
+The composer shares its controls-right inset with the attachment row so Your
+files aligns above Send in both the full-width chat and split-pane layouts.

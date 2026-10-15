@@ -757,18 +757,19 @@ New budget reads use requireAuthorizedThreadAccess before runtime/context work.
 Pending hints carry kinds only on the already-authorized thread stream. This does
 not implement Phase 5 account disablement or immediate credential revocation.
 
-## Chat uploads — October 15
+## Chat uploads and reusable library — October 15
 
-- [x] Fastify + local PostgreSQL fixtures: anonymous upload 401, foreign
+- [x] Fastify + local PostgreSQL fixtures: anonymous list/upload 401, foreign
   content/upload/attachments 404, cookie writes without trusted Origin 403.
-- [x] Agent reads require a current-chat attachment; deletion revokes reads.
+- [x] Owner-filtered SQL search/pagination includes only ready nondeleted files;
+  foreign library is empty, deletion revokes reads, literal wildcard search.
 - [x] Agent thread/Bud owner mismatch and stale invocation authority reject;
   transfer grants reject replay, disposal and revoked browser authority.
 - [x] Real Chrome/Rust fixture attaches exact hash-verified original bytes through
   the guarded file input; hidden/iframe/stale-input helper fixtures pass.
-- [ ] Two actual signed-in accounts: cookie/bearer read/delete, sign-out
+- [ ] Two actual signed-in accounts: cookie/bearer read/search/delete, sign-out
   during download, account switching and deletion during browser attachment.
 
 Files belong to authenticated users, independently of thread lifetime; reserve
 stamps required owner plus nullable tenant. Model arguments cannot choose an
-owner. Thread/Bud/invocation authority is rechecked for agent access.
+owner. Thread/Bud/invocation authority is rechecked for agent/library access.

@@ -914,7 +914,7 @@ export class AgentService {
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              (effectiveToolCall.tool !== "files_read" && !isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
+	              (effectiveToolCall.tool !== "files_read" && effectiveToolCall.tool !== "files_search" && !isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -957,7 +957,7 @@ export class AgentService {
                 this.cancellations.clear(threadId);
                 return { status: "waiting_for_user" };
               }
-            } else if (effectiveToolCall.tool === "files_read") {
+            } else if (effectiveToolCall.tool === "files_read" || effectiveToolCall.tool === "files_search") {
               execution = await executeFileTool(browserContext(), effectiveToolCall);
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);

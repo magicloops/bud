@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, desc, lt } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { db, type Database } from '../db/client.js';
 import { userFileTable, type UserFile } from './schema.js';
@@ -9,6 +9,20 @@ export const attachment = (file: UserFile) => ({ file_id: file.id, name: file.na
 
 export class FileRepository {
   constructor(private readonly database: Database = db) {}
+  async search(owner: string, input: { query: string; cursor?: string; limit: number }) {
+    // Literal substring search, scoped in SQL before pagination. Extracted text is
+    // searchable only after a file has been read; never parse the whole library.
+    const pattern = `%${input.query.replace(/[\\%_]/g, value => '\\' + value)}%`;
+    const rows = await this.database.select({ id: userFileTable.id, name: userFileTable.name,
+      mimeType: userFileTable.mimeType, sizeBytes: userFileTable.sizeBytes }).from(userFileTable).where(and(
+      eq(userFileTable.createdByUserId, owner), isNull(userFileTable.deletedAt), eq(userFileTable.state, 'ready'),
+      input.cursor ? lt(userFileTable.id, input.cursor) : undefined,
+      input.query ? sql`(${userFileTable.name} ilike ${pattern} or ${userFileTable.document}->>'pages' ilike ${pattern})` : undefined,
+    )).orderBy(desc(userFileTable.id)).limit(input.limit + 1);
+    const page = rows.slice(0, input.limit);
+    return { files: page.map(file => ({ file_id: file.id, name: file.name, mime_type: file.mimeType, size_bytes: file.sizeBytes })),
+      next_cursor: rows.length > input.limit ? page.at(-1)!.id : null };
+  }
   async reserve(owner: string, intent: FileIntent) {
     return this.database.transaction(async tx => {
       // Serialize reservations per owner, including parallel requests/instances.

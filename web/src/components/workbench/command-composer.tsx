@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
+  CSSProperties,
   FormEvent,
   KeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -274,7 +275,10 @@ export function CommandComposer({
       }}
       className="relative border-t-2 border-black bg-background"
       // The pinned controls (md+) are absolutely positioned and ignore this.
-      style={alignment ? { paddingLeft: alignment.paddingLeft } : undefined}
+      style={alignment ? {
+        paddingLeft: alignment.paddingLeft,
+        '--composer-controls-right': `${alignment.controlsRight}px`,
+      } as CSSProperties : undefined}
     >
       {/* Drag strip over the top border: resize the input by hand;
           double-click (or the next send) returns it to auto-grow. */}

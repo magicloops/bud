@@ -30,4 +30,4 @@ ownership, the file viewer open/fetch state machine, and proxied web-view state.
 
 ### `uploads/` → [uploads/uploads.spec.md](./uploads/uploads.spec.md)
 
-Chat upload state and authorized attachment cards.
+Chat upload state, attachment cards and reusable owner-private library dialog.

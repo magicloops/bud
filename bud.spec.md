@@ -937,13 +937,13 @@ web/mobile adoption are required; daemon protocol is unchanged. Single-instance
 wake/replay remains a deployment constraint, not a permanent architecture promise.
 See [mobile API handoff](plan/backend-mobile-performance/mobile-api-handoff.md).
 
-## Chat uploads
+## Chat uploads and reusable files
 
 User-owned originals are stored on the service's private persistent disk;
 PostgreSQL `user_file` rows retain ownership, immutable IDs, size/hash and extracted
 document text. Chat metadata references those IDs without duplicating originals.
-Authenticated upload routes and agent files_read authorize the
-owner before exposing metadata or bytes; agent reads require a current-chat attachment. Browser attachment uses a short-lived
+Authenticated library routes and agent files_search/files_read authorize the
+owner before exposing metadata or bytes. Browser attachment uses a short-lived
 single-use transfer, an exact observed input and a verified temporary daemon copy.
 
 `render.yaml` declares a 10 GB disk for the single `bud-service` instance at

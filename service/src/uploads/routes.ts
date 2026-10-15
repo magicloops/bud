@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { requireViewer, type Viewer } from '../auth/session.js';
 import { config } from '../config.js';
-import { fileIntent, FileError, MAX_FILE_BYTES } from './contracts.js';
+import { fileIntent, fileSearch, FileError, MAX_FILE_BYTES } from './contracts.js';
 import { files, attachment, type FileRepository } from './repository.js';
 import { fileObjects, originalBytes, type FileObjects } from './objects.js';
 
@@ -48,6 +48,7 @@ export async function registerUploadRoutes(server: FastifyInstance, dependencies
     });
     const owner = (request: FastifyRequest) => viewers.get(request)!.userId;
     const id = (request: FastifyRequest) => (request.params as { file_id: string }).file_id;
+    routes.get('/api/uploads', async request => repository.search(owner(request), fileSearch.parse(request.query)));
     routes.post('/api/uploads', { bodyLimit: 4096 }, async (request, reply) => {
       await objects().prepare(); // Fail before reserving quota if the mount is unavailable.
       const row = await repository.reserve(owner(request), fileIntent.parse(request.body));

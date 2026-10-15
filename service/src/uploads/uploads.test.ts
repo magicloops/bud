@@ -17,7 +17,7 @@ import { parseDocument } from './documents.js';
 import { registerUploadRoutes } from './routes.js';
 import { agentFile, executeFileTool } from './agent.js';
 import { browserFiles, registerBrowserFileTransfers } from './browser-files.js';
-import { budTable, threadTable, messageTable } from '../db/schema.js';
+import { budTable, threadTable } from '../db/schema.js';
 import { runInNewContext } from 'node:vm';
 import { selectedDocumentPages } from './page-references.js';
 import { hydratedImageIds, IMAGE_TOKEN_ESTIMATE } from '../browser/image-references.js';
@@ -93,13 +93,19 @@ test('owned HTTP uploads, downloads, deletion, retry and origin boundaries', {sk
     assert.deepEqual(downloaded.rawPayload,bytes); assert.match(String(downloaded.headers['content-disposition']),/r%C3%A9sum%C3%A9.pdf/);
     await assert.rejects(repository.attachments(owners[1],[id]),/file_not_found/);
     assert.equal((await repository.attachments(owners[0],[id]))[0].file_id,id);
+    // Library scopes in SQL and finds cached text without exposing it in results.
+    assert.equal((await app.inject({url:'/api/uploads'})).statusCode,401);
+    assert.deepEqual((await app.inject({url:'/api/uploads',headers:{'test-owner':owners[1]}})).json().files,[]);
+    assert.equal((await app.inject({url:'/api/uploads?query=r%C3%A9sum%C3%A9',headers})).json().files[0].file_id,id);
+    assert.deepEqual((await repository.search(owners[0],{query:'%',limit:20})).files,[]);
     const context={ownerUserId:owners[0],budId,threadId,turnId:'test',signal:new AbortController().signal};
-    await assert.rejects(agentFile(context,id),/file_not_found/);
-    await db.insert(messageTable).values({clientId:randomUUID(),threadId,role:'user',content:'Read this resume',createdByUserId:owners[0],metadata:{attachments:[{file_id:id}]}});
     const read = await executeFileTool(context,{type:'tool_call',tool:'files_read',callId:'read',args:{file_id:id}});
     assert.equal(read.result.ok,true); assert.match(String(read.payload.text),/Alex Example/);
+    assert.equal((await repository.search(owners[0],{query:'TypeScript',limit:20})).files[0].file_id,id);
     await assert.rejects(agentFile({...context,ownerUserId:owners[1]},id),/file_not_found/);
     await assert.rejects(agentFile({...context,invocation:{id:'missing',fence:1,workerId:'other'}},id),/file_authority_expired/);
+    const search=await executeFileTool(context,{type:'tool_call',tool:'files_search',callId:'search',args:{query:'résumé'}});
+    assert.equal(search.result.ok,true); assert.equal((search.payload.files as Array<{file_id:string}>)[0].file_id,id);
     // Transfer grants are single-use, revocable and carry the unchanged original.
     const transfer = await browserFiles(context,[id],async()=>true);
     const grant = await runInNewContext(transfer.prefix + `uploads.attach('target','ref','obs',${JSON.stringify(id)})`,{repl:{attachFile:(value:unknown)=>value}});
@@ -114,10 +120,17 @@ test('owned HTTP uploads, downloads, deletion, retry and origin boundaries', {sk
       assert.equal((await app.inject({url:'/api/uploads/browser-transfer',headers:{authorization:`Bearer ${ticket}`}})).statusCode,403);
       revoked.dispose();
     }
+    const second=await repository.reserve(owners[0],{name:'second.txt',mime_type:'text/plain',size_bytes:1});
+    await repository.begin(owners[0],second.id); await repository.finish(owners[0],second.id,'0'.repeat(64));
+    const firstPage=await repository.search(owners[0],{query:'',limit:1});
+    assert.equal(firstPage.files.length,1); assert.ok(firstPage.next_cursor);
+    const next=await repository.search(owners[0],{query:'',limit:1,cursor:firstPage.next_cursor!});
+    assert.equal(next.files.length,1); assert.notEqual(next.files[0].file_id,firstPage.files[0].file_id);
     assert.equal((await app.inject({method:'DELETE',url:`/api/uploads/${id}`,headers})).statusCode,204);
     assert.equal((await app.inject({method:'GET',url:path,headers})).statusCode,404);
     await assert.rejects(repository.attachments(owners[0],[id]),/file_not_found/);
     await assert.rejects(agentFile(context,id),/file_not_found/);
+    assert.deepEqual((await repository.search(owners[0],{query:'résumé',limit:20})).files,[]);
     // Database rejects ready records without verified originals.
     await assert.rejects(db.insert(userFileTable).values({id:`file_${ulid()}`,createdByUserId:owners[0],name:'x',mimeType:'text/plain',sizeBytes:1,state:'ready'}));
   } finally {
