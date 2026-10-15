@@ -1646,3 +1646,13 @@ nights marked partial). Both execute through `AgentDataQueries` with the `health
 scope and the matching grant `health_types`. Provider-strict nulls for
 `activity_type` and `timezone` are dropped like the paging keys.
 `data_request_api_key` requires `health_types` (empty unless `health.read`).
+
+## Uploaded documents
+
+The canonical `files_read` tool executes through uploads/agent.ts and
+remains available offline. Model parsing, replay and generic executed-tool payloads
+retain paired file results. Conversation loading supplies untrusted attachment
+metadata; originals remain outside model JSON. Document-page IDs hydrate only
+at provider invocation, with shared newest-two-page context estimates/anchors.
+Browser tools accept file_ids and use the existing fenced browser broker. See
+[uploads spec](../uploads/uploads.spec.md) for ownership, formats and bounds.

@@ -1,4 +1,5 @@
 import { serializeMessageView } from "../../agent/message-view.js";
+import { attachmentIds } from '../../uploads/contracts.js';
 import { Buffer } from "node:buffer";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, sql } from "drizzle-orm";
@@ -53,12 +54,13 @@ export const BrowserViewportSchema = z.object({
 
 export const CreateMessageSchema = z.object({
   browser_viewport: BrowserViewportSchema.optional(),
-  text: z.string().min(1),
+  text: z.string().default(''),
+  file_ids: attachmentIds.optional(),
   client_id: z.string().uuid().optional(),
   cwd: z.string().optional(),
   model: z.string().min(1).nullable().optional(),
   reasoning_effort: z.string().min(1).nullable().optional(),
-});
+}).refine(body => body.text.trim().length > 0 || Boolean(body.file_ids?.length), { message: 'Message or attachments required' });
 
 export const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),

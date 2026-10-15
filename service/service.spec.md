@@ -29,7 +29,7 @@ The service is the central hub of the Bud system:
 
 Package manifest:
 - **Name**: `@bud/service`
-- **Engine**: Node.js 20.19+ or 22.12+
+- **Engine**: Node.js ^22.13.0 or >=24.0.0
 - **Type**: ES Modules
 
 **Key Dependencies**:
@@ -345,3 +345,13 @@ Migrations 0048/0049 precede the matching service/web/mobile release. Current
 single-instance production was confirmed; this does not provide distributed replay
 or cross-instance wake guarantees. Native adoption and production measurements
 remain external validation. See [handoff](../plan/backend-mobile-performance/mobile-api-handoff.md).
+
+## Uploaded-file dependencies
+
+Private originals use the backend's persistent disk through Node filesystem APIs;
+no S3 SDK is required. PDF.js, @napi-rs/canvas and mammoth provide bounded
+PDF/image/DOCX reading in document-worker.mjs; postbuild copies that worker into
+dist/uploads. Production requires FILE_STORAGE_MOUNT_PATH and
+FILE_STORAGE_DIRECTORY, validated before listening. The Render Blueprint supplies
+a 10 GB disk and Node 22.23.2. Storage security, capacity, backup and coordinated
+upgrade requirements are in [uploads](src/uploads/uploads.spec.md).

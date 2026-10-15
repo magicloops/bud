@@ -1,3 +1,4 @@
+import { executeFileTool } from "../uploads/agent.js";
 import { captureContextBaseline } from "./context-accounting.js";
 import { loadLatestContextUsageAnchor } from "../llm/provider-ledger.js";
 import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentContext } from "./browser-tool-executor.js";
@@ -913,7 +914,7 @@ export class AgentService {
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              (!isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
+	              (effectiveToolCall.tool !== "files_read" && !isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -956,6 +957,8 @@ export class AgentService {
                 this.cancellations.clear(threadId);
                 return { status: "waiting_for_user" };
               }
+            } else if (effectiveToolCall.tool === "files_read") {
+              execution = await executeFileTool(browserContext(), effectiveToolCall);
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {

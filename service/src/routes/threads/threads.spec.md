@@ -368,3 +368,12 @@ GET `/context-budget` authorizes before runtime/environment/context work and ret
 only `{context_budget}` with no-store. State/open include only matching active-turn
 budgets (`activeTurnContextBudget` in `state-loader.ts`, shared with the budget route); omission means no update, and open's inclusion flag means supplied.
 See [handoff](../../../../plan/client-state-performance/mobile-api-handoff.md).
+
+## Chat attachment admission
+
+Opening and follow-up messages accept `file_ids` (max ten unique IDs); text can
+be empty only with attachments. Resolve the authenticated owned thread/Bud and
+ready user-owned originals before admission. Store `{file_id,name,mime_type,
+size_bytes}` in message.metadata.attachments. Retry comparison uses immutable
+IDs, independent of PostgreSQL JSONB object key order. Existing SSE/message
+metadata carries references only. Deleted files cannot be attached again.

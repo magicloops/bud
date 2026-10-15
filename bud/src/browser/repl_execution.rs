@@ -385,6 +385,41 @@ impl BrowserManager {
                 }
                 browser.inspect(target, json!({"operation":operation,"trace":super::super::repl::trace_enabled(),"scope":command["scope"],"observation_id":command["observation_id"]})).await
             }
+            "file_inputs" => {
+                browser
+                    .inspect(target, json!({"operation":"file_inputs"}))
+                    .await
+            }
+            "set_files" => {
+                for key in ["reference", "observation_id"] {
+                    if command[key]
+                        .as_str()
+                        .is_none_or(|s| s.is_empty() || s.len() > 128)
+                    {
+                        anyhow::bail!("browser_invalid_arguments");
+                    }
+                }
+                let paths = command["paths"]
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("browser_invalid_arguments"))?;
+                if paths.is_empty()
+                    || paths.len() > 10
+                    || paths.iter().any(|p| {
+                        p.as_str().is_none_or(|s| {
+                            s.len() > 4096 || !std::path::Path::new(s).is_absolute()
+                        })
+                    })
+                {
+                    anyhow::bail!("browser_invalid_arguments");
+                }
+                browser
+                    .inspect(
+                        target,
+                        json!({"operation":"set_files", "reference":command["reference"],
+                    "observation_id":command["observation_id"], "paths":paths, "mime_types":command["mime_types"]}),
+                    )
+                    .await
+            }
             "frames" => browser.inspect(target, json!({"operation":"frames"})).await,
             "evaluate" => {
                 if command["source"]
@@ -909,6 +944,67 @@ mod tests {
         manager.stop_repl_cells().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn live_file_transfer_verifies_bytes_and_uses_guarded_input() {
+        let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {
+            return;
+        };
+        use sha2::{Digest, Sha256};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let bytes = b"Synthetic resume - exact original bytes";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let ticket = "a".repeat(43);
+        let grant = json!({"endpoint":format!("{url}file"),"ticket":ticket,"name":"resume.txt",
+            "mime_type":"text/plain","size_bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(bytes))});
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0; 4096];
+                    let n = socket.read(&mut buffer).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buffer[..n]);
+                    let (kind, body): (&str, &[u8]) = if request.starts_with("GET /file ") {
+                        assert!(request
+                            .to_lowercase()
+                            .contains(&format!("authorization: bearer {}", "a".repeat(43))));
+                        ("application/octet-stream", bytes)
+                    } else {
+                        ("text/html", b"<form onsubmit='window.submitted=true;return false'><input type=file hidden name=Resume><button>Submit</button></form>")
+                    };
+                    let header = format!("HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                    let _ = socket.write_all(header.as_bytes()).await;
+                    let _ = socket.write_all(body).await;
+                });
+            }
+        });
+        let manager = BrowserManager::new(Some(crate::browser::addon::test_runtime(executable)));
+        manager.connect("device".into());
+        let mut open = request(1, "");
+        open.command = Action::Open { url: Some(url) };
+        assert!(manager.execute(open).await.ok);
+        let code = format!("var tab=await browser.tabs.current(); var input=await tab.fileInputs(); await repl.attachFile({},tab.id,input.inputs[0].reference,input.observation_id); console.log(await tab.evaluate(async()=>({{text:await document.querySelector('input').files[0].text(),type:document.querySelector('input').files[0].type,submitted:!!window.submitted}})))", grant);
+        let result = manager.execute(request(2, &code)).await;
+        assert!(result.ok, "{result:?}");
+        let output = result.data["text"].as_str().unwrap();
+        assert!(
+            output.contains("Synthetic resume - exact original bytes"),
+            "{output}"
+        );
+        assert!(
+            output.contains("text/plain") && output.contains("submitted: false"),
+            "{output}"
+        );
+        let mut bad = grant.clone();
+        bad["sha256"] = json!("0".repeat(64));
+        let result = manager.execute(request(3, &format!("await repl.attachFile({},tab.id,input.inputs[0].reference,input.observation_id)",bad))).await;
+        assert!(!result.ok, "{result:?}");
+        assert!(
+            result.data.to_string().contains("integrity_failed"),
+            "{result:?}"
+        );
+        manager.shutdown().await.unwrap();
+        server.abort();
+    }
     #[tokio::test]
     async fn live_repl_operations_reuse_browser_guards_and_private_return_invalidates_references() {
         let Some(executable) = std::env::var_os("BUD_BROWSER_EXECUTABLE") else {

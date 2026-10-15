@@ -1,3 +1,4 @@
+import { registerBrowserFileTransfers } from "./uploads/browser-files.js";
 import { subscribeTurnTimings, subscribeInvocationChanges } from "./agent/invocation-timing.js";
 import { invocationEvents } from "./agent/invocation-events.js";
 import { registerAccessLog } from "./access-log.js";
@@ -31,6 +32,7 @@ import { registerDeviceInstallClaimRoutes } from "./routes/device-install-claims
 import { registerMeRoutes } from "./routes/me.js";
 import { registerProxyRoutes } from "./routes/proxy.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerUploadRoutes } from "./uploads/routes.js";
 import { registerProxiedSiteRoutes } from "./routes/proxied-sites.js";
 import { isProxyGatewayRequest, type ProxyGatewayRequestHeaders } from "./proxy/proxied-site.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
@@ -302,6 +304,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server, terminalSessionManager);
   await registerProxyRoutes(server);
   await registerFileRoutes(server);
+  await registerUploadRoutes(server);
+await registerBrowserFileTransfers(server);
   await registerProxiedSiteRoutes(server);
   await registerThreadRoutes(
     server,

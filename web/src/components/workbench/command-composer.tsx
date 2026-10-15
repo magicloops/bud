@@ -15,6 +15,7 @@ import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
+import { AttachmentComposer, type FileDraft } from '@/features/uploads/attachments'
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
 
@@ -82,6 +83,7 @@ function FitSelect({
 }
 
 type CommandComposerProps = {
+  files?: FileDraft
   messageText: string
   onMessageChange: (value: string) => void
   status: WorkbenchStatus
@@ -111,6 +113,7 @@ type CommandComposerProps = {
 }
 
 export function CommandComposer({
+  files,
   messageText,
   onMessageChange,
   status,
@@ -222,6 +225,7 @@ export function CommandComposer({
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (files?.blocked) { event.preventDefault(); return }
     setManualHeight(null)
     onSubmit(event)
   }
@@ -264,6 +268,10 @@ export function CommandComposer({
     <form
       ref={formRef}
       onSubmit={handleSubmit}
+      onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }}
+      onDrop={event => {
+        if (event.dataTransfer.files.length) { event.preventDefault(); if (!inputDisabled) files?.add(Array.from(event.dataTransfer.files)) }
+      }}
       className="relative border-t-2 border-black bg-background"
       // The pinned controls (md+) are absolutely positioned and ignore this.
       style={alignment ? { paddingLeft: alignment.paddingLeft } : undefined}
@@ -289,6 +297,7 @@ export function CommandComposer({
           Bud is offline. The agent can still respond, but terminal and web-view tools are unavailable.
         </div>
       )}
+      {files && <AttachmentComposer draft={files} disabled={inputDisabled} />}
       <textarea
         ref={textareaRef}
         name="message"
@@ -373,7 +382,7 @@ export function CommandComposer({
             contextBudget={contextBudget}
             modelLabel={models.find((model) => model.id === contextBudget?.model)?.display_name ?? null}
             onViewModelContext={onViewModelContext}
-            disabled={stopMode ? false : inputDisabled}
+            disabled={stopMode ? false : inputDisabled || Boolean(files?.blocked)}
             dispatching={status === 'dispatching'}
             stopMode={stopMode}
             onStop={onCancelAgentTurn}

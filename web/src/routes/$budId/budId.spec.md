@@ -458,3 +458,10 @@ optional reads; those reads never apply agent lifecycle or stream cursors.
 Failures retain the last known meter. Explicit refreshes after send, model
 change, cancel and final start independent `/context-budget` reads; pending-inventory
 recovery is event-driven. Browser notices use structured tool payloads only.
+
+## Chat uploads
+
+New and existing thread routes compose useFileDraft, send verified `file_ids` with
+text and preserve drafts on failure. New-chat idempotency intent includes IDs;
+existing thread content remounts by owner/thread, isolating drafts. Opening
+optimistic transcript metadata includes attachments. Success clears the draft.

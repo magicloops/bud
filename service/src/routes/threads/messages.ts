@@ -1,4 +1,6 @@
 import { loadMessagePage } from "./message-loader.js";
+import { files } from '../../uploads/repository.js';
+import { FileError, type FileAttachment } from '../../uploads/contracts.js';
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { and, eq, inArray } from "drizzle-orm";
@@ -152,6 +154,12 @@ export async function registerThreadMessageRoutes(
       return;
     }
 
+    let attachments: FileAttachment[];
+    try { attachments = await files.attachments(viewer.userId, body.file_ids); }
+    catch (error) {
+      if (error instanceof FileError) return reply.code(error.status).send({ error: error.code });
+      throw error;
+    }
     if (await sendLocalModelAvailabilityError(reply, {
       budId: thread.budId,
       model: selection.model,
@@ -168,7 +176,7 @@ export async function registerThreadMessageRoutes(
           idempotencyKey: `message:${effectiveClientId}`, clientId: effectiveClientId, text: body.text,
           model: selection.model, reasoningEffort: selection.reasoningEffort,
           persistModelSelection: selection.source === "explicit_request",
-          metadata: { ...(body.browser_viewport ? { browser_viewport: body.browser_viewport } : {}), ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
+          metadata: { ...(attachments.length ? { attachments } : {}), ...(body.browser_viewport ? { browser_viewport: body.browser_viewport } : {}), ...(body.cwd ? { preferred_cwd: body.cwd } : {}), ...(pathContext ? { path_context: pathContext } : {}), ...toModelSelectionMetadata(selection) },
         });
         const message = serializeMessage(admitted.message);
         if (!admitted.duplicate) {
@@ -235,6 +243,7 @@ export async function registerThreadMessageRoutes(
       ? await agentService.getPathContextForThread(thread.threadId)
       : null;
     const metadata: Record<string, unknown> = {
+      ...(attachments.length ? { attachments } : {}),
       ...(body.browser_viewport ? { browser_viewport: body.browser_viewport } : {}),
       ...(body.cwd ? { preferred_cwd: body.cwd } : {}),
       ...(pathContext ? { path_context: pathContext } : {}),

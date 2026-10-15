@@ -1,3 +1,5 @@
+import { browserFiles } from "../uploads/browser-files.js";
+import { attachmentIds, FileError } from "../uploads/contracts.js";
 import { BrowserLifecycle } from "./lifecycle.js";
 import { BrowserResourceRepository } from "./resource-repository.js";
 import { beginAgentCapture } from "./agent-capture.js";
@@ -42,18 +44,21 @@ export class BrowserBroker implements BrowserAgentBackend {
     args: Record<string, unknown>,
   ): Promise<BrowserBackendResult> {
     if (tool !== "browser_exec") return { ok: false, outcome: "rejected", error: "unsupported_tool" };
-    return this.executeCell(context, args.code as string);
+    return this.executeCell(context, args.code as string, attachmentIds.parse(args.file_ids ?? []));
   }
   /** Durable cell receipt path shared by the catalog and integration fixtures. */
-  async executeCell(context: BrowserAgentContext, code: string): Promise<BrowserBackendResult> {
-    const result = await this.executeInternal(context, code);
+  async executeCell(context: BrowserAgentContext, code: string, fileIds: string[] = []): Promise<BrowserBackendResult> {
+    const result = await this.executeInternal(context, code, fileIds);
     return { ...result, data: { ...result.data,
       execution_state: result.data?.execution_state ?? (result.outcome === "rejected" ? "not_executed" : "unknown") } };
   }
   private async executeInternal(
     context: BrowserAgentContext,
     code: string,
+    fileIds: string[],
   ): Promise<BrowserBackendResult> {
+    // Bind the durable code hash to selected file identities, never ephemeral grants.
+    if (fileIds.length) code = `/* uploaded_file_ids:${JSON.stringify(fileIds)} */\n${code}`;
     const carrier = browserCarrier(context.budId);
     if (!carrier) {
       try { await this.repository.prepare(context, "", { action: "exec", code }, "receipt_only"); }
@@ -82,7 +87,9 @@ export class BrowserBroker implements BrowserAgentBackend {
     }
     const cellTransfers: ReturnType<typeof beginAgentCapture>[] = [];
     let result: BrowserBackendResult;
+    let transfer: Awaited<ReturnType<typeof browserFiles>> | undefined;
     try {
+      if (fileIds.length) transfer = await browserFiles(context, fileIds, async () => carrier.current() && await this.repository.evidenceAllowed(request));
       if (carrier.agentCapture) {
         const model = await this.repository.modelForCapture(context);
         let vision = false;
@@ -92,9 +99,14 @@ export class BrowserBroker implements BrowserAgentBackend {
           cellTransfers.push(beginAgentCapture(request, carrier, context.callId!, context.budId));
         }
       }
+      if (transfer && Buffer.byteLength(transfer.prefix + code) > 64 * 1024) throw new FileError("browser_file_code_too_large");
       result = await dispatchBrowser(carrier, { ...request,
+        ...(transfer ? { command: { action: "exec" as const, code: transfer.prefix + code } } : {}),
         repl_images: cellTransfers.map(t => ({ endpoint: t.command.endpoint, ticket: t.command.ticket })) }, context.signal);
-    } finally { for (const t of cellTransfers) t.dispose(); }
+    } catch (error) {
+      if (!(error instanceof FileError)) throw error;
+      result = { ok: false, outcome: "rejected", error: error.code, data: { execution_state: "not_executed" } };
+    } finally { transfer?.dispose(); for (const t of cellTransfers) t.dispose(); }
     await this.repository.complete(request, result);
     return this.deliver(request, result);
   }

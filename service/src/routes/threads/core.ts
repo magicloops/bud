@@ -1,4 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { files } from '../../uploads/repository.js';
+import { FileError } from '../../uploads/contracts.js';
 import { eq } from "drizzle-orm";
 import { loadThreadSummaries } from "./summary-loader.js";
 import { config } from "../../config.js";
@@ -99,7 +101,7 @@ export async function registerThreadCoreRoutes(
             admission: { text: opening.text, clientId: opening.client_id,
               model: selection.model, reasoningEffort: selection.reasoningEffort,
               persistModelSelection: selection.source === "explicit_request",
-              metadata: { ...toModelSelectionMetadata(selection),
+              metadata: { ...toModelSelectionMetadata(selection), attachments: await files.attachments(viewer.userId, opening.file_ids),
                 ...(opening.browser_viewport ? { browser_viewport: opening.browser_viewport } : {}),
                 ...(opening.cwd ? { preferred_cwd: opening.cwd } : {}) },
             } };
@@ -118,6 +120,7 @@ export async function registerThreadCoreRoutes(
           agent: { started: false, queued: ["pending", "retry_wait", "waiting_for_bud", "waiting_for_model"].includes(result.invocation.status),
             mode: environment.mode, bud_status: environment.bud_status } });
       } catch (error) {
+        if (error instanceof FileError) return reply.code(error.status).send({ error: error.code });
         if (sendModelSelectionError(reply, error)) return;
         if (error instanceof InvocationError) return reply.code(
           error.code.endsWith("not_found") ? 404 : error.code.endsWith("conflict") ? 409 : 400,

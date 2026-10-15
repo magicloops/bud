@@ -489,3 +489,8 @@ aggregation/quantile checks. `access-log.ts` observes finite HTTP completions
 independent of log severity, exporting INFO intervals every 60s and on close.
 Counts, duration buckets and measured response bytes exclude identities/content.
 SSE first-frame timing remains separate. See the client-state-performance runbook.
+
+## Chat uploads
+
+`server.ts` registers [uploads](./uploads/uploads.spec.md): private originals, owner
+REST routes, one-use daemon transfers and cleanup. Separate from daemon file viewing.

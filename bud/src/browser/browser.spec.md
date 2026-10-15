@@ -916,3 +916,11 @@ URLs, target/document/frame/focus/controller tokens, tickets or raw errors are
 logged. Deadlines, credit, authority and retry behavior are unchanged. Rebuild
 and restart the daemon to collect these events; see
 [production investigation](../../../debug/production-browser-media-delivery-stall.md).
+
+## File-input REPL operations
+
+`repl_execution.rs` permits `file_inputs` and `set_files` through the same
+per-operation page lock, owned target and private/invocation fences. set_files
+accepts bounded absolute staging paths and passes MIME metadata to the helper.
+The live transfer fixture checks exact bytes, integrity rejection and no submit.
+Matching rebuilt service/daemon/helper required; WebSocket envelope unchanged.

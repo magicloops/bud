@@ -775,3 +775,12 @@ only matching feedback confirms downstream disposition. Deploy the service to
 enable logs; independently rebuilt daemon/web versions add the other legs. No
 DB, route or wire change. See
 [investigation](../../../debug/production-browser-media-delivery-stall.md).
+
+## Original-file attachment
+
+`broker.ts` includes selected immutable file IDs in the durable cell identity,
+then injects one-use transfer closures only into dispatch code. Grants recheck
+current carrier/evidence and thread/Bud/invocation ownership before byte delivery;
+completion disposes them. No credential enters model args or persisted receipts.
+`image-references.ts` also includes selected document page identities when fencing
+context-usage anchors; browser artifact hydration remains separate.
