@@ -466,3 +466,20 @@ keeps the key for the 6.3 visit projection. `repository.ts` status adds
 `location { last_received_at, latest_visit_at, latest_point_at }`.
 `location-status.test.ts` (isolated PostgreSQL) covers v2 projection and owner
 isolation. Plan: [location for agents](../../../plan/location-agent-data/README.md).
+
+## Visit names (phase 6.2)
+
+- `location.ts`:
+  - `parseVisitName` validates `location.visit_named.v1`: the key, the `apple`
+    source, `named_at`, address strings (`full`, `short`, `city`,
+    `city_with_context`, `region`, `region_code`) and an optional place (name,
+    category, coordinate, distance).
+  - v2 visits require `visit_key`, which is stored on `location_observation`.
+- The processor upserts `location_visit_name` per owner and key; a later
+  `named_at` wins and older lookups never overwrite.
+- `LocationQueries.list` and `contactContext` join names and present
+  `visit_key`, `address` and `place`.
+- `app-queries.ts` reduces names for `rounded_2_decimals` keys to
+  city/region with no place.
+- Tests: `location.test.ts` (parsing), `location-status.test.ts` (isolated
+  PostgreSQL replacement and join) and `app-queries.test.ts` (rounding).

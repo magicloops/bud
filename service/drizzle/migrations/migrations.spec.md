@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0053` currently)
+- Snapshot files for each migration (`0000` through `0054` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -521,3 +521,9 @@ constraint moved before the foreign key that references it, because Postgres
 requires the unique key to exist first. Additive: existing domain events keep
 their `revision_id`, which satisfies the new subject check. Applied locally as
 exact SQL.
+
+### `0054_location_visit_names.sql`
+
+Generated, plus a final hand-written `UPDATE` that backfills
+`location_observation.visit_key` from stored `location.visit.v2` raw envelopes.
+Additive and idempotent (it only fills null keys). Applied locally as exact SQL.

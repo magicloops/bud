@@ -49,7 +49,13 @@ export class AppDataQueries {
       coordinate_precision: authority.policy.location_precision,
       // Sensor accuracy is distinct from the additional rounding of coordinates.
       source_horizontal_accuracy_m: row.horizontal_accuracy_m,
-      occurred_at: row.occurred_at, received_at: row.received_at, arrival_at: row.arrival_at, departure_at: row.departure_at });
+      occurred_at: row.occurred_at, received_at: row.received_at, arrival_at: row.arrival_at, departure_at: row.departure_at,
+      // Rounded keys get the city/region only: no street address and no specific place.
+      address: authority.policy.location_precision === "rounded_2_decimals" && row.address
+        ? { city: row.address.city ?? null, city_with_context: row.address.city_with_context ?? null,
+            region: row.address.region ?? null, region_code: row.address.region_code ?? null }
+        : row.address,
+      place: authority.policy.location_precision === "rounded_2_decimals" ? null : row.place });
     let data: unknown;
     if (operation === "contacts_search") {
       data = await this.contacts.list(authority.owner, args as z.infer<typeof schemas.contacts_search>, policy);

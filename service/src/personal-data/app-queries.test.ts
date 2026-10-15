@@ -13,7 +13,9 @@ function fixture() {
   const observe = (method: string, args: unknown[]) => { read = true; calls.push({ method, args }); };
   const evidence = { id: "observation", source_event_id: "raw-source", source_epoch_id: "raw-epoch", kind: "visit",
     coordinate: { lat: 37.774929, lon: -122.419416 }, horizontal_accuracy_m: 8,
-    occurred_at: new Date("2026-09-03T12:00:00Z"), received_at: new Date("2026-09-03T12:00:01Z"), arrival_at: null, departure_at: null };
+    occurred_at: new Date("2026-09-03T12:00:00Z"), received_at: new Date("2026-09-03T12:00:01Z"), arrival_at: null, departure_at: null,
+    visit_key: "key", address: { full: "1 Mint Plaza, San Francisco", short: "1 Mint Plaza", city: "San Francisco", city_with_context: "San Francisco, CA",
+      region: "United States", region_code: "US" }, place: { name: "Blue Bottle Coffee", distance_m: 10 } };
   type Dependencies = ConstructorParameters<typeof AppDataQueries>;
   const keys = { authenticate: async () => authority, confirmCurrent: async () => {
     if (revokeAfterRead && read) throw new DataRequestError(403, "app_data_key_invalid", "Revoked");
@@ -99,4 +101,17 @@ test("app health queries need health.read and the specific health type", async (
   assert.deepEqual(f.calls.at(-1), { method: "sleep", args: ["owner-a", { ...window, timezone: "Europe/London" }, { notBefore: new Date("2026-08-05T12:00:00Z") }] });
   await assert.rejects(f.query.execute("key", "health_sleep", { ...window, from: "2026-07-01T00:00:00Z" }), { code: "history_outside_grant" });
   await assert.rejects(f.query.execute("key", "health_sleep", { ...window, owner: "other" }), { code: "invalid_app_data_query" });
+});
+
+test("rounded app keys get the city and region of a named visit, never its street or place", async () => {
+  const f = fixture();
+  const result = await f.query.execute("key", "timeline_query", { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" });
+  const [item] = (result.data as { items: Array<{ address: Record<string, unknown>; place: unknown }> }).items;
+  assert.deepEqual(item.address, { city: "San Francisco", city_with_context: "San Francisco, CA", region: "United States", region_code: "US" });
+  assert.equal(item.place, null);
+  f.authority.policy = { ...f.authority.policy, location_precision: "as_collected" };
+  const full = await f.query.execute("key", "timeline_query", { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" });
+  const [precise] = (full.data as { items: Array<{ address: Record<string, unknown>; place: { name: string } }> }).items;
+  assert.equal(precise.address.full, "1 Mint Plaza, San Francisco");
+  assert.equal(precise.place.name, "Blue Bottle Coffee");
 });

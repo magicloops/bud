@@ -379,6 +379,13 @@
       "when": 1792049569609,
       "tag": "0053_workout_domain_events",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792105711035,
+      "tag": "0054_location_visit_names",
+      "breakpoints": true
     }
   ]
 }
