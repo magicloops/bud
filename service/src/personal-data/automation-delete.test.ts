@@ -33,7 +33,7 @@ test("deletion is owner-bound, atomic, retryable and terminal while retaining hi
     "automation_bootstrap_group", "automation_bootstrap_member", "automation_proposal", "automation_bootstrap_proposal",
     "agent_invocation", "agent_invocation_action", "agent_question_request", "data_access_request", "data_owner_state",
     "bud", "thread", "message", "agent_data_grant", "data_domain_event", "contact_revision", "contact",
-    "contact_source", "data_collection_epoch", "data_installation"]) {
+    "contact_source", "data_collection_epoch", "data_installation", "browser_handoff"]) {
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   }
   await pool.query("alter table automation drop constraint automation_state_check");

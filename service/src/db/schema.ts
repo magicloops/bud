@@ -1612,7 +1612,9 @@ export const automationRevisionTable = pgTable("automation_revision", {
 
 export const automationDeliveryTable = pgTable("automation_delivery", {
   id: text("id").primaryKey(), automationId: text("automation_id").notNull(), revision: integer("revision").notNull(),
-  domainEventId: text("domain_event_id").notNull(), invocationId: text("invocation_id"),
+  // Exactly one trigger reference: a published domain event or a schedule window.
+  domainEventId: text("domain_event_id"), scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+  invocationId: text("invocation_id"),
   status: text("status").notNull().default("pending"), outcomeCode: text("outcome_code"),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1621,6 +1623,9 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => ({
   eventKey: unique("automation_delivery_event_key").on(t.automationId, t.revision, t.domainEventId),
+  // Across revisions: editing a schedule never runs the same window twice.
+  scheduleKey: unique("automation_delivery_schedule_key").on(t.automationId, t.scheduledFor),
+  triggerCheck: check("automation_delivery_trigger_check", sql`(${t.domainEventId} is null) <> (${t.scheduledFor} is null)`),
   invocationKey: unique("automation_delivery_invocation_key").on(t.invocationId),
   ownerIdx: index("automation_delivery_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
   dueIdx: index("automation_delivery_due_idx").on(t.status, t.nextAttemptAt),

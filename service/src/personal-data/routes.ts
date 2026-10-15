@@ -8,7 +8,7 @@ import { LocationQueries, type LocationQuery } from "./location.js";
 import { DataGrants } from "./grants.js";
 import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
-import { automationCreateSchema, automationActivateBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
+import { AUTOMATION_EVENT_TYPES, automationCreateSchema, automationActivateBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
 import { parseBatch } from "./parser.js";
 import { PostgresIngestRepository, type IngestRepository } from "./repository.js";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
@@ -202,6 +202,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       ingest: { envelope_versions: [1], unknown_envelopes_stored: true, limits: INGEST_LIMITS, collection_epochs: true },
       features: { contacts: true, contacts_payload_v2: contactsV2Ready, contact_source_repair: true, location_queries: true, health_queries: false, automations: dependencies.automationActivationEnabled ?? false,
         automation_activation: dependencies.automationActivationEnabled ?? false, app_keys: dependencies.appKeysEnabled ?? false,
+        automation_triggers: AUTOMATION_EVENT_TYPES,
         automation_proposals: Boolean(dependencies.automationActivationEnabled && dependencies.automationProposalsEnabled),
         existing_contact_reviews: Boolean(dependencies.automationActivationEnabled && dependencies.automationProposalsEnabled && dependencies.bootstrapProposalsEnabled) },
       ...await repository.status(viewers.get(request)!.userId) as object,

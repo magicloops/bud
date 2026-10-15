@@ -4,14 +4,20 @@ const id = { type: "string", minLength: 1, maxLength: 128 } as const;
 const version = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const;
 const definition: CanonicalTool["parameters"] = {
   type: "object", additionalProperties: false,
-  required: ["event_type", "name", "instruction", "sources", "bud_id", "model_mode", "target", "data_access", "latest_start_seconds", "max_invocations_per_day"],
+  required: ["event_type", "name", "instruction", "bud_id", "model_mode", "target", "data_access", "latest_start_seconds", "max_invocations_per_day"],
   properties: {
-    event_type: { type: "string", enum: ["contact.added"] },
+    event_type: { type: "string", enum: ["contact.added", "schedule"], description: "contact.added runs when a new contact is observed and requires sources. schedule runs at a local time on chosen weekdays and requires schedule." },
     name: { type: "string", minLength: 1, maxLength: 120 },
     instruction: { type: "string", minLength: 1, maxLength: 20000 },
     sources: { type: "object", additionalProperties: false, required: ["source_ids"], properties: {
       source_ids: { type: "array", maxItems: 32, uniqueItems: true, items: id, description: "Empty means all permitted contact sources." },
-    } },
+    }, description: "contact.added only; omit or null for schedule." },
+    schedule: { type: "object", additionalProperties: false, required: ["local_time", "weekdays", "timezone"], properties: {
+      local_time: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: "24-hour HH:MM wall-clock time." },
+      weekdays: { type: "array", minItems: 1, maxItems: 7, uniqueItems: true, items: { type: "integer", minimum: 1, maximum: 7 },
+        description: "ISO weekdays: 1 = Monday … 7 = Sunday. All seven for daily." },
+      timezone: { type: "string", minLength: 1, maxLength: 64, description: "IANA timezone such as America/Los_Angeles. Use the user's timezone; ask if unknown." },
+    }, description: "schedule only; omit or null for contact.added. Missed runs are not caught up; only the latest window within latest_start_seconds runs." },
     model_mode: { type: "string", enum: ["inherit", "explicit"], description: "Inherit follows the conversation model on each new run. Explicit overrides it. Retired cloud models use the service default." },
     bud_id: id, model: { type: "string", minLength: 0, maxLength: 256 },
     reasoning_effort: { type: "string", enum: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
@@ -22,7 +28,7 @@ const definition: CanonicalTool["parameters"] = {
       } },
     ] },
     data_access: { type: "object", additionalProperties: false, required: ["scopes", "history_days"], properties: {
-      scopes: { type: "array", minItems: 1, maxItems: 2, uniqueItems: true, items: { type: "string", enum: ["contacts.read", "location.read"] }, description: "Must include contacts.read. These are requested limits, not a grant." },
+      scopes: { type: "array", minItems: 0, maxItems: 2, uniqueItems: true, items: { type: "string", enum: ["contacts.read", "location.read"] }, description: "contact.added must include contacts.read. schedule may request any subset, including none. These are requested limits, not a grant." },
       history_days: { type: "integer", minimum: 1, maximum: 3650 },
     } },
     latest_start_seconds: { type: "integer", minimum: 60, maximum: 86400 },
@@ -40,7 +46,7 @@ export const AUTOMATION_CANONICAL_TOOLS: CanonicalTool[] = [
   { name: "automations_history", description: "Read bounded automation delivery history and resulting conversation references." + guidance,
     parameters: { type: "object", additionalProperties: false, properties: { automation_id: id,
       limit: { type: "integer", minimum: 1, maximum: 100 }, cursor: { type: "string", maxLength: 2048 } }, required: ["automation_id"] } },
-  { name: "automations_create_draft", description: "Prepare a separate automation for a new workflow in this chat without enabling it. Multiple automations may independently receive the same contact event; a shared trigger does not make workflows duplicates. Do not consolidate another chat’s workflow merely to avoid duplicate research. Only name and instruction are required. Unless the user explicitly requests a model or reasoning override, omit both model and reasoning_effort (or use null) to inherit the current chat selection; do not guess either value. Omitted model settings follow this conversation on future runs; new-thread targets follow the originating conversation. Other omitted settings use this Bud, this current conversation, all permitted contact sources, Contacts-only access with at most 30 days of currently granted history, a 24-hour start deadline and 10 runs/day. Omit target (or use null) to keep results in this conversation; do not guess its ID. Use target mode new_thread only when the user explicitly requests a new conversation per trigger; preserve explicitly chosen existing conversations too. State the saved destination before requesting review. Preserve explicit user choices. Initial contact import does not trigger the rule. Request activation separately for human review; you cannot grant data permission." + guidance,
+  { name: "automations_create_draft", description: "Prepare a separate automation for a new workflow in this chat without enabling it. Multiple automations may independently receive the same trigger; a shared trigger does not make workflows duplicates. Do not consolidate another chat’s workflow merely to avoid duplicate research. Only name and instruction are required. Unless the user explicitly requests a model or reasoning override, omit both model and reasoning_effort (or use null) to inherit the current chat selection; do not guess either value. Omitted model settings follow this conversation on future runs; new-thread targets follow the originating conversation. Omit event_type for a new-contact rule; for a recurring scheduled run set event_type schedule and schedule (local time, weekdays and the user's IANA timezone). Other omitted settings use this Bud, this current conversation, all permitted contact sources, Contacts-only access (no data access for schedules) with at most 30 days of currently granted history, a 24-hour start deadline and 10 runs/day. Omit target (or use null) to keep results in this conversation; do not guess its ID. Use target mode new_thread only when the user explicitly requests a new conversation per trigger; preserve explicitly chosen existing conversations too. State the saved destination before requesting review. Preserve explicit user choices. Initial contact import does not trigger the rule. Request activation separately for human review; you cannot grant data permission." + guidance,
     parameters: { ...definition, required: ["name", "instruction"], properties: {
       ...definition.properties,
       model: { type: "string", minLength: 1, maxLength: 256,

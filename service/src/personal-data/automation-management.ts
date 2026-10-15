@@ -81,11 +81,17 @@ export class AutomationManagement {
         const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, context.owner));
         // A draft does not grant access. Absent consent still allows drafting;
         // the request-activation step requires the human's data permission.
-        const defaults: AutomationDefinition = { event_type: "contact.added", name: "", instruction: "",
-          sources: { source_ids: [] }, bud_id: row.invocation.budId, model_mode: "inherit", origin_thread_id: row.invocation.threadId, model: "",
-          reasoning_effort: "none", target: { mode: "existing_thread", thread_id: row.invocation.threadId },
-          data_access: { scopes: ["contacts.read"], history_days: Math.min(grant?.historyDays ?? 30, 30) },
+        const common = { name: "", instruction: "", bud_id: row.invocation.budId, model_mode: "inherit" as const,
+          origin_thread_id: row.invocation.threadId, model: "", reasoning_effort: "none" as const,
+          target: { mode: "existing_thread" as const, thread_id: row.invocation.threadId },
           latest_start_seconds: 86400, max_invocations_per_day: 10 };
+        const historyDays = Math.min(grant?.historyDays ?? 30, 30);
+        // Schedules default to no data access; the agent requests scopes explicitly.
+        const defaults = (eventType: AutomationDefinition["event_type"]): AutomationDefinition => eventType === "schedule"
+          ? { ...common, event_type: "schedule", schedule: { local_time: "09:00", weekdays: [1, 2, 3, 4, 5, 6, 7], timezone: "UTC" },
+            data_access: { scopes: [], history_days: historyDays } }
+          : { ...common, event_type: "contact.added", sources: { source_ids: [] },
+            data_access: { scopes: ["contacts.read"], history_days: historyDays } };
         const definition = resolveAgentAutomationDraft(args, defaults);
         definition.origin_thread_id = definition.bud_id === row.invocation.budId ? row.invocation.threadId : null;
         try {

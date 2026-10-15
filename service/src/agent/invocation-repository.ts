@@ -10,7 +10,7 @@ import { parseStoredAskUserQuestionsRequest, validateAskUserQuestionsResponse, b
 import { buildExecutedUserQuestionTool } from "./user-question-repository.js";
 import { deferredToolResult } from "./continuation-results.js";
 import { modelContextMessageCreatedAt, modelContextMessageVisible } from "./model-context-order.js";
-import { automationContactContext } from "../personal-data/automation-contact-context.js";
+import { automationStartEvidence } from "../personal-data/automation-contact-context.js";
 import { checkAutomationPolicy } from "../personal-data/automation-policy.js";
 import { dataOwnerStateTable, automationDeliveryTable, automationBootstrapGroupTable,
   dataAccessRequestTable as dataRequest, dataAppKeyTable as appKey, automationProposalTable as automationProposal, automationBootstrapProposalTable as bootstrapProposal } from "../db/schema.js";
@@ -361,8 +361,8 @@ export class InvocationRepository {
           if (!input) throw new InvocationError("input_message_missing");
           // First start only: continuations must not replace event evidence or
           // accidentally repeat completed actions against a newer revision.
-          if (!input.metadata?.model_context_at) {
-            const context = await automationContactContext(tx, row);
+          const context = input.metadata?.model_context_at ? null : await automationStartEvidence(tx, row);
+          if (context !== null) {
             await tx.update(messageTable).set({ content: input.content + context,
               metadata: { ...input.metadata, automation_admission_text: input.content, contact_evidence_version: 1 } })
               .where(and(eq(messageTable.messageId, input.messageId), eq(messageTable.createdByUserId, row.createdByUserId)));

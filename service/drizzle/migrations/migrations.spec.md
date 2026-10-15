@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0050` currently)
+- Snapshot files for each migration (`0000` through `0051` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -497,3 +497,12 @@ helper/channel. Action-table updates outside `waiting_for_user` return before an
 row serialization (edited in place 2026-10-06, before any non-local apply). No table data changes. Requires 0049 first and 0050 before updated
 service readiness. Local exact SQL and isolated PostgreSQL commit/rollback/expiry/
 action/reservation tests pass. db:push was canceled on unrelated constraint churn.
+
+### `0051_schedule_automation_deliveries.sql`
+
+Generated migration with snapshot/journal. `automation_delivery.domain_event_id`
+becomes nullable and a nullable `scheduled_for` window is added; a check requires
+exactly one of them, and `unique(automation_id, scheduled_for)` prevents running
+a schedule window twice across revisions. Existing rows all carry a domain event,
+so no data change. Additive for older services, which never read schedule rows.
+Applied locally as exact SQL; isolated PostgreSQL scheduler tests pass.

@@ -1,11 +1,20 @@
-import { sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
+import { automationDeliveryTable as deliveries } from "../db/schema.js";
 import type { Invocation } from "../agent/invocation-repository.js";
 import { ContactQueries, LEGACY_CONTACT_FIELDS, type ContactField } from "./contact-queries.js";
-import { automationDefinitionSchema, parseAutomationInput } from "./automation-contracts.js";
+import { automationDefinitionSchema, parseAutomationInput, requireContactDefinition } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/** First-start event evidence, or null for triggers that carry none (schedules). */
+export async function automationStartEvidence(tx: Transaction, invocation: Invocation): Promise<string | null> {
+  const [scheduled] = await tx.select({ id: deliveries.id }).from(deliveries).where(and(
+    eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, invocation.createdByUserId),
+    isNotNull(deliveries.scheduledFor))).limit(1);
+  return scheduled ? null : automationContactContext(tx, invocation);
+}
 
 /** Caller holds owner + invocation locks and has checked current automation policy. */
 export async function automationContactContext(tx: Transaction, invocation: Invocation) {
@@ -39,7 +48,7 @@ export async function automationContactContext(tx: Transaction, invocation: Invo
   let bytes = 0;
   const records = [];
   for (const reference of references.rows) {
-    const definition = parseAutomationInput(automationDefinitionSchema, reference.definition);
+    const definition = requireContactDefinition(parseAutomationInput(automationDefinitionSchema, reference.definition));
     if (reference.grant_version !== reference.current_version ||
       !definition.data_access.scopes.every(scope => reference.scopes.includes(scope)))
       throw new DataRequestError(403, "data_permission_changed", "Automation data permission changed");

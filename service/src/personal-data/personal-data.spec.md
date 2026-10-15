@@ -350,3 +350,38 @@ App-key and automation/bootstrap proposal decisions, reconciliation and expiry
 register continuation hints in the outer transaction. Successful commit wakes the
 existing worker; rollback emits nothing. No new queue, polling worker or connection
 is added, and all existing owner locks, decision evidence and row stamps remain.
+
+## Automation triggers and schedules
+
+`automation-contracts.ts` defines the definition as a union discriminated by
+`event_type`: `contact.added` (requires `sources` and `contacts.read`) or
+`schedule` (requires `schedule`, any subset of scopes including none). Stored
+contact definitions parse unchanged; no data migration. `grantCoversDefinition`
+is the shared grant check: rules without scopes need no grant, otherwise scopes,
+history and (when pinned) the approved grant version must match.
+`requireContactDefinition` keeps existing-contact processing and first-start
+contact evidence contact-only. `features.automation_triggers` advertises the
+supported types to clients.
+
+- `automation-schedule.ts`: Intl-only wall-clock math in IANA zones. Skipped
+  spring-forward times shift later; ambiguous fall-back times use their first
+  occurrence. `latestWindowAtOrBefore` / `nextWindowAfter` use the local date's
+  weekday. `automation-schedule.test.ts` covers offsets, DST and weekday edges.
+- `automation-scheduler.ts`: worker step (scan at most every 15 s) that turns the
+  latest due window of each enabled schedule rule into a delivery keyed by
+  `scheduled_for`. Windows at or before the active revision's activation never
+  run (including re-enable after pause); there is no catch-up, so downtime
+  produces at most one delivery, `expired` if already past `latest_start_seconds`.
+  Inserts recheck rule state under the owner lock and dedupe on the unique window.
+- Admission builds trigger-specific input: schedule runs name the local window,
+  the previous admitted window and the approved scopes; contact runs are
+  unchanged. Policy checks contact lineage only for event deliveries and allow a
+  missing grant for scope-free rules. `automationStartEvidence` returns no
+  evidence block for schedule deliveries. The matcher ignores non-contact rules.
+- Lists and detail add `next_run_at` for enabled schedule rules; delivery
+  history adds `scheduled_for`.
+- `automation-scheduler.test.ts`: isolated-schema PostgreSQL fixture for
+  concurrent schedulers, expiry, paused/fresh rules, throttling, scope-free
+  admission/policy/ceiling, previous-window text and pinned-grant failure.
+
+Plan: [location and health agent data](../../../plan/location-and-health-agent-data.md).

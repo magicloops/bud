@@ -42,6 +42,8 @@ export class AutomationMatcher {
         if (applicable.length > AUTOMATION_LIMITS.rules_per_owner) throw new Error("automation_rule_limit_exceeded");
         for (const { revision } of applicable) {
           const definition = parseAutomationInput(automationDefinitionSchema, revision.definition);
+          // Rules for other trigger types never see this event, not even as suppressed.
+          if (definition.event_type !== "contact.added") continue;
           const matches = !definition.sources.source_ids.length || definition.sources.source_ids.includes(contact.sourceId);
           const [captured] = await tx.select({ id: bootstraps.id }).from(bootstraps)
             .innerJoin(members, and(eq(members.bootstrapId, bootstraps.id), eq(members.createdByUserId, event.createdByUserId)))

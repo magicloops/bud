@@ -12,7 +12,8 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
 import { resolveEffectiveModelSelection } from "../llm/index.js";
 import { getCatalogEntry } from "../llm/model-catalog.js";
 import { automationDefinitionSchema, automationDraftSchema, automationActivationSchema, automationPauseSchema, automationDeleteSchema,
-  parseAutomationInput, AUTOMATION_LIMITS, type AutomationDefinition } from "./automation-contracts.js";
+  parseAutomationInput, grantCoversDefinition, AUTOMATION_LIMITS, type AutomationDefinition } from "./automation-contracts.js";
+import { nextWindowAfter } from "./automation-schedule.js";
 import { automationModelResolver } from "./automation-model.js";
 import { DataRequestError } from "./contracts.js";
 
@@ -23,6 +24,13 @@ const conflict = () => new DataRequestError(409, "automation_conflict", "Automat
 export function serializeAutomation(row: Rule) {
   return { automation_id: row.id, version: row.version, state: row.state, draft: row.draft,
     active_revision: row.activeRevision, created_at: row.createdAt, updated_at: row.updatedAt };
+}
+
+/** Next scheduled start for an enabled schedule rule's active revision; null otherwise. */
+function nextRunAt(row: Rule, active: unknown) {
+  if (row.state !== "enabled" || !active) return null;
+  const parsed = automationDefinitionSchema.safeParse(active);
+  return parsed.success && parsed.data.event_type === "schedule" ? nextWindowAfter(parsed.data.schedule, new Date()) : null;
 }
 
 export class Automations {
@@ -55,6 +63,7 @@ export class Automations {
     const resolve = await automationModelResolver(this.database, owner, definitions);
     const project = (d: unknown) => { try { return resolve(parseAutomationInput(automationDefinitionSchema, d)); } catch { return null; } };
     return { context_filter: true, items: rows.map(({ rule, revision }) => ({ ...serializeAutomation(rule), model_resolution: project(revision?.definition ?? rule.draft), draft_model_resolution: project(rule.draft),
+      next_run_at: nextRunAt(rule, revision?.definition),
       active: revision ? { revision: revision.revision, definition: revision.definition } : null })) };
   }
 
@@ -67,7 +76,8 @@ export class Automations {
     if (!row) throw new DataRequestError(404, "automation_not_found", "Automation not found");
     const resolve = await automationModelResolver(this.database, owner, [row.rule.draft, ...(row.revision ? [row.revision.definition] : [])].map(d => parseAutomationInput(automationDefinitionSchema, d)));
     const project = (d: unknown) => { try { return resolve(parseAutomationInput(automationDefinitionSchema, d)); } catch { return null; } };
-    return { ...serializeAutomation(row.rule), model_resolution: project(row.revision?.definition ?? row.rule.draft), draft_model_resolution: project(row.rule.draft), active: row.revision ? {
+    return { ...serializeAutomation(row.rule), model_resolution: project(row.revision?.definition ?? row.rule.draft), draft_model_resolution: project(row.rule.draft),
+      next_run_at: nextRunAt(row.rule, row.revision?.definition), active: row.revision ? {
       revision: row.revision.revision, definition: row.revision.definition,
       grant_version: row.revision.grantVersion, activated_at: row.revision.createdAt,
     } : null };
@@ -100,7 +110,7 @@ export class Automations {
       .where(and(eq(invocations.createdByUserId, owner), inArray(invocations.id, invocationIds))) : [];
     const byId = new Map(runs.map(run => [run.id, run]));
     return { items: page.map(row => ({ delivery_id: row.id, revision: row.revision,
-      domain_event_id: row.domainEventId, invocation_id: row.invocationId, status: row.status,
+      domain_event_id: row.domainEventId, scheduled_for: row.scheduledFor, invocation_id: row.invocationId, status: row.status,
       outcome_code: row.outcomeCode, latest_start_at: row.latestStartAt,
       invocation: row.invocationId ? byId.get(row.invocationId) ?? null : null,
       created_at: row.createdAt, updated_at: row.updatedAt })),
@@ -129,7 +139,7 @@ export class Automations {
         eq(threads.budId, definition.bud_id), isNull(threads.deletedAt))).limit(1);
       if (!thread) throw new DataRequestError(404, "automation_target_not_found", "Thread not found");
     }
-    if (definition.sources.source_ids.length) {
+    if (definition.event_type === "contact.added" && definition.sources.source_ids.length) {
       const visible = await tx.select({ id: sources.id }).from(sources)
         .innerJoin(epochs, and(eq(epochs.id, sources.epochId), eq(epochs.createdByUserId, owner)))
         .innerJoin(installations, and(eq(installations.id, epochs.installationId), eq(installations.createdByUserId, owner)))
@@ -210,11 +220,10 @@ export class Automations {
     await this.validateTargetsInTransaction(tx, owner, definition, true);
     const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, owner));
     if ((grant?.version ?? 0) !== value.expected_grant_version) throw new DataRequestError(409, "grant_conflict", "Data permissions changed; reload before activating");
-    if (!grant || !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)) ||
-      definition.data_access.history_days > grant.historyDays) throw new DataRequestError(403, "data_permission_required", "Approve the requested data access before activating");
+    if (!grantCoversDefinition(grant, definition)) throw new DataRequestError(403, "data_permission_required", "Approve the requested data access before activating");
     const revision = prior.version + 1;
     await tx.insert(revisions).values({ automationId: id, revision, definition,
-      publicationBoundary: boundary.publicationSequence, grantVersion: grant.version,
+      publicationBoundary: boundary.publicationSequence, grantVersion: grant?.version ?? 0,
       activatedByUserId: owner, createdByUserId: owner });
     const [row] = await tx.update(rules).set({ state: "enabled", activeRevision: revision, version: revision,
       updatedByUserId: owner, updatedAt: sql`clock_timestamp()` }).where(eq(rules.id, id)).returning();

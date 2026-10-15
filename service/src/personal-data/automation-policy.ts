@@ -6,9 +6,12 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   contactTable as contacts, contactSourceTable as sources, dataCollectionEpochTable as epochs,
   dataInstallationTable as installations, agentInvocationTable as invocations, messageTable as messages } from "../db/schema.js";
 import { InvocationError, type Invocation } from "../agent/invocation-repository.js";
-import { automationDefinitionSchema, parseAutomationInput } from "./automation-contracts.js";
+import { automationDefinitionSchema, grantCoversDefinition, parseAutomationInput } from "./automation-contracts.js";
 import type { AgentDataCeiling } from "./agent-queries.js";
 import { DataRequestError } from "./contracts.js";
+
+type PolicyRow = { state: string; definition: unknown; grantVersion: number; scopes: string[] | null;
+  historyDays: number | null; currentGrantVersion: number | null; domainEventId?: string | null };
 
 export async function loadAutomationDataCeiling(threadId: string, owner: string, turnId?: string,
   database: Pick<Database, "select"> = db): Promise<AgentDataCeiling | undefined> {
@@ -42,19 +45,25 @@ export async function loadAutomationDataCeiling(threadId: string, owner: string,
 export async function checkAutomationPolicy(invocation: Invocation, checkPause = true, database: Pick<Database, "select"> = db): Promise<"ready" | "retry_wait"> {
   if (invocation.origin !== "automation") return "ready";
   const owner = invocation.createdByUserId;
-  let [policy] = await database.select({ state: rules.state, definition: revisions.definition,
+  // Grants are optional: a rule without data scopes needs none.
+  let [policy]: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
     grantVersion: revisions.grantVersion, scopes: grants.scopes, historyDays: grants.historyDays,
-    currentGrantVersion: grants.version }).from(deliveries)
+    currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId }).from(deliveries)
     .innerJoin(rules, and(eq(rules.id, deliveries.automationId), eq(rules.createdByUserId, owner)))
     .innerJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, deliveries.revision), eq(revisions.createdByUserId, owner)))
-    .innerJoin(grants, eq(grants.createdByUserId, owner))
-    .innerJoin(events, and(eq(events.id, deliveries.domainEventId), eq(events.createdByUserId, owner)))
-    .innerJoin(evidence, and(eq(evidence.id, events.revisionId), eq(evidence.createdByUserId, owner)))
-    .innerJoin(contacts, and(eq(contacts.id, evidence.contactId), eq(contacts.createdByUserId, owner)))
-    .innerJoin(sources, and(eq(sources.id, contacts.sourceId), eq(sources.createdByUserId, owner)))
-    .innerJoin(epochs, and(eq(epochs.id, sources.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))
-    .innerJoin(installations, and(eq(installations.id, epochs.installationId), eq(installations.createdByUserId, owner), isNull(installations.revokedAt)))
+    .leftJoin(grants, eq(grants.createdByUserId, owner))
     .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"))).limit(1);
+  if (policy?.domainEventId) {
+    // Event deliveries keep their source lineage requirement.
+    const [lineage] = await database.select({ id: events.id }).from(events)
+      .innerJoin(evidence, and(eq(evidence.id, events.revisionId), eq(evidence.createdByUserId, owner)))
+      .innerJoin(contacts, and(eq(contacts.id, evidence.contactId), eq(contacts.createdByUserId, owner)))
+      .innerJoin(sources, and(eq(sources.id, contacts.sourceId), eq(sources.createdByUserId, owner)))
+      .innerJoin(epochs, and(eq(epochs.id, sources.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))
+      .innerJoin(installations, and(eq(installations.id, epochs.installationId), eq(installations.createdByUserId, owner), isNull(installations.revokedAt)))
+      .where(and(eq(events.id, policy.domainEventId), eq(events.createdByUserId, owner))).limit(1);
+    if (!lineage) throw new InvocationError("automation_authority_lost");
+  }
   if (!policy) policy = await bootstrapPolicy(invocation, database);
   if (!policy || policy.state === "deleted") throw new InvocationError("automation_authority_lost");
   const definition = parseAutomationInput(automationDefinitionSchema, policy.definition);
@@ -69,8 +78,9 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
     (definition.target.mode === "existing_thread" && definition.target.thread_id !== invocation.threadId)) {
     throw new InvocationError("automation_target_changed");
   }
-  if (policy.grantVersion !== policy.currentGrantVersion || definition.data_access.history_days > policy.historyDays ||
-    !definition.data_access.scopes.every(scope => policy.scopes.includes(scope))) throw new InvocationError("data_permission_changed");
+  const grant = policy.currentGrantVersion === null ? null
+    : { version: policy.currentGrantVersion, scopes: policy.scopes ?? [], historyDays: policy.historyDays ?? 0 };
+  if (!grantCoversDefinition(grant, definition, policy.grantVersion)) throw new InvocationError("data_permission_changed");
   // Pause gates starts/continuations. Already-running work follows explicit
   // cancel-active semantics; revocation still applies at every checkpoint.
   return checkPause && policy.state !== "enabled" ? "retry_wait" : "ready";

@@ -203,7 +203,7 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   assert.equal(await checkAutomationPolicy(admitted[0], false, db), "ready");
   await db.update(s.automationTable).set({ state: "enabled" }).where(eq(s.automationTable.id, rule));
   const [triggerDelivery] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.invocationId, lease.id));
-  const [triggerEvent] = await db.select().from(s.dataDomainEventTable).where(eq(s.dataDomainEventTable.id, triggerDelivery.domainEventId));
+  const [triggerEvent] = await db.select().from(s.dataDomainEventTable).where(eq(s.dataDomainEventTable.id, triggerDelivery.domainEventId!));
   const [triggerRevision] = await db.select().from(s.contactRevisionTable).where(eq(s.contactRevisionTable.id, triggerEvent.revisionId));
   const [originalInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, lease.inputMessageId));
   await db.update(s.contactTable).set({ fields: { given_name: "Later edit" } }).where(eq(s.contactTable.id, triggerRevision.contactId));

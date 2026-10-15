@@ -8,7 +8,8 @@ import { automationBootstrapTable as requests, automationBootstrapMemberTable as
   agentDataGrantTable as grants, contactTable as contacts, contactRevisionTable as contactRevisions,
   contactScanTable as scans, contactSourceTable as sources, dataCollectionEpochTable as epochs,
   dataInstallationTable as installations } from "../db/schema.js";
-import { automationBootstrapSchema, automationBootstrapPreviewSchema, automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput } from "./automation-contracts.js";
+import { automationBootstrapSchema, automationBootstrapPreviewSchema, automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput,
+  requireContactDefinition, type ContactAddedDefinition } from "./automation-contracts.js";
 import { InvocationRepository } from "../agent/invocation-repository.js";
 import { Automations } from "./automations.js";
 import { automationActivationSchema } from "./automation-contracts.js";
@@ -146,7 +147,7 @@ export class AutomationBootstrap {
       const [active] = rule.activeRevision === null ? [] : await tx.select().from(revisions).where(and(
         eq(revisions.automationId, automationId), eq(revisions.revision, rule.activeRevision), eq(revisions.createdByUserId, owner))).limit(1);
       if (!value.use_draft && !active) throw new DataRequestError(409, "automation_not_activated", "Activate a saved revision first");
-      const definition = parseAutomationInput(automationDefinitionSchema, value.use_draft ? rule.draft : active!.definition);
+      const definition = requireContactDefinition(parseAutomationInput(automationDefinitionSchema, value.use_draft ? rule.draft : active!.definition));
       if ((!value.use_draft && active!.grantVersion !== grant.version) || definition.data_access.history_days > grant.historyDays ||
         !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)))
         throw new DataRequestError(403, "data_permission_changed", "Approve current data permissions before previewing");
@@ -161,7 +162,7 @@ export class AutomationBootstrap {
   }
 
   private async selectSnapshot(tx: Parameters<Parameters<Database["transaction"]>[0]>[0], owner: string,
-    automationId: string, revisionNumber: number, definition: ReturnType<typeof automationDefinitionSchema.parse>,
+    automationId: string, revisionNumber: number, definition: ContactAddedDefinition,
     value: Pick<ReturnType<typeof automationBootstrapPreviewSchema.parse>, "sources" | "search" | "max_contacts" | "exclude_previously_delivered">,
     reviewedIDs?: string[]) {
       const availableSources = value.sources.source_ids.length ? await tx.select({ id: sources.id }).from(sources)
@@ -215,7 +216,7 @@ export class AutomationBootstrap {
     const [revision] = rule.activeRevision === null ? [] : await tx.select().from(revisions).where(and(
       eq(revisions.automationId, rule.id), eq(revisions.revision, rule.activeRevision), eq(revisions.createdByUserId, owner))).limit(1);
     if (!revision) throw new DataRequestError(409, "automation_not_activated", "Activate a saved revision first");
-    const definition = parseAutomationInput(automationDefinitionSchema, revision.definition);
+    const definition = requireContactDefinition(parseAutomationInput(automationDefinitionSchema, revision.definition));
     const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, owner));
     if (!grant || grant.version !== revision.grantVersion || definition.data_access.history_days > grant.historyDays ||
       !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)))
@@ -274,7 +275,7 @@ export class AutomationBootstrap {
     if (rule.activeRevision === null) throw new DataRequestError(409, "automation_not_activated", "Activate a saved revision first");
     const [revision] = await tx.select().from(revisions).where(and(eq(revisions.automationId, automationId), eq(revisions.revision, rule.activeRevision), eq(revisions.createdByUserId, owner))).limit(1);
     if (!revision) throw new DataRequestError(409, "automation_not_activated", "Active revision is unavailable");
-    const definition = parseAutomationInput(automationDefinitionSchema, revision.definition);
+    const definition = requireContactDefinition(parseAutomationInput(automationDefinitionSchema, revision.definition));
     const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, owner));
     if (!grant || grant.version !== revision.grantVersion || definition.data_access.history_days > grant.historyDays ||
       !definition.data_access.scopes.every(scope => grant.scopes.includes(scope)))
