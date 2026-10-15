@@ -4,7 +4,8 @@ import { db, type Database } from "../db/client.js";
 import { locationObservationTable as locations, contactTable as contacts } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
 
-export const LOCATION_TYPES = ["location.visit.v1", "location.significant_change.v1"];
+/** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits. */
+export const LOCATION_TYPES = ["location.visit.v1", "location.visit.v2", "location.significant_change.v1"];
 function timestamp(value: unknown): Date | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
   const date = new Date(value);
@@ -21,7 +22,7 @@ export function parseLocationPayload(type: string, value: unknown) {
   const departureAt = value.departure_at == null ? null : timestamp(value.departure_at);
   if ((value.arrival_at != null && !arrivalAt) || (value.departure_at != null && !departureAt)
     || (arrivalAt && departureAt && departureAt < arrivalAt)) return null;
-  return { kind: type === "location.visit.v1" ? "visit" : "significant_change", latitude: lat, longitude: lon,
+  return { kind: type.startsWith("location.visit.") ? "visit" : "significant_change", latitude: lat, longitude: lon,
     horizontalAccuracyM: accuracy, arrivalAt, departureAt };
 }
 

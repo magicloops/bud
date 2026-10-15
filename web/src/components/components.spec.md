@@ -258,3 +258,7 @@ access. `data-screen.tsx` adds a Health source summary, a Browse health link and
 agent Health toggles (per type, shown only when the service advertises
 `supported_health_types`). App access requests and agent summaries show health
 types.
+
+`data-screen.tsx` Data sources also shows a Location summary (last received and
+latest visit) from `/api/data/status`, pointing to the mobile Location section
+for permission.
