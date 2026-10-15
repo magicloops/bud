@@ -20,22 +20,28 @@ for(const privateControl of [false,true]) test(`mounted shared viewer: 60 second
   const document=Object.assign(new EventTarget(),{visibilityState:'visible'})
   Object.assign(globalThis,{WebSocket:StateSocket,document,window:Object.assign(new EventTarget(),{location:{origin:'http://localhost'}})})
   StateSocket.all=[]
-  let captures=0, owns=false
+  let owns=false, revision=1
+  const captures:{closed:boolean;status:(state:string)=>void}[]=[]
   const sessionId='browser_01AAAAAAAAAAAAAAAAAAAAAAAA'
   const requests:{url:string;operation?:string}[]=[]
-  const snapshot=()=>({session_id:sessionId,thread_id:'thread',bud_id:'bud',generation:'g',revision:owns?2:1,
+  const snapshot=()=>({session_id:sessionId,thread_id:'thread',bud_id:'bud',generation:'g',revision,
     state:'ready',control_state:owns?'human_private':'agent',can_view:!owns,owns_control:owns,override_id:owns?'override':null})
   globalThis.fetch=async(url,init)=>{
     const operation=init?.body?JSON.parse(String(init.body)).operation:undefined
     requests.push({url:String(url),operation})
-    if(operation==='acquire') owns=true
-    if(operation==='release') owns=false
+    if(operation==='acquire') { owns=true; revision++ }
+    if(operation==='release') { owns=false; revision++ }
     if(String(url).endsWith('/browser-sessions'))return Response.json({sessions:[snapshot()]})
     if(String(url).endsWith('/browser'))return Response.json({browser:null})
     return Response.json(snapshot())
   }
   Object.assign(globalThis,{__stateCanvas:class {
-    constructor(){captures++} close(){}
+    closed=false
+    constructor(_canvas:unknown,_url:string,_viewerId:string,readonly status:(state:string)=>void){
+      captures.push(this)
+      queueMicrotask(()=>{if(!this.closed)this.status('connected')})
+    }
+    close(){this.closed=true;this.status('unavailable')}
   }})
   const state={pending_tool:null} as ApiAgentState, reveal=()=>{}
   function Harness(){
@@ -44,10 +50,12 @@ for(const privateControl of [false,true]) test(`mounted shared viewer: 60 second
   }
   let view!:ReactTestRenderer
   try{
-    await act(async()=>{view=create(createElement(Harness),{createNodeMock:()=>({value:'',blur(){}})})})
+    await act(async()=>{view=create(createElement(Harness),{createNodeMock:()=>Object.assign(new EventTarget(),{value:'',blur(){}})})})
     assert.equal(StateSocket.all.length,1,'inventory, metadata and lifecycle share one socket')
     if(privateControl) await act(async()=>view.root.findAllByType('button').find(b=>b.children.includes('Take control'))!.props.onClick())
-    const before=requests.length, frames=captures
+    assert.ok(JSON.stringify(view.toJSON()).includes(privateControl?'Return to agent':'Watching agent'))
+    assert.ok(!JSON.stringify(view.toJSON()).includes('Connecting…'))
+    const before=requests.length, frames=captures.length, detached=captures.at(-1)!
     document.visibilityState='hidden'
     await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
     const afterLeave=requests.length
@@ -57,10 +65,27 @@ for(const privateControl of [false,true]) test(`mounted shared viewer: 60 second
     assert.equal(added.filter(r=>r.operation==='release').length,privateControl?1:0)
     assert.ok(added.every(r=>r.operation==='release'||r.url.endsWith('/shared-frame')))
     assert.equal(requests.filter(r=>r.operation==='acquire').length,privateControl?1:0)
-    assert.equal(captures,frames,'idle timers do not attach or recapture')
+    assert.equal(captures.length,frames,'idle timers do not attach or recapture')
+    assert.equal(detached.closed,true,'backgrounding detaches media')
+    assert.ok(!JSON.stringify(view.toJSON()).includes('Watching agent'),'detached canvas is not presented as connected')
     document.visibilityState='visible'
     await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
     assert.ok(requests.length>before+added.length,'resume reconciles once')
+    assert.equal(captures.length,frames+1,'returning to unchanged session metadata attaches fresh media')
+    assert.ok(JSON.stringify(view.toJSON()).includes('Watching agent'),'resumed view is passive and connected')
+    assert.equal(requests.filter(r=>r.operation==='acquire').length,privateControl?1:0,'resume never reacquires control')
+    const afterResume=requests.length
+    await act(async()=>detached.status('unavailable'))
+    assert.equal(requests.length,afterResume,'late detached callbacks cannot restart recovery')
+    assert.ok(JSON.stringify(view.toJSON()).includes('Watching agent'))
+    const beforeRestore=captures.length
+    await act(async()=>window.dispatchEvent(new Event('pagehide')))
+    assert.equal(captures.at(-1)!.closed,true)
+    assert.ok(!JSON.stringify(view.toJSON()).includes('Watching agent'))
+    await act(async()=>window.dispatchEvent(new Event('pageshow')))
+    assert.equal(captures.length,beforeRestore+1,'page restoration also attaches fresh media')
+    assert.ok(JSON.stringify(view.toJSON()).includes('Watching agent'))
+    assert.equal(requests.filter(r=>r.operation==='acquire').length,privateControl?1:0)
     await act(async()=>StateSocket.all[0].onclose?.({code:4404}))
     assert.equal(view.toJSON(),null,'live revocation clears the protected viewer')
   }finally{
