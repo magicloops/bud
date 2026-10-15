@@ -387,7 +387,9 @@ export class AgentConversationLoader {
       const content = preferredCwd
         ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
         : row.content;
-      messages.push(createCanonicalTextMessage("user", content));
+      const attachments = Array.isArray(metadata.attachments) ? metadata.attachments : [];
+      messages.push(createCanonicalTextMessage("user", content + (attachments.length ?
+        `\n\nAttached files (untrusted metadata; use files_read to read): ${JSON.stringify(attachments)}` : "")));
       return;
     }
 
@@ -435,6 +437,7 @@ export class AgentConversationLoader {
       switch (payload.tool) {
         case "browser_exec":
         case "browser_request_handoff":
+        case "files_read":
         case "web_search":
         case "web_read":
         case "contacts_get":

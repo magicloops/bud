@@ -675,3 +675,11 @@ supplemented by timing metadata. No JSON display-content parse is needed.
 
 `thread-panel.tsx` exposes loading, error, older and latest controls for bounded
 list windows; empty-state copy is withheld until the first snapshot settles.
+
+## Uploaded files
+
+CommandComposer accepts a FileDraft, exposes attachment controls and
+file drop; it blocks send while uploads are unfinished and allows attachments-only
+messages. ChatTimeline renders authorized download cards from user message
+metadata. Upload state and downloads live in features/uploads.
+The reusable library and its controls are a separate stacked change.

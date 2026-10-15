@@ -1,3 +1,4 @@
+import { useFileDraft } from '@/features/uploads/attachments'
 import { requestViewport } from '@/features/browser/request-viewport'
 import { BrowserWaitActionsContext, BrowserPaneContext, useBrowserPane } from '@/features/browser/pane'
 import { BrowserViewer, type BrowserReturnAction } from '@/features/browser/viewer'
@@ -136,6 +137,7 @@ function ThreadViewContent() {
     setReviewError(null)
   }, [reviewKey])
   const [messageText, setMessageText] = useState('')
+  const files = useFileDraft()
   const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
   const [agentEnvironment, setAgentEnvironment] = useState<ApiAgentEnvironment | null>(
     initialAgentState.environment ?? null,
@@ -941,8 +943,10 @@ function ThreadViewContent() {
     const formData = new FormData(e.currentTarget)
     const submittedMessage = String(formData.get('message') ?? '')
     const trimmedMessage = submittedMessage.trim()
+    if (files.blocked) { setError('Wait for uploads to finish or remove failed files.'); return }
+    const fileIds = files.ready.map(file => file.file_id)
     const browserViewport = requestViewport(chatPaneRef.current, chatPaneWidth)
-    if (!trimmedMessage) {
+    if (!trimmedMessage && !fileIds.length) {
       setError('Message cannot be empty')
       return
     }
@@ -967,6 +971,7 @@ function ThreadViewContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: trimmedMessage,
+          file_ids: fileIds,
           browser_viewport: browserViewport,
           client_id: optimisticId,
           model: explicitSelectionThreadRef.current === threadId ? selectedModel || undefined : undefined,
@@ -994,6 +999,7 @@ function ThreadViewContent() {
       if (agent?.stream_cursor) {
         agentStreamCursorSetterRef.current(agent.stream_cursor)
       }
+      files.clear()
       reconcilePersistedUserMessage(
         optimisticId,
         persistedMessageId,
@@ -1020,10 +1026,12 @@ function ThreadViewContent() {
       if (currentThreadRef.current !== sendScope) return
       cancelAgentTurnRequestedRef.current = false
       removeMessage(optimisticId)
+      setMessageText(trimmedMessage)
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to send message')
     }
   }, [
+    files,
     addOptimisticUserMessage,
     chatPaneWidth,
     budId,
@@ -1214,6 +1222,7 @@ function ThreadViewContent() {
       )}
       composer={(
         <CommandComposer
+          files={files}
           messageText={messageText}
           onMessageChange={setMessageText}
           status={status}

@@ -2030,3 +2030,25 @@ export const browserViewerVisitTable = pgTable("browser_viewer_visit", {
   sessionFk: foreignKey({name:"browser_viewer_visit_session_fk",columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
     foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
 }));
+
+export const userFileTable = pgTable('user_file', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id'),
+  createdByUserId: text('created_by_user_id').notNull().references(() => authUserTable.id),
+  name: text('name').notNull(),
+  mimeType: text('mime_type').notNull(),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+  sha256: text('sha256'),
+  state: text('state').notNull().default('pending'),
+  processingState: text('processing_state').notNull().default('pending'),
+  document: jsonb('document').$type<{ pages: string[]; complete: boolean; warnings: string[] }>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+}, table => [
+  index('user_file_owner_created_idx').on(table.createdByUserId, table.createdAt, table.id),
+  check('user_file_size_check', sql`${table.sizeBytes} between 1 and 26214400`),
+  check('user_file_state_check', sql`${table.state} in ('pending','uploading','ready','failed') and (${table.state} <> 'ready' or (${table.sha256} is not null and ${table.sha256} ~ '^[a-f0-9]{64}$'))`),
+]);
+
+export type UserFile = typeof userFileTable.$inferSelect;

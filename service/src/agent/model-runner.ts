@@ -1,3 +1,4 @@
+import { hydrateDocumentPages } from "../uploads/agent.js";
 import { hydrateBrowserImages } from "../browser/image-artifacts.js";
 import { isBrowserToolName } from "./browser-tools.js";
 import { isAutomationToolName, parseAutomationToolInput } from "../personal-data/automation-tool-contracts.js";
@@ -354,8 +355,8 @@ export class AgentModelRunner {
     };
 
     try {
-      const hydratedMessages = await hydrateBrowserImages(messages, invocationContext,
-        provider.getModelCapabilities(model).supportsVision);
+      const hydratedMessages = await hydrateDocumentPages(await hydrateBrowserImages(messages, invocationContext,
+        provider.getModelCapabilities(model).supportsVision), invocationContext, provider.getModelCapabilities(model).supportsVision);
       signal?.throwIfAborted();
       for await (const event of provider.invoke(hydratedMessages, tools, modelConfig, signal, invocationContext)) {
         // Only productive boundaries change activity. Tail metadata for older
@@ -658,6 +659,7 @@ export class AgentModelRunner {
         return { type: "tool_call", tool: "data_request_api_key", callId: toolCall.id,
           args: { ...parsed, destination: { ...parsed.destination, public_key: parsed.destination.public_key.public_key } } };
       }
+      case "files_read":
       case "web_search":
       case "web_read":
       case "contacts_get":

@@ -1,5 +1,6 @@
 import { BrowserHandoffContent } from '@/components/message-renderers/tools/browser-handoff'
 import { resolveToolPayload } from './tool-payload'
+import { AttachmentCards } from '@/features/uploads/attachments'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react'
@@ -681,6 +682,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
             </span>
             <MessageTimestamp createdAt={message.created_at} />
           </div>}
+          {isUser && <AttachmentCards metadata={message.metadata} />}
           <div className={isAssistant ? 'min-h-[1lh]' : undefined}>{contentNode}</div>
         </div>
       </div>

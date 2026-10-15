@@ -15,6 +15,7 @@ import {
 } from "./user-question-contracts.js";
 
 export type AgentToolCallDirective =
+  | { type: "tool_call"; tool: "files_read"; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: BrowserToolName; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: WebTool; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: AutomationToolName; args: Record<string, unknown>; callId: string }
@@ -287,7 +288,12 @@ export type ExecutedBrowserTool = {
 export function isBrowserToolDirective(directive: AgentToolCallDirective): directive is ExecutedBrowserTool["directive"] {
   return isBrowserToolName(directive.tool);
 }
+export type ExecutedFileTool = {
+  directive: Extract<AgentToolCallDirective, { tool: "files_read" }>; args: Record<string, unknown>; summary: string; outputTruncationReason: null;
+  result: { kind: "file"; ok: boolean; error?: string; retryable?: boolean }; payload: Record<string, unknown>;
+};
 export type ExecutedAgentTool =
+  | ExecutedFileTool
   | ExecutedBrowserTool
   | ExecutedWebRetrievalTool
   | ExecutedAutomationTool
@@ -332,6 +338,7 @@ export function toolNameForConversation(
   | PersonalDataTool
   | WebTool
   | "data_request_api_key"
+  | "files_read"
   | AutomationToolName
   | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
@@ -343,6 +350,7 @@ export function toolNameForConversation(
     case "automations_request_activation":
     case "automations_request_existing_contacts":
     case "automations_pause":
+    case "files_read":
     case "data_request_api_key":
     case "browser_exec":
     case "browser_request_handoff":
@@ -428,6 +436,7 @@ export function buildToolArgs(
     case "automations_request_activation":
     case "automations_request_existing_contacts":
     case "automations_pause":
+    case "files_read":
     case "data_request_api_key":
     case "browser_exec":
     case "browser_request_handoff":

@@ -185,7 +185,7 @@ bud/
 
 | Technology | Purpose |
 |------------|---------|
-| **Node.js 20+** | JavaScript runtime |
+| **Node.js ^22.13 or >=24** | JavaScript runtime, including uploaded-document parsing |
 | **Fastify** | HTTP server framework |
 | **@fastify/websocket** | WebSocket support |
 | **@grpc/grpc-js** | Opt-in native gRPC daemon control gateway |
@@ -410,7 +410,7 @@ The service refactor's final cleanup removes the old standalone `run` / `run_ste
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js ^22.13 or >=24
 - Rust (stable)
 - PostgreSQL 14+
 - pnpm (for web/service)
@@ -936,3 +936,23 @@ post-commit transcript publication. Migrations 0048/0049 and coordinated service
 web/mobile adoption are required; daemon protocol is unchanged. Single-instance
 wake/replay remains a deployment constraint, not a permanent architecture promise.
 See [mobile API handoff](plan/backend-mobile-performance/mobile-api-handoff.md).
+
+## Chat uploads
+
+User-owned originals are stored on the service's private persistent disk;
+PostgreSQL `user_file` rows retain ownership, immutable IDs, size/hash and extracted
+document text. Chat metadata references those IDs without duplicating originals.
+Authenticated upload routes and agent files_read authorize the
+owner before exposing metadata or bytes; agent reads require a current-chat attachment. Browser attachment uses a short-lived
+single-use transfer, an exact observed input and a verified temporary daemon copy.
+
+`render.yaml` declares a 10 GB disk for the single `bud-service` instance at
+`/var/data`, FILE_STORAGE_DIRECTORY=/var/data/uploads, FILE_STORAGE_MOUNT_PATH=
+/var/data, and service Node 22.23.2. Production verifies the mount before listening
+and rejects missing/ephemeral storage. Private atomic disk writes preserve 256 MiB
+headroom; this topology trades horizontal scaling and zero-downtime deploys for
+simple storage on the existing host. No external bucket is required. Deploy
+migrations 0053/0054 with matching service/web and daemon/helper. The Render disk
+is declared locally but has not been provisioned; deployment remains a separate
+release step. See [upload spec](service/src/uploads/uploads.spec.md) and
+[implementation and rollout](plan/browser-file-library.md).

@@ -63,6 +63,7 @@ export function createBrowser(operation, remainingBytes) {
         observations.delete(id); return result;
       },
       evaluate(fn, argument) { return evaluate(null, fn, argument); },
+      fileInputs() { return operation({ action: 'repl', operation: 'file_inputs', target_id: id }); },
       frames() { return operation({ action: 'repl', operation: 'frames', target_id: id }); },
       frame(frame_id) { return Object.freeze({ evaluate: (fn, argument) => evaluate(frame_id, fn, argument) }); },
       async screenshot() {

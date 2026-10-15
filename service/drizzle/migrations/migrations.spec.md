@@ -513,3 +513,11 @@ Generated migration with snapshot/journal. Adds the health sample and deletion
 tables and `agent_data_grant.health_types`. Purely additive; existing rows get
 the column default. Applied locally as exact SQL; the isolated PostgreSQL health
 fixture passes.
+
+### `0053_fancy_sersi.sql` and `0054_lowly_mandarin.sql`
+
+Generated user_file table, auth-user FK, owner/created/id index and size/state
+checks; 0054 makes ready-state SHA-256 explicitly non-null (SQL CHECK accepts null).
+Generated metadata is unedited. Both reviewed migrations applied transactionally
+locally after canceling db:push’s unrelated invocation constraint recreation.
+No existing rows changed. Deploy using db:migrate before the upload service.

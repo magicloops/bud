@@ -2,6 +2,7 @@
 // hydration and context accounting so both agree on which images the provider
 // receives (Phase 3s D4).
 import type { CanonicalContentBlock, CanonicalMessage } from '../llm/types.js';
+import { selectedDocumentPages } from '../uploads/page-references.js';
 
 /** Provider payloads carry at most this many of the newest screenshots. */
 export const HYDRATED_IMAGE_LIMIT = 8;
@@ -46,11 +47,14 @@ export function selectHydratedImageReferences(messages: CanonicalMessage[]): Map
  */
 export function hydratedImageIds(messages: CanonicalMessage[], count = messages.length): string[] {
   const selected = selectHydratedImageReferences(messages);
+  const documents = selectedDocumentPages(messages);
   const ids: string[] = [];
   for (const message of messages.slice(0, count)) {
     if (!Array.isArray(message.content)) continue;
     for (const block of message.content) {
       if (selected.has(block)) ids.push(...selected.get(block)!);
+      const document = documents.get(block);
+      if (document) ids.push(`document:${document.file_id}:${document.page}`);
     }
   }
   return ids;

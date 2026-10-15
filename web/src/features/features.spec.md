@@ -27,3 +27,7 @@ ownership, the file viewer open/fetch state machine, and proxied web-view state.
 ---
 
 *Referenced by: [../src.spec.md](../src.spec.md)*
+
+### `uploads/` → [uploads/uploads.spec.md](./uploads/uploads.spec.md)
+
+Chat upload state and authorized attachment cards.

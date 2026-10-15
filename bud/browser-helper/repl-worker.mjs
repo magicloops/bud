@@ -1,3 +1,6 @@
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 // Trusted-code worker. Private stdio is a lifecycle boundary, not a sandbox.
 import { start } from 'node:repl';
 import { PassThrough, Writable } from 'node:stream';
@@ -77,6 +80,38 @@ const api = createBrowser(operation, () => {
   return cell.text_limit - Buffer.byteLength(cell.text);
 });
 globalThis.repl = Object.freeze({ files,
+  attachFile(grant, target_id, reference, observation_id) {
+    const cell = cellContext();
+    const task = (async () => {
+      const endpoint = new URL(grant.endpoint);
+      if (!(endpoint.protocol === 'https:' || (endpoint.protocol === 'http:' && ['localhost','127.0.0.1'].includes(endpoint.hostname))) ||
+          endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+          !/^[A-Za-z0-9_-]{43}$/.test(grant.ticket) || !/^[^/\\\x00-\x1f]{1,240}$/.test(grant.name) || ['.','..'].includes(grant.name) ||
+          !/^[-\w.+]+\/[-\w.+]+$/.test(grant.mime_type) || grant.mime_type.length > 200 ||
+          !Number.isInteger(grant.size_bytes) || grant.size_bytes < 1 || grant.size_bytes > 25 * 1024 * 1024 || !/^[a-f0-9]{64}$/.test(grant.sha256))
+        throw Error('browser_invalid_file_grant');
+      const directory = await mkdtemp(join(process.argv[2], 'upload-'));
+      try {
+        const path = join(directory, grant.name), file = await open(path, 'wx', 0o600);
+        try {
+          const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${grant.ticket}` }, redirect: 'error', signal: AbortSignal.timeout(15000) });
+          if (!response.ok || !response.body) throw Error('browser_file_unavailable');
+          let received = 0; const hash = createHash('sha256');
+          for await (const chunk of response.body) {
+            cellContext(); received += chunk.byteLength;
+            if (received > grant.size_bytes) throw Error('browser_file_integrity_failed');
+            hash.update(chunk); await file.writeFile(chunk);
+          }
+          if (received !== grant.size_bytes || hash.digest('hex') !== grant.sha256) throw Error('browser_file_integrity_failed');
+        } finally { await file.close(); }
+        cellContext();
+        return await operation({ action: 'repl', operation: 'set_files', target_id, reference, observation_id, paths: [path], mime_types: [grant.mime_type] });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    })();
+    cell.operations.add(task);
+    task.then(() => cell.operations.delete(task), () => { cell.operations.delete(task); cell.operationError ??= 'browser_file_upload_failed'; });
+    return task;
+  },
   setOutputBudget(bytes) {
     const cell = cellContext();
     if (!Number.isInteger(bytes) || bytes < 1024 || bytes > MAX_TEXT_LIMIT)

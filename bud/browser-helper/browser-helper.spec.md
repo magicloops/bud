@@ -253,3 +253,15 @@ queries/fragments and relative spelling. Historical data does not authorize acti
 `repl-snapshot.test.mjs` covers fidelity, Unicode, URL factoring/selection, immutable
 reference binding and real Chrome stale-handle rejection. Build/archive watch and
 REPL readiness include the new module. See [Phase 7b validation](../../debug/browser-repl-phase7b.md).
+
+## Chat file attachment
+
+`repl-api.mjs` adds tab.fileInputs; `engine.mjs` discovers up to 100 exact HTML file
+handles across frames including hidden/open-shadow inputs. A separate 60-second
+observation binds handles and document identity; replacement/navigation fails
+without selector retargeting. set_files checks regular NOFOLLOW files, size/count,
+MIME, disabled/directory/multiple restrictions and invokes setInputFiles once.
+`repl-worker.mjs` privately downloads single-use grants with redirect denial,
+HTTPS/loopback URL restrictions, 15-second timeout and exact size/SHA-256 checks.
+Staging is worker-owned, 0600 and removed after selection or worker disposal.
+`uploads.test.mjs` covers hidden/iframe originals, stale inputs and no submit.

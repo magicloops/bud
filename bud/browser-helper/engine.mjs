@@ -1,3 +1,5 @@
+import { open, constants } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { chromium } from 'playwright-core';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { compactNodes } from './compact.mjs';
@@ -77,7 +79,7 @@ export class Engine {
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 8000 });
     return new Engine(browser);
   }
-  constructor(browser) { this.browser = browser; this.snapshot = null; this.watched = new WeakSet(); this.navigation = 0; this.frames = new Map(); }
+  constructor(browser) { this.browser = browser; this.snapshot = null; this.uploadSnapshot = null; this.watched = new WeakSet(); this.navigation = 0; this.frames = new Map(); }
   async page(target) {
     // Rust creates tabs over its own CDP connection. Playwright can receive the
     // target-created event after Rust's create acknowledgement; wait only for
@@ -91,7 +93,7 @@ export class Engine {
           if (targetInfo.targetId === target) {
             if (!this.watched.has(page)) {
               this.watched.add(page);
-              page.on('framenavigated', () => { this.navigation++; if (this.snapshot?.target === target) this.snapshot = null; });
+              page.on('framenavigated', () => { void this.clearUploads(); this.navigation++; if (this.snapshot?.target === target) this.snapshot = null; });
               page.on('close', () => { if (this.snapshot?.target === target) this.snapshot = null; });
             }
             return page;
@@ -126,10 +128,71 @@ export class Engine {
       coverage:s.scoped ? 'accessible_subtree' : s.mode === 'visible_dom' ? 'visible_accessible_dom' : 'accessible_dom',
       limitations:['Closed shadow roots, inaccessible embedded documents and non-rendered virtualized content may be omitted.'] };
   }
+  async clearUploads() {
+    const old = this.uploadSnapshot; this.uploadSnapshot = null;
+    if (old) await Promise.all([...old.refs.values()].map(handle => handle.dispose().catch(() => {})));
+  }
+  async uploadCurrent(page, c) {
+    const saved = this.uploadSnapshot;
+    if (!saved || saved.target !== c.target_id || saved.id !== c.observation_id || Date.now() - saved.at > TTL ||
+        await this.document(page) !== saved.document || saved !== this.uploadSnapshot) fail('browser_stale_reference');
+    return saved;
+  }
+  async fileInputs(page, c) {
+    await this.clearUploads();
+    const id = randomUUID(), document = await this.document(page), navigation = this.navigation, refs = new Map(), inputs = [];
+    try {
+      for (const frame of page.frames()) {
+        const count = await frame.locator('input[type=file]').count();
+        if (count + inputs.length > 100) fail('browser_file_input_limit');
+        for (const handle of await frame.locator('input[type=file]').elementHandles()) {
+          const reference = `${id}:f${inputs.length}`; refs.set(reference, handle);
+          const metadata = await handle.evaluate(el => ({
+            name: (el.getAttribute('aria-label') || [...(el.labels || [])].map(l => l.textContent).join(' ') || el.name || el.id || 'File input').slice(0, 300),
+            accept: el.accept.slice(0, 500), multiple: el.multiple, directory: el.webkitdirectory, disabled: el.disabled,
+          }));
+          inputs.push({ reference, ...metadata, frame_url: frame.url().slice(0, 2048) });
+        }
+      }
+      if (navigation !== this.navigation || await this.document(page) !== document) fail('browser_document_changed');
+      this.uploadSnapshot = { id, document, target: c.target_id, at: Date.now(), refs };
+      return { observation_id: id, target_id: c.target_id, inputs, coverage: 'HTML file inputs including hidden inputs and accessible frames; closed shadow roots may be omitted.' };
+    } catch (error) { await Promise.all([...refs.values()].map(handle => handle.dispose().catch(() => {}))); throw error; }
+  }
+  async setFiles(page, c) {
+    const saved = await this.uploadCurrent(page, c), handle = saved.refs.get(c.reference);
+    if (!handle) fail('browser_stale_reference');
+    if (!Array.isArray(c.paths) || !c.paths.length || c.paths.length > 10) fail('browser_invalid_arguments');
+    const validate = () => handle.evaluate(el => {
+      if (!el.isConnected || el.tagName !== 'INPUT' || el.type !== 'file') throw Error('browser_stale_reference');
+      if (el.disabled || el.webkitdirectory) throw Error('browser_file_input_unsupported');
+      return el.multiple;
+    });
+    if (!await validate() && c.paths.length > 1) fail('browser_file_input_not_multiple');
+    const payloads = []; let total = 0;
+    for (const [index, path] of c.paths.entries()) {
+      if (typeof path !== 'string' || !path.startsWith('/') || path.length > 4096) fail('browser_invalid_arguments');
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const info = await file.stat(); total += info.size;
+        if (!info.isFile() || info.size < 1 || info.size > 25 * 1024 * 1024 || total > 100 * 1024 * 1024) fail('browser_file_limit');
+        const buffer = await file.readFile();
+        if (buffer.length !== info.size) fail('browser_file_changed');
+        const mime = c.mime_types?.[index];
+        if (mime !== undefined && (typeof mime !== 'string' || mime.length > 200 || !/^[-\w.+]+\/[-\w.+]+$/.test(mime))) fail('browser_invalid_arguments');
+        payloads.push({ name: basename(path), mimeType: mime ?? (/\.pdf$/i.test(path) ? 'application/pdf' : /\.docx$/i.test(path) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/octet-stream'), buffer });
+      } finally { await file.close(); }
+    }
+    await this.uploadCurrent(page, c); await validate();
+    await handle.setInputFiles(payloads, { timeout: 3000 });
+    return { action_applied: true, selected: await handle.evaluate(el => [...el.files].map(file => ({ name: file.name, size_bytes: file.size }))) };
+  }
   async execute(c) {
     this.stage = 'resolve_page';
-    if (c.operation === 'invalidate') { this.snapshot = null; this.frames.clear(); return {}; }
+    if (c.operation === 'invalidate') { await this.clearUploads(); this.snapshot = null; this.frames.clear(); return {}; }
     const page = await this.page(c.target_id);
+    if (c.operation === 'file_inputs') return this.fileInputs(page, c);
+    if (c.operation === 'set_files') return this.setFiles(page, c);
     // Page input has no element reference. Authority/ownership and serialization
     // remain daemon-owned; a retired snapshot must not block this exact tab.
     if (c.operation === 'scroll') {

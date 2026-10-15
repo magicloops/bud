@@ -1,3 +1,4 @@
+import { useFileDraft } from '@/features/uploads/attachments'
 import { requestViewport } from '@/features/browser/request-viewport'
 /**
  * New Thread View - workspace for composing a new thread
@@ -43,6 +44,7 @@ function NewThreadView() {
   const chatPaneRef = useRef<HTMLDivElement | null>(null)
 
   const [messageText, setMessageText] = useState('')
+  const files = useFileDraft()
   const [optimisticMessage, setOptimisticMessage] = useState<ChatMessage | null>(null)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -147,8 +149,10 @@ function NewThreadView() {
     const formData = new FormData(e.currentTarget)
     const submittedMessage = String(formData.get('message') ?? '')
     const trimmedMessage = submittedMessage.trim()
+    if (files.blocked) { setError('Wait for uploads to finish or remove failed files.'); return }
+    const fileIds = files.ready.map(file => file.file_id)
     const browserViewport = requestViewport(chatPaneRef.current, chatPaneWidth)
-    if (!trimmedMessage) {
+    if (!trimmedMessage && !fileIds.length) {
       setError('Message cannot be empty')
       return
     }
@@ -158,12 +162,12 @@ function NewThreadView() {
     setMessageText('')
     const model = (modelTouchedRef.current || reasoningTouchedRef.current) ? selectedModel || undefined : undefined
     const reasoning = model ? reasoningEffort : undefined
-    const intent = JSON.stringify({ bud_id: budId, text: trimmedMessage, model, reasoning_effort: reasoning })
+    const intent = JSON.stringify({ bud_id: budId, text: trimmedMessage, file_ids: fileIds, model, reasoning_effort: reasoning })
     if (creationAttemptRef.current?.intent !== intent) {
       const clientId = generateMessageClientId()
       creationAttemptRef.current = { intent, clientId, body: JSON.stringify({ bud_id: budId,
         creation_key: clientId, model, reasoning_effort: reasoning,
-        opening_message: { text: trimmedMessage, client_id: clientId, browser_viewport: browserViewport },
+        opening_message: { text: trimmedMessage, file_ids: fileIds, client_id: clientId, browser_viewport: browserViewport },
       }) }
     }
     // Keep the exact geometry and IDs when retrying a lost response.
@@ -171,7 +175,7 @@ function NewThreadView() {
     const clientId = attempt.clientId
     submittingRef.current = true
     setOptimisticMessage({ message_id: clientId, client_id: clientId, role: 'user', display_role: 'User',
-      content: trimmedMessage, created_at: new Date().toISOString(), metadata: { optimistic: true } })
+      content: trimmedMessage, created_at: new Date().toISOString(), metadata: { optimistic: true, attachments: files.ready } })
 
     try {
       // Create and admit atomically; the destination loader recovers any work
@@ -264,6 +268,7 @@ function NewThreadView() {
       )}
       composer={(
         <CommandComposer
+          files={files}
           messageText={messageText}
           onMessageChange={setMessageText}
           status={status}

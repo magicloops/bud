@@ -160,7 +160,7 @@ export class InvocationRepository {
 
   /** Caller owns the transaction so delivery, thread and input commit together. */
   async admitInTransaction(tx: Transaction, input: InvocationAdmission) {
-    if (!input.owner || !input.idempotencyKey || input.idempotencyKey.length > 256 || !input.text || input.text.length > 100_000) {
+    if (!input.owner || !input.idempotencyKey || input.idempotencyKey.length > 256 || (!input.text && !(Array.isArray(input.metadata?.attachments) && input.metadata.attachments.length)) || input.text.length > 100_000) {
       throw new InvocationError("invalid_admission");
     }
     const [thread] = await tx.select({ threadId: threadTable.threadId, budId: threadTable.budId, tenantId: threadTable.tenantId })
@@ -175,6 +175,7 @@ export class InvocationRepository {
       const [message] = await tx.select().from(messageTable).where(eq(messageTable.messageId, existing.inputMessageId));
       if (existing.threadId !== input.threadId || existing.origin !== input.origin || existing.model !== input.model ||
         existing.reasoningEffort !== input.reasoningEffort || (existing.origin === "automation" ? message?.metadata?.automation_admission_text ?? message?.content : message?.content) !== input.text ||
+        JSON.stringify((message?.metadata?.attachments as Array<{file_id: string}> | undefined)?.map(file => file.file_id) ?? []) !== JSON.stringify((input.metadata?.attachments as Array<{file_id: string}> | undefined)?.map(file => file.file_id) ?? []) ||
         (input.clientId && message.clientId !== input.clientId)) throw new InvocationError("admission_conflict");
       return { invocation: existing, message, duplicate: true };
     }

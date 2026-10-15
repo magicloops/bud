@@ -1,4 +1,5 @@
 import { selectHydratedImageReferences, IMAGE_TOKEN_ESTIMATE } from "../browser/image-references.js";
+import { selectedDocumentPages } from "../uploads/page-references.js";
 import { config } from "../config.js";
 import {
   getCatalogEntry,
@@ -217,6 +218,7 @@ export function estimateCanonicalMessagesBreakdown(messages: CanonicalMessage[])
   // trigger see what the provider will actually receive.
   const hydrated = selectHydratedImageReferences(messages);
   breakdown.images += [...hydrated.values()].reduce((n, ids) => n + ids.length, 0) * IMAGE_TOKEN_ESTIMATE;
+  breakdown.images += selectedDocumentPages(messages).size * IMAGE_TOKEN_ESTIMATE;
   let systemPromptSeen = false;
   for (const message of messages) {
     let messageKind: ContextBreakdownKind;

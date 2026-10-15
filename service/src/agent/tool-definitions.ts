@@ -1,3 +1,4 @@
+import { FILE_TOOLS } from "../uploads/agent.js";
 import { BROWSER_REPL_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools.js";
 import { WEB_CANONICAL_TOOLS } from "./web-retrieval-tools.js";
 import { retrievalAvailable } from "../web-retrieval/config.js";
@@ -12,6 +13,7 @@ import { APP_PERMISSION_TOOL } from "./app-permission-tool.js";
 // Canonical tool definitions using standard JSON Schema.
 export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   ...PERSONAL_DATA_CANONICAL_TOOLS,
+  ...FILE_TOOLS,
   {
     name: "terminal_send",
     description:

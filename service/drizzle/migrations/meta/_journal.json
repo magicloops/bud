@@ -372,6 +372,20 @@
       "when": 1792040176213,
       "tag": "0052_health_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792055360131,
+      "tag": "0053_fancy_sersi",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792056268576,
+      "tag": "0054_lowly_mandarin",
+      "breakpoints": true
     }
   ]
 }

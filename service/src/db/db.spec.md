@@ -633,3 +633,12 @@ Migration `0052_health_samples.sql` adds `health_workout`,
 composite owner FKs to `data_event` and `data_collection_epoch`) and
 `health_sample_deletion` (unique owner + UUID). `agent_data_grant.health_types`
 defaults to both workouts and sleep; agents still need the `health.read` scope.
+
+## User file storage
+
+`userFileTable` owns immutable originals by required `created_by_user_id` (auth.user
+FK), nullable tenant, opaque ULID, filename/MIME/size/hash, upload/processing state,
+extracted document cache and timestamps/deletion. Ready rows require a valid
+non-null SHA-256; size is 1..25MiB. Owner/created/id index supports inventory.
+Message metadata stores attachment IDs and display metadata; no binary JSON or
+thread-owned file lifetime. Generated migrations 0053/0054 apply before service.

@@ -1,0 +1,2 @@
+ALTER TABLE "user_file" DROP CONSTRAINT "user_file_state_check";--> statement-breakpoint
+ALTER TABLE "user_file" ADD CONSTRAINT "user_file_state_check" CHECK ("user_file"."state" in ('pending','uploading','ready','failed') and ("user_file"."state" <> 'ready' or ("user_file"."sha256" is not null and "user_file"."sha256" ~ '^[a-f0-9]{64}$')));
