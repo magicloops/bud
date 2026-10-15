@@ -89,6 +89,8 @@ export async function registerAppKeyRoutes(server: FastifyInstance, dependencies
       backend.get<{ Params: { id: string } }>("/api/app-data/contacts/:id/history", async request =>
         queries.execute(credentials.get(request), "contacts_history", { ...query(request), contact_id: request.params.id }));
       backend.get("/api/app-data/location", async request => queries.execute(credentials.get(request), "timeline_query", query(request)));
+      backend.get("/api/app-data/location/visits", async request => queries.execute(credentials.get(request), "location_visits", query(request)));
+      backend.get("/api/app-data/location/recent", async request => queries.execute(credentials.get(request), "location_recent", query(request)));
       backend.get<{ Params: { id: string } }>("/api/app-data/contacts/:id/location-context", async request =>
         queries.execute(credentials.get(request), "location_context", { ...query(request), contact_id: request.params.id }));
       backend.get("/api/app-data/health/workouts", async request => queries.execute(credentials.get(request), "health_workouts", query(request)));

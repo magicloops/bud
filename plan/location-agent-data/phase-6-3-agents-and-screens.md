@@ -77,8 +77,45 @@ Even with reliable, named data, nothing presents it:
 - **Device and browser:** a day of normal movement shows the right visits and
   names on both clients.
 
+## Implementation (October 15, 2026)
+
+On branches `feat/location-visits` (service, web) and mobile
+`feature/location-visits`, stacked on 6.2:
+- **Migration 0055** adds `location_visit` (unique owner + `visit_key`) and
+  backfills it from stored visit observations: v2 reports merge by key, and v1
+  visits are keyed `v1:<event>`.
+- **`projectVisit`** merges each new visit report under the processor's owner
+  lock:
+  - arrival takes the earliest time and departure the latest;
+  - the coordinate comes from a completed report, then the most accurate one.
+- **`LocationQueries`:**
+  - `visits` covers windows up to 31 days, newest first by default. Each visit
+    has a state: `completed`, `in_progress` (no departure, under a day old) or
+    `end_unknown`.
+  - `recent` returns the in-progress visit, else the newest visit end or point,
+    with `age_seconds` and `stale` after 2 hours, limited by approved history.
+  - `timeline_query` gains `kind`.
+- **Agent tools** `location_recent` and `location_visits`, and first-party
+  routes `/api/data/location/{visits,recent}`. App routes
+  `/api/app-data/location/{visits,recent}` share one precision helper
+  (rounded keys: 2-decimal coordinates, city/region only, no place or visit
+  key). The backend helper allows them.
+- **Web `/data/location`:** a last-known line, a day picker, the visit list
+  (title prefers a likely place within the visit's accuracy, else street, city
+  or coordinates) and an OpenStreetMap embed of the selected visit. There's no
+  multi-pin map on web, since the app has no map library.
+- **iOS Browse location:** last known, a day picker, a MapKit map with a marker
+  per visit, and the same list.
+- **Tests:**
+  - `location-visits.test.ts` (isolated PostgreSQL): merging in both orders,
+    coordinate choice, v1, states, paging, owner isolation, `recent`
+    staleness and history, and the `kind` filter.
+  - Adapter tests for agents and apps.
+  - Web `location-format.test.ts`.
+  - iOS decoding and label tests.
+
 ## Rollout
 
-- A migration adds `location_visit`, then a backfill job projects existing
-  observations, running in the processor's recovery pass.
+- Migration 0055 adds `location_visit` and backfills it in the same migration
+  (Render runs it before deploy). There's no separate backfill job.
 - Service first, then web and iOS.

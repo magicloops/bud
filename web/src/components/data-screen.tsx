@@ -92,11 +92,11 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
         <p>Workouts and sleep from the phone's Health app, starting with the last 30 days. Allow Health access in the mobile app; HealthKit does not tell Bud when reading is denied.</p>
         {status?.health && <p>Workouts: {status.health.workouts_last_received_at ? `last received ${time(status.health.workouts_last_received_at)}` : 'nothing received yet'} · Sleep: {status.health.sleep_last_received_at ? `last received ${time(status.health.sleep_last_received_at)}` : 'nothing received yet'}</p>}
       </section>
-      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
+      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><Link to="/data/location" className="settings-action">Browse location →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
       {error && <p role="alert">{error}</p>}
       </>}
       {browse && <>
-      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span><Link to="/data/health">Health</Link>{['Location', 'Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
+      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span><Link to="/data/health">Health</Link><Link to="/data/location">Location</Link>{['Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
       <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); setQuery(search); setCursor(null); setSelected(null); setRefresh(value => value + 1) }}>
         <input aria-label="Search contacts" placeholder="Search collected contact fields" className="min-w-0 flex-1 rounded border bg-background p-2" value={search} maxLength={200} onChange={event => setSearch(event.target.value)} />
         <button className="rounded border px-4 py-2" type="submit">Search</button>

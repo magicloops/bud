@@ -16,7 +16,7 @@ function fixture() {
   };
   type Dependencies = ConstructorParameters<typeof AgentDataQueries>;
   const contacts = { list: query("search"), get: query("contact"), getRevision: query("revision"), history: query("history") } as unknown as Dependencies[0];
-  const locations = { list: query("timeline"), contactContext: query("context") } as unknown as Dependencies[1];
+  const locations = { list: query("timeline"), contactContext: query("context"), visits: query("visits"), recent: query("recent") } as unknown as Dependencies[1];
   const grants = { require: async (_owner: string, required: DataScope[]) => {
     if (!required.every(s => scopes.includes(s))) throw new DataRequestError(403, "data_permission_required", "Permission required");
     return { scopes: [...scopes], version, history_days: 30, updated_at: null, consumer: "your_agents", fields: [...fields],
@@ -144,4 +144,21 @@ test("health tools need the health scope and the matching health type, within ap
   await assert.rejects(f.adapter.execute("alice", "health_workouts", window, { scopes: ["contacts.read"], historyDays: 30, grantVersion: 1, binding: "rule" }),
     { code: "automation_data_scope" });
   assert.equal(f.calls.length, calls, "an automation without health scope reads nothing");
+});
+
+test("location visit and recent tools need location access and respect approved history", async () => {
+  const f = fixture();
+  const window = { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" };
+  f.contactsOnly();
+  await assert.rejects(f.adapter.execute("alice", "location_visits", window), { code: "data_permission_required" });
+  await assert.rejects(f.adapter.execute("alice", "location_recent", {}), { code: "data_permission_required" });
+  const f2 = fixture();
+  await f2.adapter.execute("alice", "location_visits", { ...window, order: "asc", limit: 5 });
+  assert.deepEqual(f2.calls.at(-1), { method: "visits", args: ["alice", { ...window, limit: 5, cursor: undefined, order: "asc" }] });
+  await f2.adapter.execute("alice", "location_recent", {});
+  assert.deepEqual(f2.calls.at(-1), { method: "recent", args: ["alice", { notBefore: new Date("2026-08-05T12:00:00Z") }] });
+  await f2.adapter.execute("alice", "timeline_query", { ...window, kind: "visits" });
+  assert.equal((f2.calls.at(-1)!.args[1] as { kind: string }).kind, "visits");
+  await assert.rejects(f2.adapter.execute("alice", "location_visits", { from: "2026-08-01T00:00:00Z", to: "2026-08-10T00:00:00Z" }), { code: "history_outside_grant" });
+  await assert.rejects(f2.adapter.execute("alice", "location_recent", { owner: "bob" }), { code: "invalid_query" });
 });

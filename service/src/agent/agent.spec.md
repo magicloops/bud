@@ -1653,3 +1653,9 @@ The automation definition accepts `event_type: workout.completed` with
 `workout_filter` and `max_event_age_seconds` (agent defaults: any activity, no
 minimum, 6 hours, Health access). Provider-strict nulls for the other triggers'
 fields are dropped.
+
+## Location tools (phase 6.3)
+
+`location_recent` (no arguments; last known location with age and staleness)
+and `location_visits` (merged visits in a window of up to 31 days, newest first).
+`timeline_query` accepts `kind`. Provider-strict nulls for `kind` are dropped.

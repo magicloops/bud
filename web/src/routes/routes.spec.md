@@ -403,3 +403,8 @@ includes it). It has activity checkboxes (none = any), a minimum duration, a
 maximum age in hours, and data access that requires Health, with optional
 location during the workout. `lib/automation-schedule.ts` describes workout
 filters for the list, editor and review summary.
+
+### `data_.location.tsx`
+
+Authenticated `/data/location`, rendering `LocationScreen`. The Contacts, Health
+and Data sources pages link to it.

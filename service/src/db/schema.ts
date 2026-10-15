@@ -1545,6 +1545,23 @@ export const locationObservationTable = pgTable("location_observation", {
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
 }));
 
+// One row per visit: iOS's arrival and completed reports merge by visit key (v2);
+// a v1 visit, which has no key, is its own visit keyed by its raw event.
+export const locationVisitTable = pgTable("location_visit", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  // Start time used for ordering and windows: arrival, else departure.
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  firstEventId: text("first_event_id").notNull(), lastEventId: text("last_event_id").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_visit_key").on(t.createdByUserId, t.visitKey),
+  ownerStartIdx: index("location_visit_owner_start_idx").on(t.createdByUserId, t.startedAt, t.id),
+}));
+
 // Names for a visit (address and likely place), looked up on the phone. One row per
 // owner and visit key; a later lookup (by named_at) replaces an earlier one.
 export const locationVisitNameTable = pgTable("location_visit_name", {

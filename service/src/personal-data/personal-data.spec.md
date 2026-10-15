@@ -483,3 +483,22 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   city/region with no place.
 - Tests: `location.test.ts` (parsing), `location-status.test.ts` (isolated
   PostgreSQL replacement and join) and `app-queries.test.ts` (rounding).
+
+## Visits and recent location (phase 6.3)
+
+- **`location_visit`** (migration 0055, backfilled) holds one row per owner and
+  visit key. `projectVisit` merges reports during processing: earliest arrival,
+  latest departure, and the coordinate from a completed report, then the most
+  accurate one.
+- **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
+  (default desc), cursors bound to the window, order and policy. Visits are
+  joined to names.
+- **`LocationQueries.recent`:** the latest in-progress visit, visit end or
+  point, with age, `stale` after 2 hours, and a `notBefore` history limit.
+- **`list`** accepts `kind: visits | points | all`.
+- **Exposure:**
+  - agent tools `location_recent` and `location_visits` (`location.read`);
+  - routes `/api/data/location/{visits,recent}`;
+  - app operations and routes with shared precision rules (`restrict` in
+    `app-queries.ts`).
+- Test: `location-visits.test.ts`.

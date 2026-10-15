@@ -27,7 +27,7 @@ test("v2 visits project as visits and status reports location receipt and recenc
   // Isolated copies keep fixture jobs away from the running development processor.
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
     "location_observation", "health_workout", "health_sleep_segment", "health_sample_deletion", "data_domain_event",
-    "contact_source", "contact_scan", "contact_scan_record", "location_visit_name"])
+    "contact_source", "contact_scan", "contact_scan_record", "location_visit_name", "location_visit"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   const repository = new PostgresIngestRepository(db), processor = new ContactProcessor(db);
   const upload = async (owner: string, values: Array<[string, Date, object]>) => {

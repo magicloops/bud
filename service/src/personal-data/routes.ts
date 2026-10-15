@@ -195,6 +195,9 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       queries.history(viewers.get(request)!.userId, request.params.id, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
     app.get<{ Querystring: Omit<LocationQuery, "limit"> & { limit?: string } }>("/api/data/location", async request =>
       locationQueries.list(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
+    app.get<{ Querystring: { from: string; to: string; order?: string; limit?: string; cursor?: string } }>("/api/data/location/visits", async request =>
+      locationQueries.visits(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
+    app.get("/api/data/location/recent", async request => locationQueries.recent(viewers.get(request)!.userId));
     app.get<{ Params: { id: string }; Querystring: Pick<LocationQuery, "from" | "to"> }>("/api/data/contacts/:id/location-context", async request =>
       locationQueries.contactContext(viewers.get(request)!.userId, request.params.id, request.query));
     // First-party owner reads; agents and apps go through their grant-aware adapters.

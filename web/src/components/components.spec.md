@@ -262,3 +262,13 @@ types.
 `data-screen.tsx` Data sources also shows a Location summary (last received and
 latest visit) from `/api/data/status`, pointing to the mobile Location section
 for permission.
+
+### `location-screen.tsx`
+
+Owner view at `/data/location`:
+- a last-known line from `/api/data/location/recent`;
+- a day picker and the day's visits (`/api/data/location/visits`, local-day
+  window, oldest first);
+- an OpenStreetMap embed of the selected visit.
+
+Labels come from `lib/location-format.ts`.
