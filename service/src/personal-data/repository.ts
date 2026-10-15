@@ -1,7 +1,8 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, max, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
-import { dataOwnerStateTable as ownerState, dataInstallationTable as installation, dataCollectionEpochTable as epoch, dataEventTable as event, dataProcessingJobTable as job, contactScanTable as scan, contactSourceTable as contactSource } from "../db/schema.js";
+import { dataOwnerStateTable as ownerState, dataInstallationTable as installation, dataCollectionEpochTable as epoch, dataEventTable as event, dataProcessingJobTable as job, contactScanTable as scan, contactSourceTable as contactSource,
+  locationObservationTable as locations } from "../db/schema.js";
 import { DataRequestError, type BatchResult, type IngestContext, type ParsedBatch } from "./contracts.js";
 import { HealthQueries } from "./health.js";
 
@@ -102,6 +103,18 @@ export class PostgresIngestRepository implements IngestRepository {
       scans, pending_processing_count: counts.count, failed_processing_count: counts.failed,
       reconciliation_scan_count: scanCounts.repair,
       projection_status: counts.failed || scanCounts.repair ? "needs_reconciliation" : counts.count || scanCounts.pending ? "processing" : "ready",
-      health: await new HealthQueries(this.database).status(userId) };
+      health: await new HealthQueries(this.database).status(userId),
+      location: await this.locationStatus(userId) };
+  }
+
+  /** Receipt and observation recency, kept separate: a recent upload can carry old points. */
+  private async locationStatus(userId: string) {
+    const [row] = await this.database.select({
+      last_received_at: max(locations.receivedAt),
+      latest_visit_at: sql<Date | null>`max(${locations.occurredAt}) filter (where ${locations.kind} = 'visit')`.mapWith(locations.occurredAt),
+      latest_point_at: sql<Date | null>`max(${locations.occurredAt}) filter (where ${locations.kind} = 'significant_change')`.mapWith(locations.occurredAt),
+    }).from(locations).where(eq(locations.createdByUserId, userId));
+    return { last_received_at: row?.last_received_at ?? null, latest_visit_at: row?.latest_visit_at ?? null,
+      latest_point_at: row?.latest_point_at ?? null };
   }
 }

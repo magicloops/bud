@@ -33,9 +33,9 @@ Part of [location for agents, automations and apps](README.md).
   rounded to 4 decimals. Each also carries `phase`: `arrived` (no departure yet)
   or `completed`. The arrival and the completed report share the key, so the
   service can merge them (6.3).
-- **Significant change.** `location.significant_change.v2` keeps today's fields
-  and adds the authorization snapshot already in `consent`. No behaviour
-  change.
+- **Significant change:** unchanged (`location.significant_change.v1`). The
+  envelope's `consent` already carries the authorization snapshot, so a new
+  version would add nothing.
 - **Lifecycle.** Use the same `CollectionGate` pattern as health:
   - `stop()` closes the gate;
   - appends are gated, so nothing commits after sign-out or an account switch.
@@ -85,6 +85,34 @@ Part of [location for agents, automations and apps](README.md).
   - locked phone overnight;
   - permission flows from Off to Always, including the reduced-accuracy
     warning.
+
+## Implementation (October 15, 2026)
+
+Implemented as designed, on branches `feat/location-capture` (service, web) and
+mobile `feature/location-capture`:
+- **Capture:**
+  - `LocationProducer` holds a `BackgroundAssertion` per callback and commits
+    each callback's envelopes with `SQLiteEventStore.append(_:gate:fence:)` (one
+    gated transaction).
+  - Visits use `location.visit.v2` with `visit_key` and `phase` (pure mapping in
+    `LocationEnvelopes`).
+- **App:**
+  - `LocationAccess` and `LocationAccessState` drive Data sources → Location:
+    state, the reduced-accuracy warning, "Turn on location" → "Allow all the
+    time" (offered once) → "Open Settings", and the service's last received and
+    latest visit.
+  - Onboarding uses the same flow; the debug location buttons are gone.
+- **Service:** accepts `location.visit.v2` (projected as visits; key and phase
+  are kept in the raw event for 6.3). `/api/data/status` adds
+  `location { last_received_at, latest_visit_at, latest_point_at }`. Web Data
+  sources shows it.
+- **Tests:**
+  - TimelineCore: visit-key stability, payload mapping, atomic and gated batch
+    append.
+  - App: state mapping.
+  - Service: an isolated PostgreSQL status fixture.
+- Also fixed the flaky `QueueRecoveryTests` date comparisons (millisecond
+  tolerance).
 
 ## Rollout
 

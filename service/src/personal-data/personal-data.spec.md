@@ -457,3 +457,12 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
 - `automation-workout.test.ts`: isolated-schema PostgreSQL fixture for
   publication rules, filters, age, deletion before and after matching,
   admission, policy, evidence and withdrawn health types.
+
+## Location capture (phase 6.1)
+
+`location.ts` accepts `location.visit.v2` (adds `visit_key` and `phase`) as a
+visit; both versions project into `location_observation`, and the raw event
+keeps the key for the 6.3 visit projection. `repository.ts` status adds
+`location { last_received_at, latest_visit_at, latest_point_at }`.
+`location-status.test.ts` (isolated PostgreSQL) covers v2 projection and owner
+isolation. Plan: [location for agents](../../../plan/location-agent-data/README.md).

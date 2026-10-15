@@ -15,7 +15,8 @@ type Page<T> = { items: T[]; next_cursor: string | null }
 type Status = { projection_status: string; pending_processing_count: number; failed_processing_count?: number; reconciliation_scan_count?: number;
   scans?: { scan_id: string; generation: number; status: string; waiting_reason: string | null; error_code: string | null }[];
   sources: { installation_id: string; last_received_at: string | null }[]
-  health?: { workouts_last_received_at: string | null; sleep_last_received_at: string | null } }
+  health?: { workouts_last_received_at: string | null; sleep_last_received_at: string | null }
+  location?: { last_received_at: string | null; latest_visit_at: string | null; latest_point_at: string | null } }
 const name = (fields: Fields) => [fields.given_name, fields.family_name].filter(Boolean).join(' ') || fields.organization || 'Unnamed contact'
 const time = (value: string) => new Date(value).toLocaleString()
 
@@ -80,6 +81,11 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
             </div>
           </details>
         </>}
+      </section>
+      <section aria-label="Location source" className="rounded border p-4 text-sm space-y-3">
+        <h2 className="text-xl font-semibold">Location</h2>
+        <p>Places you visit and large moves, not a continuous track. Turn location on, and allow it all the time for background visits, in the mobile app under Data sources → Location.</p>
+        {status?.location && <p>{status.location.last_received_at ? `Last received ${time(status.location.last_received_at)}` : 'Nothing received yet'}{status.location.latest_visit_at ? ` · Latest visit ${time(status.location.latest_visit_at)}` : ''}</p>}
       </section>
       <section aria-label="Health source" className="rounded border p-4 text-sm space-y-3">
         <h2 className="text-xl font-semibold">Health</h2>
