@@ -169,13 +169,13 @@ export class BudAppData {
 
   async query(keyId, resource, parameters = {}) {
     if (!keyPattern.test(keyId) || typeof resource !== 'string' ||
-      !/^(contacts(?:\/[0-9A-HJKMNP-TV-Z]{26}(?:\/(?:history|location-context))?)?|location|health\/(?:workouts|sleep))$/.test(resource)) throw fail('invalid_app_data_query');
+      !/^(contacts(?:\/[0-9A-HJKMNP-TV-Z]{26}(?:\/(?:history|location-context))?)?|location(?:\/(?:visits|recent))?|health\/(?:workouts|sleep))$/.test(resource)) throw fail('invalid_app_data_query');
     await this.#identity(); // Pins the credential to the original API origin.
     const stored = await this.#read(`${keyId}.json`);
     if (!stored || stored.context?.key_id !== keyId || !new RegExp(`^${keyId}\\.[A-Za-z0-9_-]{43}$`).test(stored.credential)) throw fail('app_data_local_credential_missing');
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(parameters)) {
-      if (!['search', 'visibility', 'limit', 'cursor', 'from', 'to', 'timezone', 'activity_type', 'order'].includes(key) || !['string', 'number'].includes(typeof value)) throw fail('invalid_app_data_query');
+      if (!['search', 'visibility', 'limit', 'cursor', 'from', 'to', 'timezone', 'activity_type', 'order', 'kind'].includes(key) || !['string', 'number'].includes(typeof value)) throw fail('invalid_app_data_query');
       search.set(key, String(value));
     }
     return this.#request(`/api/app-data/${resource}${search.size ? `?${search}` : ''}`, {

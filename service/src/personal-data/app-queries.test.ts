@@ -25,7 +25,12 @@ function fixture() {
     get: async (...args: unknown[]) => { observe("get", args); return { id: "contact", fields: { given_name: "Ada" } }; },
     history: async (...args: unknown[]) => { observe("history", args); return { items: [], next_cursor: null }; },
   } as unknown as Dependencies[1];
+  const namedVisit = { id: "visit", visit_key: "key", state: "completed", arrival_at: new Date("2026-09-03T10:00:00Z"),
+    departure_at: new Date("2026-09-03T11:00:00Z"), duration_s: 3600, coordinate: { lat: 37.774929, lon: -122.419416 },
+    horizontal_accuracy_m: 20, address: evidence.address, place: evidence.place, received_at: new Date("2026-09-03T11:05:00Z") };
   const locations = {
+    visits: async (...args: unknown[]) => { observe("visits", args); return { items: [namedVisit], next_cursor: null, coverage: {} }; },
+    recent: async (...args: unknown[]) => { observe("recent", args); return { location: { kind: "visit", ...namedVisit }, as_of: new Date(), age_seconds: 60, stale: false }; },
     list: async (...args: unknown[]) => { observe("locations", args); return { items: [evidence], next_cursor: null, coverage: { continuous: false } }; },
     contactContext: async (...args: unknown[]) => { observe("context", args); return { contact_id: "contact", evidence,
       uncertainty: "Not a verified meeting or creation location", continuous_coverage: false }; },
@@ -114,4 +119,21 @@ test("rounded app keys get the city and region of a named visit, never its stree
   const [precise] = (full.data as { items: Array<{ address: Record<string, unknown>; place: { name: string } }> }).items;
   assert.equal(precise.address.full, "1 Mint Plaza, San Francisco");
   assert.equal(precise.place.name, "Blue Bottle Coffee");
+});
+
+test("app visit and recent results follow the key's location precision", async () => {
+  const f = fixture();
+  const visits = await f.query.execute("key", "location_visits", { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" });
+  const [visit] = (visits.data as { items: Array<Record<string, unknown>> }).items;
+  assert.deepEqual(visit.coordinate, { lat: 37.77, lon: -122.42 });
+  assert.equal(visit.place, null);
+  assert.equal((visit.address as Record<string, unknown>).full, undefined);
+  assert.equal(Object.hasOwn(visit, "visit_key"), false);
+  assert.equal(visit.duration_s, 3600);
+  const recent = await f.query.execute("key", "location_recent", {});
+  const latest = (recent.data as { location: Record<string, unknown> }).location;
+  assert.deepEqual([latest.kind, latest.place], ["visit", null]);
+  assert.deepEqual(f.calls.at(-1), { method: "recent", args: ["owner-a", { notBefore: new Date("2026-08-05T12:00:00Z") }] });
+  f.authority.policy = { ...f.authority.policy, scopes: ["contacts.read"], location_precision: "none" };
+  await assert.rejects(f.query.execute("key", "location_recent", {}), { code: "app_data_scope_required" });
 });

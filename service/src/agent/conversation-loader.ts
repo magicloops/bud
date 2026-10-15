@@ -444,6 +444,8 @@ export class AgentConversationLoader {
         case "timeline_query":
         case "health_workouts":
         case "health_sleep":
+        case "location_recent":
+        case "location_visits":
           return { type: "tool_call", tool: payload.tool, callId,
             args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args) ? payload.args : {} };
         case "terminal.run":

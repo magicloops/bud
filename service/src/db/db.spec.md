@@ -643,3 +643,7 @@ Migration `0054_location_visit_names.sql` adds `location_observation.visit_key`
 (indexed with owner) and `location_visit_name` (unique owner + visit key,
 owner-composite FK to `data_event`). It ends with a hand-written backfill that
 copies `visit_key` from stored `location.visit.v2` raw events.
+
+Migration `0055_location_visits.sql` adds `location_visit` (unique owner + visit
+key, owner/start index). It ends with a hand-written backfill from
+`location_observation` visits.

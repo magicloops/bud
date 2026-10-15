@@ -72,7 +72,7 @@ function HealthView() {
         <p className="text-muted-foreground">Workouts and sleep received from your phone's Health app. The first import covers the last 30 days.</p>
         <p className="text-sm text-muted-foreground">HealthKit does not report denied access, so missing records can mean nothing was recorded, Bud cannot read it, or it has not synced yet.</p>
       </header>
-      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><Link to="/data/contacts">Contacts</Link><span aria-current="page" className="font-semibold">Health</span></nav>
+      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><Link to="/data/contacts">Contacts</Link><span aria-current="page" className="font-semibold">Health</span><Link to="/data/location">Location</Link></nav>
       <button className="rounded border px-4 py-2" onClick={() => setRefresh(value => value + 1)}>Refresh received data</button>
       {error && <p role="alert">Could not load health data. Try again.</p>}
       <div className="grid gap-6 md:grid-cols-2">

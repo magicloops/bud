@@ -355,6 +355,8 @@ export function toolNameForConversation(
     case "timeline_query":
     case "health_workouts":
     case "health_sleep":
+    case "location_recent":
+    case "location_visits":
       return tool;
     case "terminal.send":
       return "terminal_send";
@@ -440,6 +442,8 @@ export function buildToolArgs(
     case "timeline_query":
     case "health_workouts":
     case "health_sleep":
+    case "location_recent":
+    case "location_visits":
       return directive.args;
     case "terminal.send":
       return {

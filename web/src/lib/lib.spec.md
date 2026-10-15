@@ -463,3 +463,12 @@ Weekday labels, device-timezone default schedule and `describeSchedule` /
 `describeTrigger` text ("Weekdays at 08:30 (America/Los_Angeles)") shared by the
 automations page and review summary. Types live in `api-types.ts`
 (`ApiAutomationSchedule`, `ApiAutomationTrigger`).
+
+### `location-format.ts`
+
+Visit labels shared by the location screen:
+- `visitTitle` (a likely place only within the visit's accuracy, with a 50 m
+  floor; else street, city or coordinates);
+- `visitNearby`, `visitDuration`, and `dayWindow` (local-midnight bounds).
+
+Tested in `location-format.test.ts`.

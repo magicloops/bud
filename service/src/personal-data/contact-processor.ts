@@ -2,7 +2,7 @@ import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations, locationVisitNameTable as visitNames } from "../db/schema.js";
-import { parseLocationPayload, parseVisitName, LOCATION_TYPES, VISIT_NAME_TYPE } from "./location.js";
+import { parseLocationPayload, parseVisitName, projectVisit, LOCATION_TYPES, VISIT_NAME_TYPE } from "./location.js";
 import { HEALTH_TYPES, processHealthEvent } from "./health.js";
 import { canonicalJson } from "./contracts.js";
 import { parseContactPayload, verifyContactScan, type ContactManifest, type ContactRecord } from "./contacts.js";
@@ -58,8 +58,11 @@ export class ContactProcessor {
       const [event] = await tx.select().from(events).where(and(eq(events.id, job.eventId), eq(events.createdByUserId, candidate.owner)));
       if (event.schemaVersion === 1 && LOCATION_TYPES.includes(event.eventType)) {
         const location = parseLocationPayload(event.eventType, event.rawEnvelope.payload);
-        if (location) await tx.insert(locations).values({ id: ulid(), rawEventId: event.id, epochId: event.epochId,
-          ...location, occurredAt: event.occurredAt, receivedAt: event.receivedAt, createdByUserId: candidate.owner }).onConflictDoNothing();
+        if (location) {
+          await tx.insert(locations).values({ id: ulid(), rawEventId: event.id, epochId: event.epochId,
+            ...location, occurredAt: event.occurredAt, receivedAt: event.receivedAt, createdByUserId: candidate.owner }).onConflictDoNothing();
+          if (location.kind === "visit") await projectVisit(tx, candidate.owner, event.id, event.receivedAt, location);
+        }
         await tx.update(jobs).set({ status: location ? "processed" : "invalid", errorCode: location ? null : "invalid_location", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
         return true;
       }
