@@ -1,9 +1,10 @@
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import type { Invocation } from "../agent/invocation-repository.js";
 import { agentDataGrantTable as grants, automationDeliveryTable as deliveries, automationRevisionTable as revisions,
-  dataDomainEventTable as events, healthWorkoutTable as workouts, locationObservationTable as locations } from "../db/schema.js";
-import { automationDefinitionSchema, parseAutomationInput } from "./automation-contracts.js";
+  dataDomainEventTable as events, healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions,
+  locationObservationTable as locations } from "../db/schema.js";
+import { automationDefinitionSchema, parseAutomationInput, withinHistory } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -29,13 +30,22 @@ export async function automationWorkoutContext(tx: Transaction, invocation: Invo
   if (!grant || grant.version !== reference.grantVersion || !grant.scopes.includes("health.read") || !grant.healthTypes.includes("workouts"))
     throw new DataRequestError(403, "data_permission_changed", "Automation data permission changed");
   const row = reference.workout;
+  // A deletion or an elapsed history window after admission still stops the first start.
+  const [deletion] = await tx.select({ id: healthDeletions.id }).from(healthDeletions)
+    .where(and(eq(healthDeletions.createdByUserId, owner), eq(healthDeletions.hkUuid, row.hkUuid))).limit(1);
+  if (deletion) throw new DataRequestError(409, "workout_evidence_unavailable", "The workout was deleted");
+  const [clock] = (await tx.execute<{ seconds: number }>(sql`select extract(epoch from clock_timestamp())::float8 as seconds`))
+    .rows.map(row => ({ now: new Date(Number(row.seconds) * 1000) }));
+  const historyDays = Math.min(grant.historyDays, definition.data_access.history_days);
+  if (!withinHistory(row.startAt, clock.now, historyDays))
+    throw new DataRequestError(403, "history_outside_grant", "The workout is outside the approved history");
   const workout = { workout_id: row.id, activity_type: row.activityType, start_at: row.startAt, end_at: row.endAt,
     duration_s: row.durationS, total_energy_kcal: row.totalEnergyKcal, total_distance_m: row.totalDistanceM, indoor: row.indoor,
     source: { name: row.sourceName, bundle_id: row.sourceBundleId },
     device: row.deviceName || row.deviceModel ? { name: row.deviceName, model: row.deviceModel } : null };
   // Location needs both the rule's request and the current grant; the rule's history bound still applies.
   const withLocation = definition.data_access.scopes.includes("location.read") && grant.scopes.includes("location.read");
-  const historyStart = Date.now() - Math.min(grant.historyDays, definition.data_access.history_days) * 86400_000;
+  const historyStart = clock.now.getTime() - historyDays * 86400_000;
   const from = new Date(Math.max(row.startAt.getTime() - LOCATION_MARGIN_MS, historyStart));
   const observations = withLocation ? await tx.select().from(locations).where(and(eq(locations.createdByUserId, owner),
     gte(locations.occurredAt, from), lte(locations.occurredAt, new Date(row.endAt.getTime() + LOCATION_MARGIN_MS))))

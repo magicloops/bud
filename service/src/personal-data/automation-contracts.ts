@@ -107,6 +107,11 @@ export function grantCoversDefinition(grant: { version: number; scopes: string[]
     definition.data_access.history_days <= grant.historyDays;
 }
 
+/** Approved-history bound for a record, by its start time. */
+export function withinHistory(startAt: Date, now: Date, historyDays: number) {
+  return startAt.getTime() >= now.getTime() - historyDays * 86400_000;
+}
+
 export function requireContactDefinition(definition: AutomationDefinition): ContactAddedDefinition {
   if (definition.event_type !== "contact.added")
     throw new DataRequestError(400, "automation_trigger_unsupported", "Only new-contact automations can process existing contacts");

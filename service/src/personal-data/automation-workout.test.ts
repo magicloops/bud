@@ -74,8 +74,8 @@ test("new workouts publish once, match workout rules by filter, age and deletion
     await db.insert(s.automationRevisionTable).values({ automationId: id, revision: 1, definition, publicationBoundary: 0,
       grantVersion: 1, activatedByUserId: owner, createdByUserId: owner });
   };
-  const workoutRule = (filter: object, maxAge: number, scopes: string[]) => ({ ...common, event_type: "workout.completed",
-    workout_filter: filter, max_event_age_seconds: maxAge, data_access: { scopes, history_days: 30 } });
+  const workoutRule = (filter: object, maxAge: number, scopes: string[], historyDays = 30) => ({ ...common, event_type: "workout.completed",
+    workout_filter: filter, max_event_age_seconds: maxAge, data_access: { scopes, history_days: historyDays } });
   await rule("runs", workoutRule({ activity_types: ["running"], min_duration_minutes: 20 }, 21600, ["health.read", "location.read"]));
   await rule("any", workoutRule({ activity_types: [], min_duration_minutes: 0 }, 21600, ["health.read"]));
   await rule("stale", workoutRule({ activity_types: [], min_duration_minutes: 0 }, 300, ["health.read"]));
@@ -120,7 +120,32 @@ test("new workouts publish once, match workout rules by filter, age and deletion
   const withoutLocation = await db.transaction(tx => automationStartEvidence(tx, anyInvocation));
   assert.match(withoutLocation!, /does not have location access/);
 
+  // A deletion after admission, before first start, stops the run at start (owner lock held by the caller).
+  await upload([deletion("w1")]);
+  await assert.rejects(db.transaction(tx => automationStartEvidence(tx, invocation)), { code: "workout_evidence_unavailable" });
+
   // Withdrawing the workouts health type stops admitted runs at their policy check.
   await db.update(s.agentDataGrantTable).set({ healthTypes: ["sleep"] }).where(eq(s.agentDataGrantTable.createdByUserId, owner));
   await assert.rejects(checkAutomationPolicy(invocation, true, db), /data_permission_changed/);
+
+  // Boundaries: approved history limits the workout itself, and maximum age bounds the first start.
+  await db.update(s.agentDataGrantTable).set({ healthTypes: ["workouts", "sleep"] }).where(eq(s.agentDataGrantTable.createdByUserId, owner));
+  await rule("short", workoutRule({ activity_types: [], min_duration_minutes: 0 }, 604800, ["health.read"], 1));
+  await upload([workout("w4", "running", 30, 60 * 48), workout("w5", "running", 20, 350)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  const [w4] = await db.select().from(s.healthWorkoutTable).where(eq(s.healthWorkoutTable.hkUuid, "w4"));
+  const [w5] = await db.select().from(s.healthWorkoutTable).where(eq(s.healthWorkoutTable.hkUuid, "w5"));
+  const refreshed = await domainEvents();
+  const deliveryFor = async (automation: string, workoutId: string) => (await db.select().from(s.automationDeliveryTable).where(and(
+    eq(s.automationDeliveryTable.automationId, automation),
+    eq(s.automationDeliveryTable.domainEventId, refreshed.find(event => event.workoutId === workoutId)!.id))))[0];
+  assert.equal((await deliveryFor("short", w4.id)).status, "pending", "two days old is within the seven-day maximum age");
+  const tightened = await deliveryFor("any", w5.id);
+  assert.equal(tightened.status, "pending");
+  assert.ok(Math.abs(tightened.latestStartAt.getTime() - (w5.endAt.getTime() + 21600_000)) < 1000,
+    "first start is bounded by the workout end plus maximum age, not publication plus latest_start_seconds");
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const outside = await deliveryFor("short", w4.id);
+  assert.deepEqual([outside.status, outside.outcomeCode], ["failed", "history_outside_grant"],
+    "a workout older than the approved one-day history never reaches the agent");
 });

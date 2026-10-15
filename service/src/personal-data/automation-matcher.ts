@@ -56,8 +56,11 @@ export class AutomationMatcher {
       .filter(({ definition }) => definition.event_type === event.eventType);
   }
 
-  private async insertDelivery(tx: Transaction, event: DomainEvent, revision: Revision, definition: AutomationDefinition, outcome: Outcome) {
-    const deadline = new Date(event.publishedAt.getTime() + definition.latest_start_seconds * 1000);
+  /** `notAfter` can only tighten the publication deadline. */
+  private async insertDelivery(tx: Transaction, event: DomainEvent, revision: Revision, definition: AutomationDefinition,
+    outcome: Outcome, notAfter?: Date) {
+    const published = event.publishedAt.getTime() + definition.latest_start_seconds * 1000;
+    const deadline = new Date(notAfter ? Math.min(published, notAfter.getTime()) : published);
     const [clock] = await tx.execute<{ expired: boolean }>(sql`select clock_timestamp() >= ${deadline.toISOString()}::timestamptz as expired`).then(result => result.rows);
     const status = outcome.status === "pending" && clock.expired ? "expired" : outcome.status;
     await tx.insert(deliveries).values({ id: ulid(), automationId: revision.automationId, revision: revision.revision,
@@ -89,6 +92,7 @@ export class AutomationMatcher {
    * measured from the workout's end, against the database clock). */
   private async matchWorkout(tx: Transaction, event: DomainEvent) {
     const [workout] = await tx.select({ hkUuid: workouts.hkUuid, activityType: workouts.activityType, durationS: workouts.durationS,
+      endAt: workouts.endAt,
       stale: sql<number>`extract(epoch from clock_timestamp() - ${workouts.endAt})`.mapWith(Number) }).from(workouts)
       .where(and(eq(workouts.id, event.workoutId!), eq(workouts.createdByUserId, event.createdByUserId))).limit(1);
     if (!workout) throw new Error("workout_event_evidence_missing");
@@ -105,7 +109,9 @@ export class AutomationMatcher {
         deleted ? { status: "suppressed", outcomeCode: "sample_deleted" }
         : !matches ? { status: "suppressed", outcomeCode: "workout_filter_mismatch" }
         : workout.stale > definition.max_event_age_seconds ? { status: "suppressed", outcomeCode: "event_too_old" }
-        : { status: "pending", outcomeCode: null });
+        : { status: "pending", outcomeCode: null },
+        // Maximum age also bounds the first start, not only matching.
+        new Date(workout.endAt.getTime() + definition.max_event_age_seconds * 1000));
     }
   }
 }

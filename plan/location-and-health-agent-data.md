@@ -396,7 +396,14 @@ Implemented as planned, with these choices:
   - Workouts deleted after publication are suppressed at matching, or fail at
     admission.
 - **Permissions:** runs need the grant's `workouts` health type, checked at
-  admission and on every policy check.
+  admission and on every policy check. The workout itself must be within
+  approved history (rule and grant), checked at admission and again at first
+  start.
+- **Freshness:** `max_event_age_seconds` applies at matching and also bounds
+  the first start. The deadline is the earlier of publication plus
+  `latest_start_seconds` and the workout's end plus the maximum age.
+- **Deletion:** a workout deleted after admission is caught at first start,
+  under the owner lock, and the run fails.
 - **Evidence:** the agent receives the workout record, plus location samples
   within 10 minutes of it when both the rule and the grant allow location. There
   is still no workout route.

@@ -446,7 +446,11 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
   workout's end against the database clock). The deletion lookup is a separate
   query, because Drizzle does not table-qualify columns inside selected `sql`.
 - Admission requires the grant's `workouts` health type, a non-deleted workout
-  and an unrevoked source, and builds the run input text. Policy checks re-verify
+  within approved history (rule and grant, by workout start) and an unrevoked
+  source, and builds the run input text.
+- First start rechecks the deletion tombstone and the history bound under the
+  owner lock. A run's start deadline is the earlier of publication plus
+  `latest_start_seconds` and the workout's end plus `max_event_age_seconds`. Policy checks re-verify
   the type and lineage. `automation-workout-context.ts` adds first-start evidence:
   the workout record, plus location observations within 10 minutes of it when
   both the rule and grant include `location.read`.
