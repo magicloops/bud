@@ -461,14 +461,21 @@ names remain unknown without client-side JSON-content or metadata fallbacks.
 
 Weekday labels, device-timezone default schedule and `describeSchedule` /
 `describeTrigger` text ("Weekdays at 08:30 (America/Los_Angeles)") shared by the
-automations page and review summary. Types live in `api-types.ts`
-(`ApiAutomationSchedule`, `ApiAutomationTrigger`).
+automations page and review summary. `describeLocationTrigger` names places
+from an ID-to-name map ("When you arrive at Home", "a deleted place" for unknown
+IDs). Types live in `api-types.ts` (`ApiAutomationSchedule`,
+`ApiAutomationTrigger`, `ApiPlace`). Tested in `automation-schedule.test.ts`.
+
+### `places.ts`
+
+`usePlaces(enabled, refresh)` loads `/api/data/places` and returns the places
+and an ID-to-name map.
 
 ### `location-format.ts`
 
 Visit labels shared by the location screen:
-- `visitTitle` (a likely place only within the visit's accuracy, with a 50 m
-  floor; else street, city or coordinates);
+- `visitTitle` (saved places first; then a likely place only within the
+  visit's accuracy, with a 50 m floor; else street, city or coordinates);
 - `visitNearby`, `visitDuration`, and `dayWindow` (local-midnight bounds).
 
 Tested in `location-format.test.ts`.

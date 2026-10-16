@@ -1508,9 +1508,48 @@ export const healthSampleDeletionTable = pgTable("health_sample_deletion", {
   kindCheck: check("health_sample_deletion_kind_check", sql`${t.sampleKind} in ('workout','sleep_segment')`),
 }));
 
-// Exactly one subject: a contact revision (contact.added) or a workout (workout.completed).
+// One row per visit: iOS's arrival and completed reports merge by visit key (v2);
+// a v1 visit, which has no key, is its own visit keyed by its raw event.
+export const locationVisitTable = pgTable("location_visit", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  // Start time used for ordering and windows: arrival, else departure.
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  firstEventId: text("first_event_id").notNull(), lastEventId: text("last_event_id").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_visit_key").on(t.createdByUserId, t.visitKey),
+  ownerKey: unique("location_visit_owner_key").on(t.id, t.createdByUserId),
+  ownerStartIdx: index("location_visit_owner_start_idx").on(t.createdByUserId, t.startedAt, t.id),
+}));
+
+// A user's named place (a label, not a permission): centre and radius. `geometryChangedAt`
+// is the baseline for presence: visits that started before it never trigger for it.
+export const placeTable = pgTable("place", {
+  id: text("id").primaryKey(), name: text("name").notNull(), note: text("note"),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  radiusM: doublePrecision("radius_m").notNull(),
+  createdBy: text("created_by").notNull(),
+  geometryChangedAt: timestamp("geometry_changed_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_owner_key").on(t.id, t.createdByUserId),
+  ownerIdx: index("place_owner_idx").on(t.createdByUserId, t.id),
+  radiusCheck: check("place_radius_check", sql`${t.radiusM} between 50 and 2000`),
+  createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
+}));
+
+// Exactly one subject: a contact revision (contact.added), a workout (workout.completed) or a
+// visit (place.arrived/place.departed with their place, visit.ended without one).
 export const dataDomainEventTable = pgTable("data_domain_event", {
   id: text("id").primaryKey(), revisionId: text("revision_id"), workoutId: text("workout_id"),
+  visitId: text("visit_id"), placeId: text("place_id"),
   eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
   publicationSequence: bigint("publication_sequence", { mode: "number" }),
   publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1523,7 +1562,12 @@ export const dataDomainEventTable = pgTable("data_domain_event", {
   revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
   workoutKey: unique("data_domain_workout_key").on(t.workoutId, t.eventType),
   workoutFk: foreignKey({ name: "data_domain_workout_fk", columns: [t.workoutId, t.createdByUserId], foreignColumns: [healthWorkoutTable.id, healthWorkoutTable.createdByUserId] }),
-  subjectCheck: check("data_domain_subject_check", sql`(${t.revisionId} is null) <> (${t.workoutId} is null)`),
+  subjectCheck: check("data_domain_subject_check", sql`num_nonnulls(${t.revisionId}, ${t.workoutId}, ${t.visitId}) = 1`),
+  visitFk: foreignKey({ name: "data_domain_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  placeFk: foreignKey({ name: "data_domain_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  // One place event per visit and place; one visit.ended per visit.
+  visitPlaceKey: uniqueIndex("data_domain_visit_place_key").on(t.visitId, t.eventType, t.placeId).where(sql`${t.placeId} is not null`),
+  visitEndedKey: uniqueIndex("data_domain_visit_ended_key").on(t.visitId, t.eventType).where(sql`${t.visitId} is not null and ${t.placeId} is null`),
 }));
 
 
@@ -1543,23 +1587,6 @@ export const locationObservationTable = pgTable("location_observation", {
   ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
   eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
-}));
-
-// One row per visit: iOS's arrival and completed reports merge by visit key (v2);
-// a v1 visit, which has no key, is its own visit keyed by its raw event.
-export const locationVisitTable = pgTable("location_visit", {
-  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(),
-  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
-  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
-  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
-  // Start time used for ordering and windows: arrival, else departure.
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-  firstEventId: text("first_event_id").notNull(), lastEventId: text("last_event_id").notNull(),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
-  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
-}, t => ({
-  visitKey: unique("location_visit_visit_key").on(t.createdByUserId, t.visitKey),
-  ownerStartIdx: index("location_visit_owner_start_idx").on(t.createdByUserId, t.startedAt, t.id),
 }));
 
 // Names for a visit (address and likely place), looked up on the phone. One row per

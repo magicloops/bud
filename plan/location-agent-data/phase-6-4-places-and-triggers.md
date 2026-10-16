@@ -81,8 +81,64 @@ the shared publication sequence. Each adds a typed subject column on
 - **Device:** arrive at and leave a saved place, and see a run with the expected
   delay.
 
+## Implementation (October 15, 2026)
+
+On branches `feat/places-triggers` (service, web) and mobile
+`feature/places-triggers`, stacked on 6.3:
+- **Migration 0056** adds:
+  - `place`, soft-deleted, with `geometry_changed_at` for the baseline;
+  - `data_domain_event.visit_id` and `place_id`, with unique indexes per
+    (visit, type, place) and per visit for `visit.ended`.
+- **`places.ts`:**
+  - CRUD with a limit of 200 per owner;
+  - matching: radius plus accuracy, padding capped at 200 m;
+  - `publishVisitEvents`, called from `projectVisit` for v2 visits on first
+    arrival and first completion.
+- **Triggers:**
+  - contracts, defaults and the agent tool schema for the three types;
+  - matcher outcomes `place_deleted`, `visit_filter_mismatch` and
+    `event_too_old`;
+  - admission text with the place name, rechecking history and the place;
+  - a policy check that the visit still exists;
+  - visit evidence at first start (`automation-visit-context.ts`).
+- **Labels and tools:** `visits` and `recent` add `places`, dropped for rounded
+  app keys. Routes are under `/api/data/places`. Agent tools are `places_list`
+  and `places_create`, at a coordinate or at a visit within approved history.
+- **Web:**
+  - Location adds "Save as place" on the selected visit and a Places section
+    (edit name and radius, delete);
+  - the automation editor adds the three triggers with place checkboxes,
+    minimum stay and maximum age;
+  - the list and reviews name the places.
+- **iOS:**
+  - Browse location adds Save as place (button or swipe) and a Places section
+    (tap to edit, swipe to delete);
+  - visit titles prefer saved places;
+  - the automation editor and reviews support the three triggers.
+- **Changes from the design:**
+  - Places are created from a visit (or by agents at a coordinate). Address
+    search is deferred.
+  - Places are managed on the Location page, not a separate Personal data
+    page.
+  - `visit.ended` has no named/unnamed filter.
+  - `timeline_query` rows aren't labeled with places; use `location_visits`.
+- **Tests:**
+  - `automation-places.test.ts` (isolated PostgreSQL) covers:
+    - publication, duplicates, baseline and accuracy padding;
+    - labels;
+    - matcher filters, deleted places and staleness;
+    - the first-start bound, admission text and policy;
+    - evidence;
+    - deletion after admission and withdrawn access.
+  - Contract, tool-parsing and adapter tests.
+  - Web `automation-schedule.test.ts`, `location-format.test.ts` and the
+    proposal summary render test.
+  - iOS contract and decoding tests.
+
 ## Rollout
 
-- Migrations add `place` and `data_domain_event.visit_id`.
-- Service, then web and iOS. Older iOS builds can't decode the automation list
-  once a place rule exists, as with schedules and workouts.
+- Migration 0056 is additive. Render runs it before deploy.
+- Deploy the service first, then web, then iOS.
+- Older iOS builds decode location rules but label them as contact rules and
+  can't save them: the server rejects a definition without `place_trigger`.
+  Update the app before editing these rules on iOS.

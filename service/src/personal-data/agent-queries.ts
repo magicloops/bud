@@ -3,6 +3,7 @@ import { DataRequestError, isRecord } from "./contracts.js";
 import { DataGrants, type DataScope } from "./grants.js";
 import { LocationQueries, locationWindow } from "./location.js";
 import { HealthQueries, healthWindow } from "./health.js";
+import { Places } from "./places.js";
 
 import type { PersonalDataTool } from "./tool-names.js";
 export type AgentDataCeiling = { scopes: DataScope[]; historyDays: number; grantVersion: number; binding: string };
@@ -12,10 +13,11 @@ export type AgentDataCeiling = { scopes: DataScope[]; historyDays: number; grant
 export class AgentDataQueries {
   constructor(
     private readonly contacts: Pick<ContactQueries, "list" | "get" | "history" | "getRevision"> = new ContactQueries(),
-    private readonly locations: Pick<LocationQueries, "list" | "contactContext" | "visits" | "recent"> = new LocationQueries(),
+    private readonly locations: Pick<LocationQueries, "list" | "contactContext" | "visits" | "recent" | "visitById"> = new LocationQueries(),
     private readonly grants: Pick<DataGrants, "require"> = new DataGrants(),
     private readonly now: () => Date = () => new Date(),
     private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries(),
+    private readonly places: Pick<Places, "list" | "create"> = new Places(),
   ) {}
 
   async execute(owner: string, tool: PersonalDataTool, input: unknown, ceiling?: AgentDataCeiling) {
@@ -29,13 +31,15 @@ export class AgentDataQueries {
       timeline_query: ["from", "to", "kind", "limit", "cursor"],
       location_recent: [],
       location_visits: ["from", "to", "order", "limit", "cursor"],
+      places_list: [],
+      places_create: ["name", "latitude", "longitude", "radius_m", "note", "visit_id"],
       health_workouts: ["from", "to", "activity_type", "order", "limit", "cursor"],
       health_sleep: ["from", "to", "timezone"],
     };
     if (!keys[tool] || Object.keys(input).some(key => !keys[tool].includes(key)))
       throw new DataRequestError(400, "invalid_query", "Unsupported query argument");
     const scopes: DataScope[] = tool === "location_context" ? ["contacts.read", "location.read"]
-      : tool === "timeline_query" || tool === "location_recent" || tool === "location_visits" ? ["location.read"]
+      : tool === "timeline_query" || tool === "location_recent" || tool === "location_visits" || tool.startsWith("places_") ? ["location.read"]
       : tool.startsWith("health_") ? ["health.read"] : ["contacts.read"];
     const grant = await this.grants.require(owner, scopes);
     const healthType = tool === "health_workouts" ? "workouts" : tool === "health_sleep" ? "sleep" : null;
@@ -68,6 +72,18 @@ export class AgentDataQueries {
       data = await this.contacts.list(owner, { ...page, search: string("search"), visibility: string("visibility") }, policy);
     } else if (tool === "contacts_history") {
       data = await this.contacts.history(owner, string("contact_id", true)!, page, policy);
+    } else if (tool === "places_list") {
+      data = await this.places.list(owner);
+    } else if (tool === "places_create") {
+      // Places are labels, not permissions: agents may save them; the user sees and edits them.
+      const { visit_id: visitId, ...rest } = input;
+      let center = { latitude: rest.latitude, longitude: rest.longitude };
+      if (visitId !== undefined) {
+        const visit = typeof visitId === "string" ? await this.locations.visitById(owner, visitId) : null;
+        if (!visit || visit.startedAt < observedSince) throw new DataRequestError(404, "visit_not_found", "Visit not found within approved history");
+        center = { latitude: visit.latitude, longitude: visit.longitude };
+      }
+      data = await this.places.create(owner, { ...rest, ...center }, "agent");
     } else if (tool === "location_recent") {
       data = await this.locations.recent(owner, { notBefore: observedSince });
     } else if (healthType) {

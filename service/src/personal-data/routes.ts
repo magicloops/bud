@@ -6,6 +6,7 @@ import { ContactProcessor } from "./contact-processor.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, type LocationQuery } from "./location.js";
 import { DataGrants } from "./grants.js";
+import { Places } from "./places.js";
 import { HealthQueries, type SleepQuery, type WorkoutQuery } from "./health.js";
 import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
@@ -25,6 +26,7 @@ type Dependencies = {
   queries?: ContactQueries;
   locationQueries?: LocationQueries;
   healthQueries?: Pick<HealthQueries, "workouts" | "sleep">;
+  places?: Pick<Places, "list" | "create" | "update" | "delete">;
   grants?: DataGrants;
   automations?: Pick<Automations, "list" | "get" | "history" | "create" | "update" | "pause" | "activate" | "delete">;
   automationActivationEnabled?: boolean;
@@ -43,6 +45,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
   const queries = dependencies.queries ?? new ContactQueries();
   const locationQueries = dependencies.locationQueries ?? new LocationQueries();
   const healthQueries = dependencies.healthQueries ?? new HealthQueries();
+  const places = dependencies.places ?? new Places();
   const grants = dependencies.grants ?? new DataGrants();
   const automations = dependencies.automations ?? new Automations();
   const bootstrap = dependencies.bootstrap ?? new AutomationBootstrap();
@@ -198,6 +201,11 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     app.get<{ Querystring: { from: string; to: string; order?: string; limit?: string; cursor?: string } }>("/api/data/location/visits", async request =>
       locationQueries.visits(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
     app.get("/api/data/location/recent", async request => locationQueries.recent(viewers.get(request)!.userId));
+    // Places are labels for presence and triggers; the owner manages them.
+    app.get("/api/data/places", async request => places.list(viewers.get(request)!.userId));
+    app.post("/api/data/places", async request => places.create(viewers.get(request)!.userId, request.body, "user"));
+    app.put<{ Params: { id: string } }>("/api/data/places/:id", async request => places.update(viewers.get(request)!.userId, request.params.id, request.body));
+    app.delete<{ Params: { id: string } }>("/api/data/places/:id", async request => places.delete(viewers.get(request)!.userId, request.params.id));
     app.get<{ Params: { id: string }; Querystring: Pick<LocationQuery, "from" | "to"> }>("/api/data/contacts/:id/location-context", async request =>
       locationQueries.contactContext(viewers.get(request)!.userId, request.params.id, request.query));
     // First-party owner reads; agents and apps go through their grant-aware adapters.

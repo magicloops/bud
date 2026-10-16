@@ -1,5 +1,5 @@
 import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-types'
-import { describeSchedule, describeWorkoutFilter } from '@/lib/automation-schedule'
+import { describeLocationTrigger, describeSchedule, describeWorkoutFilter } from '@/lib/automation-schedule'
 
 export function automationReviewOperation(proposal: ApiAutomationProposal | ApiBootstrapProposal) {
   if ('kind' in proposal) return 'Process existing contacts'
@@ -14,9 +14,11 @@ export function automationReviewDestination(proposal: ApiAutomationProposal | Ap
   return `Another conversation: ${proposal.destination_thread_title || target.thread_id}`
 }
 
-export function AutomationProposalSummary({ proposal }: { proposal: ApiAutomationProposal | ApiBootstrapProposal }) {
+/** `placeNames` labels location triggers; IDs without a name read as deleted places. */
+export function AutomationProposalSummary({ proposal, placeNames }: { proposal: ApiAutomationProposal | ApiBootstrapProposal; placeNames?: ReadonlyMap<string, string> }) {
   const definition = proposal.definition
   const bootstrap = 'kind' in proposal ? proposal : null
+  const location = definition.event_type === 'place.arrived' || definition.event_type === 'place.departed' || definition.event_type === 'visit.ended'
   return <>
     <p className="font-semibold">{automationReviewOperation(proposal)}</p>
     <h3 className="text-lg font-semibold">{definition.name}</h3>
@@ -33,6 +35,8 @@ export function AutomationProposalSummary({ proposal }: { proposal: ApiAutomatio
       ? <p>Runs on a schedule: {describeSchedule(definition.schedule)}. Missed runs are not caught up.</p>
       : definition.event_type === 'workout.completed'
       ? <p>{describeWorkoutFilter(definition.workout_filter)}, usually within an hour or two. The initial health import doesn't trigger it, and workouts older than {Math.round(definition.max_event_age_seconds / 3600)} hours when they arrive are skipped.</p>
+      : location
+      ? <p>{describeLocationTrigger(definition, placeNames)}, usually a few minutes after it happens. Only visits that start after activation trigger it, and events older than {Math.round(definition.max_event_age_seconds / 60)} minutes when they arrive are skipped.</p>
       : <p>When a new contact is observed. Existing contacts and initial imports are not processed.</p>}
     {proposal.model_resolution && <p className="text-sm">Currently: {proposal.model_resolution.model} · {proposal.model_resolution.reasoning_effort} reasoning</p>}
     {proposal.model_resolution?.warning && <p className="text-sm text-amber-700">{proposal.model_resolution.warning}</p>}

@@ -5,6 +5,7 @@ import { db, type Database } from "../db/client.js";
 import { locationObservationTable as locations, contactTable as contacts, locationVisitNameTable as names,
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
+import { matchingPlaces, placesForOwner, publishVisitEvents } from "./places.js";
 
 /** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits. */
 export const LOCATION_TYPES = ["location.visit.v1", "location.visit.v2", "location.significant_change.v1"];
@@ -67,6 +68,8 @@ type ParsedLocation = NonNullable<ReturnType<typeof parseLocationPayload>>;
 export async function projectVisit(tx: Transaction, owner: string, rawEventId: string, receivedAt: Date, location: ParsedLocation) {
   const key = location.visitKey ?? `v1:${rawEventId}`;
   const startedAt = location.arrivalAt ?? location.departureAt ?? receivedAt;
+  const [before] = await tx.select({ departureAt: visits.departureAt }).from(visits)
+    .where(and(eq(visits.createdByUserId, owner), eq(visits.visitKey, key))).for("update");
   await tx.execute(sql`
     insert into location_visit (id, visit_key, arrival_at, departure_at, latitude, longitude, horizontal_accuracy_m,
       started_at, first_event_id, last_event_id, received_at, created_by_user_id)
@@ -80,6 +83,13 @@ export async function projectVisit(tx: Transaction, owner: string, rawEventId: s
       horizontal_accuracy_m = case when ${preferIncoming} then excluded.horizontal_accuracy_m else location_visit.horizontal_accuracy_m end,
       started_at = coalesce(least(location_visit.arrival_at, excluded.arrival_at), location_visit.arrival_at, excluded.arrival_at, location_visit.started_at),
       last_event_id = excluded.last_event_id, received_at = greatest(location_visit.received_at, excluded.received_at)`);
+  // Only v2 visits (with arrival/completion reports) trigger automations; v1 history doesn't.
+  if (!location.visitKey) return;
+  const [after] = await tx.select().from(visits).where(and(eq(visits.createdByUserId, owner), eq(visits.visitKey, key)));
+  await publishVisitEvents(tx, owner, after, {
+    arrived: !before && after.arrivalAt !== null,
+    completed: (!before || before.departureAt === null) && after.departureAt !== null,
+  });
 }
 // Prefer a completed report over an arrival, then the more accurate of two of the same kind.
 const preferIncoming = sql.raw(`((excluded.departure_at is not null and location_visit.departure_at is null)
@@ -159,11 +169,17 @@ export class LocationQueries {
           : sql`(${visits.startedAt}, ${visits.id}) > (${new Date(cursor.time)}, ${cursor.id})` : undefined))
       .orderBy(...descending ? [desc(visits.startedAt), desc(visits.id)] : [asc(visits.startedAt), asc(visits.id)]).limit(limit + 1);
     const now = Date.now();
+    const owned = await placesForOwner(this.database, owner);
     const page = rows.slice(0, limit), last = page.at(-1);
-    return { items: page.map(row => presentVisit(row.visit, row.name, now)),
+    return { items: page.map(row => ({ ...presentVisit(row.visit, row.name, now), places: matchingPlaces(owned, row.visit) })),
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ binding, time: last.visit.startedAt.toISOString(), id: last.visit.id })).toString("base64url") : null,
       coverage: { from: from.toISOString(), to: to.toISOString(), continuous: false,
         note: "Visits are places iOS noticed you staying; time between visits is not tracked." } };
+  }
+
+  async visitById(owner: string, id: string) {
+    const [row] = await this.database.select().from(visits).where(and(eq(visits.createdByUserId, owner), eq(visits.id, id))).limit(1);
+    return row ?? null;
   }
 
   /** The latest known location: an in-progress visit, else the newest visit end or point.
@@ -177,7 +193,8 @@ export class LocationQueries {
       .where(and(eq(locations.createdByUserId, owner), eq(locations.kind, "significant_change")))
       .orderBy(desc(locations.occurredAt), desc(locations.id)).limit(1);
     const now = Date.now();
-    const visit = visitRow ? presentVisit(visitRow.visit, visitRow.name, now) : null;
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now),
+      places: matchingPlaces(await placesForOwner(this.database, owner), visitRow.visit) } : null;
     const visitAt = visitRow ? (visit!.state === "in_progress" ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
     const pointAt = point ? point.occurredAt.getTime() : -Infinity;
     const notBefore = limits.notBefore?.getTime() ?? -Infinity;

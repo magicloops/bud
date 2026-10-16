@@ -9,13 +9,16 @@ export type LocationVisit = {
   horizontal_accuracy_m: number
   address: { full?: string | null; short?: string | null; city?: string | null } | null
   place: { name: string; distance_m: number } | null
+  /** Saved places the visit is within (radius plus accuracy). */
+  places?: Array<{ id: string; name: string }>
 }
 
 /**
- * The likely place only when it's within the visit's accuracy (with a 50 m floor);
+ * Saved places first (they're the owner's own labels), then the likely place only when it's within the visit's accuracy (with a 50 m floor);
  * otherwise the street address, city, or coordinates.
  */
 export function visitTitle(visit: LocationVisit) {
+  if (visit.places?.length) return visit.places.map(place => place.name).join(' · ')
   const nearby = visit.place && visit.place.distance_m <= Math.max(visit.horizontal_accuracy_m, 50)
   if (visit.place && nearby) return visit.place.name
   if (visit.address?.short) return visit.address.short

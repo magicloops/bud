@@ -5,7 +5,7 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   agentDataGrantTable as grants, dataDomainEventTable as events, contactRevisionTable as evidence,
   contactTable as contacts, contactSourceTable as sources, dataCollectionEpochTable as epochs,
   dataInstallationTable as installations, agentInvocationTable as invocations, messageTable as messages,
-  healthWorkoutTable as workouts } from "../db/schema.js";
+  healthWorkoutTable as workouts, locationVisitTable as locationVisits } from "../db/schema.js";
 import { InvocationError, type Invocation } from "../agent/invocation-repository.js";
 import { automationDefinitionSchema, grantCoversDefinition, parseAutomationInput } from "./automation-contracts.js";
 import type { AgentDataCeiling } from "./agent-queries.js";
@@ -13,7 +13,7 @@ import { DataRequestError } from "./contracts.js";
 
 type PolicyRow = { state: string; definition: unknown; grantVersion: number; scopes: string[] | null;
   historyDays: number | null; currentGrantVersion: number | null; domainEventId?: string | null;
-  healthTypes?: string[] | null; workoutId?: string | null };
+  healthTypes?: string[] | null; workoutId?: string | null; visitId?: string | null };
 
 export async function loadAutomationDataCeiling(threadId: string, owner: string, turnId?: string,
   database: Pick<Database, "select"> = db): Promise<AgentDataCeiling | undefined> {
@@ -51,13 +51,18 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
   let [policy]: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
     grantVersion: revisions.grantVersion, scopes: grants.scopes, historyDays: grants.historyDays,
     currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId, healthTypes: grants.healthTypes,
-    workoutId: events.workoutId }).from(deliveries)
+    workoutId: events.workoutId, visitId: events.visitId }).from(deliveries)
     .innerJoin(rules, and(eq(rules.id, deliveries.automationId), eq(rules.createdByUserId, owner)))
     .innerJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, deliveries.revision), eq(revisions.createdByUserId, owner)))
     .leftJoin(grants, eq(grants.createdByUserId, owner))
     .leftJoin(events, and(eq(events.id, deliveries.domainEventId), eq(events.createdByUserId, owner)))
     .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"))).limit(1);
-  if (policy?.workoutId) {
+  if (policy?.visitId) {
+    // Visit deliveries need the visit to still exist; places are labels, not authority.
+    const [visit] = await database.select({ id: locationVisits.id }).from(locationVisits)
+      .where(and(eq(locationVisits.id, policy.visitId), eq(locationVisits.createdByUserId, owner))).limit(1);
+    if (!visit) throw new InvocationError("automation_authority_lost");
+  } else if (policy?.workoutId) {
     // Workout deliveries need the workout, its source and the grant's workouts type.
     const [lineage] = await database.select({ id: workouts.id }).from(workouts)
       .innerJoin(epochs, and(eq(epochs.id, workouts.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))

@@ -40,13 +40,13 @@ function dropNulls(input: unknown, keys: Set<string>) {
 // Provider strict mode sends null for optional fields, including inside a
 // replacement definition (e.g. `schedule: null` on a new-contact rule).
 const definitionOptionalKeys = new Set([...optionalKeys(automationDefinitionSchema), "sources", "schedule",
-  "workout_filter", "max_event_age_seconds"]);
+  "workout_filter", "max_event_age_seconds", "place_trigger", "visit_filter"]);
 
 /** Normalize only optional nulls inserted by provider strict mode. */
 export function parseAutomationToolInput<T extends AutomationToolName>(name: T, input: unknown): z.infer<(typeof AUTOMATION_TOOL_SCHEMAS)[T]> {
   const shape: z.ZodTypeAny = AUTOMATION_TOOL_SCHEMAS[name];
   const keys = optionalKeys(shape);
-  if (name === "automations_create_draft") for (const key of ["schedule", "workout_filter", "max_event_age_seconds"]) keys.add(key);
+  if (name === "automations_create_draft") for (const key of ["schedule", "workout_filter", "max_event_age_seconds", "place_trigger", "visit_filter"]) keys.add(key);
   let value = dropNulls(input, keys);
   if (name === "automations_update_draft" && value && typeof value === "object" && "definition" in value)
     value = { ...value, definition: dropNulls((value as { definition: unknown }).definition, definitionOptionalKeys) };

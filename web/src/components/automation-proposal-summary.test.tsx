@@ -107,3 +107,18 @@ test('workout review describes its filter, delivery delay and age limit, with he
     assert.ok(markup.includes(text), text)
   assert.doesNotMatch(markup, /Contact sources|When a new contact is observed/)
 })
+
+test('location reviews describe the trigger, delay and maximum age', () => {
+  const { name, instruction, bud_id, model, reasoning_effort, target, latest_start_seconds, max_invocations_per_day } = proposal.definition
+  const base = { name, instruction, bud_id, model, reasoning_effort, target, latest_start_seconds, max_invocations_per_day }
+  const arrived = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: { ...proposal, definition: { ...base,
+    event_type: 'place.arrived', place_trigger: { place_ids: ['home'] }, max_event_age_seconds: 3600,
+    data_access: { scopes: ['location.read'], history_days: 30 } } }, placeNames: new Map([['home', 'Home']]) }))
+  for (const text of ['When you arrive at Home', 'a few minutes after', 'older than 60 minutes', 'Location at collected precision'])
+    assert.ok(arrived.includes(text), text)
+  const ended = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: { ...proposal, definition: { ...base,
+    event_type: 'visit.ended', visit_filter: { place_ids: [], min_duration_minutes: 30 }, max_event_age_seconds: 21600,
+    data_access: { scopes: ['location.read'], history_days: 30 } } } }))
+  assert.ok(ended.includes('When a visit of at least 30 minutes ends'))
+  assert.doesNotMatch(ended, /When a new contact is observed/)
+})
