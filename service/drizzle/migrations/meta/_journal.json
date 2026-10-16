@@ -393,6 +393,13 @@
       "when": 1792106722192,
       "tag": "0055_location_visits",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792107443221,
+      "tag": "0056_places_and_visit_events",
+      "breakpoints": true
     }
   ]
 }

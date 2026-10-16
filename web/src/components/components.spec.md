@@ -269,6 +269,10 @@ Owner view at `/data/location`:
 - a last-known line from `/api/data/location/recent`;
 - a day picker and the day's visits (`/api/data/location/visits`, local-day
   window, oldest first);
-- an OpenStreetMap embed of the selected visit.
+- an OpenStreetMap embed of the selected visit, with "Save as place" (name and
+  radius) when the visit isn't at a saved place;
+- a Places section listing saved places (radius, "saved by an agent") with
+  inline edit and delete.
 
-Labels come from `lib/location-format.ts`.
+Labels come from `lib/location-format.ts`; places load through
+`lib/places.ts`.

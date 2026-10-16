@@ -647,3 +647,9 @@ copies `visit_key` from stored `location.visit.v2` raw events.
 Migration `0055_location_visits.sql` adds `location_visit` (unique owner + visit
 key, owner/start index). It ends with a hand-written backfill from
 `location_observation` visits.
+
+Migration `0056_places_and_visit_events.sql` adds `place` (owner-composite
+unique key, radius check 50–2,000) and `location_visit_owner_key`. It also adds
+`data_domain_event.visit_id` and `place_id` with owner-composite FKs. The subject
+check becomes exactly one of revision, workout or visit. Partial unique indexes
+publish each (visit, type, place) and each `visit.ended` once.

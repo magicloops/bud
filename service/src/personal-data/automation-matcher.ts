@@ -1,11 +1,13 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataDomainEventTable as events,
   contactRevisionTable as contactRevisions, contactTable as contacts,
   automationTable as rules, automationRevisionTable as revisions, automationDeliveryTable as deliveries,
   automationBootstrapTable as bootstraps, automationBootstrapMemberTable as members,
-  healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions } from "../db/schema.js";
+  healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions,
+  locationVisitTable as visits, placeTable as places } from "../db/schema.js";
+import { visitAtPlace } from "./places.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput, type AutomationDefinition } from "./automation-contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -33,6 +35,8 @@ export class AutomationMatcher {
       if (event.publicationSequence !== null) {
         if (event.eventType === "contact.added") await this.matchContact(tx, event);
         else if (event.eventType === "workout.completed") await this.matchWorkout(tx, event);
+        else if (event.eventType === "place.arrived" || event.eventType === "place.departed") await this.matchPlace(tx, event);
+        else if (event.eventType === "visit.ended") await this.matchVisitEnded(tx, event);
       }
       await tx.update(events).set({ status: "matched" }).where(and(eq(events.id, event.id), eq(events.createdByUserId, event.createdByUserId)));
       return true;
@@ -85,6 +89,57 @@ export class AutomationMatcher {
           sql`${bootstraps.publicationBoundary} >= ${event.publicationSequence}`)).limit(1);
       await this.insertDelivery(tx, event, revision, definition, !matches ? { status: "suppressed", outcomeCode: "source_filter_mismatch" }
         : captured ? { status: "suppressed", outcomeCode: "bootstrap_snapshot_selected" } : { status: "pending", outcomeCode: null });
+    }
+  }
+
+  private async visitWithAge(tx: Transaction, event: DomainEvent) {
+    const [visit] = await tx.select({ visit: visits,
+      arrivalAge: sql<number | null>`extract(epoch from clock_timestamp() - ${visits.arrivalAt})`.mapWith(Number),
+      departureAge: sql<number | null>`extract(epoch from clock_timestamp() - ${visits.departureAt})`.mapWith(Number) }).from(visits)
+      .where(and(eq(visits.id, event.visitId!), eq(visits.createdByUserId, event.createdByUserId))).limit(1);
+    if (!visit) throw new Error("visit_event_evidence_missing");
+    return visit;
+  }
+
+  /** Rules list the places they react to. Age runs from arrival (or departure), and the
+   * maximum age also bounds the first start. A deleted place stops matching. */
+  private async matchPlace(tx: Transaction, event: DomainEvent) {
+    const { visit, arrivalAge, departureAge } = await this.visitWithAge(tx, event);
+    const [place] = await tx.select({ deletedAt: places.deletedAt }).from(places)
+      .where(and(eq(places.id, event.placeId!), eq(places.createdByUserId, event.createdByUserId))).limit(1);
+    const arrived = event.eventType === "place.arrived";
+    const at = arrived ? visit.arrivalAt ?? visit.startedAt : visit.departureAt!;
+    const age = arrived ? arrivalAge ?? 0 : departureAge ?? 0;
+    for (const { revision, definition } of await this.applicable(tx, event)) {
+      if (definition.event_type !== "place.arrived" && definition.event_type !== "place.departed") continue;
+      if (!definition.place_trigger.place_ids.includes(event.placeId!)) continue;
+      await this.insertDelivery(tx, event, revision, definition,
+        !place || place.deletedAt ? { status: "suppressed", outcomeCode: "place_deleted" }
+        : age > definition.max_event_age_seconds ? { status: "suppressed", outcomeCode: "event_too_old" }
+        : { status: "pending", outcomeCode: null },
+        new Date(at.getTime() + definition.max_event_age_seconds * 1000));
+    }
+  }
+
+  /** Optional place and minimum-duration filters; age runs from departure. */
+  private async matchVisitEnded(tx: Transaction, event: DomainEvent) {
+    const { visit, departureAge } = await this.visitWithAge(tx, event);
+    const durationMinutes = visit.arrivalAt && visit.departureAt ? (visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 60_000 : null;
+    for (const { revision, definition } of await this.applicable(tx, event)) {
+      if (definition.event_type !== "visit.ended") continue;
+      const filter = definition.visit_filter;
+      let atPlace = !filter.place_ids.length;
+      if (!atPlace) {
+        const listed = await tx.select().from(places).where(and(eq(places.createdByUserId, event.createdByUserId),
+          inArray(places.id, filter.place_ids), isNull(places.deletedAt)));
+        atPlace = listed.some(place => visitAtPlace(visit, place));
+      }
+      const long = filter.min_duration_minutes === 0 || (durationMinutes !== null && durationMinutes >= filter.min_duration_minutes);
+      await this.insertDelivery(tx, event, revision, definition,
+        !atPlace || !long ? { status: "suppressed", outcomeCode: "visit_filter_mismatch" }
+        : (departureAge ?? 0) > definition.max_event_age_seconds ? { status: "suppressed", outcomeCode: "event_too_old" }
+        : { status: "pending", outcomeCode: null },
+        new Date(visit.departureAt!.getTime() + definition.max_event_age_seconds * 1000));
     }
   }
 

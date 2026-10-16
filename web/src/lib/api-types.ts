@@ -427,10 +427,21 @@ export type ApiAutomationSchedule = { local_time: string; weekdays: number[]; ti
 /** Empty activity_types means any workout. */
 export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes: number }
 
+/** A saved place, from `/api/data/places`. */
+export type ApiPlace = { id: string; name: string; note: string | null; coordinate: { lat: number; lon: number }; radius_m: number
+  created_by: 'user' | 'agent'; created_at: string; updated_at: string }
+
+/** Saved place IDs (1–20). */
+export type ApiPlaceTrigger = { place_ids: string[] }
+/** Empty place_ids means a visit anywhere. */
+export type ApiVisitFilter = { place_ids: string[]; min_duration_minutes: number }
+
 export type ApiAutomationTrigger =
   | { event_type: 'contact.added'; sources: { source_ids: string[] } }
   | { event_type: 'schedule'; schedule: ApiAutomationSchedule }
   | { event_type: 'workout.completed'; workout_filter: ApiWorkoutFilter; max_event_age_seconds: number }
+  | { event_type: 'place.arrived' | 'place.departed'; place_trigger: ApiPlaceTrigger; max_event_age_seconds: number }
+  | { event_type: 'visit.ended'; visit_filter: ApiVisitFilter; max_event_age_seconds: number }
 
 export type ApiAutomationDefinition = ApiAutomationTrigger & {
   name: string

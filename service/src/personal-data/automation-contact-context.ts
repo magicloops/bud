@@ -6,6 +6,7 @@ import { ContactQueries, LEGACY_CONTACT_FIELDS, type ContactField } from "./cont
 import { automationDefinitionSchema, parseAutomationInput, requireContactDefinition } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 import { automationWorkoutContext } from "./automation-workout-context.js";
+import { automationVisitContext } from "./automation-visit-context.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
@@ -15,7 +16,8 @@ export async function automationStartEvidence(tx: Transaction, invocation: Invoc
     eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, invocation.createdByUserId),
     isNotNull(deliveries.scheduledFor))).limit(1);
   if (scheduled) return null;
-  return await automationWorkoutContext(tx, invocation) ?? automationContactContext(tx, invocation);
+  return await automationWorkoutContext(tx, invocation) ?? await automationVisitContext(tx, invocation)
+    ?? automationContactContext(tx, invocation);
 }
 
 /** Caller holds owner + invocation locks and has checked current automation policy. */

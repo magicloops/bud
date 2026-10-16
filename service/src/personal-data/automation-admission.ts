@@ -8,6 +8,7 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   dataOwnerStateTable as owners, agentDataGrantTable as grants, dataDomainEventTable as events,
   contactRevisionTable as evidence, contactTable as contacts, contactSourceTable as sources,
   dataCollectionEpochTable as epochs, dataInstallationTable as installations, healthWorkoutTable as workouts,
+  locationVisitTable as locationVisits, locationVisitNameTable as visitNames, placeTable as placeRows,
   threadTable as threads, budTable as buds } from "../db/schema.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, parseAutomationInput, withinHistory,
   type AutomationDefinition } from "./automation-contracts.js";
@@ -120,6 +121,33 @@ export class AutomationAdmission {
   /** Trigger-specific admission text and metadata, or a failure outcome code. */
   private async triggerInput(tx: Transaction, owner: string, delivery: Delivery, definition: AutomationDefinition,
     healthTypes: string[], grantHistoryDays: number): Promise<{ text: string; metadata: Record<string, unknown> } | string> {
+    if (definition.event_type === "place.arrived" || definition.event_type === "place.departed" || definition.event_type === "visit.ended") {
+      if (!delivery.domainEventId) return "automation_trigger_mismatch";
+      const [row] = await tx.select({ event: events, visit: locationVisits, name: visitNames,
+        now: sql<Date>`clock_timestamp()`.mapWith(locationVisits.startedAt) }).from(events)
+        .innerJoin(locationVisits, and(eq(locationVisits.id, events.visitId), eq(locationVisits.createdByUserId, owner)))
+        .leftJoin(visitNames, and(eq(visitNames.createdByUserId, owner), eq(visitNames.visitKey, locationVisits.visitKey)))
+        .where(and(eq(events.id, delivery.domainEventId), eq(events.createdByUserId, owner))).limit(1);
+      if (!row) return "visit_evidence_unavailable";
+      if (!withinHistory(row.visit.startedAt, row.now, Math.min(grantHistoryDays, definition.data_access.history_days)))
+        return "history_outside_grant";
+      const [place] = row.event.placeId ? await tx.select().from(placeRows).where(and(eq(placeRows.id, row.event.placeId),
+        eq(placeRows.createdByUserId, owner), isNull(placeRows.deletedAt))).limit(1) : [];
+      if (row.event.placeId && !place) return "place_unavailable";
+      const where = place?.name ?? (row.name?.address as { short?: string } | null)?.short ?? "a place";
+      const minutes = row.visit.arrivalAt && row.visit.departureAt
+        ? Math.round((row.visit.departureAt.getTime() - row.visit.arrivalAt.getTime()) / 60_000) : null;
+      const text = definition.event_type === "place.arrived"
+        ? `Arrived at ${where} at ${(row.visit.arrivalAt ?? row.visit.startedAt).toISOString()}.`
+        : definition.event_type === "place.departed"
+        ? `Left ${where} at ${row.visit.departureAt!.toISOString()}${minutes !== null ? ` after ${minutes} minutes` : ""}.`
+        : `A visit at ${where} ended at ${row.visit.departureAt!.toISOString()}${minutes !== null ? ` after ${minutes} minutes` : ""}.`;
+      return {
+        text: `${text}\nVisit ID: ${row.visit.id}\nThe visit record follows. iOS reports visits several minutes after they happen, then uploads, ` +
+          "so this may arrive late. Places are your saved labels; a likely place from Apple Maps is not verified.",
+        metadata: { domain_event_id: delivery.domainEventId, visit_id: row.visit.id, place_id: row.event.placeId },
+      };
+    }
     if (definition.event_type === "workout.completed") {
       if (!delivery.domainEventId) return "automation_trigger_mismatch";
       if (!healthTypes.includes("workouts")) return "data_permission_changed";

@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0055` currently)
+- Snapshot files for each migration (`0000` through `0056` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -534,3 +534,10 @@ Generated table, plus a hand-written backfill `INSERT … ON CONFLICT DO NOTHING
 It groups stored visit observations by key (v1 rows by `v1:<raw event>`), takes
 the earliest arrival and latest departure, and uses the completed and most
 accurate report for the coordinate. Applied locally (48 visits backfilled).
+
+### `0056_places_and_visit_events.sql`
+
+Generated, then reordered so `location_visit_owner_key` exists before the
+`data_domain_visit_fk` that references it. Additive: new table, nullable
+columns, a widened subject check (existing rows have exactly one of revision or
+workout), and partial unique indexes. Applied locally as exact SQL.

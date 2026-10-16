@@ -1659,3 +1659,13 @@ fields are dropped.
 `location_recent` (no arguments; last known location with age and staleness)
 and `location_visits` (merged visits in a window of up to 31 days, newest first).
 `timeline_query` accepts `kind`. Provider-strict nulls for `kind` are dropped.
+
+## Places and location triggers (phase 6.4)
+
+`places_list` (no arguments) and `places_create` (name, plus `latitude` and
+`longitude` or a `visit_id`; optional `radius_m` and note) use `location.read`.
+The automation definition accepts `place.arrived` and `place.departed` with
+`place_trigger.place_ids`, and `visit.ended` with `visit_filter`. Agent defaults
+are a 1-hour maximum age for arrive/leave and 6 hours for visit-ended, with
+Location access. Provider-strict nulls for `place_trigger` and `visit_filter`
+are dropped.

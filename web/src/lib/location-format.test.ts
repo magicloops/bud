@@ -23,3 +23,9 @@ test('visit durations describe in-progress and unknown ends', () => {
   assert.equal(visitDuration(visit({ state: 'in_progress', duration_s: null })), 'Here now')
   assert.equal(visitDuration(visit({ state: 'end_unknown', duration_s: null })), 'End unknown')
 })
+
+test('saved places title a visit before Apple Maps names', () => {
+  assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Home' }] })), 'Home')
+  assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Office' }, { id: 'p2', name: 'Campus' }] })), 'Office · Campus')
+  assert.equal(visitTitle(visit({ places: [] })), 'Blue Bottle Coffee')
+})

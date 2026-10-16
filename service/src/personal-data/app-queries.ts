@@ -59,8 +59,9 @@ export class AppDataQueries {
     const location = (row: Location) => ({ id: row.id, kind: row.kind, ...restrict(row),
       occurred_at: row.occurred_at, received_at: row.received_at, arrival_at: row.arrival_at, departure_at: row.departure_at });
     const visit = (row: Awaited<ReturnType<LocationQueries["visits"]>>["items"][number]) => {
-      const { coordinate: _c, horizontal_accuracy_m: _a, address: _d, place: _p, visit_key: _k, ...rest } = row;
-      return { ...rest, ...restrict(row) };
+      const { coordinate: _c, horizontal_accuracy_m: _a, address: _d, place: _p, visit_key: _k, places, ...rest } = row;
+      // Saved place names are as specific as an address, so rounded keys don't get them.
+      return { ...rest, ...restrict(row), places: rounded ? [] : places };
     };
     let data: unknown;
     if (operation === "contacts_search") {

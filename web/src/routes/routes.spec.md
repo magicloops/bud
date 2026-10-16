@@ -404,6 +404,12 @@ maximum age in hours, and data access that requires Health, with optional
 location during the workout. `lib/automation-schedule.ts` describes workout
 filters for the list, editor and review summary.
 
+Location triggers ("When I arrive at a place", "When I leave a place", "When a
+visit ends") offer the saved places as checkboxes (deleted IDs stay listed until
+unchecked), a minimum stay for visit-ended, a maximum age in minutes, and
+Location as required access. The list, activation review and proposal review
+name the places.
+
 ### `data_.location.tsx`
 
 Authenticated `/data/location`, rendering `LocationScreen`. The Contacts, Health

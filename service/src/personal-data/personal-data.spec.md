@@ -502,3 +502,46 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - app operations and routes with shared precision rules (`restrict` in
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
+
+## Places and location triggers (phase 6.4)
+
+- **`place`** (migration 0056): owner, name, centre, radius 50–2,000 m, note,
+  `created_by` (`user` or `agent`), `geometry_changed_at` and a soft
+  `deleted_at`. `places.ts` holds `Places` (list, create with a 200-per-owner
+  limit under the owner lock, update, delete) and the matching helpers.
+- **Matching:** a visit is at a place when its coordinate is within the radius
+  plus the visit's accuracy, capped at 200 m. Places can overlap.
+- **Labels:** `visits` and `recent` add `places` (`id`, `name`) to each visit.
+  App keys with `rounded_2_decimals` get an empty list.
+- **Exposure:** `/api/data/places` (GET, POST, PUT `/:id`, DELETE `/:id`), and
+  agent tools `places_list` and `places_create` (`location.read`). Agents may
+  save places at a coordinate or at a `visit_id` within approved history;
+  places are labels, not permissions.
+- **Publication:** `projectVisit` calls `publishVisitEvents` for v2 visits
+  under the processor's owner lock. When a visit first appears with an arrival
+  it publishes `place.arrived` per matching place. When it first completes it
+  publishes `place.departed` per matching place, then `visit.ended`.
+  - Only places whose `geometry_changed_at` is at or before the visit's start
+    count, so saving, moving or resizing a place never acts on a visit already
+    under way.
+  - `data_domain_event.visit_id` and `place_id` are the subject; unique indexes
+    on (visit, type, place) and (visit, type) for `visit.ended` make
+    re-uploads no-ops.
+- **Rules:** `place.arrived` and `place.departed` need `place_trigger.place_ids`
+  (1–20). `visit.ended` takes `visit_filter` (place IDs, empty for anywhere, and
+  a minimum duration). All need `location.read` and `max_event_age_seconds`
+  (defaults: 1 hour for arrive/leave, 6 hours for visit-ended).
+- **Matcher:**
+  - place rules match only their places; a deleted place is `place_deleted`;
+  - a filter miss is `visit_filter_mismatch`;
+  - age (from arrival or departure) past the maximum is `event_too_old`;
+  - the first start is bounded by that time plus the maximum age.
+- **Admission and start:**
+  - admission rechecks history (`history_outside_grant`) and the place
+    (`place_unavailable`), and writes "Arrived at …", "Left … after N
+    minutes" or "A visit at … ended …" with the visit ID;
+  - the policy check fails a run whose visit disappeared;
+  - `automation-visit-context.ts` adds visit evidence at first start: times,
+    coordinate, accuracy, address, likely place, the trigger place, saved
+    places at the visit, and delay.
+- Test: `automation-places.test.ts` (isolated PostgreSQL).

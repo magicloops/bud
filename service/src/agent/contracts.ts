@@ -357,6 +357,8 @@ export function toolNameForConversation(
     case "health_sleep":
     case "location_recent":
     case "location_visits":
+    case "places_list":
+    case "places_create":
       return tool;
     case "terminal.send":
       return "terminal_send";
@@ -444,6 +446,8 @@ export function buildToolArgs(
     case "health_sleep":
     case "location_recent":
     case "location_visits":
+    case "places_list":
+    case "places_create":
       return directive.args;
     case "terminal.send":
       return {
