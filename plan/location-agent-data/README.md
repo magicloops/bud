@@ -39,7 +39,9 @@ order, because each builds on the one before.
 | 6.2 | [Place names](phase-6-2-place-names.md) | Visits named on the phone (address and likely place), rate-limited and cached | iOS, service |
 | 6.3 | [Location for agents and screens](phase-6-3-agents-and-screens.md) | Merged visits, recent/current location for agents, named timelines, history and map on web and iOS, app access | Service, web, iOS |
 | 6.4 | [Named places and triggers](phase-6-4-places-and-triggers.md) | Your places, plus arrive, leave and visit-ended automations | Service, web, iOS |
-| 7 | [Timely place triggers (optional)](phase-7-geofences.md) | Geofences, if 6.4's visit-based triggers prove too slow | iOS, service |
+| 6.5 | [A fresh location when Bud opens](phase-6-5-foreground-fix.md) | One fix per foreground, named, so "where am I?" is current when you're using the app | iOS, service |
+| 7 | [Timely place triggers](phase-7-geofences.md) | Geofences plus a single presence state, so arrive/leave runs within about a minute | iOS, service |
+| 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
 
 **Why this order:**
 - Everything depends on reliable capture (6.1).
@@ -48,6 +50,14 @@ order, because each builds on the one before.
 - 6.3 makes location visibly useful.
 - Presence triggers (6.4) are the trickiest logic and come last, on named and
   merged visits.
+
+**After the walk test (October 19, 2026):** arrive/leave felt slow, and "where
+am I?" returned a 5-minute-old point. The follow-ups run in this order:
+- **6.5:** cheap, needs no new permission, and its fix code is reused by 7 and 8.
+- **7:** fixes trigger latency, which is what automations depend on.
+- **8.1:** uses only a silent push, and force-quitting Bud stops it.
+- **8.2:** Apple's intended mechanism. It starts after Apple approves the
+  location push entitlement, which should be requested early.
 
 ## Decisions
 
