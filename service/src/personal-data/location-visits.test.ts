@@ -89,7 +89,23 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   const pointOnly = await queries.recent("points");
   assert.deepEqual([pointOnly.location?.kind, pointOnly.stale], ["point", true]);
   assert.equal((await queries.recent("nobody")).location, null);
-  // Timeline kind filter.
+  // A fix near the in-progress visit leaves it as the latest location.
+  const fix = (key: string, at: Date, lat: number) => ["location.fix.v1", at, { fix_key: key, reason: "foreground",
+    coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: 10, speed_mps: 1, course_deg: 90, altitude_m: 0 }] as [string, Date, object];
+  await upload("owner", [fix("fix:near", ago(5), 37.7401)]);
+  assert.equal((await queries.recent("owner")).location?.kind, "visit");
+  // A later fix away from it means iOS hasn't reported the departure yet: the fix wins, with its name.
+  await upload("owner", [fix("fix:away", ago(2), 37.75), ["location.visit_named.v1", ago(1), { visit_key: "fix:away", source: "apple",
+    named_at: ago(1).toISOString(), address: { short: "Market St", city: "San Francisco" }, place: null }]]);
+  const moved = await queries.recent("owner");
+  assert.deepEqual([moved.location?.kind, moved.location?.address?.short, moved.stale],
+    ["fix", "Market St", false]);
+  assert.ok(moved.age_seconds! >= 100 && moved.age_seconds! < 200);
+  // Without a fix key, a fix is invalid and stored as nothing.
+  await upload("owner", [["location.fix.v1", ago(1), { coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 10 }]]);
+  // Timeline kind filter: points include fixes.
   const points = await queries.list("owner", { ...window, kind: "points" });
-  assert.ok(points.items.length > 0 && points.items.every(item => item.kind === "significant_change"));
+  assert.deepEqual([...new Set(points.items.map(item => item.kind))].sort(), ["fix", "significant_change"]);
+  assert.equal(points.items.filter(item => item.kind === "fix").length, 2);
+  assert.equal(points.items.find(item => item.visit_key === "fix:away")?.address?.short, "Market St");
 });

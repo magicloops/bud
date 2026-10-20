@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { locationObservationTable as locations, contactTable as contacts, locationVisitNameTable as names,
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
-import { matchingPlaces, placesForOwner, publishVisitEvents } from "./places.js";
+import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents } from "./places.js";
 
-/** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits. */
-export const LOCATION_TYPES = ["location.visit.v1", "location.visit.v2", "location.significant_change.v1"];
+/** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits.
+ * Fixes are one-off positions the phone takes when Bud opens; their `fix_key` is stored as the
+ * naming key so `location.visit_named.v1` names them too. */
+export const LOCATION_TYPES = ["location.visit.v1", "location.visit.v2", "location.significant_change.v1", "location.fix.v1"];
+/** Coarse significant-change points and precise fixes, as opposed to visits. */
+export const POINT_KINDS = ["significant_change", "fix"];
 /** Address and likely place for a v2 visit, looked up on the phone after it completes. */
 export const VISIT_NAME_TYPE = "location.visit_named.v1";
 function timestamp(value: unknown): Date | null {
@@ -27,9 +31,11 @@ export function parseLocationPayload(type: string, value: unknown) {
   const departureAt = value.departure_at == null ? null : timestamp(value.departure_at);
   if ((value.arrival_at != null && !arrivalAt) || (value.departure_at != null && !departureAt)
     || (arrivalAt && departureAt && departureAt < arrivalAt)) return null;
-  const visitKey = type === "location.visit.v2" ? text(value.visit_key, 128) : null;
-  if (type === "location.visit.v2" && !visitKey) return null;
-  return { kind: type.startsWith("location.visit.") ? "visit" : "significant_change", latitude: lat, longitude: lon,
+  const fix = type === "location.fix.v1";
+  const visitKey = type === "location.visit.v2" ? text(value.visit_key, 128)
+    : fix && typeof value.fix_key === "string" && /^fix:[0-9a-z-]{1,64}$/.test(value.fix_key) ? value.fix_key : null;
+  if ((type === "location.visit.v2" || fix) && !visitKey) return null;
+  return { kind: type.startsWith("location.visit.") ? "visit" : fix ? "fix" : "significant_change", latitude: lat, longitude: lon,
     horizontalAccuracyM: accuracy, arrivalAt, departureAt, visitKey };
 }
 
@@ -98,6 +104,8 @@ const preferIncoming = sql.raw(`((excluded.departure_at is not null and location
 
 /** A visit with no departure is in progress for a day after arrival; after that its end is unknown. */
 const IN_PROGRESS_LIMIT_MS = 86_400_000;
+/** A fix farther than this (or the visit's accuracy) from an in-progress visit means it ended. */
+const LEFT_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
 const RECENT_LIMIT_MS = 2 * 3600_000;
 
@@ -118,9 +126,9 @@ export class LocationQueries {
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new DataRequestError(400, "invalid_limit", "Limit must be 1–200");
     if (query.kind !== undefined && !["visits", "points", "all"].includes(query.kind))
       throw new DataRequestError(400, "invalid_query", "kind must be visits, points or all");
-    const kind = query.kind === "visits" ? "visit" : query.kind === "points" ? "significant_change" : null;
+    const kinds = query.kind === "visits" ? ["visit"] : query.kind === "points" ? POINT_KINDS : null;
     const binding = createHash("sha256").update(JSON.stringify([owner, from.toISOString(), to.toISOString(),
-      ...(kind ? [kind] : []), ...(policy ? [policy.cursorBinding] : [])])).digest("hex");
+      ...(kinds ? [kinds.join(",")] : []), ...(policy ? [policy.cursorBinding] : [])])).digest("hex");
     let cursor: { time: string; id: string } | undefined;
     if (query.cursor) {
       try {
@@ -133,7 +141,7 @@ export class LocationQueries {
     const rows = await this.database.select({ location: locations, name: names }).from(locations)
       .leftJoin(names, and(eq(names.createdByUserId, locations.createdByUserId), eq(names.visitKey, locations.visitKey)))
       .where(and(eq(locations.createdByUserId, owner), gte(locations.occurredAt, from), lte(locations.occurredAt, to),
-        kind ? eq(locations.kind, kind) : undefined,
+        kinds ? inArray(locations.kind, kinds) : undefined,
         cursor ? sql`(${locations.occurredAt}, ${locations.id}) > (${new Date(cursor.time)}, ${cursor.id})` : undefined))
       .orderBy(asc(locations.occurredAt), asc(locations.id)).limit(limit + 1);
     const page = rows.slice(0, limit);
@@ -182,20 +190,27 @@ export class LocationQueries {
     return row ?? null;
   }
 
-  /** The latest known location: an in-progress visit, else the newest visit end or point.
+  /** The latest known location: an in-progress visit, else the newest visit end, fix or point.
    * Never live: it reports its age, and is stale after two hours. `notBefore` hides
    * anything older than approved history. */
   async recent(owner: string, limits: { notBefore?: Date } = {}) {
     const [visitRow] = await this.database.select({ visit: visits, name: names }).from(visits)
       .leftJoin(names, and(eq(names.createdByUserId, visits.createdByUserId), eq(names.visitKey, visits.visitKey)))
       .where(eq(visits.createdByUserId, owner)).orderBy(desc(visits.startedAt), desc(visits.id)).limit(1);
-    const [point] = await this.database.select().from(locations)
-      .where(and(eq(locations.createdByUserId, owner), eq(locations.kind, "significant_change")))
+    const [pointRow] = await this.database.select({ location: locations, name: names }).from(locations)
+      .leftJoin(names, and(eq(names.createdByUserId, locations.createdByUserId), eq(names.visitKey, locations.visitKey)))
+      .where(and(eq(locations.createdByUserId, owner), inArray(locations.kind, POINT_KINDS)))
       .orderBy(desc(locations.occurredAt), desc(locations.id)).limit(1);
+    const point = pointRow?.location;
     const now = Date.now();
     const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now),
       places: matchingPlaces(await placesForOwner(this.database, owner), visitRow.visit) } : null;
-    const visitAt = visitRow ? (visit!.state === "in_progress" ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
+    // iOS reports departures minutes late, so a fix taken after the visit began and away from
+    // it means the visit already ended: the fix wins over the "in progress" visit.
+    const leftVisit = visitRow && point?.kind === "fix" && point.occurredAt > visitRow.visit.startedAt
+      && distanceM(point.latitude, point.longitude, visitRow.visit.latitude, visitRow.visit.longitude)
+        > Math.max(visitRow.visit.horizontalAccuracyM, LEFT_VISIT_DISTANCE_M);
+    const visitAt = visitRow ? (visit!.state === "in_progress" && !leftVisit ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
     const pointAt = point ? point.occurredAt.getTime() : -Infinity;
     const notBefore = limits.notBefore?.getTime() ?? -Infinity;
     const useVisit = visitAt >= pointAt;
@@ -203,10 +218,13 @@ export class LocationQueries {
     if (at === -Infinity || at < notBefore) return { location: null, note: "No location within approved history." };
     const age = Math.max(0, now - at);
     return {
-      location: useVisit ? { kind: "visit", ...visit! } : { kind: "point", coordinate: { lat: point!.latitude, lon: point!.longitude },
-        horizontal_accuracy_m: point!.horizontalAccuracyM, occurred_at: point!.occurredAt, received_at: point!.receivedAt },
+      location: useVisit ? { kind: "visit", ...visit! } : { kind: point!.kind === "fix" ? "fix" : "point",
+        coordinate: { lat: point!.latitude, lon: point!.longitude }, horizontal_accuracy_m: point!.horizontalAccuracyM,
+        occurred_at: point!.occurredAt, received_at: point!.receivedAt,
+        address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null },
       as_of: new Date(at), age_seconds: Math.round(age / 1000), stale: age > RECENT_LIMIT_MS,
-      note: "Last known location from the phone, not a live position. Points are coarse (often hundreds of metres).",
+      note: "Last known location from the phone, not a live position. A fix is a precise position taken when Bud was opened; "
+        + "points are coarse (often hundreds of metres).",
     };
   }
 

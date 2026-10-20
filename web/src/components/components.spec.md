@@ -266,7 +266,8 @@ for permission.
 ### `location-screen.tsx`
 
 Owner view at `/data/location`:
-- a last-known line from `/api/data/location/recent`;
+- a last-known line from `/api/data/location/recent` (a fix reads "Here:
+  <address>", a point is marked approximate);
 - a day picker and the day's visits (`/api/data/location/visits`, local-day
   window, oldest first);
 - an OpenStreetMap embed of the selected visit, with "Save as place" (name and
