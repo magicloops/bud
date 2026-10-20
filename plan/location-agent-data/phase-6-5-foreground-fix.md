@@ -76,6 +76,39 @@ Core Location for its current position.
     the new spot, under a minute old;
   - with When In Use only, opening Bud still records a fix.
 
+## Implementation (October 19, 2026)
+
+On branches `feat/location-fixes` (service, web) and mobile
+`feature/location-fixes`, stacked on 6.4.
+- **iOS:**
+  - `CoreLocationFixer` streams updates until one is within 20 m, or returns
+    the best after 10 seconds, ignoring locations cached over 15 seconds before
+    the request;
+  - `LocationFixPolicy` decides whether a fix is due;
+  - the producer takes a fix on `didBecomeActive`, and at start when Bud is
+    already active;
+  - the fix is committed with the producer's gate and fence, and queued for
+    naming.
+- **Service:** `location.fix.v1` is stored as kind `fix`. `recent`,
+  `timeline_query` (`points`), status and apps include fixes.
+- **Clients:** the Last known line shows "Here: <address>" for a fix.
+- **Changes from the design:**
+  - **Freshness:** the 2-minute check uses the newest point or fix this run of
+    the app has committed, not the store; after a relaunch it always fixes.
+  - **Naming:** fixes reuse `location.visit_named.v1`, with the `fix:<uuid>`
+    key in `visit_key`, instead of a new `location.fix_named.v1`. The
+    service's naming join works unchanged.
+  - **Reason:** `reason` stays in the raw event and has no column; phase 8 adds
+    what it needs.
+  - **Added:** a fix taken after an in-progress visit started, and away from
+    it, is the latest location. iOS reports departures late; this was the walk
+    test's symptom.
+- **Tests:**
+  - TimelineCore: fix payload, policy, naming by fix key;
+  - service: near and far fixes, names, invalid keys, the points filter, app
+    rounding;
+  - iOS: the last-known label.
+
 ## Rollout
 
 - Service first, so the new events are stored as fixes rather than as unknown

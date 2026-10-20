@@ -112,7 +112,7 @@ export class PostgresIngestRepository implements IngestRepository {
     const [row] = await this.database.select({
       last_received_at: max(locations.receivedAt),
       latest_visit_at: sql<Date | null>`max(${locations.occurredAt}) filter (where ${locations.kind} = 'visit')`.mapWith(locations.occurredAt),
-      latest_point_at: sql<Date | null>`max(${locations.occurredAt}) filter (where ${locations.kind} = 'significant_change')`.mapWith(locations.occurredAt),
+      latest_point_at: sql<Date | null>`max(${locations.occurredAt}) filter (where ${locations.kind} in ('significant_change', 'fix'))`.mapWith(locations.occurredAt),
     }).from(locations).where(eq(locations.createdByUserId, userId));
     return { last_received_at: row?.last_received_at ?? null, latest_visit_at: row?.latest_visit_at ?? null,
       latest_point_at: row?.latest_point_at ?? null };

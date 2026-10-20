@@ -9,6 +9,7 @@ function fixture() {
   const authority: AppKeyAuthority = { owner: "owner-a", keyId: "key-a", version: 1,
     policy: { scopes: ["contacts.read", "location.read"], contact_fields: ["names"], location_precision: "rounded_2_decimals", health_types: [], history_days: 30 } };
   let revokeAfterRead = false;
+  let latestFix = false;
   let read = false;
   const observe = (method: string, args: unknown[]) => { read = true; calls.push({ method, args }); };
   const evidence = { id: "observation", source_event_id: "raw-source", source_epoch_id: "raw-epoch", kind: "visit",
@@ -30,7 +31,9 @@ function fixture() {
     horizontal_accuracy_m: 20, address: evidence.address, place: evidence.place, received_at: new Date("2026-09-03T11:05:00Z") };
   const locations = {
     visits: async (...args: unknown[]) => { observe("visits", args); return { items: [namedVisit], next_cursor: null, coverage: {} }; },
-    recent: async (...args: unknown[]) => { observe("recent", args); return { location: { kind: "visit", ...namedVisit }, as_of: new Date(), age_seconds: 60, stale: false }; },
+    recent: async (...args: unknown[]) => { observe("recent", args); return { location: latestFix ? { kind: "fix", coordinate: evidence.coordinate,
+      horizontal_accuracy_m: 8, occurred_at: evidence.occurred_at, received_at: evidence.received_at, address: evidence.address, place: evidence.place }
+      : { kind: "visit", ...namedVisit }, as_of: new Date(), age_seconds: 60, stale: false }; },
     list: async (...args: unknown[]) => { observe("locations", args); return { items: [evidence], next_cursor: null, coverage: { continuous: false } }; },
     contactContext: async (...args: unknown[]) => { observe("context", args); return { contact_id: "contact", evidence,
       uncertainty: "Not a verified meeting or creation location", continuous_coverage: false }; },
@@ -39,7 +42,7 @@ function fixture() {
     workouts: async (...args: unknown[]) => { observe("workouts", args); return { items: [], next_cursor: null }; },
     sleep: async (...args: unknown[]) => { observe("sleep", args); return { items: [] }; },
   } as unknown as Dependencies[4];
-  return { authority, calls, revokeDuringRead: () => { revokeAfterRead = true; },
+  return { authority, calls, revokeDuringRead: () => { revokeAfterRead = true; }, useFix: () => { latestFix = true; },
     query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health) };
 }
 
@@ -134,6 +137,11 @@ test("app visit and recent results follow the key's location precision", async (
   const latest = (recent.data as { location: Record<string, unknown> }).location;
   assert.deepEqual([latest.kind, latest.place], ["visit", null]);
   assert.deepEqual(f.calls.at(-1), { method: "recent", args: ["owner-a", { notBefore: new Date("2026-08-05T12:00:00Z") }] });
+  f.useFix();
+  const fix = (await f.query.execute("key", "location_recent", {})).data as { location: Record<string, unknown> };
+  assert.deepEqual([fix.location.kind, fix.location.coordinate, fix.location.place], ["fix", { lat: 37.77, lon: -122.42 }, null],
+    "a fix is rounded like any other location");
+  assert.equal((fix.location.address as Record<string, unknown>).short, undefined);
   f.authority.policy = { ...f.authority.policy, scopes: ["contacts.read"], location_precision: "none" };
   await assert.rejects(f.query.execute("key", "location_recent", {}), { code: "app_data_scope_required" });
 });

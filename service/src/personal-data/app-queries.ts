@@ -76,7 +76,7 @@ export class AppDataQueries {
       const latest = result.location;
       data = { ...result, location: !latest ? null : latest.kind === "visit"
         ? { kind: "visit", ...visit(latest as Parameters<typeof visit>[0]) }
-        : { kind: "point", ...restrict(latest as Parameters<typeof restrict>[0]),
+        : { kind: latest.kind, ...restrict(latest as Parameters<typeof restrict>[0]),
             occurred_at: (latest as { occurred_at: Date }).occurred_at, received_at: (latest as { received_at: Date }).received_at } };
     } else if (operation === "location_visits") {
       const query = args as z.infer<typeof schemas.location_visits>;

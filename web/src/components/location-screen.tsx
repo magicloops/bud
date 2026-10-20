@@ -8,7 +8,8 @@ import { usePlaces } from '@/lib/places'
 import type { ApiPlace } from '@/lib/api-types'
 import { dayWindow, visitDuration, visitNearby, visitTitle, type LocationVisit } from '@/lib/location-format'
 
-type Recent = { location: (LocationVisit & { kind: 'visit' }) | { kind: 'point'; coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number } | null;
+type Recent = { location: (LocationVisit & { kind: 'visit' }) | { kind: 'point' | 'fix'; coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number
+  address?: LocationVisit['address'] } | null;
   as_of?: string; age_seconds?: number; stale?: boolean }
 const today = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` }
 const time = (value: string | null) => value ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '…'
@@ -51,7 +52,9 @@ function LocationView() {
         <p className="text-muted-foreground">Places your phone noticed you staying, with addresses and likely places from Apple Maps. Time between visits isn't tracked.</p>
       </header>
       <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><Link to="/data/contacts">Contacts</Link><Link to="/data/health">Health</Link><span aria-current="page" className="font-semibold">Location</span></nav>
-      {recent?.location && <p className="rounded border p-3 text-sm">Last known: {recent.location.kind === 'visit' ? visitTitle(recent.location) : `${recent.location.coordinate.lat.toFixed(3)}, ${recent.location.coordinate.lon.toFixed(3)} (approximate)`}
+      {recent?.location && <p className="rounded border p-3 text-sm">Last known: {recent.location.kind === 'visit' ? visitTitle(recent.location) : recent.location.kind === 'fix'
+          ? `Here: ${recent.location.address?.short ?? recent.location.address?.city ?? `${recent.location.coordinate.lat.toFixed(4)}, ${recent.location.coordinate.lon.toFixed(4)}`}`
+          : `${recent.location.coordinate.lat.toFixed(3)}, ${recent.location.coordinate.lon.toFixed(3)} (approximate)`}
         {recent.age_seconds !== undefined && ` · ${Math.round(recent.age_seconds / 60)} min ago`}{recent.stale ? ' · may be out of date' : ''}</p>}
       <div className="flex flex-wrap items-center gap-3">
         <label>Day <input type="date" className="rounded border bg-background p-2" value={day} max={today()} onChange={event => event.target.value && setDay(event.target.value)} /></label>

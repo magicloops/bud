@@ -503,6 +503,23 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
 
+## Fixes (phase 6.5)
+
+- **`location.fix.v1`:** a one-off precise position the phone takes when Bud
+  comes to the foreground. It's stored in `location_observation` as kind `fix`.
+- **Naming:** its `fix_key` (`fix:<uuid>`) goes in the `visit_key` column. That
+  column holds the naming key for both visits and fixes, so a
+  `location.visit_named.v1` for the key names the fix through the same join.
+- **`recent`:** considers fixes alongside points, and reports `kind: fix` with
+  its address.
+  - An in-progress visit normally wins, but a fix taken after the visit started
+    and over max(accuracy, 100 m) away means the departure hasn't been reported
+    yet, so the fix wins.
+- **Other queries:** `timeline_query` `kind: points` and the status
+  `latest_point_at` include fixes. App keys round fixes like any other
+  location.
+- Test: `location-visits.test.ts` (near and far fixes, names, invalid keys).
+
 ## Places and location triggers (phase 6.4)
 
 - **`place`** (migration 0056): owner, name, centre, radius 50–2,000 m, note,
