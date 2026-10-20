@@ -503,6 +503,34 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
 
+## Place presence (phase 7)
+
+- **`place-presence.ts`** keeps one presence state per owner and place
+  (`place_presence`: inside or outside, since, `leaving_at`, linked visit).
+  Geofence transitions (`location.region_transition.v1`) and visits both feed
+  it under the processor's owner lock.
+- **Publishing:** `place.arrived` and `place.departed` are published only when
+  the state changes. Each change is a `place_presence_event` (source `region` or
+  `visit`), which is the domain event's subject, so a rule runs once per
+  arrival whichever signal comes first.
+- **Rules:**
+  - transitions older than the current state are ignored, but a visit arriving
+    during a stay links to it;
+  - initial geofence reports, and reports from before the place was last
+    moved, set state without publishing;
+  - a region exit waits in `leaving_at`. Re-entry within 3 minutes cancels it,
+    otherwise `PlacePresence.settleDepartures` (in the automation worker)
+    publishes it;
+  - a completed visit is a confirmed departure and publishes at once;
+  - a different visit arriving during a stay starts a new stay, if the stay
+    came from a visit or a geofence stay is over 12 hours old (its exit was
+    missed);
+  - moving or resizing a place deletes its presence.
+- **`visit.ended`** stays visit-based. The matcher, admission (text says how
+  the change was detected), policy and evidence (`transition`, optional
+  `visit`) read the presence event.
+- Tests: `place-presence.test.ts` and `automation-places.test.ts`.
+
 ## Fixes (phase 6.5)
 
 - **`location.fix.v1`:** a one-off precise position the phone takes when Bud

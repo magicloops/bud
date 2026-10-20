@@ -36,7 +36,7 @@ export function AutomationProposalSummary({ proposal, placeNames }: { proposal: 
       : definition.event_type === 'workout.completed'
       ? <p>{describeWorkoutFilter(definition.workout_filter)}, usually within an hour or two. The initial health import doesn't trigger it, and workouts older than {Math.round(definition.max_event_age_seconds / 3600)} hours when they arrive are skipped.</p>
       : location
-      ? <p>{describeLocationTrigger(definition, placeNames)}, usually a few minutes after it happens. Only visits that start after activation trigger it, and events older than {Math.round(definition.max_event_age_seconds / 60)} minutes when they arrive are skipped.</p>
+      ? <p>{describeLocationTrigger(definition, placeNames)}, {definition.event_type === 'visit.ended' ? 'a few minutes after the visit ends' : 'usually within a minute or two when Bud can use location all the time (otherwise a few minutes later)'}. Only changes after activation trigger it, and events older than {Math.round(definition.max_event_age_seconds / 60)} minutes when they arrive are skipped.</p>
       : <p>When a new contact is observed. Existing contacts and initial imports are not processed.</p>}
     {proposal.model_resolution && <p className="text-sm">Currently: {proposal.model_resolution.model} · {proposal.model_resolution.reasoning_effort} reasoning</p>}
     {proposal.model_resolution?.warning && <p className="text-sm text-amber-700">{proposal.model_resolution.warning}</p>}

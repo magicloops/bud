@@ -100,6 +100,48 @@ a minute.
   - more than 20 places;
   - measure the time from crossing the boundary to the run starting.
 
+## Implementation (October 19, 2026)
+
+On branches `feat/place-presence` (service, web) and mobile
+`feature/place-presence`, stacked on 6.5.
+- **iOS:**
+  - `PlaceMonitor` (an actor) keeps the places, the monitored geometry, the
+    places awaiting their first report and the selection anchor in one
+    event-store snapshot (`location.places.v1`);
+  - it reconciles `CLMonitor` conditions (via `RegionMonitoring`) with the 20
+    nearest places, re-picking after moving 1 km;
+  - its state is saved before conditions are added, so an immediate first
+    report is still recognised as initial;
+  - reports are committed with the snapshot and kick sync;
+  - the app fetches places at start, on foreground and after editing them;
+  - stop() removes all conditions.
+- **Service:**
+  - migration 0057 and `place-presence.ts` (see the personal-data spec);
+  - region events are processed with the other location events;
+  - the automation worker settles departures each poll.
+- **Copy:** the editors and reviews say arrive/leave usually runs within a
+  minute or two with Allow all the time, and visit-ended a few minutes late.
+  The Location footer explains geofences.
+- **Changes from the design:**
+  - **No unknown state.** Places rotated out of monitoring keep their last
+    state, and the initial report when re-added resets it.
+  - **Visits link to geofence stays.** A visit arriving during a stay links to
+    it whatever its timestamp.
+  - **Missed exits.** A geofence stay with no exit for over 12 hours is
+    replaced by the next visit there.
+  - **No fix with transitions.** Region transitions don't carry a fix (whether
+    a background wake can get one is the phase 8.1 spike).
+  - **No monitored count in the UI.** Only the footer explains geofences.
+  - **No separate upload session.** Uploads use the existing
+    non-discretionary background session.
+- **Tests:**
+  - `place-presence.test.ts` (parsing; geofence-then-visit, flap,
+    settle, initial, stale, new stay, move, invalid, admission and
+    evidence);
+  - the updated `automation-places.test.ts`;
+  - TimelineCore `PlaceMonitorTests` (selection, initial across relaunch,
+    geometry change, disable, reselection, closed gate).
+
 ## Rollout
 
 - A migration adds `place_presence` and `place_presence_event`, and moves

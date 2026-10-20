@@ -648,6 +648,16 @@ Migration `0055_location_visits.sql` adds `location_visit` (unique owner + visit
 key, owner/start index). It ends with a hand-written backfill from
 `location_observation` visits.
 
+Migration `0057_place_presence.sql` adds:
+- `place_presence` (primary key owner + place, with a partial index on
+  `leaving_at`);
+- `place_presence_event` (owner-composite FKs to place and visit);
+- `data_domain_event.presence_event_id`.
+
+The subject check becomes exactly one of revision, workout, visit or presence
+event. A unique key on (presence event, type) replaces the per-(visit, place)
+index, and `data_domain_visit_ended_key` now covers every visit subject.
+
 Migration `0056_places_and_visit_events.sql` adds `place` (owner-composite
 unique key, radius check 50–2,000) and `location_visit_owner_key`. It also adds
 `data_domain_event.visit_id` and `place_id` with owner-composite FKs. The subject

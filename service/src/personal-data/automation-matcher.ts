@@ -6,7 +6,7 @@ import { dataOwnerStateTable as owners, dataDomainEventTable as events,
   automationTable as rules, automationRevisionTable as revisions, automationDeliveryTable as deliveries,
   automationBootstrapTable as bootstraps, automationBootstrapMemberTable as members,
   healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions,
-  locationVisitTable as visits, placeTable as places } from "../db/schema.js";
+  locationVisitTable as visits, placeTable as places, placePresenceEventTable as presenceEvents } from "../db/schema.js";
 import { visitAtPlace } from "./places.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput, type AutomationDefinition } from "./automation-contracts.js";
 
@@ -101,15 +101,16 @@ export class AutomationMatcher {
     return visit;
   }
 
-  /** Rules list the places they react to. Age runs from arrival (or departure), and the
-   * maximum age also bounds the first start. A deleted place stops matching. */
+  /** Rules list the places they react to. Age runs from the presence change (geofence or
+   * visit), and the maximum age also bounds the first start. A deleted place stops matching. */
   private async matchPlace(tx: Transaction, event: DomainEvent) {
-    const { visit, arrivalAge, departureAge } = await this.visitWithAge(tx, event);
+    const [change] = await tx.select({ at: presenceEvents.occurredAt,
+      age: sql<number>`extract(epoch from clock_timestamp() - ${presenceEvents.occurredAt})`.mapWith(Number) }).from(presenceEvents)
+      .where(and(eq(presenceEvents.id, event.presenceEventId!), eq(presenceEvents.createdByUserId, event.createdByUserId))).limit(1);
+    if (!change) throw new Error("presence_event_evidence_missing");
     const [place] = await tx.select({ deletedAt: places.deletedAt }).from(places)
       .where(and(eq(places.id, event.placeId!), eq(places.createdByUserId, event.createdByUserId))).limit(1);
-    const arrived = event.eventType === "place.arrived";
-    const at = arrived ? visit.arrivalAt ?? visit.startedAt : visit.departureAt!;
-    const age = arrived ? arrivalAge ?? 0 : departureAge ?? 0;
+    const { at, age } = change;
     for (const { revision, definition } of await this.applicable(tx, event)) {
       if (definition.event_type !== "place.arrived" && definition.event_type !== "place.departed") continue;
       if (!definition.place_trigger.place_ids.includes(event.placeId!)) continue;
