@@ -549,7 +549,8 @@ placed before the new unique index and subject check:
 - 6.4 place events become visit-sourced `place_presence_event` rows with the
   same IDs;
 - their domain events point at those rows (`visit_id` is cleared);
-- `place_presence` is filled from each place's latest event.
+- `place_presence` is filled from each place's latest event, with
+  `last_entered_at` for places you're inside.
 
 Applied locally as exact SQL. There were no place events locally, so the
 conversion ran on empty data.

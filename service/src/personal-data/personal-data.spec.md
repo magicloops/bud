@@ -514,18 +514,25 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   `visit`), which is the domain event's subject, so a rule runs once per
   arrival whichever signal comes first.
 - **Rules:**
-  - transitions older than the current state are ignored, but a visit arriving
-    during a stay links to it;
+  - transitions older than the current state are ignored, but a visit
+    overlapping the current stay links to it. One that ended before the stay
+    began never links, and is unlinked when its completion shows that;
   - initial geofence reports, and reports from before the place was last
     moved, set state without publishing;
-  - a region exit waits in `leaving_at`. Re-entry within 3 minutes cancels it,
-    otherwise `PlacePresence.settleDepartures` (in the automation worker)
-    publishes it;
+  - a region exit waits in `leaving_at`. Re-entry within 3 minutes (by source
+    time) cancels it; a later re-entry publishes the departure and a new
+    arrival. That holds even if both are processed before settling, or the
+    re-entry is processed first (`last_entered_at`). Otherwise
+    `PlacePresence.settleDepartures` (in the automation worker) publishes it;
   - a completed visit is a confirmed departure and publishes at once;
   - a different visit arriving during a stay starts a new stay, if the stay
     came from a visit or a geofence stay is over 12 hours old (its exit was
     missed);
-  - moving or resizing a place deletes its presence.
+  - moving or resizing a place deletes its presence;
+  - each region report carries the `geometry_revision` its geofence was
+    installed for (`place.geometry_changed_at` in ms, shown in place
+    responses). Reports for a superseded revision are ignored, so the old
+    boundary can't trigger the edited place.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how
   the change was detected), policy and evidence (`transition`, optional
   `visit`) read the presence event.
@@ -540,10 +547,11 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   `location.visit_named.v1` for the key names the fix through the same join.
 - **`recent`:** considers fixes alongside points, and reports `kind: fix` with
   its address and saved `places`.
-  - A fix taken after the latest visit started wins, even over an "in progress"
-    visit: iOS reports departures late and sometimes never.
-  - When the fix is within max(accuracy, 100 m) of that in-progress visit, it
-    adds `within_visit` (the visit and its arrival time).
+  - `age_seconds` and `stale` always measure time since the phone observed the
+    location. An in-progress visit counts from its arrival, not from now.
+  - The newest observation wins: a fix, a coarse point or a visit report. A
+    newer fix or point within the combined accuracy (at least 100 m) of an
+    in-progress visit adds `within_visit` (the visit and its arrival time).
 - **Other queries:** `timeline_query` `kind: points` and the status
   `latest_point_at` include fixes. App keys round fixes like any other
   location.

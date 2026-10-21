@@ -1551,6 +1551,9 @@ export const placePresenceTable = pgTable("place_presence", {
   placeId: text("place_id").notNull(), state: text("state").notNull(),
   since: timestamp("since", { withTimezone: true }).notNull(),
   leavingAt: timestamp("leaving_at", { withTimezone: true }),
+  // The latest arrival seen during this stay, so an exit processed out of order can tell
+  // whether a re-entry followed it.
+  lastEnteredAt: timestamp("last_entered_at", { withTimezone: true }),
   // The visit that last confirmed the owner is inside, when one did.
   visitId: text("visit_id"),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),

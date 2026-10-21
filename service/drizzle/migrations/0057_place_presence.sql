@@ -19,6 +19,7 @@ CREATE TABLE "place_presence" (
 	"state" text NOT NULL,
 	"since" timestamp with time zone NOT NULL,
 	"leaving_at" timestamp with time zone,
+	"last_entered_at" timestamp with time zone,
 	"visit_id" text,
 	"created_by_user_id" text NOT NULL,
 	"tenant_id" text,
@@ -47,9 +48,10 @@ JOIN "location_visit" v ON v."id" = d."visit_id" AND v."created_by_user_id" = d.
 WHERE d."event_type" IN ('place.arrived', 'place.departed');--> statement-breakpoint
 UPDATE "data_domain_event" SET "presence_event_id" = "id", "visit_id" = NULL
 WHERE "event_type" IN ('place.arrived', 'place.departed');--> statement-breakpoint
-INSERT INTO "place_presence" ("place_id", "state", "since", "visit_id", "created_by_user_id")
+INSERT INTO "place_presence" ("place_id", "state", "since", "last_entered_at", "visit_id", "created_by_user_id")
 SELECT DISTINCT ON ("created_by_user_id", "place_id") "place_id",
   CASE "transition" WHEN 'arrived' THEN 'inside' ELSE 'outside' END, "occurred_at",
+  CASE "transition" WHEN 'arrived' THEN "occurred_at" END,
   CASE "transition" WHEN 'arrived' THEN "visit_id" END, "created_by_user_id"
 FROM "place_presence_event" ORDER BY "created_by_user_id", "place_id", "occurred_at" DESC, "id" DESC;--> statement-breakpoint
 CREATE UNIQUE INDEX "data_domain_visit_ended_key" ON "data_domain_event" USING btree ("visit_id","event_type") WHERE "data_domain_event"."visit_id" is not null;--> statement-breakpoint

@@ -5,7 +5,7 @@ import { db, type Database } from "../db/client.js";
 import { placeTable as places, dataOwnerStateTable as owners, dataDomainEventTable as domains,
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
-import { applyPresence, resetPresence } from "./place-presence.js";
+import { applyPresence, geometryRevision, resetPresence } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Place = typeof places.$inferSelect;
@@ -38,7 +38,7 @@ export function visitAtPlace(visit: { latitude: number; longitude: number; horiz
 
 export function presentPlace(row: Place) {
   return { id: row.id, name: row.name, note: row.note, coordinate: { lat: row.latitude, lon: row.longitude }, radius_m: row.radiusM,
-    created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
+    geometry_revision: geometryRevision(row), created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
 }
 
 export class Places {
@@ -117,10 +117,10 @@ export async function publishVisitEvents(tx: Transaction, owner: string, visit: 
     sql`${places.geometryChangedAt} <= ${visit.startedAt}`));
   const at = owned.filter(place => visitAtPlace(visit, place));
   if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
-    at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id });
+    at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
   if (transition.completed) {
     for (const place of at) await applyPresence(tx, owner, place, { transition: "departed", at: visit.departureAt!,
-      source: "visit", visitId: visit.id });
+      source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
     const [sequence] = await tx.update(owners).set({ publicationSequence: sql`${owners.publicationSequence} + 1` })
       .where(eq(owners.createdByUserId, owner)).returning({ value: owners.publicationSequence });
     await tx.insert(domains).values({ id: ulid(), visitId: visit.id, eventType: "visit.ended", publicationSequence: sequence.value,

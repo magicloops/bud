@@ -429,6 +429,8 @@ export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes:
 
 /** A saved place, from `/api/data/places`. */
 export type ApiPlace = { id: string; name: string; note: string | null; coordinate: { lat: number; lon: number }; radius_m: number
+  /** Changes when the place is moved or resized; phone geofences are installed per revision. */
+  geometry_revision: string
   created_by: 'user' | 'agent'; created_at: string; updated_at: string }
 
 /** Saved place IDs (1–20). */

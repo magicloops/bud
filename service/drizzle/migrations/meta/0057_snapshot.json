@@ -1,5 +1,5 @@
 {
-  "id": "97916fb1-3266-4548-a13a-246deb8850f9",
+  "id": "fa9d0199-ad06-4715-a0ac-be7a56473de1",
   "prevId": "ef6c9173-e7bf-4b4e-9edf-08c27ae45061",
   "version": "7",
   "dialect": "postgresql",
@@ -10225,6 +10225,12 @@
         },
         "leaving_at": {
           "name": "leaving_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_entered_at": {
+          "name": "last_entered_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

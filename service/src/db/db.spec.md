@@ -650,7 +650,7 @@ key, owner/start index). It ends with a hand-written backfill from
 
 Migration `0057_place_presence.sql` adds:
 - `place_presence` (primary key owner + place, with a partial index on
-  `leaving_at`);
+  `leaving_at`, and `last_entered_at` for exits processed out of order);
 - `place_presence_event` (owner-composite FKs to place and visit);
 - `data_domain_event.presence_event_id`.
 

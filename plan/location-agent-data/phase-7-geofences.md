@@ -142,6 +142,27 @@ On branches `feat/place-presence` (service, web) and mobile
   - TimelineCore `PlaceMonitorTests` (selection, initial across relaunch,
     geometry change, disable, reselection, closed gate).
 
+### Review fixes (October 20, 2026)
+
+- **Visit linking:** only visits overlapping the current stay link to it. A late
+  report for an earlier visit no longer makes the current visit look like a new
+  stay (duplicate arrival automation).
+- **Late re-entry:** a re-entry after the 3-minute window publishes the departure
+  and a return, by source time, even when both reports arrive before settling or
+  out of order (`place_presence.last_entered_at`).
+- **Geometry revisions:** places carry `geometry_revision`. The phone installs
+  geofences as `<place>@<revision>` and reports the revision; the service ignores
+  superseded revisions, so the old boundary can't trigger the moved place.
+- **`recent`:** age is time since observation. An unfinished visit is no longer
+  "now", and any newer fix or point can replace it.
+- **One lifecycle owner (iOS):** `RegionMonitorOwner` owns the system monitor.
+  - Every add and remove, and account teardown, runs in call order.
+  - Operations from an ended session are dropped.
+- **Recovery:** reconciliation compares with the installed condition identifiers,
+  not saved geometry, so an update interrupted by a crash is repaired.
+- **Out-of-order reports (found while testing these):** an exit processed after
+  a later entry no longer leaves a false pending departure.
+
 ## Rollout
 
 - A migration adds `place_presence` and `place_presence_event`, and moves
