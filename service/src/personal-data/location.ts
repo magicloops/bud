@@ -104,8 +104,8 @@ const preferIncoming = sql.raw(`((excluded.departure_at is not null and location
 
 /** A visit with no departure is in progress for a day after arrival; after that its end is unknown. */
 const IN_PROGRESS_LIMIT_MS = 86_400_000;
-/** A fix farther than this (or the visit's accuracy) from an in-progress visit means it ended. */
-const LEFT_VISIT_DISTANCE_M = 100;
+/** A fix within this (or the visit's accuracy) of an in-progress visit is still at it. */
+const WITHIN_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
 const RECENT_LIMIT_MS = 2 * 3600_000;
 
@@ -203,14 +203,16 @@ export class LocationQueries {
       .orderBy(desc(locations.occurredAt), desc(locations.id)).limit(1);
     const point = pointRow?.location;
     const now = Date.now();
-    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now),
-      places: matchingPlaces(await placesForOwner(this.database, owner), visitRow.visit) } : null;
-    // iOS reports departures minutes late, so a fix taken after the visit began and away from
-    // it means the visit already ended: the fix wins over the "in progress" visit.
-    const leftVisit = visitRow && point?.kind === "fix" && point.occurredAt > visitRow.visit.startedAt
+    const owned = await placesForOwner(this.database, owner);
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: matchingPlaces(owned, visitRow.visit) } : null;
+    // A fix is a precise position taken after the fact, so one taken after the visit began wins
+    // over an "in progress" visit: iOS reports departures late and sometimes never. When the fix
+    // is still at the visit, it says since when.
+    const fixAfterVisit = visitRow && point?.kind === "fix" && point.occurredAt > visitRow.visit.startedAt;
+    const withinVisit = fixAfterVisit && visit!.state === "in_progress"
       && distanceM(point.latitude, point.longitude, visitRow.visit.latitude, visitRow.visit.longitude)
-        > Math.max(visitRow.visit.horizontalAccuracyM, LEFT_VISIT_DISTANCE_M);
-    const visitAt = visitRow ? (visit!.state === "in_progress" && !leftVisit ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
+        <= Math.max(visitRow.visit.horizontalAccuracyM, WITHIN_VISIT_DISTANCE_M);
+    const visitAt = visitRow ? (visit!.state === "in_progress" && !fixAfterVisit ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
     const pointAt = point ? point.occurredAt.getTime() : -Infinity;
     const notBefore = limits.notBefore?.getTime() ?? -Infinity;
     const useVisit = visitAt >= pointAt;
@@ -221,7 +223,10 @@ export class LocationQueries {
       location: useVisit ? { kind: "visit", ...visit! } : { kind: point!.kind === "fix" ? "fix" : "point",
         coordinate: { lat: point!.latitude, lon: point!.longitude }, horizontal_accuracy_m: point!.horizontalAccuracyM,
         occurred_at: point!.occurredAt, received_at: point!.receivedAt,
-        address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null },
+        address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null,
+        places: matchingPlaces(owned, point!),
+        ...(withinVisit ? { within_visit: { id: visitRow!.visit.id, arrival_at: visitRow!.visit.arrivalAt,
+          note: "iOS reported arriving here then and no departure since; it can miss departures." } } : {}) },
       as_of: new Date(at), age_seconds: Math.round(age / 1000), stale: age > RECENT_LIMIT_MS,
       note: "Last known location from the phone, not a live position. A fix is a precise position taken when Bud was opened; "
         + "points are coarse (often hundreds of metres).",

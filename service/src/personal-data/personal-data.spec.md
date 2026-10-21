@@ -539,10 +539,11 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   column holds the naming key for both visits and fixes, so a
   `location.visit_named.v1` for the key names the fix through the same join.
 - **`recent`:** considers fixes alongside points, and reports `kind: fix` with
-  its address.
-  - An in-progress visit normally wins, but a fix taken after the visit started
-    and over max(accuracy, 100 m) away means the departure hasn't been reported
-    yet, so the fix wins.
+  its address and saved `places`.
+  - A fix taken after the latest visit started wins, even over an "in progress"
+    visit: iOS reports departures late and sometimes never.
+  - When the fix is within max(accuracy, 100 m) of that in-progress visit, it
+    adds `within_visit` (the visit and its arrival time).
 - **Other queries:** `timeline_query` `kind: points` and the status
   `latest_point_at` include fixes. App keys round fixes like any other
   location.
