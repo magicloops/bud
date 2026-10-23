@@ -313,7 +313,8 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       <p>Maximum {detail.draft.max_invocations_per_day} invocations per 24 hours · Expire unstarted work after {detail.draft.latest_start_seconds} seconds</p>
       <p className="text-sm">{detail.draft.event_type === 'schedule' ? 'Scheduled times after activation only. Missed runs are not caught up; only the latest one runs if it is still within the expiry.'
         : detail.draft.event_type === 'workout.completed' ? 'Workouts recorded after activation only, usually within an hour or two. The initial health import never triggers it.'
-        : LOCATION_TRIGGERS.includes(detail.draft.event_type) ? 'Visits that start after activation and after the place was saved. iOS reports visits minutes late, so these are not instant geofences.'
+        : detail.draft.event_type === 'visit.ended' ? 'Visits that end after activation. iOS reports visits a few minutes after they end, and the phone may upload later still.'
+        : LOCATION_TRIGGERS.includes(detail.draft.event_type) ? "Arrivals and departures after activation. With Allow all the time, Bud watches your 20 nearest places and usually reacts within a minute or two; departures wait 3 minutes in case you come straight back. Otherwise it relies on iOS visit reports, a few minutes late. Being at a place when it's saved doesn't trigger it."
         : 'New contact observations after activation only. Initial imports and existing contacts are not processed by this action.'}</p>
       <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={saving} onChange={event => setAcknowledged(event.target.checked)} />Allow this Bud and selected model to run these saved instructions automatically with normal terminal access.</label>
       {JSON.stringify(draft) !== JSON.stringify(detail.draft) && <p>Save or reload your draft edits before activating.</p>}
@@ -532,6 +533,6 @@ function LocationFields({ draft, places, onChange }: { draft: Definition; places
       onChange={event => onChange({ visit_filter: { ...draft.visit_filter!, min_duration_minutes: Number(event.target.value) } })} /></label>}
     <label className="block">Skip events older than (minutes)<input className={field} type="number" min={5} max={10080} value={Math.round(maxAge / 60)}
       onChange={event => onChange({ max_event_age_seconds: Math.max(300, Number(event.target.value) * 60) })} /></label>
-    <p className="text-sm text-muted-foreground">iOS reports arrivals and departures a few minutes late, and the phone may upload later still. Places saved or resized during a visit don't trigger for that visit.</p>
+    <p className="text-sm text-muted-foreground">{ended ? 'iOS reports visits a few minutes after they end, and the phone may upload later still.' : "With Allow all the time, Bud watches your 20 nearest places and usually reacts within a minute or two; departures wait 3 minutes in case you come straight back. Otherwise it relies on iOS visit reports, a few minutes late. Being at a place when it's saved doesn't trigger it."}</p>
   </fieldset>
 }

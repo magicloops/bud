@@ -100,6 +100,78 @@ a minute.
   - more than 20 places;
   - measure the time from crossing the boundary to the run starting.
 
+## Implementation (October 19, 2026)
+
+On branches `feat/place-presence` (service, web) and mobile
+`feature/place-presence`, stacked on 6.5.
+- **iOS:**
+  - `PlaceMonitor` (an actor) keeps the places, the monitored geometry, the
+    places awaiting their first report and the selection anchor in one
+    event-store snapshot (`location.places.v1`);
+  - it reconciles `CLMonitor` conditions (via `RegionMonitoring`) with the 20
+    nearest places, re-picking after moving 1 km;
+  - its state is saved before conditions are added, so an immediate first
+    report is still recognised as initial;
+  - reports are committed with the snapshot and kick sync;
+  - the app fetches places at start, on foreground and after editing them;
+  - stop() removes all conditions.
+- **Service:**
+  - migration 0057 and `place-presence.ts` (see the personal-data spec);
+  - region events are processed with the other location events;
+  - the automation worker settles departures each poll.
+- **Copy:** the editors and reviews say arrive/leave usually runs within a
+  minute or two with Allow all the time, and visit-ended a few minutes late.
+  The Location footer explains geofences.
+- **Changes from the design:**
+  - **No unknown state.** Places rotated out of monitoring keep their last
+    state, and the initial report when re-added resets it.
+  - **Visits link to geofence stays.** A visit arriving during a stay links to
+    it whatever its timestamp.
+  - **Missed exits.** A geofence stay with no exit for over 12 hours is
+    replaced by the next visit there.
+  - **No fix with transitions.** Region transitions don't carry a fix (whether
+    a background wake can get one is the phase 8.1 spike).
+  - **No monitored count in the UI.** Only the footer explains geofences.
+  - **No separate upload session.** Uploads use the existing
+    non-discretionary background session.
+- **Tests:**
+  - `place-presence.test.ts` (parsing; geofence-then-visit, flap,
+    settle, initial, stale, new stay, move, invalid, admission and
+    evidence);
+  - the updated `automation-places.test.ts`;
+  - TimelineCore `PlaceMonitorTests` (selection, initial across relaunch,
+    geometry change, disable, reselection, closed gate).
+
+### Review fixes (October 20, 2026)
+
+- **Visit linking:** only visits overlapping the current stay link to it. A late
+  report for an earlier visit no longer makes the current visit look like a new
+  stay (duplicate arrival automation).
+- **Late re-entry:** a re-entry after the 3-minute window publishes the departure
+  and a return, by source time, even when both reports arrive before settling or
+  out of order (`place_presence.last_entered_at`).
+- **Geometry revisions:** places carry `geometry_revision`. The phone installs
+  geofences as `<place>@<revision>` and reports the revision; the service ignores
+  superseded revisions, so the old boundary can't trigger the moved place.
+- **`recent`:** age is time since observation. An unfinished visit is no longer
+  "now", and any newer fix or point can replace it.
+- **One lifecycle owner (iOS):** `RegionMonitorOwner` owns the system monitor.
+  - Every add and remove, and account teardown, runs in call order.
+  - Operations from an ended session are dropped.
+- **Recovery:** reconciliation compares with the installed condition identifiers,
+  not saved geometry, so an update interrupted by a crash is repaired.
+- **Background delivery (device test, October 22):** iOS 18 delivers `CLMonitor`
+  events to an app not in use only while it holds a `CLServiceSession` requiring
+  Always. The producer now holds one while monitoring.
+- **Re-delivered reports (device tests, October 20–23):** `CLMonitor` re-delivers
+  a condition's latest event, up to five times and at each relaunch. A
+  re-delivered initial report had been sent again as a transition. The phone
+  now drops any report no newer than the condition's last one.
+- **Departure time:** a visit completion that confirms a pending geofence exit
+  publishes the departure at the exit time.
+- **Out-of-order reports (found while testing these):** an exit processed after
+  a later entry no longer leaves a false pending departure.
+
 ## Rollout
 
 - A migration adds `place_presence` and `place_presence_event`, and moves

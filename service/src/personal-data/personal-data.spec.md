@@ -503,6 +503,41 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
 
+## Place presence (phase 7)
+
+- **`place-presence.ts`** keeps one presence state per owner and place
+  (`place_presence`: inside or outside, since, `leaving_at`, linked visit).
+  Geofence transitions (`location.region_transition.v1`) and visits both feed
+  it under the processor's owner lock.
+- **Publishing:** `place.arrived` and `place.departed` are published only when
+  the state changes. Each change is a `place_presence_event` (source `region` or
+  `visit`), which is the domain event's subject, so a rule runs once per
+  arrival whichever signal comes first.
+- **Rules:**
+  - transitions older than the current state are ignored, but a visit
+    overlapping the current stay links to it. One that ended before the stay
+    began never links, and is unlinked when its completion shows that;
+  - initial geofence reports, and reports from before the place was last
+    moved, set state without publishing;
+  - a region exit waits in `leaving_at`. Re-entry within 3 minutes (by source
+    time) cancels it; a later re-entry publishes the departure and a new
+    arrival. That holds even if both are processed before settling, or the
+    re-entry is processed first (`last_entered_at`). Otherwise
+    `PlacePresence.settleDepartures` (in the automation worker) publishes it;
+  - a completed visit is a confirmed departure and publishes at once;
+  - a different visit arriving during a stay starts a new stay, if the stay
+    came from a visit or a geofence stay is over 12 hours old (its exit was
+    missed);
+  - moving or resizing a place deletes its presence;
+  - each region report carries the `geometry_revision` its geofence was
+    installed for (`place.geometry_changed_at` in ms, shown in place
+    responses). Reports for a superseded revision are ignored, so the old
+    boundary can't trigger the edited place.
+- **`visit.ended`** stays visit-based. The matcher, admission (text says how
+  the change was detected), policy and evidence (`transition`, optional
+  `visit`) read the presence event.
+- Tests: `place-presence.test.ts` and `automation-places.test.ts`.
+
 ## Fixes (phase 6.5)
 
 - **`location.fix.v1`:** a one-off precise position the phone takes when Bud
@@ -511,10 +546,12 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   column holds the naming key for both visits and fixes, so a
   `location.visit_named.v1` for the key names the fix through the same join.
 - **`recent`:** considers fixes alongside points, and reports `kind: fix` with
-  its address.
-  - An in-progress visit normally wins, but a fix taken after the visit started
-    and over max(accuracy, 100 m) away means the departure hasn't been reported
-    yet, so the fix wins.
+  its address and saved `places`.
+  - `age_seconds` and `stale` always measure time since the phone observed the
+    location. An in-progress visit counts from its arrival, not from now.
+  - The newest observation wins: a fix, a coarse point or a visit report. A
+    newer fix or point within the combined accuracy (at least 100 m) of an
+    in-progress visit adds `within_visit` (the visit and its arrival time).
 - **Other queries:** `timeline_query` `kind: points` and the status
   `latest_point_at` include fixes. App keys round fixes like any other
   location.

@@ -104,8 +104,8 @@ const preferIncoming = sql.raw(`((excluded.departure_at is not null and location
 
 /** A visit with no departure is in progress for a day after arrival; after that its end is unknown. */
 const IN_PROGRESS_LIMIT_MS = 86_400_000;
-/** A fix farther than this (or the visit's accuracy) from an in-progress visit means it ended. */
-const LEFT_VISIT_DISTANCE_M = 100;
+/** A fix or point within this (or the combined accuracy) of an in-progress visit is still at it. */
+const WITHIN_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
 const RECENT_LIMIT_MS = 2 * 3600_000;
 
@@ -203,17 +203,18 @@ export class LocationQueries {
       .orderBy(desc(locations.occurredAt), desc(locations.id)).limit(1);
     const point = pointRow?.location;
     const now = Date.now();
-    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now),
-      places: matchingPlaces(await placesForOwner(this.database, owner), visitRow.visit) } : null;
-    // iOS reports departures minutes late, so a fix taken after the visit began and away from
-    // it means the visit already ended: the fix wins over the "in progress" visit.
-    const leftVisit = visitRow && point?.kind === "fix" && point.occurredAt > visitRow.visit.startedAt
-      && distanceM(point.latitude, point.longitude, visitRow.visit.latitude, visitRow.visit.longitude)
-        > Math.max(visitRow.visit.horizontalAccuracyM, LEFT_VISIT_DISTANCE_M);
-    const visitAt = visitRow ? (visit!.state === "in_progress" && !leftVisit ? now : (visitRow.visit.departureAt ?? visitRow.visit.startedAt).getTime()) : -Infinity;
+    const owned = await placesForOwner(this.database, owner);
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: matchingPlaces(owned, visitRow.visit) } : null;
+    // Age is always the time since the phone observed this location; an unfinished visit is not
+    // "now". The newest observation wins (a fix, a coarse point or a visit report); a newer fix or
+    // point within accuracy of an in-progress visit says so, since iOS can miss departures.
+    const visitAt = visitRow ? (visitRow.visit.departureAt ?? visitRow.visit.arrivalAt ?? visitRow.visit.startedAt).getTime() : -Infinity;
     const pointAt = point ? point.occurredAt.getTime() : -Infinity;
     const notBefore = limits.notBefore?.getTime() ?? -Infinity;
     const useVisit = visitAt >= pointAt;
+    const withinVisit = !useVisit && visit?.state === "in_progress" && point!.occurredAt > visitRow!.visit.startedAt
+      && distanceM(point!.latitude, point!.longitude, visitRow!.visit.latitude, visitRow!.visit.longitude)
+        <= Math.max(visitRow!.visit.horizontalAccuracyM + point!.horizontalAccuracyM, WITHIN_VISIT_DISTANCE_M);
     const at = useVisit ? visitAt : pointAt;
     if (at === -Infinity || at < notBefore) return { location: null, note: "No location within approved history." };
     const age = Math.max(0, now - at);
@@ -221,10 +222,14 @@ export class LocationQueries {
       location: useVisit ? { kind: "visit", ...visit! } : { kind: point!.kind === "fix" ? "fix" : "point",
         coordinate: { lat: point!.latitude, lon: point!.longitude }, horizontal_accuracy_m: point!.horizontalAccuracyM,
         occurred_at: point!.occurredAt, received_at: point!.receivedAt,
-        address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null },
+        address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null,
+        places: matchingPlaces(owned, point!),
+        ...(withinVisit ? { within_visit: { id: visitRow!.visit.id, arrival_at: visitRow!.visit.arrivalAt,
+          note: "iOS reported arriving here then and no departure since; it can miss departures." } } : {}) },
       as_of: new Date(at), age_seconds: Math.round(age / 1000), stale: age > RECENT_LIMIT_MS,
-      note: "Last known location from the phone, not a live position. A fix is a precise position taken when Bud was opened; "
-        + "points are coarse (often hundreds of metres).",
+      note: "Last known location from the phone, not a live position. age_seconds is the time since the phone observed it: for "
+        + "a visit, its arrival (or departure); an in_progress visit only means no departure was reported. A fix is a precise "
+        + "position taken when Bud was opened; points are coarse (often hundreds of metres).",
     };
   }
 
