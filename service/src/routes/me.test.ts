@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../auth/auth.js";
+import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { registerMeRoutes } from "./me.js";
 
@@ -78,7 +79,9 @@ async function invokeRoute(
   request: Record<string, unknown> = {},
 ): Promise<{ statusCode: number; payload: unknown }> {
   const reply = new TestReply();
-  const result = await handler(request, reply);
+  // Fastify always provides a request logger; routes may log warnings.
+  const noop = () => {};
+  const result = await handler({ log: { info: noop, warn: noop, error: noop, debug: noop }, ...request }, reply);
 
   return {
     statusCode: reply.statusCode,
@@ -336,7 +339,8 @@ test("PUT /api/me/push/endpoints/:installation_id rejects unknown APNs topics", 
   assert.equal(response.statusCode, 400);
   assert.deepEqual(response.payload, {
     error: "invalid_app_id",
-    allowed_app_ids: ["chat.bud.app", "chat.bud.app.staging"],
+    // From APNS_ALLOWED_TOPICS, which local .env files extend (e.g. chat.bud.app.local).
+    allowed_app_ids: config.apnsAllowedTopics,
   });
   assert.equal(transactionCalled, false);
 });
