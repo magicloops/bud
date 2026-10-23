@@ -124,8 +124,10 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
     }
     return row.leavingAt ? undefined : set({ leavingAt: change.at });
   }
-  await set({ state: "outside", since: change.at, leavingAt: null, lastEnteredAt: null, visitId: null });
-  return publish("departed", change.at, visitId);
+  // A completed visit confirming a pending geofence exit: the person left at the earlier exit.
+  const departedAt = row.leavingAt && row.leavingAt < change.at ? row.leavingAt : change.at;
+  await set({ state: "outside", since: departedAt, leavingAt: null, lastEnteredAt: null, visitId: null });
+  return publish("departed", departedAt, visitId);
 }
 
 async function publishPresence(tx: Transaction, owner: string, placeId: string, change: PresenceChange, visitId: string | null) {

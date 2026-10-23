@@ -4,10 +4,31 @@ Part of [location for agents, automations and apps](README.md). Requires 6.5
 (fixes). It ships in two steps:
 - **8.1 (silent push):** needs no new permission from Apple. The user can stop
   it by force-quitting Bud.
-- **8.2 (location push extension):** Apple's intended mechanism, which needs an
-  entitlement Apple must approve.
+- **8.2 (location push extension):** needs an entitlement Apple must approve,
+  and approval is unlikely (see the risk below).
 
 The agent tool and the service contract are the same for both.
+
+## Risk: the 8.2 entitlement may not be granted
+
+Apple documents the location push service extension for two uses:
+- sharing location with people the user explicitly approves;
+- certain time-sensitive medical emergency and first-responder apps.
+
+It's also rate-limited. A personal agent reading its own user's location fits
+neither use, so **assume the request is refused**
+([reference/location-ios.md](../../reference/location-ios.md), section 8).
+
+- **8.1 is the main path, not a stopgap.** "Where am I?" answers from 8.1 when
+  the phone responds. Otherwise it gives the latest known location with its age
+  and, after 7.1, the place presence.
+- **Request the entitlement anyway**, early and honestly worded. Don't schedule
+  work that depends on it.
+- **If 8.1's device spike fails** (no fix from a push-woken app), the fallback is
+  stored location with freshness, not 8.2. That makes 7.1's prompt uploads and
+  presence the main way to keep "where am I?" current.
+- **Revisit** if Bud adds person-to-person location sharing, which is a use
+  Apple documents for the extension.
 
 ## Problem
 
@@ -66,7 +87,8 @@ user's permission and visible limits.
     1. check the owner;
     2. take one fix (up to 10 seconds);
     3. commit it;
-    4. flush the upload;
+    4. flush the upload through 7.1's prompt path. A background-session upload
+       started from a push wake is discretionary and can be hours late;
     5. call the completion handler within about 25 seconds.
 - **Limits:**
   - iOS treats background pushes as best effort and throttles them, so a few
@@ -76,12 +98,13 @@ user's permission and visible limits.
   - Low Power Mode may delay them.
 - **First step (device spike):** confirm that a push-woken app with Always can
   get a fix with `requestLocation()` (or `CLBackgroundActivitySession`), and
-  measure push-to-fix time. If it can't, skip to 8.2.
+  measure push-to-fix time. If it can't, see the risk above: fall back to
+  stored location with freshness, not 8.2.
 
 ### 8.2: Location push service extension
 
-- **Entitlement:** request `com.apple.developer.location.push` from Apple. Do
-  this early; the request explains that agents read location on request, under
+- **Entitlement:** request `com.apple.developer.location.push` from Apple. It's
+  likely to be refused (see the risk above). Do this early; the request explains that agents read location on request, under
   the user's location permission for agents, with rate limits and a visible
   log.
 - **Extension:**
@@ -135,7 +158,7 @@ user's permission and visible limits.
 
    Older iOS builds never answer, so the tool reports `no_response` with
    stored data.
-2. 8.2 after the entitlement is approved:
+2. 8.2 only if the entitlement is approved:
    - a new extension target, App ID capability and provisioning profile
      update;
    - then the service endpoint and push type.
