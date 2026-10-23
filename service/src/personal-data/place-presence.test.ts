@@ -169,6 +169,18 @@ test("geofences and visits share one presence state: one arrival, settled depart
     [["place.departed", ago(60).getTime()], ["place.arrived", ago(30).getTime()]]);
   assert.deepEqual([(await state(pier.id)).state, (await state(pier.id)).leavingAt], ["inside", null], "no false pending departure");
 
+  // A completed visit confirming a pending geofence exit publishes at the earlier exit time.
+  const cafe = await places.create(owner, { name: "Cafe", latitude: 38.20, longitude: -122.4 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, cafe.id));
+  await refreshRevisions();
+  await upload([region(cafe.id, "entered", ago(100), true)]);
+  await upload([visit("c1", ago(90), null, 38.20)]);
+  await upload([region(cafe.id, "exited", ago(10))]);
+  await upload([visit("c1", ago(90), ago(9), 38.20)]);
+  assert.deepEqual((await changes()).filter(change => change[1] === cafe.id).map(change => [change[0], change[2], change[3]]),
+    [["place.departed", "region", ago(10).getTime()]]);
+  assert.deepEqual([(await state(cafe.id)).state, (await state(cafe.id)).since.getTime()], ["outside", ago(10).getTime()]);
+
   // A geofence arrival runs a place rule, says how it was detected and has no visit record.
   await db.insert(s.budTable).values({ budId: "bud", name: "Fixture", os: "test", arch: "test", createdByUserId: owner });
   await db.insert(s.threadTable).values({ threadId: randomUUID(), budId: "bud", createdByUserId: owner, modelId: "gpt-6-astra", reasoningEffort: "medium" });

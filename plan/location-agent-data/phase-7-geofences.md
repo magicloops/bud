@@ -160,6 +160,15 @@ On branches `feat/place-presence` (service, web) and mobile
   - Operations from an ended session are dropped.
 - **Recovery:** reconciliation compares with the installed condition identifiers,
   not saved geometry, so an update interrupted by a crash is repaired.
+- **Background delivery (device test, October 22):** iOS 18 delivers `CLMonitor`
+  events to an app not in use only while it holds a `CLServiceSession` requiring
+  Always. The producer now holds one while monitoring.
+- **Re-delivered reports (device tests, October 20–23):** `CLMonitor` re-delivers
+  a condition's latest event, up to five times and at each relaunch. A
+  re-delivered initial report had been sent again as a transition. The phone
+  now drops any report no newer than the condition's last one.
+- **Departure time:** a visit completion that confirms a pending geofence exit
+  publishes the departure at the exit time.
 - **Out-of-order reports (found while testing these):** an exit processed after
   a later entry no longer leaves a false pending departure.
 
