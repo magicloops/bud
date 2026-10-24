@@ -548,6 +548,14 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     keeps the exit, so the settled departure has its evidence. Exited +
     inside: ignored; the visit completion brings the departure.
   - Initial reports take their state from the reading.
+  - A reading inside one place also starts the departure wait for every other
+    place it puts the owner outside of (`departOthers`; places inside or
+    approaching). Geofence exits can lag: one Office exit came 30 minutes after
+    the walk home. Only a reading confirmed inside another place counts, so a
+    lone indoor reading that drifts outside can't start a departure that no
+    geofence re-entry would cancel.
+- **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
+  and readings) is stored raw and not processed.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how
   the change was detected, with the reading's distance and accuracy when there
   is one), policy and evidence (`transition` with its `reading`, optional

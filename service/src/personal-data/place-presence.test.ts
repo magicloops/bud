@@ -242,6 +242,13 @@ test("geofences and visits share one presence state: one arrival, settled depart
   // A reading too coarse to tell trusts the geofence.
   await upload([[region(north.id, "entered", ago(30))[0], { ...(region(north.id, "entered", ago(30))[1] as object), fix: reading(atSouth, ago(30), 150) }]]);
   assert.deepEqual((await of(north.id)).at(-1), ["place.arrived", ago(30).getTime()]);
+  // A reading confirmed at South also shows North was left (its exit can lag by many minutes):
+  // North's departure wait starts at the reading's time.
+  await upload([confirmed(south.id, "entered", ago(20), atSouth)]);
+  assert.equal((await state(north.id)).leavingAt?.getTime(), ago(20).getTime() + 3000);
+  assert.equal(await presence.settleDepartures(() => ago(0)), true);
+  assert.deepEqual((await of(north.id)).at(-1), ["place.departed", ago(20).getTime() + 3000]);
+  assert.equal((await state(south.id)).state, "inside", "South itself is unchanged");
 
   // A geofence arrival runs a place rule, says how it was detected and has no visit record.
   await db.insert(s.budTable).values({ budId: "bud", name: "Fixture", os: "test", arch: "test", createdByUserId: owner });

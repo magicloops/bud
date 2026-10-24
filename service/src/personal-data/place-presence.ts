@@ -101,7 +101,8 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
     isNull(places.deletedAt))).limit(1);
   if (!place || parsed.revision !== geometryRevision(place)) return true;
   const initial = parsed.initial || parsed.at < place.geometryChangedAt;
-  const reading = parsed.fix ? classifyFix(parsed.fix, place, await placesForOwner(tx, owner)) : null;
+  const owned = parsed.fix ? await placesForOwner(tx, owner) : [];
+  const reading = parsed.fix ? classifyFix(parsed.fix, place, owned) : null;
   const change = { at: parsed.at, source: "region" as const, rawEventId, initial };
   if (!reading || reading.state === "unknown") {
     await applyPresence(tx, owner, place, { ...change, transition: parsed.transition });
@@ -113,7 +114,27 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
   } else if (reading.state === "outside") {
     await applyPresence(tx, owner, place, { ...change, transition: "departed" });
   }
+  if (reading?.state === "inside") await departOthers(tx, owner, place.id, parsed.fix!, owned, rawEventId);
   return true;
+}
+
+/**
+ * A reading that places the owner at one place also shows they've left every other place it
+ * puts them outside of. Geofence exits can lag: after walking from the Office to Home (117 m),
+ * the Office exit came 30 minutes later. Each such place starts its usual departure wait at
+ * the reading's time; for a place already outside, an approach ends.
+ *
+ * Only a reading confirmed inside another place counts: a lone indoor reading drifting outside
+ * a place's radius would otherwise start a false departure that no geofence re-entry cancels.
+ */
+async function departOthers(tx: Transaction, owner: string, placeId: string, fix: FixReading, owned: Place[], rawEventId: string) {
+  const current = await tx.select({ placeId: presence.placeId }).from(presence).where(and(eq(presence.createdByUserId, owner),
+    sql`(${presence.state} = 'inside' or ${presence.approachingAt} is not null)`));
+  for (const { placeId: id } of current) {
+    const other = owned.find(candidate => candidate.id === id);
+    if (!other || id === placeId || fix.at < other.geometryChangedAt || classifyFix(fix, other, owned).state !== "outside") continue;
+    await applyPresence(tx, owner, other, { transition: "departed", at: fix.at, source: "region", rawEventId });
+  }
 }
 
 /** The precise reading behind a geofence change, for evidence: its distance from the place's

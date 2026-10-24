@@ -242,3 +242,33 @@ Step 4, on `feat/precise-confirmation` (service) and
   processing task (`BGTaskManager`). iOS refuses to schedule those without the
   modes, so the sync retry tasks never ran. `UIBackgroundModes` is now `fetch`,
   `location` and `processing`.
+
+### Walk test (October 23, evening)
+
+| Time | What happened | Verdict |
+|---|---|---|
+| 5:27 | Walked from the Office to the house. Home was approaching (77 m), then the follow-up confirmed it 28 s later (58 m, ±8) | ✅ |
+| 5:27 | The Office stayed inside until its geofence exit at 5:56 | ❌ 30 min late |
+| 6:41 | Got home. Home was approaching (92 m) with no confirmation; the visit brought the arrival at 6:44 | ⚠️ |
+| 7:34 | Walking to the Office. It was approaching (66 m; the reading was nearer Home) with no confirmation | ⚠️ |
+
+Uploads took 0–4 s throughout, and no false arrival or departure fired. The
+follow-up confirmed only within the first 28 s, which is about the time iOS gives
+a geofence wake. The suspicion is that standard updates started from that wake
+don't keep Bud running. Two fixes and an experiment followed:
+- **Departures from other places:** a reading confirmed inside one place starts
+  the departure wait for every other place it rules out (`departOthers`). With
+  this, the Office departure would have started at 5:27:43.
+- **Replayed points:** the stored time doesn't round-trip a `CLLocation`
+  timestamp exactly (seconds since 1970 against 2001), so a replay could compare
+  a few ULPs newer. Points must now be more than 1 ms newer.
+- **Follow-up modes and diagnostics:**
+  - Device & Debug picks the mode: standard updates; `liveUpdates` with a
+    `CLBackgroundActivitySession`; alternating between them (the default, for
+    the next walk); or off.
+  - Each follow-up records `location.follow_up.v1` with its mode, how it
+    ended, the number of readings, the closest reading and the last reading's
+    time.
+  - A suspended Bud records it late (`ended_at` long after the 3-minute window,
+    and `last_reading_at` shows when readings stopped) or not at all.
+
