@@ -197,3 +197,78 @@ at `min(leaving_at, visit departure)`.
 4. The fix in the payload, the confirmation rules, approaching, and the
    follow-up (iOS and service).
 5. Presence in `location_recent`, and the Precise Location copy.
+
+## Implementation (October 23, 2026)
+
+Steps 1 and 2 shipped in magicloops/bud#165 and bud-mobile#74 (duplicate reports,
+departure time, the background `CLServiceSession`) and bud-mobile#76 (direct
+uploads). A walk that afternoon confirmed uploads now arrive 0–2 s after
+recording in the background (they had waited up to 13 hours), and arrivals
+reached the run in 6–11 s. It also showed the overlap problem again: a false
+"Arrived Home" while 9 m from the Office.
+
+Step 4, on `feat/precise-confirmation` (service) and
+`feature/precise-confirmation` (iOS):
+- **Service:**
+  - `parseRegionTransition` accepts an optional `fix`, and `classifyFix`
+    applies the rules above.
+  - Migration 0058 adds `place_presence.approaching_at` and `leaving_event_id`.
+  - Admission text and evidence include the reading's distance and accuracy.
+- **iOS:**
+  - `PlaceMonitor.place(for:)` skips readings for reports that would be
+    dropped.
+  - Each report takes a `CoreLocationFixer` reading (8 s), reusing one from
+    the last 30 s at 65 m or better, if it was taken after the crossing.
+  - Entries short of the place start a `PlaceFollowUp`.
+- **Follow-up mechanism (a change from the design above):**
+  - It uses a dedicated `CLLocationManager` with
+    `allowsBackgroundLocationUpdates`, not `CLLocationUpdate.liveUpdates()`.
+    Starting standard updates from a background location wake is the
+    documented path for an Always app with the `location` background mode.
+    Starting `liveUpdates` from the background was the open question for the
+    spike.
+  - It holds a background assertion too, so it still gets about 30 s if iOS
+    doesn't keep it running.
+  - Device & Debug → Place Detection turns it off.
+- **Background mode:** `Info.plist` now declares `UIBackgroundModes` with
+  `location`. The fixer allows background updates too, so a reading can be
+  taken in a background wake.
+- **Replayed points:** iOS replays its last cached location each time
+  significant-change monitoring starts, and the same 10:39 point had been
+  recorded at every launch. `SignificantPoints` commits only points newer than
+  the last one, atomically with that time (`location.points.v1`).
+- **Found while doing this:** `Info.plist` declared no `fetch` or `processing`
+  background modes, though Bud schedules a background refresh task and a
+  processing task (`BGTaskManager`). iOS refuses to schedule those without the
+  modes, so the sync retry tasks never ran. `UIBackgroundModes` is now `fetch`,
+  `location` and `processing`.
+
+### Walk test (October 23, evening)
+
+| Time | What happened | Verdict |
+|---|---|---|
+| 5:27 | Walked from the Office to the house. Home was approaching (77 m), then the follow-up confirmed it 28 s later (58 m, ±8) | ✅ |
+| 5:27 | The Office stayed inside until its geofence exit at 5:56 | ❌ 30 min late |
+| 6:41 | Got home. Home was approaching (92 m) with no confirmation; the visit brought the arrival at 6:44 | ⚠️ |
+| 7:34 | Walking to the Office. It was approaching (66 m; the reading was nearer Home) with no confirmation | ⚠️ |
+
+Uploads took 0–4 s throughout, and no false arrival or departure fired. The
+follow-up confirmed only within the first 28 s, which is about the time iOS gives
+a geofence wake. The suspicion is that standard updates started from that wake
+don't keep Bud running. Two fixes and an experiment followed:
+- **Departures from other places:** a reading confirmed inside one place starts
+  the departure wait for every other place it rules out (`departOthers`). With
+  this, the Office departure would have started at 5:27:43.
+- **Replayed points:** the stored time doesn't round-trip a `CLLocation`
+  timestamp exactly (seconds since 1970 against 2001), so a replay could compare
+  a few ULPs newer. Points must now be more than 1 ms newer.
+- **Follow-up modes and diagnostics:**
+  - Device & Debug picks the mode: standard updates; `liveUpdates` with a
+    `CLBackgroundActivitySession`; alternating between them (the default, for
+    the next walk); or off.
+  - Each follow-up records `location.follow_up.v1` with its mode, how it
+    ended, the number of readings, the closest reading and the last reading's
+    time.
+  - A suspended Bud records it late (`ended_at` long after the 3-minute window,
+    and `last_reading_at` shows when readings stopped) or not at all.
+

@@ -14,6 +14,7 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
 import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, parseAutomationInput, withinHistory,
   type AutomationDefinition } from "./automation-contracts.js";
 import { describeLocalWindow } from "./automation-schedule.js";
+import { presenceReading } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Delivery = typeof deliveries.$inferSelect;
@@ -141,9 +142,12 @@ export class AutomationAdmission {
       const text = definition.event_type === "place.arrived"
         ? `Arrived at ${place.name} at ${row.change.occurredAt.toISOString()}.`
         : `Left ${place.name} at ${row.change.occurredAt.toISOString()}${minutes !== null ? ` after ${minutes} minutes` : ""}.`;
-      const how = row.change.source === "region"
-        ? "Detected by the phone's geofence for this place, usually within a minute or two."
-        : "Detected from an iOS visit report, which arrives several minutes after the fact, then uploads.";
+      const reading = row.change.source === "region" ? await presenceReading(tx, owner, row.change.rawEventId, place) : null;
+      const how = row.change.source === "visit"
+        ? "Detected from an iOS visit report, which arrives several minutes after the fact, then uploads."
+        : reading
+          ? `Detected by the phone's geofence for this place and confirmed by a precise reading ${reading.distance_m} m from its centre (±${reading.accuracy_m} m).`
+          : "Detected by the phone's geofence for this place, usually within a minute or two.";
       return {
         text: `${text}\n${how}${visit ? `\nVisit ID: ${visit.id}` : ""}\nThe event record follows. Places are your saved labels.`,
         metadata: { domain_event_id: delivery.domainEventId, presence_event_id: row.change.id, place_id: place.id,
