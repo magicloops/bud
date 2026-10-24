@@ -197,3 +197,48 @@ at `min(leaving_at, visit departure)`.
 4. The fix in the payload, the confirmation rules, approaching, and the
    follow-up (iOS and service).
 5. Presence in `location_recent`, and the Precise Location copy.
+
+## Implementation (October 23, 2026)
+
+Steps 1 and 2 shipped in magicloops/bud#165 and bud-mobile#74 (duplicate reports,
+departure time, the background `CLServiceSession`) and bud-mobile#76 (direct
+uploads). A walk that afternoon confirmed uploads now arrive 0–2 s after
+recording in the background (they had waited up to 13 hours), and arrivals
+reached the run in 6–11 s. It also showed the overlap problem again: a false
+"Arrived Home" while 9 m from the Office.
+
+Step 4, on `feat/precise-confirmation` (service) and
+`feature/precise-confirmation` (iOS):
+- **Service:**
+  - `parseRegionTransition` accepts an optional `fix`, and `classifyFix`
+    applies the rules above.
+  - Migration 0058 adds `place_presence.approaching_at` and `leaving_event_id`.
+  - Admission text and evidence include the reading's distance and accuracy.
+- **iOS:**
+  - `PlaceMonitor.place(for:)` skips readings for reports that would be
+    dropped.
+  - Each report takes a `CoreLocationFixer` reading (8 s), reusing one from
+    the last 30 s at 65 m or better, if it was taken after the crossing.
+  - Entries short of the place start a `PlaceFollowUp`.
+- **Follow-up mechanism (a change from the design above):**
+  - It uses a dedicated `CLLocationManager` with
+    `allowsBackgroundLocationUpdates`, not `CLLocationUpdate.liveUpdates()`.
+    Starting standard updates from a background location wake is the
+    documented path for an Always app with the `location` background mode.
+    Starting `liveUpdates` from the background was the open question for the
+    spike.
+  - It holds a background assertion too, so it still gets about 30 s if iOS
+    doesn't keep it running.
+  - Device & Debug → Place Detection turns it off.
+- **Background mode:** `Info.plist` now declares `UIBackgroundModes` with
+  `location`. The fixer allows background updates too, so a reading can be
+  taken in a background wake.
+- **Replayed points:** iOS replays its last cached location each time
+  significant-change monitoring starts, and the same 10:39 point had been
+  recorded at every launch. `SignificantPoints` commits only points newer than
+  the last one, atomically with that time (`location.points.v1`).
+- **Found while doing this:** `Info.plist` declared no `fetch` or `processing`
+  background modes, though Bud schedules a background refresh task and a
+  processing task (`BGTaskManager`). iOS refuses to schedule those without the
+  modes, so the sync retry tasks never ran. `UIBackgroundModes` is now `fetch`,
+  `location` and `processing`.

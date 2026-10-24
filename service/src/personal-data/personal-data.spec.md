@@ -506,7 +506,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 ## Place presence (phase 7)
 
 - **`place-presence.ts`** keeps one presence state per owner and place
-  (`place_presence`: inside or outside, since, `leaving_at`, linked visit).
+  (`place_presence`: inside or outside, since, `leaving_at`, `approaching_at`,
+  linked visit).
   Geofence transitions (`location.region_transition.v1`) and visits both feed
   it under the processor's owner lock.
 - **Publishing:** `place.arrived` and `place.departed` are published only when
@@ -533,8 +534,23 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     installed for (`place.geometry_changed_at` in ms, shown in place
     responses). Reports for a superseded revision are ignored, so the old
     boundary can't trigger the edited place.
+- **Precise readings (phase 7.1):** a region report may carry a `fix` (the
+  phone's precise reading from the same wake). `classifyFix` checks it against
+  the place's own radius plus the reading's accuracy, not the 100 m geofence.
+  When one reading is inside two places, it counts only for the nearer one; a
+  reading coarser than 100 m is unknown.
+  - Unknown, or no reading: the geofence is trusted, as above.
+  - Entered + inside: arrival. Entered + outside: `approaching_at` is set and
+    nothing publishes. The phone's confirming report (a later entry with a
+    reading inside) or the visit brings the arrival. An arrival or a
+    departure clears it.
+  - Exited + outside: departure after the settle window. `leaving_event_id`
+    keeps the exit, so the settled departure has its evidence. Exited +
+    inside: ignored; the visit completion brings the departure.
+  - Initial reports take their state from the reading.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how
-  the change was detected), policy and evidence (`transition`, optional
+  the change was detected, with the reading's distance and accuracy when there
+  is one), policy and evidence (`transition` with its `reading`, optional
   `visit`) read the presence event.
 - Tests: `place-presence.test.ts` and `automation-places.test.ts`.
 
