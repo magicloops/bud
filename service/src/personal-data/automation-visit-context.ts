@@ -6,7 +6,7 @@ import { agentDataGrantTable as grants, automationDeliveryTable as deliveries, a
   placePresenceEventTable as presenceEvents } from "../db/schema.js";
 import { automationDefinitionSchema, parseAutomationInput, withinHistory } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
-import { matchingPlaces, placesForOwner, presentPlace } from "./places.js";
+import { matchingPlaces, placesForOwner } from "./places.js";
 import { presenceReading } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -49,7 +49,8 @@ export async function automationVisitContext(tx: Transaction, invocation: Invoca
       duration_s: visit.arrivalAt && visit.departureAt ? Math.round((visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 1000) : null,
       coordinate: { lat: visit.latitude, lon: visit.longitude }, horizontal_accuracy_m: visit.horizontalAccuracyM,
       address: row!.name?.address ?? null, likely_place: row!.name?.place ?? null } : null,
-    place: trigger ? presentPlace(trigger) : null,
+    place: trigger ? { id: trigger.id, name: trigger.name, note: trigger.note, coordinate: { lat: trigger.latitude, lon: trigger.longitude },
+      radius_m: trigger.radiusM } : null,
     saved_places_at_visit: visit ? matchingPlaces(await placesForOwner(tx, owner), visit) : [],
     delay_seconds: Math.max(0, Math.round((reference.event.publishedAt.getTime() - happenedAt.getTime()) / 1000)),
   };

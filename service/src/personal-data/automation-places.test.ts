@@ -153,10 +153,13 @@ test("visits at saved places publish arrival, departure and visit end once, matc
     return { invocation, input };
   };
   const arrived = await invocationFor("arrive-home", a);
-  assert.match(arrived.input.content, /\nArrived at Home at /);
+  assert.match(arrived.input.content, /^Arrived at Home at [^\n]+\.\n\n/);
+  assert.match(arrived.input.content, /\n---\nFor reference\. Don't mention these details unless the instruction asks for them\.\n- Triggered by the "[^"]+" automation \(ID arrive-home\)\.\n- Times are in UTC; the phone hasn't reported its time zone\./);
+  assert.match(arrived.input.content, /^Arrived at Home at [^\n]+\.\n\nNote it\.\n\n---\n/);
+  assert.equal(arrived.input.metadata?.automation_name, "Places");
   assert.deepEqual([arrived.input.metadata?.visit_id, arrived.input.metadata?.place_id], [a, home.id]);
-  assert.match((await invocationFor("leave-home", a)).input.content, /\nLeft Home at .* after 25 minutes/);
-  assert.match((await invocationFor("ended-any", d)).input.content, /\nA visit at a place ended at .* after 14 minutes/);
+  assert.match((await invocationFor("leave-home", a)).input.content, /^Left Home at [^\n]*, after 25 minutes there\./);
+  assert.match((await invocationFor("ended-any", d)).input.content, /^A visit at a place ended at [^\n]*, after 14 minutes\./);
   assert.equal(await checkAutomationPolicy(arrived.invocation, true, db), "ready");
 
   const evidence = await db.transaction(tx => automationStartEvidence(tx, arrived.invocation));
