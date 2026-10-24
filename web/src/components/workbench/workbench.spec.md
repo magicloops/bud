@@ -117,7 +117,9 @@ Message list with auto-scroll and full-height message rendering.
 ### `automation-attribution.ts` and `automation-attribution.test.ts`
 
 Recognizes server-stamped system-origin automation input, retaining its recorded
-name/revision/run/event identity independently of current rule state. Tests reject
+name/revision/run/event identity independently of current rule state. The name
+comes from `automation_name` metadata; messages admitted before it began with
+"Automation: <name>", which is the fallback. Tests reject
 ordinary messages and text-only impersonation, and cover incomplete metadata.
 Chat timeline renders these as compact expandable Triggered by rows even when
 generic system messages are hidden. Expanded rows retain full original input;
