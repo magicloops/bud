@@ -534,26 +534,37 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     installed for (`place.geometry_changed_at` in ms, shown in place
     responses). Reports for a superseded revision are ignored, so the old
     boundary can't trigger the edited place.
-- **Precise readings (phase 7.1):** a region report may carry a `fix` (the
-  phone's precise reading from the same wake). `classifyFix` checks it against
-  the place's own radius plus the reading's accuracy, not the 100 m geofence.
-  When one reading is inside two places, it counts only for the nearer one; a
-  reading coarser than 100 m is unknown.
-  - Unknown, or no reading: the geofence is trusted, as above.
-  - Entered + inside: arrival. Entered + outside: `approaching_at` is set and
-    nothing publishes. The phone's confirming report (a later entry with a
-    reading inside) or the visit brings the arrival. An arrival or a
-    departure clears it.
-  - Exited + outside: departure after the settle window. `leaving_event_id`
-    keeps the exit, so the settled departure has its evidence. Exited +
-    inside: ignored; the visit completion brings the departure.
-  - Initial reports take their state from the reading.
-  - A reading inside one place also starts the departure wait for every other
-    place it puts the owner outside of (`departOthers`; places inside or
-    approaching). Geofence exits can lag: one Office exit came 30 minutes after
-    the walk home. Only a reading confirmed inside another place counts, so a
-    lone indoor reading that drifts outside can't start a departure that no
-    geofence re-entry would cancel.
+- **Readings (phases 7.1–7.2):** `classifyReading` puts a precise reading
+  against a place's own radius `r` (not the 100 m geofence). With distance `d`
+  and accuracy `a`, it's one of:
+  - **definitely inside:** `d + a ≤ r`, and no nearer saved place also contains
+    it;
+  - **definitely outside:** `d − a > r`;
+  - **uncertain:** in between;
+  - **unknown:** coarser than 100 m.
+
+  Arriving needs the whole error circle inside, and leaving needs it wholly
+  outside.
+  - **Region reports** carry their wake reading as `fix`. A report without one,
+    or with an unknown one, trusts the geofence.
+    - Entered: definitely inside arrives; otherwise `approaching_at` is set.
+    - Exited: definitely outside starts the departure wait; otherwise it's
+      ignored.
+    - Initial: inside only if definitely inside.
+  - **Re-delivered reports** (same place, revision and `occurred_at` as an
+    earlier one, whatever `initial` says) are ignored. The first recorded wins.
+  - **`applyReading`:** every reading counts for each place the owner is
+    inside or approaching. That means the wake reading for the other places,
+    `location.fix.v1`, and significant-change points at 65 m or better.
+    - Approaching and definitely inside: an arrival (source `reading`).
+    - Inside with a departure pending, and definitely inside: a re-entry.
+    - Inside, and definitely outside (or uncertain while definitely inside
+      another place): the departure wait starts at the reading's time.
+      Geofence exits can lag by many minutes.
+  - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
+    settled departure has its evidence and source.
+  - **Replayed significant-change points** (same time and coordinate) aren't
+    stored again.
 - **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
   and readings) is stored raw and not processed.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how

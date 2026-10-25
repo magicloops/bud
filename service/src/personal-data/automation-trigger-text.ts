@@ -52,6 +52,15 @@ export function timeAgo(at: Date, now: Date) {
   return hours < 36 ? `about ${hours} hours ago` : null;
 }
 
+/** "25 minutes", "about 3 hours", "about 2 days". */
+export function duration(seconds: number) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 90) return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return hours === 1 ? "about an hour" : `about ${hours} hours`;
+  return `about ${Math.round(hours / 24)} days`;
+}
+
 /** "5:36 PM (about 4 minutes ago)". */
 export function when(at: Date, timeZone: string | null, now: Date) {
   const ago = timeAgo(at, now);
