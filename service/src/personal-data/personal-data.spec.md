@@ -565,6 +565,16 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     settled departure has its evidence and source.
   - **Replayed significant-change points** (same time and coordinate) aren't
     stored again.
+- **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with follow-up
+  readings (`location.fix.v1` with `follow_up: { place_id, transition }`) or
+  non-initial region reports gets `follow_ups` in its ACK: per place, `settled`
+  or `open`.
+  - The upload handler first drains that owner's pending jobs inline, for up to
+    2 s, so presence reflects the batch.
+  - **After an entry:** open while the place is approaching.
+  - **After an exit:** open while it's inside with no departure wait.
+  - Unknown places are settled. Without the inline processor (injected route
+    tests), it's omitted.
 - **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
   and readings) is stored raw and not processed.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how

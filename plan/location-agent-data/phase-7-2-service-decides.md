@@ -94,7 +94,7 @@ to save GPS.
   device).
   - Every 10 s, the most accurate reading since the last one is committed as
     `location.fix.v1`, with `reason: follow_up` and
-    `follow_up: { place_id, geometry_revision }`, and uploaded straight away
+    `follow_up: { place_id, geometry_revision, transition }`, and uploaded straight away
     (the direct path).
   - Readings coarser than 65 m are skipped.
 - **Settling, in the upload response:** the batch ACK gains
@@ -184,4 +184,26 @@ older service runs every follow-up to its window.
 - **7.1 phones** still send confirming region entries from their own looser
   check. Those now arrive only when definitely inside, and otherwise the place
   stays approaching until a fix, a point or the visit.
+
+**Step 2 (October 24, 2026), on `feat/follow-up-settling` and bud-mobile
+`feature/follow-up-settling`:**
+- **Service:**
+  - `followUpRequests` reads the places a batch asks about: non-initial
+    region reports, and `location.fix.v1` with `follow_up`.
+  - `settleFollowUps` answers from presence:
+    - entry: open while approaching;
+    - exit: open while inside with no departure wait;
+    - unknown places: settled.
+  - The upload handler drains the owner's jobs inline for up to 2 s, then
+    adds `follow_ups` to the ACK.
+- **Shared fixture:** `wire-contract-v1.json` gains a `follow_ups` ACK case,
+  with the hash updated in both repos.
+- **iOS:**
+  - `UploadResponse.followUps` is optional and tolerant: a malformed answer
+    never fails the ACK.
+  - It's carried on `UploadResult`, and `SyncEngine.setFollowUpHandler`
+    receives it after an acknowledged upload. Nothing uses it until step 3.
+- **Follow-up reading payload:** `follow_up` carries `transition` (`entered`
+  or `exited`) as well as `place_id`, so the service knows which question
+  each follow-up is asking.
 

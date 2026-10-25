@@ -13,7 +13,7 @@ test("shared mobile/service fixture preserves envelopes, manifest and HTTP ACK",
   // Same reviewed bytes are bundled into TimelineCoreTests; neither test suite
   // requires the other checkout at runtime.
   assert.equal(createHash("sha256").update(bytes).digest("hex"),
-    "0e03793494fd91c453aa4f51d991777947430ff5d3794b042ecabe3463d75515");
+    "853c48afeea29e557ac10cb259f9ff2212aa0a2e27be664ed865b1ee48a4f504");
   const fixture = JSON.parse(bytes.toString());
   const raw = Buffer.from(fixture.events.map((event: unknown) => JSON.stringify(event)).join("\n") + "\n");
   for (const encoding of ["identity", "gzip"]) {

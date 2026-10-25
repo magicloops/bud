@@ -75,6 +75,46 @@ test("encapsulated upload parser, auth, explicit ACK, owner status and commit fa
   assert.ok(!failed.body.includes("sensitive"));
 });
 
+test("uploads with follow-up readings process inline and answer which follow-ups are settled", async t => {
+  const app = Fastify();
+  t.after(() => app.close());
+  const processed: Array<string | undefined> = [];
+  let pending = 2;
+  await registerPersonalDataRoutes(app, {
+    authenticate: async () => ({ userId: "owner-a" }),
+    repository: {
+      persist: async (_context, batch) => ({ accepted_count: batch.events.length, duplicate_count: 0,
+        acked_event_ids: batch.events.map(e => e.eventId), rejected: batch.rejected }),
+      status: async () => ({}),
+    },
+    processor: {
+      requeueSupportedLocations: async () => false,
+      // The background worker polls without an owner; only the inline drain is counted.
+      processNext: async (owner?: string) => { if (!owner) return false; processed.push(owner); return pending-- > 0; },
+      publishNext: async () => false,
+    },
+    settleFollowUps: async (_owner, requests) => Object.fromEntries([...requests].map(([id, request]) =>
+      [id, request.transition === "entered" ? "open" : "settled"])),
+  });
+  const place = "01M5KD6NQN33ZS31CJ8NRXDXCZ", office = "01M5DV10ZNSFWHYS34RCZ6F1PR";
+  const line = (eventId: string, type: string, payload: unknown) => JSON.stringify({ ...envelope, event_id: eventId, event_type: type, payload });
+  const headers = { "content-type": "application/x-ndjson", "x-installation-id": "phone-a", "x-batch-id": "batch-f" };
+  const body = [
+    line("f1", "location.fix.v1", { fix_key: "fix:a", reason: "follow_up", coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 5,
+      follow_up: { place_id: place, transition: "entered" } }),
+    line("f2", "location.region_transition.v1", { place_id: office, transition: "exited", initial: false, occurred_at: envelope.occurred_at,
+      geometry_revision: "1" }),
+  ].join("\n") + "\n";
+  const response = await app.inject({ method: "POST", url: "/v1/events/batches", headers, payload: body });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().follow_ups, { [place]: "open", [office]: "settled" });
+  assert.deepEqual(processed, ["owner-a", "owner-a", "owner-a"], "the owner's pending jobs were drained inline, until none were left");
+  // A batch without follow-ups answers as before.
+  const plain = await app.inject({ method: "POST", url: "/v1/events/batches", headers: { ...headers, "x-batch-id": "batch-g" },
+    payload: JSON.stringify(envelope) + "\n" });
+  assert.equal(plain.json().follow_ups, undefined);
+});
+
 test("app permission capability follows explicit composition setting", async t => {
   const app = Fastify();
   t.after(() => app.close());

@@ -13,6 +13,7 @@ import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { automationStartEvidence } from "./automation-contact-context.js";
 import { Places } from "./places.js";
+import { followUpRequests, settleFollowUps } from "./follow-ups.js";
 import { classifyReading, DEPARTURE_SETTLE_MS, geometryRevision, parseRegionTransition, PlacePresence } from "./place-presence.js";
 
 test("region transitions parse strictly", () => {
@@ -284,12 +285,18 @@ test("geofences and visits share one presence state: one arrival, settled depart
   // Past the Office at 52 m (±5): approaching, not arrived.
   await upload([wake(work.id, "entered", ago(85), workCenter - 52 / 111_195, 5)]);
   assert.deepEqual([(await state(work.id)).state, (await state(work.id)).approachingAt?.getTime()], ["outside", ago(85).getTime()]);
+  // Follow-ups the upload response settles: an approach still needs readings.
+  const ask = (id: string, transition: "entered" | "exited") => settleFollowUps(owner, new Map([[id, { transition, at: 0 }]]), db);
+  assert.deepEqual(await ask(work.id, "entered"), { [work.id]: "open" });
   await upload([wake(work.id, "exited", ago(83), workCenter - 175 / 111_195, 17)]);
   assert.equal((await state(work.id)).approachingAt, null, "walking on ends the approach");
   // Back towards home: the entry fires 70 m out (±16), then the fix when Bud opens, 5 m away, arrives.
   await upload([wake(house.id, "entered", ago(70), fromHouse(70), 16)]);
   assert.deepEqual([(await state(house.id)).state, Boolean((await state(house.id)).approachingAt)], ["outside", true]);
   await upload([fix(fromHouse(5), ago(68), 10)]);
+  assert.deepEqual(await ask(house.id, "entered"), { [house.id]: "settled" }, "arrived");
+  assert.deepEqual(await ask(house.id, "exited"), { [house.id]: "open" }, "inside with no departure wait: an exit still needs readings");
+  assert.deepEqual(await ask("01K00000000000000000000000", "entered"), { "01K00000000000000000000000": "settled" }, "unknown place");
   const houseChanges = (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, house.id))
     .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.source, row.occurredAt.getTime()]);
   assert.deepEqual(houseChanges, [["departed", "region", ago(90).getTime()], ["arrived", "reading", ago(68).getTime()]]);
@@ -299,6 +306,7 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([wake(work.id, "entered", ago(60), workCenter, 5)]);
   await upload([point(fromHouse(5), ago(50), 10), point(fromHouse(5), ago(50), 10), point(workCenter, ago(49), 90)]);
   assert.equal((await state(work.id)).leavingAt?.getTime(), ago(50).getTime());
+  assert.deepEqual(await ask(work.id, "exited"), { [work.id]: "settled" }, "the departure wait has started");
   const points = await db.select().from(s.locationObservationTable).where(and(eq(s.locationObservationTable.kind, "significant_change"),
     eq(s.locationObservationTable.occurredAt, ago(50))));
   assert.equal(points.length, 1, "a replayed point is not a new observation");

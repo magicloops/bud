@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getOptionalBearerViewer, getOptionalViewer } from "../auth/session.js";
-import { DataRequestError, INGEST_LIMITS, validIdentifier, type IngestContext } from "./contracts.js";
+import { DataRequestError, INGEST_LIMITS, validIdentifier, type IngestContext, type ValidEvent } from "./contracts.js";
+import { FOLLOW_UP_PROCESSING_MS, followUpRequests, settleFollowUps } from "./follow-ups.js";
 import { ContactProcessor } from "./contact-processor.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, type LocationQuery } from "./location.js";
@@ -37,6 +38,8 @@ type Dependencies = {
   automationProposals?: Pick<AutomationProposals, "get" | "list" | "decide" | "cancel" | "expireNext">;
   bootstrap?: Pick<AutomationBootstrap, "list" | "get" | "page" | "capture" | "activateAndCapture" | "cancel" | "progress" | "preview">;
   processor?: Pick<ContactProcessor, "requeueSupportedLocations" | "processNext" | "publishNext">;
+  /** Follow-up answers from processed presence; injectable for route tests. */
+  settleFollowUps?: typeof settleFollowUps;
   authenticate?: (request: FastifyRequest) => Promise<{ userId: string } | null>;
 };
 
@@ -61,6 +64,8 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     });
   }
   let stop = async () => {};
+  // Uploads that carry follow-up readings answer from processed presence (Phase 7.2).
+  const inlineProcessor = dependencies.processor ?? (dependencies.repository ? undefined : new ContactProcessor());
   // Injection tests do not start a background worker against a real database.
   if (!dependencies.repository || dependencies.processor) {
     const processor = dependencies.processor ?? new ContactProcessor();
@@ -232,6 +237,24 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     await app.register(async (uploads) => {
       uploads.removeAllContentTypeParsers();
       uploads.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: INGEST_LIMITS.compressed_bytes }, (_request, body, done) => done(null, body));
+      /**
+       * For a batch with follow-up readings or region reports, processes this owner's pending
+       * jobs inline (at most `FOLLOW_UP_PROCESSING_MS`, as the background worker would) so the
+       * phone learns which follow-ups are settled from this response. Work left unprocessed
+       * stays queued; those places answer from current presence, usually "open".
+       */
+      const answerFollowUps = async (request: FastifyRequest, owner: string, events: ValidEvent[]) => {
+        const requests = followUpRequests(events);
+        if (requests.size === 0 || !inlineProcessor) return null;
+        const deadline = Date.now() + FOLLOW_UP_PROCESSING_MS;
+        try {
+          while (Date.now() < deadline && await inlineProcessor.processNext(owner)) { /* drain this owner */ }
+          return await (dependencies.settleFollowUps ?? settleFollowUps)(owner, requests);
+        } catch {
+          request.log.warn("Inline follow-up processing failed; work stays queued");
+          return null;
+        }
+      };
       const handler = async (request: FastifyRequest, reply: FastifyReply) => {
         const installationId = request.headers["x-installation-id"];
         const batchId = request.headers["x-batch-id"];
@@ -242,7 +265,9 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
         if (!Buffer.isBuffer(request.body)) throw new DataRequestError(400, "invalid_body", "NDJSON body is required");
         const batch = await parseBatch(request.body, String(request.headers["content-encoding"] ?? "").toLowerCase(), context);
         const result = await repository.persist(context, batch);
-        return reply.code(200).send({ request_id: request.id, batch_id: batchId, server_time: new Date().toISOString(), ...result, rejected_count: result.rejected.length, retry_after_s: 0 });
+        const followUps = await answerFollowUps(request, context.userId, batch.events);
+        return reply.code(200).send({ request_id: request.id, batch_id: batchId, server_time: new Date().toISOString(), ...result,
+          rejected_count: result.rejected.length, retry_after_s: 0, ...(followUps ? { follow_ups: followUps } : {}) });
       };
       uploads.post("/v1/events/batches", { bodyLimit: INGEST_LIMITS.compressed_bytes }, handler);
     });
