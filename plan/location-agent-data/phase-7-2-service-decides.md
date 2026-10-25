@@ -207,3 +207,23 @@ older service runs every follow-up to its window.
   or `exited`) as well as `place_id`, so the service knows which question
   each follow-up is asking.
 
+**Step 3 (October 25, 2026), on bud-mobile `feature/follow-up-phone`:**
+- **Follow-ups start on every non-initial geofence report,** at once (before
+  the 8 s wake reading), in the Device & Debug mode.
+- **Readings:** the most accurate one at 65 m or better goes as
+  `location.fix.v1` (`reason: follow_up`,
+  `follow_up { place_id, geometry_revision, transition }`). The first goes at
+  once, then at most one every 10 s, with a scheduled flush for a reading held
+  back while standing still.
+- **Stopping:** on a `settled` answer, the same geofence firing again, or the
+  window.
+- **Diagnostics:** `location.follow_up.v1` reasons are `settled`, `geofence`
+  and `timeout`. Instead of a separate `offline` reason, it records `answers`
+  (none means the service wasn't reached) as well as `readings` and `sent`.
+- **Removed from the phone:**
+  - `MonitoredPlace.contains`;
+  - the confirming region entry;
+  - the significant-change point filter (`SignificantPoints`).
+- **Re-deliveries are sent bare** (no reading, no follow-up), and the service
+  ignores them.
+
