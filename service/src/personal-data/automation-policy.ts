@@ -13,7 +13,7 @@ import { DataRequestError } from "./contracts.js";
 
 type PolicyRow = { state: string; definition: unknown; grantVersion: number; scopes: string[] | null;
   historyDays: number | null; currentGrantVersion: number | null; domainEventId?: string | null;
-  healthTypes?: string[] | null; workoutId?: string | null; visitId?: string | null };
+  healthTypes?: string[] | null; workoutId?: string | null; visitId?: string | null; presenceEventId?: string | null };
 
 export async function loadAutomationDataCeiling(threadId: string, owner: string, turnId?: string,
   database: Pick<Database, "select"> = db): Promise<AgentDataCeiling | undefined> {
@@ -51,13 +51,15 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
   let [policy]: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
     grantVersion: revisions.grantVersion, scopes: grants.scopes, historyDays: grants.historyDays,
     currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId, healthTypes: grants.healthTypes,
-    workoutId: events.workoutId, visitId: events.visitId }).from(deliveries)
+    workoutId: events.workoutId, visitId: events.visitId, presenceEventId: events.presenceEventId }).from(deliveries)
     .innerJoin(rules, and(eq(rules.id, deliveries.automationId), eq(rules.createdByUserId, owner)))
     .innerJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, deliveries.revision), eq(revisions.createdByUserId, owner)))
     .leftJoin(grants, eq(grants.createdByUserId, owner))
     .leftJoin(events, and(eq(events.id, deliveries.domainEventId), eq(events.createdByUserId, owner)))
     .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"))).limit(1);
-  if (policy?.visitId) {
+  if (policy?.presenceEventId) {
+    // Presence changes are kept; the place is checked at admission and evidence. Places are labels, not authority.
+  } else if (policy?.visitId) {
     // Visit deliveries need the visit to still exist; places are labels, not authority.
     const [visit] = await database.select({ id: locationVisits.id }).from(locationVisits)
       .where(and(eq(locationVisits.id, policy.visitId), eq(locationVisits.createdByUserId, owner))).limit(1);

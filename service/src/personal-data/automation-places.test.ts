@@ -32,7 +32,8 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   await admin.query(`create schema "${namespace}"`);
   // Isolated copies keep fixture jobs and deliveries away from the running development workers.
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
-    "location_observation", "location_visit", "location_visit_name", "place", "health_workout", "data_domain_event",
+    "location_observation", "location_visit", "location_visit_name", "place", "place_presence", "place_presence_event",
+    "health_workout", "data_domain_event",
     "automation", "automation_revision", "automation_delivery", "automation_bootstrap", "automation_bootstrap_member", "automation_bootstrap_group",
     "agent_invocation", "agent_invocation_action", "agent_data_grant", "bud", "thread", "message", "browser_handoff"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
@@ -51,8 +52,12 @@ test("visits at saved places publish arrival, departure and visit end once, matc
     while (await processor.processNext()) { /* drain */ }
   };
   const visitId = async (key: string) => (await db.select().from(s.locationVisitTable).where(eq(s.locationVisitTable.visitKey, key)))[0].id;
-  const published = () => db.select().from(s.dataDomainEventTable).where(
-    inArray(s.dataDomainEventTable.eventType, ["place.arrived", "place.departed", "visit.ended"]));
+  // Place events reach their visit through the presence change; visit.ended names it directly.
+  const published = async () => (await db.select({ event: s.dataDomainEventTable, change: s.placePresenceEventTable })
+    .from(s.dataDomainEventTable).leftJoin(s.placePresenceEventTable, eq(s.placePresenceEventTable.id, s.dataDomainEventTable.presenceEventId))
+    .where(inArray(s.dataDomainEventTable.eventType, ["place.arrived", "place.departed", "visit.ended"]))
+    .orderBy(s.dataDomainEventTable.publicationSequence))
+    .map(({ event, change }) => ({ ...event, visitId: event.visitId ?? change?.visitId ?? null }));
 
   // Saved places; their geometry predates the fixture visits.
   const home = await places.create(owner, { name: "Home", latitude: 37.70, longitude: -122.4 }, "user");
@@ -117,9 +122,12 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   await places.delete(owner, gym.id);
   const matcher = new AutomationMatcher(db);
   while (await matcher.matchNext(owner)) { /* drain */ }
-  const deliveries = async (automation: string) => db.select({ visitId: s.dataDomainEventTable.visitId, delivery: s.automationDeliveryTable })
-    .from(s.automationDeliveryTable).innerJoin(s.dataDomainEventTable, eq(s.dataDomainEventTable.id, s.automationDeliveryTable.domainEventId))
-    .where(eq(s.automationDeliveryTable.automationId, automation));
+  const deliveries = async (automation: string) => (await db.select({ event: s.dataDomainEventTable, change: s.placePresenceEventTable,
+    delivery: s.automationDeliveryTable }).from(s.automationDeliveryTable)
+    .innerJoin(s.dataDomainEventTable, eq(s.dataDomainEventTable.id, s.automationDeliveryTable.domainEventId))
+    .leftJoin(s.placePresenceEventTable, eq(s.placePresenceEventTable.id, s.dataDomainEventTable.presenceEventId))
+    .where(eq(s.automationDeliveryTable.automationId, automation)))
+    .map(({ event, change, delivery }) => ({ visitId: event.visitId ?? change?.visitId ?? null, delivery }));
   const outcomes = async (automation: string) => new Map((await deliveries(automation)).map(row =>
     [row.visitId, row.delivery.outcomeCode ?? row.delivery.status]));
   assert.deepEqual([...await outcomes("arrive-home")], [[a, "pending"]], "only rules for the event's place match");

@@ -1545,11 +1545,46 @@ export const placeTable = pgTable("place", {
   createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
 }));
 
-// Exactly one subject: a contact revision (contact.added), a workout (workout.completed) or a
-// visit (place.arrived/place.departed with their place, visit.ended without one).
+// Whether the owner is at each place, fed by geofence transitions and visits. A region exit
+// waits in `leaving_at` until the flap window passes; re-entry cancels it.
+export const placePresenceTable = pgTable("place_presence", {
+  placeId: text("place_id").notNull(), state: text("state").notNull(),
+  since: timestamp("since", { withTimezone: true }).notNull(),
+  leavingAt: timestamp("leaving_at", { withTimezone: true }),
+  // The latest arrival seen during this stay, so an exit processed out of order can tell
+  // whether a re-entry followed it.
+  lastEnteredAt: timestamp("last_entered_at", { withTimezone: true }),
+  // The visit that last confirmed the owner is inside, when one did.
+  visitId: text("visit_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "place_presence_pk", columns: [t.createdByUserId, t.placeId] }),
+  leavingIdx: index("place_presence_leaving_idx").on(t.leavingAt).where(sql`${t.leavingAt} is not null`),
+  placeFk: foreignKey({ name: "place_presence_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  stateCheck: check("place_presence_state_check", sql`${t.state} in ('inside', 'outside')`),
+}));
+
+// Each published arrival or departure, from a region transition or a visit.
+export const placePresenceEventTable = pgTable("place_presence_event", {
+  id: text("id").primaryKey(), placeId: text("place_id").notNull(), transition: text("transition").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  source: text("source").notNull(), visitId: text("visit_id"), rawEventId: text("raw_event_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_presence_event_owner_key").on(t.id, t.createdByUserId),
+  placeFk: foreignKey({ name: "place_presence_event_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  visitFk: foreignKey({ name: "place_presence_event_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  transitionCheck: check("place_presence_event_transition_check", sql`${t.transition} in ('arrived', 'departed')`),
+  sourceCheck: check("place_presence_event_source_check", sql`${t.source} in ('region', 'visit')`),
+}));
+
+// Exactly one subject: a contact revision (contact.added), a workout (workout.completed), a
+// visit (visit.ended) or a presence change (place.arrived/place.departed, with their place).
 export const dataDomainEventTable = pgTable("data_domain_event", {
   id: text("id").primaryKey(), revisionId: text("revision_id"), workoutId: text("workout_id"),
-  visitId: text("visit_id"), placeId: text("place_id"),
+  visitId: text("visit_id"), placeId: text("place_id"), presenceEventId: text("presence_event_id"),
   eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
   publicationSequence: bigint("publication_sequence", { mode: "number" }),
   publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1562,12 +1597,13 @@ export const dataDomainEventTable = pgTable("data_domain_event", {
   revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
   workoutKey: unique("data_domain_workout_key").on(t.workoutId, t.eventType),
   workoutFk: foreignKey({ name: "data_domain_workout_fk", columns: [t.workoutId, t.createdByUserId], foreignColumns: [healthWorkoutTable.id, healthWorkoutTable.createdByUserId] }),
-  subjectCheck: check("data_domain_subject_check", sql`num_nonnulls(${t.revisionId}, ${t.workoutId}, ${t.visitId}) = 1`),
+  subjectCheck: check("data_domain_subject_check", sql`num_nonnulls(${t.revisionId}, ${t.workoutId}, ${t.visitId}, ${t.presenceEventId}) = 1`),
   visitFk: foreignKey({ name: "data_domain_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
   placeFk: foreignKey({ name: "data_domain_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
-  // One place event per visit and place; one visit.ended per visit.
-  visitPlaceKey: uniqueIndex("data_domain_visit_place_key").on(t.visitId, t.eventType, t.placeId).where(sql`${t.placeId} is not null`),
-  visitEndedKey: uniqueIndex("data_domain_visit_ended_key").on(t.visitId, t.eventType).where(sql`${t.visitId} is not null and ${t.placeId} is null`),
+  presenceFk: foreignKey({ name: "data_domain_presence_fk", columns: [t.presenceEventId, t.createdByUserId], foreignColumns: [placePresenceEventTable.id, placePresenceEventTable.createdByUserId] }),
+  // One event per presence change; one visit.ended per visit.
+  presenceKey: unique("data_domain_presence_key").on(t.presenceEventId, t.eventType),
+  visitEndedKey: uniqueIndex("data_domain_visit_ended_key").on(t.visitId, t.eventType).where(sql`${t.visitId} is not null`),
 }));
 
 

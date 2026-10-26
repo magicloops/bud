@@ -41,6 +41,7 @@ order, because each builds on the one before.
 | 6.4 | [Named places and triggers](phase-6-4-places-and-triggers.md) | Your places, plus arrive, leave and visit-ended automations | Service, web, iOS |
 | 6.5 | [A fresh location when Bud opens](phase-6-5-foreground-fix.md) | One fix per foreground, named, so "where am I?" is current when you're using the app | iOS, service |
 | 7 | [Timely place triggers](phase-7-geofences.md) | Geofences plus a single presence state, so arrive/leave runs within about a minute | iOS, service |
+| 7.1 | [Precise confirmation](phase-7-1-precise-confirmation.md) | A precise reading on each geofence wake confirms arrivals and departures (places 100 m apart work); prompt uploads from background wakes | iOS, service |
 | 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
 
 **Why this order:**
@@ -55,9 +56,15 @@ order, because each builds on the one before.
 am I?" returned a 5-minute-old point. The follow-ups run in this order:
 - **6.5:** cheap, needs no new permission, and its fix code is reused by 7 and 8.
 - **7:** fixes trigger latency, which is what automations depend on.
+- **7.1 (after the October 22–23 walks):** geofences are too coarse for places
+  about 100 m apart, and background-started uploads were deferred for up to 13
+  hours. It comes before 8.1 because triggers have to be right before agents
+  read more from them.
 - **8.1:** uses only a silent push, and force-quitting Bud stops it.
-- **8.2:** Apple's intended mechanism. It starts after Apple approves the
-  location push entitlement, which should be requested early.
+- **8.2:** starts only if Apple approves the location push entitlement. Apple
+  documents it for sharing with approved people and for emergency apps, so
+  approval is unlikely; 8.1 is the main path (see
+  [the risk](phase-8-on-demand-location.md#risk-the-82-entitlement-may-not-be-granted)).
 
 ## Decisions
 

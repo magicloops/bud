@@ -3,8 +3,9 @@ import { ulid } from "ulid";
 import { z } from "zod";
 import { db, type Database } from "../db/client.js";
 import { placeTable as places, dataOwnerStateTable as owners, dataDomainEventTable as domains,
-  locationVisitTable as visits } from "../db/schema.js";
+  locationVisitTable as visits, placePresenceTable as presenceRows } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
+import { applyPresence, geometryRevision, resetPresence } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Place = typeof places.$inferSelect;
@@ -37,7 +38,7 @@ export function visitAtPlace(visit: { latitude: number; longitude: number; horiz
 
 export function presentPlace(row: Place) {
   return { id: row.id, name: row.name, note: row.note, coordinate: { lat: row.latitude, lon: row.longitude }, radius_m: row.radiusM,
-    created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
+    geometry_revision: geometryRevision(row), created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
 }
 
 export class Places {
@@ -71,14 +72,19 @@ export class Places {
     if (!parsed.success) throw new DataRequestError(400, "invalid_place", "Check the place name, coordinate and radius");
     const value = parsed.data;
     const geometry = value.latitude !== undefined || value.radius_m !== undefined;
-    const [row] = await this.database.update(places).set({
-      ...(value.name !== undefined ? { name: value.name } : {}), ...(value.note !== undefined ? { note: value.note } : {}),
-      ...(value.latitude !== undefined ? { latitude: value.latitude, longitude: value.longitude! } : {}),
-      ...(value.radius_m !== undefined ? { radiusM: value.radius_m } : {}),
-      ...(geometry ? { geometryChangedAt: sql`clock_timestamp()` } : {}), updatedAt: sql`clock_timestamp()`,
-    }).where(and(eq(places.id, id), eq(places.createdByUserId, owner), isNull(places.deletedAt))).returning();
-    if (!row) throw new DataRequestError(404, "place_not_found", "Place not found");
-    return presentPlace(row);
+    return this.database.transaction(async tx => {
+      // The processor's owner lock, so presence isn't reset under a transition being applied.
+      if (geometry) await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update");
+      const [row] = await tx.update(places).set({
+        ...(value.name !== undefined ? { name: value.name } : {}), ...(value.note !== undefined ? { note: value.note } : {}),
+        ...(value.latitude !== undefined ? { latitude: value.latitude, longitude: value.longitude! } : {}),
+        ...(value.radius_m !== undefined ? { radiusM: value.radius_m } : {}),
+        ...(geometry ? { geometryChangedAt: sql`clock_timestamp()` } : {}), updatedAt: sql`clock_timestamp()`,
+      }).where(and(eq(places.id, id), eq(places.createdByUserId, owner), isNull(places.deletedAt))).returning();
+      if (!row) throw new DataRequestError(404, "place_not_found", "Place not found");
+      if (geometry) await resetPresence(tx, owner, id);
+      return presentPlace(row);
+    });
   }
 
   /** Soft delete: past events keep their reference; rules targeting it stop matching. */
@@ -102,21 +108,27 @@ export function matchingPlaces(owned: Place[], visit: { latitude: number; longit
 
 type VisitRow = typeof visits.$inferSelect;
 /** Called under the processor's owner lock when a v2 visit first appears or completes.
- * Places created or moved after the visit started are its baseline and never fire. */
+ * Places created or moved after the visit started are its baseline and never fire.
+ * Arrivals and departures go through place presence, which de-duplicates them against
+ * geofence transitions; `visit.ended` is published here. */
 export async function publishVisitEvents(tx: Transaction, owner: string, visit: VisitRow, transition: { arrived: boolean; completed: boolean }) {
   if (!transition.arrived && !transition.completed) return;
   const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, owner), isNull(places.deletedAt),
     sql`${places.geometryChangedAt} <= ${visit.startedAt}`));
   const at = owned.filter(place => visitAtPlace(visit, place));
-  const publish = async (eventType: string, placeId: string | null) => {
+  if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
+    at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
+  if (transition.completed) {
+    // The completed report can move its coordinate (by ~70–80 m on device). Stays this visit
+    // confirmed end too, even where the revised coordinate no longer matches the place.
+    const linked = await tx.select({ placeId: presenceRows.placeId }).from(presenceRows).where(and(
+      eq(presenceRows.createdByUserId, owner), eq(presenceRows.visitId, visit.id), eq(presenceRows.state, "inside")));
+    const ending = [...at, ...owned.filter(place => !at.includes(place) && linked.some(row => row.placeId === place.id))];
+    for (const place of ending) await applyPresence(tx, owner, place, { transition: "departed", at: visit.departureAt!,
+      source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
     const [sequence] = await tx.update(owners).set({ publicationSequence: sql`${owners.publicationSequence} + 1` })
       .where(eq(owners.createdByUserId, owner)).returning({ value: owners.publicationSequence });
-    await tx.insert(domains).values({ id: ulid(), visitId: visit.id, placeId, eventType, publicationSequence: sequence.value,
+    await tx.insert(domains).values({ id: ulid(), visitId: visit.id, eventType: "visit.ended", publicationSequence: sequence.value,
       createdByUserId: owner }).onConflictDoNothing();
-  };
-  if (transition.arrived) for (const place of at) await publish("place.arrived", place.id);
-  if (transition.completed) {
-    for (const place of at) await publish("place.departed", place.id);
-    await publish("visit.ended", null);
   }
 }

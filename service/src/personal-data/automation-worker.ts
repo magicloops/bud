@@ -2,12 +2,16 @@ import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { BootstrapAdmission } from "./bootstrap-admission.js";
 import { AutomationScheduler } from "./automation-scheduler.js";
+import { PlacePresence } from "./place-presence.js";
 
-type Work = { matchNext(): Promise<boolean>; scheduleDue?(): Promise<boolean>; admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
+type Work = { settleDepartures?(): Promise<boolean>; matchNext(): Promise<boolean>; scheduleDue?(): Promise<boolean>;
+  admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
 
 function defaultWork(): Work {
   const scheduler = new AutomationScheduler();
   return {
+    // Region exits that stayed out past the settle window publish before matching.
+    settleDepartures: () => new PlacePresence().settleDepartures(),
     matchNext: () => new AutomationMatcher().matchNext(),
     scheduleDue: () => scheduler.scheduleDue(),
     admitLive: () => new AutomationAdmission().admitNext(),

@@ -82,6 +82,17 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   assert.equal(recent.location?.kind, "visit");
   assert.equal((recent.location as { visit_key: string }).visit_key, "c");
   assert.equal(recent.stale, false);
+  assert.ok(Math.abs(recent.age_seconds! - 1800) < 60, "age is since the arrival was observed, not now");
+  // An eight-hour-old unfinished visit is old, and a fresh point 100 km away beats it.
+  await upload("drifter", [visit("old", ago(480), null, 37.70, 30)]);
+  const unfinished = await queries.recent("drifter");
+  assert.deepEqual([unfinished.location?.kind, unfinished.stale], ["visit", true]);
+  assert.ok(unfinished.age_seconds! >= 480 * 60 - 60);
+  await upload("drifter", [point(ago(5), 38.60)]);
+  const moved = await queries.recent("drifter");
+  assert.deepEqual([moved.location?.kind, moved.stale, (moved.location as { within_visit?: unknown }).within_visit],
+    ["point", false, undefined]);
+  assert.ok(moved.age_seconds! < 400);
   // History that ends before anything recorded hides it.
   assert.equal((await queries.recent("owner", { notBefore: new Date(now + 60_000) })).location, null);
   // Without visits, a point is the latest location, and an old one is stale.
@@ -89,18 +100,21 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   const pointOnly = await queries.recent("points");
   assert.deepEqual([pointOnly.location?.kind, pointOnly.stale], ["point", true]);
   assert.equal((await queries.recent("nobody")).location, null);
-  // A fix near the in-progress visit leaves it as the latest location.
+  // A fix after the in-progress visit began is the latest location; near the visit, it says since when.
   const fix = (key: string, at: Date, lat: number) => ["location.fix.v1", at, { fix_key: key, reason: "foreground",
     coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: 10, speed_mps: 1, course_deg: 90, altitude_m: 0 }] as [string, Date, object];
   await upload("owner", [fix("fix:near", ago(5), 37.7401)]);
-  assert.equal((await queries.recent("owner")).location?.kind, "visit");
+  const near = await queries.recent("owner");
+  assert.equal(near.location?.kind, "fix");
+  assert.equal((near.location as { within_visit?: { id: string } }).within_visit?.id, byKey.get("c")!.id);
   // A later fix away from it means iOS hasn't reported the departure yet: the fix wins, with its name.
   await upload("owner", [fix("fix:away", ago(2), 37.75), ["location.visit_named.v1", ago(1), { visit_key: "fix:away", source: "apple",
     named_at: ago(1).toISOString(), address: { short: "Market St", city: "San Francisco" }, place: null }]]);
-  const moved = await queries.recent("owner");
-  assert.deepEqual([moved.location?.kind, moved.location?.address?.short, moved.stale],
+  const away = await queries.recent("owner");
+  assert.equal((away.location as { within_visit?: unknown }).within_visit, undefined, "away from the visit, no since");
+  assert.deepEqual([away.location?.kind, away.location?.address?.short, away.stale],
     ["fix", "Market St", false]);
-  assert.ok(moved.age_seconds! >= 100 && moved.age_seconds! < 200);
+  assert.ok(away.age_seconds! >= 100 && away.age_seconds! < 200);
   // Without a fix key, a fix is invalid and stored as nothing.
   await upload("owner", [["location.fix.v1", ago(1), { coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 10 }]]);
   // Timeline kind filter: points include fixes.

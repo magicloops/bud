@@ -114,7 +114,7 @@ test('location reviews describe the trigger, delay and maximum age', () => {
   const arrived = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: { ...proposal, definition: { ...base,
     event_type: 'place.arrived', place_trigger: { place_ids: ['home'] }, max_event_age_seconds: 3600,
     data_access: { scopes: ['location.read'], history_days: 30 } } }, placeNames: new Map([['home', 'Home']]) }))
-  for (const text of ['When you arrive at Home', 'a few minutes after', 'older than 60 minutes', 'Location at collected precision'])
+  for (const text of ['When you arrive at Home', 'usually within a minute or two', 'older than 60 minutes', 'Location at collected precision'])
     assert.ok(arrived.includes(text), text)
   const ended = renderToStaticMarkup(createElement(AutomationProposalSummary, { proposal: { ...proposal, definition: { ...base,
     event_type: 'visit.ended', visit_filter: { place_ids: [], min_duration_minutes: 30 }, max_event_age_seconds: 21600,

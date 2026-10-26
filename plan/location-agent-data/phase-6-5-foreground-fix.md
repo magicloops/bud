@@ -100,9 +100,16 @@ On branches `feat/location-fixes` (service, web) and mobile
     service's naming join works unchanged.
   - **Reason:** `reason` stays in the raw event and has no column; phase 8 adds
     what it needs.
-  - **Added:** a fix taken after an in-progress visit started, and away from
-    it, is the latest location. iOS reports departures late; this was the walk
-    test's symptom.
+  - **Added:** a fix taken after an in-progress visit started is the latest
+    location, with `within_visit` when it's still at that visit. iOS reports
+    departures late and sometimes never; this was the walk test's symptom. The
+    first version required the fix to be 100 m away, which hid fixes behind a
+    day-old visit in the device test of October 20.
+  - **Added after the device test (October 20):**
+    - "Save this location as a place" on Last known (web and iOS);
+    - visits are named on arrival as well as completion;
+    - visit keys use the arrival time only, since iOS moved a completed
+      report's coordinate about 70 m and the two reports didn't merge.
 - **Tests:**
   - TimelineCore: fix payload, policy, naming by fix key;
   - service: near and far fixes, names, invalid keys, the points filter, app
