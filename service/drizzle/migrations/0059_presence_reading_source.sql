@@ -1,0 +1,2 @@
+ALTER TABLE "place_presence_event" DROP CONSTRAINT "place_presence_event_source_check";--> statement-breakpoint
+ALTER TABLE "place_presence_event" ADD CONSTRAINT "place_presence_event_source_check" CHECK ("place_presence_event"."source" in ('region', 'visit', 'reading'));

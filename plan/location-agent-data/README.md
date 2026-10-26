@@ -42,6 +42,7 @@ order, because each builds on the one before.
 | 6.5 | [A fresh location when Bud opens](phase-6-5-foreground-fix.md) | One fix per foreground, named, so "where am I?" is current when you're using the app | iOS, service |
 | 7 | [Timely place triggers](phase-7-geofences.md) | Geofences plus a single presence state, so arrive/leave runs within about a minute | iOS, service |
 | 7.1 | [Precise confirmation](phase-7-1-precise-confirmation.md) | A precise reading on each geofence wake confirms arrivals and departures (places 100 m apart work); prompt uploads from background wakes | iOS, service |
+| 7.2 | [The phone collects, the service decides](phase-7-2-service-decides.md) | Every precise reading decides presence on the service (arrive only when definitely inside); follow-ups run until the service settles them | Service, iOS |
 | 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
 
 **Why this order:**
@@ -60,6 +61,10 @@ am I?" returned a 5-minute-old point. The follow-ups run in this order:
   about 100 m apart, and background-started uploads were deferred for up to 13
   hours. It comes before 8.1 because triggers have to be right before agents
   read more from them.
+- **7.2 (after the October 24 walk):** the phone's copy of the placement rule
+  disagreed with the service's, and walking past a place counted as arriving.
+  The service now decides from every reading, and follow-ups run until it says
+  stop.
 - **8.1:** uses only a silent push, and force-quitting Bud stops it.
 - **8.2:** starts only if Apple approves the location push entitlement. Apple
   documents it for sharing with approved people and for emergency apps, so

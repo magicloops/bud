@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataDomainEventTable as domains, dataEventTable as rawEvents, dataOwnerStateTable as owners, placePresenceEventTable as presenceEvents,
@@ -16,7 +16,8 @@ export const DEPARTURE_SETTLE_MS = 3 * 60_000;
 const MISSED_EXIT_MS = 12 * 3600_000;
 
 export type PresenceChange = {
-  transition: "arrived" | "departed"; at: Date; source: "region" | "visit";
+  /** `reading`: a precise reading (fix, follow-up or significant-change point) decided it. */
+  transition: "arrived" | "departed"; at: Date; source: "region" | "visit" | "reading";
   visitId?: string | null; rawEventId?: string | null;
   /** For visit changes: when the visit ended, if it has. Only a visit overlapping the current
    * stay may link to it. */
@@ -62,37 +63,49 @@ function parseFix(value: unknown): FixReading | null {
   return Number.isFinite(at.getTime()) ? { latitude, longitude, accuracyM: accuracy, at } : null;
 }
 
+/** Readings from significant-change points coarser than this are ignored for presence. */
+export const POINT_MAX_ACCURACY_M = 65;
+
+export type ReadingClass = "inside" | "outside" | "uncertain" | "unknown";
+
 /**
  * Where a precise reading puts the owner relative to a place, using the place's own radius
- * (geofences are monitored at 100 m or more and are accurate only to 100–200 m):
- * - inside: within the radius plus the reading's accuracy, and no other saved place that also
- *   contains the reading is nearer (one reading counts for one of two overlapping places);
- * - outside: otherwise;
- * - unknown: the reading is coarser than `FIX_MAX_ACCURACY_M`.
+ * (geofences are monitored at 100 m or more and are accurate only to 100–200 m). `d` is the
+ * distance from the centre, `r` the radius and `a` the accuracy:
+ * - inside (definitely): `d + a ≤ r`, and no other saved place that contains the reading
+ *   (`d' ≤ r' + a`) is nearer, so one reading counts for one of two overlapping places;
+ * - outside (definitely): `d − a > r`;
+ * - uncertain: in between, where the reading can't tell;
+ * - unknown: coarser than `FIX_MAX_ACCURACY_M`.
+ * Arriving needs the whole error circle inside and leaving needs it wholly outside, so walking
+ * past a place's edge doesn't arrive and an indoor reading drifting outward doesn't leave.
  */
-export function classifyFix(fix: FixReading, place: Pick<Place, "id" | "latitude" | "longitude" | "radiusM">,
-  owned: Array<Pick<Place, "id" | "latitude" | "longitude" | "radiusM">>) {
+export function classifyReading(fix: FixReading, place: Pick<Place, "id" | "latitude" | "longitude" | "radiusM">,
+  owned: Array<Pick<Place, "id" | "latitude" | "longitude" | "radiusM">>): { state: ReadingClass; distanceM: number } {
   const distance = distanceM(fix.latitude, fix.longitude, place.latitude, place.longitude);
-  if (fix.accuracyM > FIX_MAX_ACCURACY_M) return { state: "unknown" as const, distanceM: distance };
-  const contains = (other: typeof place, d: number) => d <= other.radiusM + fix.accuracyM;
+  if (fix.accuracyM > FIX_MAX_ACCURACY_M) return { state: "unknown", distanceM: distance };
+  if (distance - fix.accuracyM > place.radiusM) return { state: "outside", distanceM: distance };
+  if (distance + fix.accuracyM > place.radiusM) return { state: "uncertain", distanceM: distance };
   const nearer = owned.some(other => other.id !== place.id && (() => {
     const d = distanceM(fix.latitude, fix.longitude, other.latitude, other.longitude);
-    return d < distance && contains(other, d);
+    return d < distance && d <= other.radiusM + fix.accuracyM;
   })());
-  return { state: contains(place, distance) && !nearer ? "inside" as const : "outside" as const, distanceM: distance };
+  return { state: nearer ? "uncertain" : "inside", distanceM: distance };
 }
 
 /**
  * Applies a region transition under the processor's owner lock. Unknown or deleted places,
- * and reports from a geofence for a superseded geometry, are ignored.
+ * reports from a geofence for a superseded geometry, and re-deliveries (the same place,
+ * revision and time as an earlier report) are ignored.
  *
- * A precise reading in the report decides it (`classifyFix`); without one, or with one too
+ * The report's wake reading decides it (`classifyReading`); without one, or with one too
  * coarse, the geofence is trusted:
- * - entered + inside: arrival. Entered + outside: approaching (the geofence fires 100–150 m
- *   out); the phone's follow-up reading or the visit brings the arrival.
- * - exited + outside: departure, after the settle window. Exited + inside: ignored; the visit
- *   completion brings the departure.
- * - initial reports take their state from the reading.
+ * - entered: definitely inside arrives; otherwise approaching (geofences fire 100–150 m out),
+ *   and a later reading or the visit brings the arrival;
+ * - exited: definitely outside starts the departure wait; otherwise it's ignored, and a later
+ *   reading or the visit completion settles it;
+ * - initial: inside only if definitely inside.
+ * The reading then counts for every other place too (`applyReading`).
  */
 export async function processRegionTransition(tx: Transaction, owner: string, rawEventId: string, payload: unknown) {
   const parsed = parseRegionTransition(payload);
@@ -100,52 +113,86 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
   const [place] = await tx.select().from(places).where(and(eq(places.id, parsed.placeId), eq(places.createdByUserId, owner),
     isNull(places.deletedAt))).limit(1);
   if (!place || parsed.revision !== geometryRevision(place)) return true;
+  if (await isRedelivery(tx, owner, rawEventId, parsed)) return true;
   const initial = parsed.initial || parsed.at < place.geometryChangedAt;
   const owned = parsed.fix ? await placesForOwner(tx, owner) : [];
-  const reading = parsed.fix ? classifyFix(parsed.fix, place, owned) : null;
+  const reading = parsed.fix ? classifyReading(parsed.fix, place, owned).state : "unknown";
   const change = { at: parsed.at, source: "region" as const, rawEventId, initial };
-  if (!reading || reading.state === "unknown") {
+  if (reading === "unknown") {
     await applyPresence(tx, owner, place, { ...change, transition: parsed.transition });
   } else if (initial) {
-    await applyPresence(tx, owner, place, { ...change, transition: reading.state === "inside" ? "arrived" : "departed" });
+    await applyPresence(tx, owner, place, { ...change, transition: reading === "inside" ? "arrived" : "departed" });
   } else if (parsed.transition === "arrived") {
-    if (reading.state === "inside") await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+    if (reading === "inside") await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
     else await markApproaching(tx, owner, place, parsed.at);
-  } else if (reading.state === "outside") {
+  } else if (reading === "outside") {
     await applyPresence(tx, owner, place, { ...change, transition: "departed" });
   }
-  if (reading?.state === "inside") await departOthers(tx, owner, place.id, parsed.fix!, owned, rawEventId);
+  if (parsed.fix && reading !== "unknown") await applyReading(tx, owner, parsed.fix, rawEventId, owned, place.id);
   return true;
 }
 
+/** `CLMonitor` re-delivers a condition's latest event (up to five times, and at each relaunch),
+ * sometimes once as `initial` and again as a transition. The first one received counts. */
+async function isRedelivery(tx: Transaction, owner: string, rawEventId: string,
+  parsed: NonNullable<ReturnType<typeof parseRegionTransition>>) {
+  const [earlier] = await tx.select({ id: rawEvents.id }).from(rawEvents).where(and(eq(rawEvents.createdByUserId, owner),
+    eq(rawEvents.eventType, REGION_TRANSITION_TYPE), eq(rawEvents.occurredAt, parsed.at), ne(rawEvents.id, rawEventId),
+    sql`${rawEvents.rawEnvelope}->'payload'->>'place_id' = ${parsed.placeId}`,
+    sql`${rawEvents.rawEnvelope}->'payload'->>'geometry_revision' = ${parsed.revision}`,
+    sql`(${rawEvents.recordedAt}, ${rawEvents.id}) < (select recorded_at, id from data_event where id = ${rawEventId})`)).limit(1);
+  return Boolean(earlier);
+}
+
 /**
- * A reading that places the owner at one place also shows they've left every other place it
- * puts them outside of. Geofence exits can lag: after walking from the Office to Home (117 m),
- * the Office exit came 30 minutes later. Each such place starts its usual departure wait at
- * the reading's time; for a place already outside, an approach ends.
- *
- * Only a reading confirmed inside another place counts: a lone indoor reading drifting outside
- * a place's radius would otherwise start a false departure that no geofence re-entry cancels.
+ * A precise reading from any source (a geofence wake, a follow-up, the fix when Bud opens, a
+ * significant-change point) as evidence about every place the owner is at or approaching:
+ * - approaching, and definitely inside: arrival at the reading's time;
+ * - inside with a departure pending, and definitely inside: a re-entry (cancels it, or
+ *   publishes the departure and a new arrival if it's past the settle window);
+ * - inside, and definitely outside or definitely inside another place: the departure wait
+ *   starts at the reading's time (geofence exits can lag by many minutes);
+ * - uncertain or unknown: no change.
+ * `except` is the place a region report already decided.
  */
-async function departOthers(tx: Transaction, owner: string, placeId: string, fix: FixReading, owned: Place[], rawEventId: string) {
-  const current = await tx.select({ placeId: presence.placeId }).from(presence).where(and(eq(presence.createdByUserId, owner),
+export async function applyReading(tx: Transaction, owner: string, fix: FixReading, rawEventId: string,
+  owned?: Place[], except?: string) {
+  if (fix.accuracyM > FIX_MAX_ACCURACY_M) return;
+  const current = await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner),
     sql`(${presence.state} = 'inside' or ${presence.approachingAt} is not null)`));
-  for (const { placeId: id } of current) {
-    const other = owned.find(candidate => candidate.id === id);
-    if (!other || id === placeId || fix.at < other.geometryChangedAt || classifyFix(fix, other, owned).state !== "outside") continue;
-    await applyPresence(tx, owner, other, { transition: "departed", at: fix.at, source: "region", rawEventId });
+  if (current.length === 0) return;
+  const all = owned ?? await placesForOwner(tx, owner);
+  const classes = new Map(all.map(place => [place.id, classifyReading(fix, place, all).state]));
+  const insideElsewhere = (id: string) => [...classes].some(([other, state]) => other !== id && state === "inside");
+  const change = { at: fix.at, source: "reading" as const, rawEventId };
+  for (const row of current) {
+    const place = all.find(candidate => candidate.id === row.placeId);
+    if (!place || place.id === except || fix.at < place.geometryChangedAt || fix.at < row.since) continue;
+    const state = classes.get(place.id);
+    if (row.state !== "inside") {
+      if (state === "inside" && row.approachingAt && fix.at >= row.approachingAt)
+        await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+    } else if (state === "inside") {
+      if (row.leavingAt && fix.at >= row.leavingAt) await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+    } else if (state === "outside" || (state === "uncertain" && insideElsewhere(place.id))) {
+      await applyPresence(tx, owner, place, { ...change, transition: "departed" });
+    }
   }
 }
 
-/** The precise reading behind a geofence change, for evidence: its distance from the place's
- * centre and its accuracy, rounded to metres. Null without a reading. */
+/** The precise reading behind a presence change, for evidence: its distance from the place's
+ * centre and its accuracy, rounded to metres. It's a region report's `fix`, or a fix or
+ * significant-change point itself. Null without a reading. */
 export async function presenceReading(tx: Pick<Database, "select">, owner: string, rawEventId: string | null,
   place: Pick<Place, "latitude" | "longitude">) {
   if (!rawEventId) return null;
   const [row] = await tx.select({ envelope: rawEvents.rawEnvelope }).from(rawEvents)
     .where(and(eq(rawEvents.id, rawEventId), eq(rawEvents.createdByUserId, owner))).limit(1);
   const payload = isRecord(row?.envelope) ? row.envelope.payload : null;
-  const fix = isRecord(payload) ? parseFix(payload.fix) : null;
+  const point = isRecord(payload) && isRecord(payload.coordinate) ? payload.coordinate : null;
+  const fix = !isRecord(payload) ? null : payload.fix !== undefined ? parseFix(payload.fix)
+    : point && typeof point.lat === "number" && typeof point.lon === "number" && typeof payload.horizontal_accuracy_m === "number"
+      ? { latitude: point.lat, longitude: point.lon, accuracyM: payload.horizontal_accuracy_m, at: new Date() } : null;
   return fix ? { distance_m: Math.round(distanceM(fix.latitude, fix.longitude, place.latitude, place.longitude)),
     accuracy_m: Math.round(fix.accuracyM) } : null;
 }
@@ -223,7 +270,7 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
   // A linked visit that turns out to have ended before this stay began was never part of it.
   if (inside && stale && visitId && row.visitId === visitId) return set({ visitId: null });
   if (!inside || stale) return;
-  if (change.source === "region") {
+  if (change.source !== "visit") {
     // A re-entry after this exit was already processed (reports out of order).
     if (row.lastEnteredAt && change.at < row.lastEnteredAt) {
       if (row.lastEnteredAt.getTime() - change.at.getTime() < DEPARTURE_SETTLE_MS) return;
@@ -273,7 +320,11 @@ export class PlacePresence {
       for (const row of rows) {
         await tx.update(presence).set({ state: "outside", since: row.leavingAt!, leavingAt: null, lastEnteredAt: null, visitId: null, updatedAt: sql`clock_timestamp()` })
           .where(and(eq(presence.createdByUserId, row.createdByUserId), eq(presence.placeId, row.placeId)));
-        await publishPresence(tx, row.createdByUserId, row.placeId, { transition: "departed", at: row.leavingAt!, source: "region",
+        // The exit that started the wait: a region report, or a reading (fix or point).
+        const [exit] = row.leavingEventId ? await tx.select({ type: rawEvents.eventType }).from(rawEvents)
+          .where(and(eq(rawEvents.id, row.leavingEventId), eq(rawEvents.createdByUserId, row.createdByUserId))).limit(1) : [];
+        await publishPresence(tx, row.createdByUserId, row.placeId, { transition: "departed", at: row.leavingAt!,
+          source: !exit || exit.type === REGION_TRANSITION_TYPE ? "region" : "reading",
           rawEventId: row.leavingEventId }, null);
       }
       return rows.length > 0;

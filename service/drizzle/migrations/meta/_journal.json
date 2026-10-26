@@ -414,6 +414,13 @@
       "when": 1792799214008,
       "tag": "0058_presence_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792910615524,
+      "tag": "0059_presence_reading_source",
+      "breakpoints": true
     }
   ]
 }

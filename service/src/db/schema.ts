@@ -1582,7 +1582,7 @@ export const placePresenceEventTable = pgTable("place_presence_event", {
   placeFk: foreignKey({ name: "place_presence_event_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
   visitFk: foreignKey({ name: "place_presence_event_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
   transitionCheck: check("place_presence_event_transition_check", sql`${t.transition} in ('arrived', 'departed')`),
-  sourceCheck: check("place_presence_event_source_check", sql`${t.source} in ('region', 'visit')`),
+  sourceCheck: check("place_presence_event_source_check", sql`${t.source} in ('region', 'visit', 'reading')`),
 }));
 
 // Exactly one subject: a contact revision (contact.added), a workout (workout.completed), a

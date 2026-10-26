@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { admissionText, localTime, timeAgo, timeZoneLine, when } from "./automation-trigger-text.js";
+import { admissionText, duration, localTime, timeAgo, timeZoneLine, when } from "./automation-trigger-text.js";
 
 test("trigger times read as people say them, in the phone's time zone", () => {
   const zone = "America/Los_Angeles";
@@ -17,6 +17,14 @@ test("trigger times read as people say them, in the phone's time zone", () => {
   assert.equal(timeAgo(new Date(now.getTime() - 3 * 86_400_000), now), null);
   assert.equal(when(new Date("2026-10-24T00:36:00Z"), zone, now), "5:36 PM (about 4 minutes ago)");
   assert.equal(timeZoneLine(zone), "Times are in America/Los_Angeles, the phone's time zone.");
+});
+
+test("durations read naturally", () => {
+  assert.equal(duration(20), "1 minute");
+  assert.equal(duration(25 * 60), "25 minutes");
+  assert.equal(duration(100 * 60), "about 2 hours");
+  assert.equal(duration(93_665), "about 26 hours", "not 1561 minutes (October 24)");
+  assert.equal(duration(3 * 86_400), "about 3 days");
 });
 
 test("the run's input puts the event first, the instruction next and bookkeeping last", () => {

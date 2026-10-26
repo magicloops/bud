@@ -3,7 +3,7 @@ import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations, locationVisitNameTable as visitNames } from "../db/schema.js";
 import { parseLocationPayload, parseVisitName, projectVisit, LOCATION_TYPES, VISIT_NAME_TYPE } from "./location.js";
-import { processRegionTransition, REGION_TRANSITION_TYPE } from "./place-presence.js";
+import { applyReading, POINT_MAX_ACCURACY_M, processRegionTransition, REGION_TRANSITION_TYPE } from "./place-presence.js";
 import { HEALTH_TYPES, processHealthEvent } from "./health.js";
 import { canonicalJson } from "./contracts.js";
 import { parseContactPayload, verifyContactScan, type ContactManifest, type ContactRecord } from "./contacts.js";
@@ -60,9 +60,20 @@ export class ContactProcessor {
       if (event.schemaVersion === 1 && LOCATION_TYPES.includes(event.eventType)) {
         const location = parseLocationPayload(event.eventType, event.rawEnvelope.payload);
         if (location) {
-          await tx.insert(locations).values({ id: ulid(), rawEventId: event.id, epochId: event.epochId,
-            ...location, occurredAt: event.occurredAt, receivedAt: event.receivedAt, createdByUserId: candidate.owner }).onConflictDoNothing();
-          if (location.kind === "visit") await projectVisit(tx, candidate.owner, event.id, event.receivedAt, location);
+          // iOS replays its cached location when monitoring starts (every launch): the same point
+          // again is not a new observation.
+          const replay = location.kind === "significant_change" && (await tx.select({ id: locations.id }).from(locations).where(and(
+            eq(locations.createdByUserId, candidate.owner), eq(locations.kind, "significant_change"), eq(locations.occurredAt, event.occurredAt),
+            eq(locations.latitude, location.latitude), eq(locations.longitude, location.longitude))).limit(1)).length > 0;
+          if (!replay) {
+            await tx.insert(locations).values({ id: ulid(), rawEventId: event.id, epochId: event.epochId,
+              ...location, occurredAt: event.occurredAt, receivedAt: event.receivedAt, createdByUserId: candidate.owner }).onConflictDoNothing();
+            if (location.kind === "visit") await projectVisit(tx, candidate.owner, event.id, event.receivedAt, location);
+            // Fixes and accurate points are presence evidence too.
+            else if (location.kind === "fix" || location.horizontalAccuracyM <= POINT_MAX_ACCURACY_M)
+              await applyReading(tx, candidate.owner, { latitude: location.latitude, longitude: location.longitude,
+                accuracyM: location.horizontalAccuracyM, at: event.occurredAt }, event.id);
+          }
         }
         await tx.update(jobs).set({ status: location ? "processed" : "invalid", errorCode: location ? null : "invalid_location", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
         return true;

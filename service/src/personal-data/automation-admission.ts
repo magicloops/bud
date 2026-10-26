@@ -15,7 +15,7 @@ import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, p
   type AutomationDefinition } from "./automation-contracts.js";
 import { describeLocalWindow } from "./automation-schedule.js";
 import { presenceReading } from "./place-presence.js";
-import { admissionText, localTime, phoneTimeZone, timeZoneLine, when } from "./automation-trigger-text.js";
+import { admissionText, duration, localTime, phoneTimeZone, timeZoneLine, when } from "./automation-trigger-text.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Delivery = typeof deliveries.$inferSelect;
@@ -142,19 +142,21 @@ export class AutomationAdmission {
       if (!place) return "place_unavailable";
       const [visit] = row.change.visitId ? await tx.select().from(locationVisits)
         .where(and(eq(locationVisits.id, row.change.visitId), eq(locationVisits.createdByUserId, owner))).limit(1) : [];
-      const minutes = visit?.arrivalAt && visit.departureAt
-        ? Math.round((visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 60_000) : null;
+      const stayed = visit?.arrivalAt && visit.departureAt ? duration((visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 1000) : null;
       const zone = await phoneTimeZone(tx, owner, row.event.publishedAt);
       const at = when(row.change.occurredAt, zone, now);
       const event = definition.event_type === "place.arrived"
         ? `Arrived at ${place.name} at ${at}.`
-        : `Left ${place.name} at ${at}${minutes !== null ? `, after ${minutes} minutes there` : ""}.`;
-      const reading = row.change.source === "region" ? await presenceReading(tx, owner, row.change.rawEventId, place) : null;
+        : `Left ${place.name} at ${at}${stayed ? `, after ${stayed} there` : ""}.`;
+      const reading = row.change.source === "visit" ? null : await presenceReading(tx, owner, row.change.rawEventId, place);
+      const measured = reading ? `a precise reading ${reading.distance_m} m from its centre (±${reading.accuracy_m} m)` : null;
       const how = row.change.source === "visit"
         ? "Detected from an iOS visit report, which arrives several minutes after the fact, then uploads."
-        : reading
-          ? `Detected by the phone's geofence for this place and confirmed by a precise reading ${reading.distance_m} m from its centre (±${reading.accuracy_m} m).`
-          : "Detected by the phone's geofence for this place, usually within a minute or two.";
+        : row.change.source === "reading"
+          ? `Detected from ${measured ?? "a precise reading from the phone"}.`
+          : measured
+            ? `Detected by the phone's geofence for this place and confirmed by ${measured}.`
+            : "Detected by the phone's geofence for this place, usually within a minute or two.";
       return {
         event,
         reference: [timeZoneLine(zone), how, ...(visit ? [`Visit ID: ${visit.id}.`] : []), "Places are the user's saved labels."],
@@ -173,11 +175,11 @@ export class AutomationAdmission {
       if (!withinHistory(row.visit.startedAt, row.now, Math.min(grantHistoryDays, definition.data_access.history_days)))
         return "history_outside_grant";
       const where = (row.name?.address as { short?: string } | null)?.short ?? "a place";
-      const minutes = row.visit.arrivalAt && row.visit.departureAt
-        ? Math.round((row.visit.departureAt.getTime() - row.visit.arrivalAt.getTime()) / 60_000) : null;
+      const stayed = row.visit.arrivalAt && row.visit.departureAt
+        ? duration((row.visit.departureAt.getTime() - row.visit.arrivalAt.getTime()) / 1000) : null;
       const zone = await phoneTimeZone(tx, owner, row.publishedAt);
       return {
-        event: `A visit at ${where} ended at ${when(row.visit.departureAt!, zone, now)}${minutes !== null ? `, after ${minutes} minutes` : ""}.`,
+        event: `A visit at ${where} ended at ${when(row.visit.departureAt!, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
         reference: [timeZoneLine(zone), `Visit ID: ${row.visit.id}.`,
           "iOS reports visits several minutes after they happen, then uploads, so this may arrive late.",
           "Places are the user's saved labels; a likely place from Apple Maps is not verified."],
@@ -201,7 +203,7 @@ export class AutomationAdmission {
         return "history_outside_grant";
       const zone = await phoneTimeZone(tx, owner, workout.publishedAt);
       return {
-        event: `Finished a ${Math.round(workout.durationS / 60)}-minute ${workout.activityType.replaceAll("_", " ")} workout at ${when(workout.endAt, zone, now)}.`,
+        event: `Finished a ${Math.max(1, Math.round(workout.durationS / 60))}-minute ${workout.activityType.replaceAll("_", " ")} workout at ${when(workout.endAt, zone, now)}.`,
         reference: [timeZoneLine(zone), `It started at ${localTime(workout.startAt, zone, now)}.`, `Workout ID: ${workout.id}.`,
           "HealthKit delivers new workouts about hourly, so this may arrive after the workout ended.",
           "Don't repeat completed actions if the same workout is delivered again."],

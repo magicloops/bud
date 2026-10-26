@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0058` currently)
+- Snapshot files for each migration (`0000` through `0059` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -564,3 +564,11 @@ Phase 7.1. Generated, additive: two nullable `place_presence` columns.
   departure keeps its raw event as evidence.
 
 Applied locally as exact SQL.
+
+### `0059_presence_reading_source.sql`
+
+Phase 7.2. Generated: `place_presence_event.source` also allows `reading`, for
+arrivals and departures decided by a precise reading (a fix, a follow-up or a
+significant-change point) rather than a geofence report or a visit. It's a
+widened check, so existing rows pass. Applied locally as exact SQL.
+

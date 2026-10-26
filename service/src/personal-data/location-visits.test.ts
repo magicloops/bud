@@ -26,7 +26,7 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   await admin.query(`create schema "${namespace}"`);
   // Isolated copies keep fixture jobs away from the running development processor.
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
-    "location_observation", "location_visit", "location_visit_name", "place", "data_domain_event"])
+    "location_observation", "location_visit", "location_visit_name", "place", "place_presence", "place_presence_event", "data_domain_event"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   const repository = new PostgresIngestRepository(db), processor = new ContactProcessor(db), queries = new LocationQueries(db);
   const upload = async (owner: string, values: Array<[string, Date, object]>) => {
