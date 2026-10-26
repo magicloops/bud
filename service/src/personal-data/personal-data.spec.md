@@ -558,9 +558,15 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     `location.fix.v1`, and significant-change points at 65 m or better.
     - Approaching and definitely inside: an arrival (source `reading`).
     - Inside with a departure pending, and definitely inside: a re-entry.
-    - Inside, and definitely outside (or uncertain while definitely inside
-      another place): the departure wait starts at the reading's time.
-      Geofence exits can lag by many minutes.
+    - Inside, and definitely inside another place: departed at once (with a
+      pending exit's earlier time, if any), since the owner is confirmed
+      elsewhere. Geofence exits can lag by many minutes.
+    - Inside, and definitely outside: the departure wait starts at the
+      reading's time.
+    - Approaching, and definitely outside while definitely inside another
+      place: the approach ends.
+    - Departures are applied before arrivals. A region exit applies to its own
+      place first, so the exit time is kept.
   - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
     settled departure has its evidence and source.
   - **Replayed significant-change points** (same time and coordinate) aren't
@@ -571,7 +577,9 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   or `open`.
   - The upload handler first drains that owner's pending jobs inline, for up to
     2 s, so presence reflects the batch.
-  - **After an entry:** open while the place is approaching.
+  - **After an entry:** open while the place is approaching, or while its
+    geofence report hasn't been processed yet. The phone's first reading can
+    arrive before the report, which waits for its wake reading.
   - **After an exit:** open while it's inside with no departure wait.
   - Unknown places are settled. Without the inline processor (injected route
     tests), it's omitted.

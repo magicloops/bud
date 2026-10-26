@@ -24,6 +24,9 @@ export type PresenceChange = {
   visitDepartureAt?: Date | null;
   /** The state a geofence reports when it's first added: recorded, never published. */
   initial?: boolean;
+  /** A departure already confirmed (the owner is definitely at another place): published at
+   * once, without the settle window that guards against geofence flapping. */
+  confirmed?: boolean;
 };
 
 /** A reading coarser than this can't confirm or reject a geofence report. */
@@ -118,6 +121,10 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
   const owned = parsed.fix ? await placesForOwner(tx, owner) : [];
   const reading = parsed.fix ? classifyReading(parsed.fix, place, owned).state : "unknown";
   const change = { at: parsed.at, source: "region" as const, rawEventId, initial };
+  // The reading counts for every other place too. For an entry they go first, so their departures
+  // come before this arrival; for an exit this place goes first, so its exit time is kept.
+  const others = async () => { if (parsed.fix && reading !== "unknown") await applyReading(tx, owner, parsed.fix, rawEventId, owned, place.id); };
+  if (parsed.transition === "arrived") await others();
   if (reading === "unknown") {
     await applyPresence(tx, owner, place, { ...change, transition: parsed.transition });
   } else if (initial) {
@@ -128,7 +135,7 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
   } else if (reading === "outside") {
     await applyPresence(tx, owner, place, { ...change, transition: "departed" });
   }
-  if (parsed.fix && reading !== "unknown") await applyReading(tx, owner, parsed.fix, rawEventId, owned, place.id);
+  if (parsed.transition === "departed") await others();
   return true;
 }
 
@@ -150,9 +157,13 @@ async function isRedelivery(tx: Transaction, owner: string, rawEventId: string,
  * - approaching, and definitely inside: arrival at the reading's time;
  * - inside with a departure pending, and definitely inside: a re-entry (cancels it, or
  *   publishes the departure and a new arrival if it's past the settle window);
- * - inside, and definitely outside or definitely inside another place: the departure wait
- *   starts at the reading's time (geofence exits can lag by many minutes);
+ * - inside, and definitely inside another place: departed at the reading's time, at once (the
+ *   owner is confirmed elsewhere; geofence exits can lag by many minutes);
+ * - inside, and definitely outside: the departure wait starts at the reading's time;
+ * - approaching, and definitely outside while definitely inside another place: the approach
+ *   ends (the geofence fired on the way to the other place);
  * - uncertain or unknown: no change.
+ * Departures are applied before arrivals, so "left the Office" comes before "arrived home".
  * `except` is the place a region report already decided.
  */
 export async function applyReading(tx: Transaction, owner: string, fix: FixReading, rawEventId: string,
@@ -165,19 +176,36 @@ export async function applyReading(tx: Transaction, owner: string, fix: FixReadi
   const classes = new Map(all.map(place => [place.id, classifyReading(fix, place, all).state]));
   const insideElsewhere = (id: string) => [...classes].some(([other, state]) => other !== id && state === "inside");
   const change = { at: fix.at, source: "reading" as const, rawEventId };
-  for (const row of current) {
+  const ordered = [...current].sort((a, b) => (a.state === "inside" ? 0 : 1) - (b.state === "inside" ? 0 : 1));
+  for (const row of ordered) {
     const place = all.find(candidate => candidate.id === row.placeId);
     if (!place || place.id === except || fix.at < place.geometryChangedAt || fix.at < row.since) continue;
     const state = classes.get(place.id);
+    const elsewhere = insideElsewhere(place.id);
     if (row.state !== "inside") {
-      if (state === "inside" && row.approachingAt && fix.at >= row.approachingAt)
-        await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+      if (!row.approachingAt || fix.at < row.approachingAt) continue;
+      if (state === "inside") await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+      else if (state === "outside" && elsewhere) await endApproach(tx, owner, place.id);
     } else if (state === "inside") {
       if (row.leavingAt && fix.at >= row.leavingAt) await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
-    } else if (state === "outside" || (state === "uncertain" && insideElsewhere(place.id))) {
+    } else if (elsewhere && state !== "unknown") {
+      await applyPresence(tx, owner, place, { ...change, transition: "departed", confirmed: true });
+    } else if (state === "outside") {
       await applyPresence(tx, owner, place, { ...change, transition: "departed" });
     }
   }
+}
+
+/** The source of the exit that started a departure wait: a region report, or a reading. */
+async function exitSource(tx: Transaction, owner: string, leavingEventId: string | null): Promise<"region" | "reading"> {
+  const [exit] = leavingEventId ? await tx.select({ type: rawEvents.eventType }).from(rawEvents)
+    .where(and(eq(rawEvents.id, leavingEventId), eq(rawEvents.createdByUserId, owner))).limit(1) : [];
+  return !exit || exit.type === REGION_TRANSITION_TYPE ? "region" : "reading";
+}
+
+async function endApproach(tx: Transaction, owner: string, placeId: string) {
+  await tx.update(presence).set({ approachingAt: null, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, placeId)));
 }
 
 /** The precise reading behind a presence change, for evidence: its distance from the place's
@@ -270,7 +298,7 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
   // A linked visit that turns out to have ended before this stay began was never part of it.
   if (inside && stale && visitId && row.visitId === visitId) return set({ visitId: null });
   if (!inside || stale) return;
-  if (change.source !== "visit") {
+  if (change.source !== "visit" && !change.confirmed) {
     // A re-entry after this exit was already processed (reports out of order).
     if (row.lastEnteredAt && change.at < row.lastEnteredAt) {
       if (row.lastEnteredAt.getTime() - change.at.getTime() < DEPARTURE_SETTLE_MS) return;
@@ -280,10 +308,17 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
     }
     return row.leavingAt ? undefined : set({ leavingAt: change.at, leavingEventId: change.rawEventId ?? null });
   }
-  // A completed visit confirming a pending geofence exit: the person left at the earlier exit.
-  const departedAt = row.leavingAt && row.leavingAt < change.at ? row.leavingAt : change.at;
-  await set({ state: "outside", since: departedAt, leavingAt: null, lastEnteredAt: null, visitId: null });
-  return publish("departed", departedAt, visitId);
+  // A completed visit, or a reading confirming the owner at another place: published at once. If
+  // a geofence exit or reading was already waiting, the person left at that earlier time, and that
+  // exit is the evidence.
+  if (row.leavingAt && row.leavingAt < change.at) {
+    const leftAt = row.leavingAt;
+    await set({ state: "outside", since: leftAt, leavingAt: null, lastEnteredAt: null, visitId: null });
+    return publishPresence(tx, owner, place.id, { ...change, transition: "departed", at: leftAt,
+      source: await exitSource(tx, owner, row.leavingEventId), rawEventId: row.leavingEventId }, visitId);
+  }
+  await set({ state: "outside", since: change.at, leavingAt: null, lastEnteredAt: null, visitId: null });
+  return publish("departed", change.at, visitId);
 }
 
 async function publishPresence(tx: Transaction, owner: string, placeId: string, change: PresenceChange, visitId: string | null) {
@@ -320,11 +355,8 @@ export class PlacePresence {
       for (const row of rows) {
         await tx.update(presence).set({ state: "outside", since: row.leavingAt!, leavingAt: null, lastEnteredAt: null, visitId: null, updatedAt: sql`clock_timestamp()` })
           .where(and(eq(presence.createdByUserId, row.createdByUserId), eq(presence.placeId, row.placeId)));
-        // The exit that started the wait: a region report, or a reading (fix or point).
-        const [exit] = row.leavingEventId ? await tx.select({ type: rawEvents.eventType }).from(rawEvents)
-          .where(and(eq(rawEvents.id, row.leavingEventId), eq(rawEvents.createdByUserId, row.createdByUserId))).limit(1) : [];
         await publishPresence(tx, row.createdByUserId, row.placeId, { transition: "departed", at: row.leavingAt!,
-          source: !exit || exit.type === REGION_TRANSITION_TYPE ? "region" : "reading",
+          source: await exitSource(tx, row.createdByUserId, row.leavingEventId),
           rawEventId: row.leavingEventId }, null);
       }
       return rows.length > 0;

@@ -227,3 +227,18 @@ older service runs every follow-up to its window.
 - **Re-deliveries are sent bare** (no reading, no follow-up), and the service
   ignores them.
 
+**Fixes from the October 25 walks:**
+- **A reading before its report:** a follow-up's first reading reached the
+  service 3 s before its geofence report (the report waits for its wake
+  reading), so the follow-up was "settled" after one reading. An entry
+  follow-up now stays open while approaching or until its report has been
+  processed.
+- **Approaches ending:** Home was confirmed at 2:28 PM, but the Office stayed
+  approaching. A reading definitely inside one place now ends the approach for
+  any place it puts the owner definitely outside, and that follow-up settles.
+- **Confirmed departures publish at once:** "Left the office" came 3 minutes
+  late because a confirmed arrival elsewhere still waited the settle window.
+  It now publishes immediately, at a pending exit's earlier time if there is
+  one, with that exit as evidence. A lone outside reading or a geofence exit
+  still waits. Departures are applied before arrivals.
+

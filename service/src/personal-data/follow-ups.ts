@@ -1,11 +1,14 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
-import { placePresenceTable as presence, placeTable as places } from "../db/schema.js";
+import { dataEventTable as rawEvents, dataProcessingJobTable as jobs, placePresenceTable as presence,
+  placeTable as places } from "../db/schema.js";
 import { isRecord, type ValidEvent } from "./contracts.js";
 import { REGION_TRANSITION_TYPE } from "./place-presence.js";
 
 /** How long an upload waits for its location events to be processed before answering. */
 export const FOLLOW_UP_PROCESSING_MS = 2_000;
+/** A follow-up's readings come at most this long after the geofence report that started it. */
+const FOLLOW_UP_WINDOW_MS = 180_000;
 
 export type FollowUpDecision = "settled" | "open";
 
@@ -32,8 +35,10 @@ export function followUpRequests(events: ValidEvent[]) {
 
 /**
  * Whether each follow-up still needs readings, from presence after the batch was processed:
- * - after an entry, open while the place is approaching (a reading definitely inside will
- *   arrive it); settled once inside, or when nothing is pending;
+ * - after an entry, open while the place is approaching, or while its geofence report hasn't
+ *   been processed yet (the phone sends its first reading before the report, which waits for
+ *   its wake reading); settled once inside, or once the report is processed and nothing is
+ *   pending (walked past, or the approach ended because the owner is confirmed elsewhere);
  * - after an exit, open while the place is inside with no departure wait (a reading definitely
  *   outside will start one); settled once the wait has started or the place is outside.
  * Unknown or deleted places are settled. A walker who turns back after an exit stays open
@@ -47,12 +52,25 @@ export async function settleFollowUps(owner: string, requests: ReturnType<typeof
     inArray(places.id, ids), isNull(places.deletedAt)))).map(row => row.id));
   const rows = new Map((await database.select().from(presence).where(and(eq(presence.createdByUserId, owner),
     inArray(presence.placeId, ids)))).map(row => [row.placeId, row]));
-  return Object.fromEntries(ids.map(id => {
-    const row = rows.get(id);
-    if (!known.has(id) || !row) return [id, "settled"];
-    const open = requests.get(id)!.transition === "entered"
-      ? row.state !== "inside" && row.approachingAt !== null
-      : row.state === "inside" && row.leavingAt === null;
-    return [id, open ? "open" : "settled"];
-  }));
+  const decisions: Record<string, FollowUpDecision> = {};
+  for (const id of ids) {
+    const row = rows.get(id), request = requests.get(id)!;
+    if (!known.has(id)) decisions[id] = "settled";
+    else if (request.transition === "exited") decisions[id] = row?.state === "inside" && row.leavingAt === null ? "open" : "settled";
+    else if (row?.state === "inside") decisions[id] = "settled";
+    else if (row?.approachingAt) decisions[id] = "open";
+    else decisions[id] = await reportProcessed(database, owner, id, new Date(request.at)) ? "settled" : "open";
+  }
+  return decisions;
+}
+
+/** Whether a region report for the place from the follow-up's window around `at` (a reading's
+ * time can trail the crossing slightly) has been processed, so presence reflects it. */
+async function reportProcessed(database: Pick<Database, "select">, owner: string, placeId: string, at: Date) {
+  const [row] = await database.select({ id: rawEvents.id }).from(rawEvents)
+    .innerJoin(jobs, and(eq(jobs.eventId, rawEvents.id), eq(jobs.createdByUserId, owner)))
+    .where(and(eq(rawEvents.createdByUserId, owner), eq(rawEvents.eventType, REGION_TRANSITION_TYPE),
+      gte(rawEvents.occurredAt, new Date(at.getTime() - FOLLOW_UP_WINDOW_MS)), lte(rawEvents.occurredAt, new Date(at.getTime() + 30_000)),
+      sql`${rawEvents.rawEnvelope}->'payload'->>'place_id' = ${placeId}`, ne(jobs.status, "pending"))).limit(1);
+  return Boolean(row);
 }
