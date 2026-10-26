@@ -70,7 +70,8 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const upload = async (values: Array<[string, unknown]>) => {
     const context = { userId: owner, installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
     const lines = values.map(([type, payload]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
-      occurred_at: ago(0).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" }, payload }));
+      occurred_at: ago(0).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" },
+      context: { time_zone: "America/Los_Angeles" }, payload }));
     await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
     while (await processor.processNext()) { /* drain */ }
   };
@@ -271,7 +272,8 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const first = admitted.find(delivery => delivery.status === "admitted")!;
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, first.invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /Arrived at Home at .*\nDetected by the phone's geofence/);
+  assert.match(input.content, /^Arrived at Home at [^\n]+\.\n\nSay hi\.\n\n---\n/);
+  assert.match(input.content, /- Times are in America\/Los_Angeles, the phone's time zone\.\n- Detected by the phone's geofence/);
   const evidence = await db.transaction(tx => automationStartEvidence(tx, invocation));
   const json = JSON.parse(evidence!.slice(evidence!.indexOf("{")));
   assert.deepEqual([json.transition.source, json.place.name, json.visit], ["region", "Home", null]);

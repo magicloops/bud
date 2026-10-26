@@ -14,6 +14,12 @@ test('attribution uses the recorded name and revision without requiring current 
   } }), { label: 'Triggered by New contact', automationId: 'auto_old', revision: 2, invocationId: 'inv_old', eventId: 'evt_old' })
 })
 
+test('attribution names the automation from metadata; the message no longer starts with it', () => {
+  const content = 'Arrived at Home at 5:36 PM.\n\nSay hi.\n\n---\nFor reference.'
+  assert.equal(automationAttribution({ role: 'system', content, metadata: { origin: 'automation', automation_name: 'Arrive at Home' } })?.label,
+    'Triggered by Arrive at Home')
+})
+
 test('older or incomplete metadata has a neutral automation fallback', () => {
   assert.deepEqual(automationAttribution({ role: 'system', content: 'Existing contacts batch', metadata: { origin: 'automation', automation_revision: 'wrong' } }), {
     label: 'Triggered by automation', automationId: null, revision: null, invocationId: null, eventId: null,
