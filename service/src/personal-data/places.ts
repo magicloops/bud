@@ -3,7 +3,7 @@ import { ulid } from "ulid";
 import { z } from "zod";
 import { db, type Database } from "../db/client.js";
 import { placeTable as places, dataOwnerStateTable as owners, dataDomainEventTable as domains,
-  locationVisitTable as visits } from "../db/schema.js";
+  locationVisitTable as visits, placePresenceTable as presenceRows } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
 import { applyPresence, geometryRevision, resetPresence } from "./place-presence.js";
 
@@ -119,7 +119,12 @@ export async function publishVisitEvents(tx: Transaction, owner: string, visit: 
   if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
     at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
   if (transition.completed) {
-    for (const place of at) await applyPresence(tx, owner, place, { transition: "departed", at: visit.departureAt!,
+    // The completed report can move its coordinate (by ~70–80 m on device). Stays this visit
+    // confirmed end too, even where the revised coordinate no longer matches the place.
+    const linked = await tx.select({ placeId: presenceRows.placeId }).from(presenceRows).where(and(
+      eq(presenceRows.createdByUserId, owner), eq(presenceRows.visitId, visit.id), eq(presenceRows.state, "inside")));
+    const ending = [...at, ...owned.filter(place => !at.includes(place) && linked.some(row => row.placeId === place.id))];
+    for (const place of ending) await applyPresence(tx, owner, place, { transition: "departed", at: visit.departureAt!,
       source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
     const [sequence] = await tx.update(owners).set({ publicationSequence: sql`${owners.publicationSequence} + 1` })
       .where(eq(owners.createdByUserId, owner)).returning({ value: owners.publicationSequence });
