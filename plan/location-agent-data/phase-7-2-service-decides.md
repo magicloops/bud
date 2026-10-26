@@ -242,3 +242,36 @@ older service runs every follow-up to its window.
   one, with that exit as evidence. A lone outside reading or a geofence exit
   still waits. Departures are applied before arrivals.
 
+**Review fixes (October 26, 2026):**
+- **A late answer stopped a newer follow-up:** answers named only the place, so
+  an entry upload answered "settled" after an exit had started a new follow-up
+  stopped the exit's sampling. Geometry changes had the same problem.
+  - Each follow-up now has an ID. Its region report (`follow_up_id`), its
+    readings (`follow_up.id`) and the ACK (`follow_ups` keyed by ID) carry it.
+  - The phone applies an answer only to that follow-up.
+  - The service settles a follow-up for a superseded geometry.
+- **A delayed reading could publish a false departure:** inside evidence was
+  kept only when a departure was pending. A definitely-inside reading now
+  always raises `last_entered_at`, and every non-visit departure (including
+  confirmed ones) checks it.
+- **An entry settled before its own report arrived:** `reportProcessed` matched
+  any nearby report for the place. It now matches this follow-up's report by
+  `follow_up_id` and requires successful processing.
+- **The inline processing limit wasn't enforced:** the deadline was only
+  checked between jobs. The whole step now races a timer. Past 2 s, the ACK
+  goes without `follow_ups` and the work continues in the background.
+- **A completed visit could leave its place inside** (from Phase 7, after an
+  80 m coordinate change): completions now end the stays linked to the visit.
+- **Direct uploads released the background assertion before handling the ACK**
+  (bud-mobile #76): it now lasts through result handling and queueing the
+  next batch.
+- **Second review:**
+  - A geofence exit whose reading was still definitely inside only raised
+    `last_entered_at`, so a pending departure from an earlier outside reading
+    was still published. All inside evidence now goes through re-entry
+    handling (`insideEvidence`).
+  - An entry follow-up was settled while a departure from the previous stay
+    was still pending. It now stays open until that resolves.
+  - The 2 s limit bounds the ACK. Database work past it carries on in the
+    background, as the worker's would.
+

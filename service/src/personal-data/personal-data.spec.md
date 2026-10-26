@@ -567,19 +567,35 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
       place: the approach ends.
     - Departures are applied before arrivals. A region exit applies to its own
       place first, so the exit time is kept.
+    - **Inside evidence:** a definitely-inside reading while inside, from any
+      source (including a geofence exit whose reading is still inside), is a
+      re-entry when a departure is pending. Otherwise it still raises
+      `last_entered_at`. A delayed exit or reading from before it
+      can't then publish a departure; one more than 3 minutes older publishes
+      a departure and a return.
+  - **Visit completions** end the stays they confirmed (`visit_id`), even when
+    the completed report's revised coordinate no longer matches the place.
   - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
     settled departure has its evidence and source.
   - **Replayed significant-change points** (same time and coordinate) aren't
     stored again.
-- **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with follow-up
-  readings (`location.fix.v1` with `follow_up: { place_id, transition }`) or
-  non-initial region reports gets `follow_ups` in its ACK: per place, `settled`
-  or `open`.
-  - The upload handler first drains that owner's pending jobs inline, for up to
-    2 s, so presence reflects the batch.
-  - **After an entry:** open while the place is approaching, or while its
-    geofence report hasn't been processed yet. The phone's first reading can
-    arrive before the report, which waits for its wake reading.
+- **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
+  region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
+  `follow_up: { id, place_id, geometry_revision, transition }`) gets
+  `follow_ups` in its ACK: per follow-up ID, `settled` or `open`. Answers are
+  keyed by follow-up, not place, so a late answer for an earlier follow-up
+  never stops a newer one.
+  - The upload handler first drains that owner's pending jobs inline, so
+    presence reflects the batch. The whole step is bounded to 2 s: past that,
+    the ACK goes without `follow_ups` and the work continues in the background.
+  - **After an entry:** settled once inside with no departure pending; open
+    while a departure is pending (the previous stay doesn't confirm the
+    return), while the place is approaching, or until this
+    follow-up's own geofence report (matched by `follow_up_id`) has been
+    processed. The phone's first reading can arrive before the report, which
+    waits for its wake reading.
+  - **Superseded geometry:** a follow-up for another geometry revision is
+    settled.
   - **After an exit:** open while it's inside with no departure wait.
   - Unknown places are settled. Without the inline processor (injected route
     tests), it's omitted.

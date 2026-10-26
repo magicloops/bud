@@ -134,6 +134,10 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
     else await markApproaching(tx, owner, place, parsed.at);
   } else if (reading === "outside") {
     await applyPresence(tx, owner, place, { ...change, transition: "departed" });
+  } else if (reading === "inside" && parsed.fix) {
+    // An exit whose reading is still definitely inside: no departure, but the reading is inside
+    // evidence like any other (it cancels a pending departure).
+    await insideEvidence(tx, owner, place, parsed.fix.at, rawEventId);
   }
   if (parsed.transition === "departed") await others();
   return true;
@@ -187,7 +191,7 @@ export async function applyReading(tx: Transaction, owner: string, fix: FixReadi
       if (state === "inside") await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
       else if (state === "outside" && elsewhere) await endApproach(tx, owner, place.id);
     } else if (state === "inside") {
-      if (row.leavingAt && fix.at >= row.leavingAt) await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
+      await insideEvidence(tx, owner, place, fix.at, rawEventId, row);
     } else if (elsewhere && state !== "unknown") {
       await applyPresence(tx, owner, place, { ...change, transition: "departed", confirmed: true });
     } else if (state === "outside") {
@@ -201,6 +205,27 @@ async function exitSource(tx: Transaction, owner: string, leavingEventId: string
   const [exit] = leavingEventId ? await tx.select({ type: rawEvents.eventType }).from(rawEvents)
     .where(and(eq(rawEvents.id, leavingEventId), eq(rawEvents.createdByUserId, owner))).limit(1) : [];
   return !exit || exit.type === REGION_TRANSITION_TYPE ? "region" : "reading";
+}
+
+/** A definitely-inside reading while inside, from any source: after a pending departure, a
+ * re-entry (cancelled within the settle window, otherwise a departure and a return); otherwise
+ * newer inside evidence. */
+async function insideEvidence(tx: Transaction, owner: string, place: Pick<Place, "id">, at: Date, rawEventId: string,
+  known?: typeof presence.$inferSelect) {
+  const row = known ?? (await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner),
+    eq(presence.placeId, place.id))))[0];
+  if (row?.state !== "inside") return;
+  if (row.leavingAt && at >= row.leavingAt) await applyPresence(tx, owner, place, { transition: "arrived", at, source: "reading", rawEventId });
+  else await noteInside(tx, owner, place.id, at);
+}
+
+/** A definitely-inside reading that changes nothing still counts: `last_entered_at` keeps the
+ * newest evidence of being inside, so a delayed exit or outside reading from before it can't
+ * publish a departure. */
+async function noteInside(tx: Transaction, owner: string, placeId: string, at: Date) {
+  await tx.update(presence).set({ lastEnteredAt: sql`greatest(coalesce(${presence.lastEnteredAt}, ${at.toISOString()}::timestamptz), ${at.toISOString()}::timestamptz)`,
+    updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, placeId), eq(presence.state, "inside")));
 }
 
 async function endApproach(tx: Transaction, owner: string, placeId: string) {
@@ -298,15 +323,16 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
   // A linked visit that turns out to have ended before this stay began was never part of it.
   if (inside && stale && visitId && row.visitId === visitId) return set({ visitId: null });
   if (!inside || stale) return;
-  if (change.source !== "visit" && !change.confirmed) {
-    // A re-entry after this exit was already processed (reports out of order).
+  if (change.source !== "visit") {
+    // Newer evidence of being inside (a re-entry, or a definitely-inside reading) was already
+    // processed: this exit or reading arrived late (uploads and jobs aren't ordered).
     if (row.lastEnteredAt && change.at < row.lastEnteredAt) {
       if (row.lastEnteredAt.getTime() - change.at.getTime() < DEPARTURE_SETTLE_MS) return;
       await publish("departed", change.at, null);
       await set({ since: row.lastEnteredAt, leavingAt: null, visitId: null });
       return publish("arrived", row.lastEnteredAt, null);
     }
-    return row.leavingAt ? undefined : set({ leavingAt: change.at, leavingEventId: change.rawEventId ?? null });
+    if (!change.confirmed) return row.leavingAt ? undefined : set({ leavingAt: change.at, leavingEventId: change.rawEventId ?? null });
   }
   // A completed visit, or a reading confirming the owner at another place: published at once. If
   // a geofence exit or reading was already waiting, the person left at that earlier time, and that

@@ -40,6 +40,8 @@ type Dependencies = {
   processor?: Pick<ContactProcessor, "requeueSupportedLocations" | "processNext" | "publishNext">;
   /** Follow-up answers from processed presence; injectable for route tests. */
   settleFollowUps?: typeof settleFollowUps;
+  /** The inline processing budget (default `FOLLOW_UP_PROCESSING_MS`); injectable for tests. */
+  followUpProcessingMs?: number;
   authenticate?: (request: FastifyRequest) => Promise<{ userId: string } | null>;
 };
 
@@ -239,20 +241,33 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       uploads.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: INGEST_LIMITS.compressed_bytes }, (_request, body, done) => done(null, body));
       /**
        * For a batch with follow-up readings or region reports, processes this owner's pending
-       * jobs inline (at most `FOLLOW_UP_PROCESSING_MS`, as the background worker would) so the
-       * phone learns which follow-ups are settled from this response. Work left unprocessed
-       * stays queued; those places answer from current presence, usually "open".
+       * jobs inline, as the background worker would, so the phone learns which follow-ups are
+       * settled from this response. The whole step is bounded: if processing and answering
+       * don't finish within the budget (a long job, or a wait for the owner lock), the ACK goes
+       * without `follow_ups` (the phone keeps sampling) and the work carries on in the
+       * background. The batch is already persisted, so its ACK never waits beyond that.
        */
       const answerFollowUps = async (request: FastifyRequest, owner: string, events: ValidEvent[]) => {
         const requests = followUpRequests(events);
         if (requests.size === 0 || !inlineProcessor) return null;
-        const deadline = Date.now() + FOLLOW_UP_PROCESSING_MS;
-        try {
+        const budget = dependencies.followUpProcessingMs ?? FOLLOW_UP_PROCESSING_MS;
+        const deadline = Date.now() + budget;
+        const work = (async () => {
           while (Date.now() < deadline && await inlineProcessor.processNext(owner)) { /* drain this owner */ }
-          return await (dependencies.settleFollowUps ?? settleFollowUps)(owner, requests);
+          if (Date.now() >= deadline) return null;
+          return (dependencies.settleFollowUps ?? settleFollowUps)(owner, requests);
+        })();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), budget); });
+        try {
+          return await Promise.race([work, late]);
         } catch {
           request.log.warn("Inline follow-up processing failed; work stays queued");
           return null;
+        } finally {
+          clearTimeout(timer);
+          // A job still running past the budget finishes (or fails) on its own; never unhandled.
+          work.catch(() => request.log.warn("Inline follow-up processing failed; work stays queued"));
         }
       };
       const handler = async (request: FastifyRequest, reply: FastifyReply) => {
