@@ -556,15 +556,51 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - **`applyReading`:** every reading counts for each place the owner is
     inside or approaching. That means the wake reading for the other places,
     `location.fix.v1`, and significant-change points at 65 m or better.
-    - Approaching and definitely inside: an arrival (source `reading`).
+    - Definitely inside a place the owner isn't at: an arrival (source
+      `reading`), whether or not it was approaching. A delayed reading older
+      than a confirmation at a nearby place (within 1 km) doesn't arrive.
+      Approaches stay until the geofence exits, as a hint for agents.
     - Inside with a departure pending, and definitely inside: a re-entry.
-    - Inside, and definitely outside (or uncertain while definitely inside
-      another place): the departure wait starts at the reading's time.
-      Geofence exits can lag by many minutes.
+    - Inside, and definitely inside another place: departed at once (with a
+      pending exit's earlier time, if any), since the owner is confirmed
+      elsewhere. Geofence exits can lag by many minutes.
+    - Inside, and definitely outside: the departure wait starts at the
+      reading's time.
+    - Departures are applied before arrivals. A region exit applies to its own
+      place first, so the exit time is kept.
+    - **Inside evidence:** a definitely-inside reading while inside, from any
+      source (including a geofence exit whose reading is still inside), is a
+      re-entry when a departure is pending. Otherwise it still raises
+      `last_entered_at`. A delayed exit or reading from before it
+      can't then publish a departure; one more than 3 minutes older publishes
+      a departure and a return.
+  - **Visit completions** end the stays they confirmed (`visit_id`), even when
+    the completed report's revised coordinate no longer matches the place.
   - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
     settled departure has its evidence and source.
   - **Replayed significant-change points** (same time and coordinate) aren't
     stored again.
+- **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
+  region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
+  `follow_up: { id, place_id, geometry_revision, transition }`) gets
+  `follow_ups` in its ACK: per follow-up ID, `settled` or `open`. Answers are
+  keyed by follow-up, not place, so a late answer for an earlier follow-up
+  never stops a newer one.
+  - The upload handler first drains that owner's pending jobs inline, so
+    presence reflects the batch. The whole step is bounded to 2 s: past that,
+    the ACK goes without `follow_ups` and the work continues in the background.
+  - **After an entry:** settled once inside with no departure pending, or once
+    the owner is confirmed at another place within 1 km since the report.
+    Open while a departure is pending (the previous stay doesn't confirm the
+    return), while the place is approaching, or until this
+    follow-up's own geofence report (matched by `follow_up_id`) has been
+    processed. The phone's first reading can arrive before the report, which
+    waits for its wake reading.
+  - **Superseded geometry:** a follow-up for another geometry revision is
+    settled.
+  - **After an exit:** open while it's inside with no departure wait.
+  - Unknown places are settled. Without the inline processor (injected route
+    tests), it's omitted.
 - **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
   and readings) is stored raw and not processed.
 - **`visit.ended`** stays visit-based. The matcher, admission (text says how

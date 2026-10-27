@@ -94,7 +94,7 @@ to save GPS.
   device).
   - Every 10 s, the most accurate reading since the last one is committed as
     `location.fix.v1`, with `reason: follow_up` and
-    `follow_up: { place_id, geometry_revision }`, and uploaded straight away
+    `follow_up: { place_id, geometry_revision, transition }`, and uploaded straight away
     (the direct path).
   - Readings coarser than 65 m are skipped.
 - **Settling, in the upload response:** the batch ACK gains
@@ -184,4 +184,117 @@ older service runs every follow-up to its window.
 - **7.1 phones** still send confirming region entries from their own looser
   check. Those now arrive only when definitely inside, and otherwise the place
   stays approaching until a fix, a point or the visit.
+
+**Step 2 (October 24, 2026), on `feat/follow-up-settling` and bud-mobile
+`feature/follow-up-settling`:**
+- **Service:**
+  - `followUpRequests` reads the places a batch asks about: non-initial
+    region reports, and `location.fix.v1` with `follow_up`.
+  - `settleFollowUps` answers from presence:
+    - entry: open while approaching;
+    - exit: open while inside with no departure wait;
+    - unknown places: settled.
+  - The upload handler drains the owner's jobs inline for up to 2 s, then
+    adds `follow_ups` to the ACK.
+- **Shared fixture:** `wire-contract-v1.json` gains a `follow_ups` ACK case,
+  with the hash updated in both repos.
+- **iOS:**
+  - `UploadResponse.followUps` is optional and tolerant: a malformed answer
+    never fails the ACK.
+  - It's carried on `UploadResult`, and `SyncEngine.setFollowUpHandler`
+    receives it after an acknowledged upload. Nothing uses it until step 3.
+- **Follow-up reading payload:** `follow_up` carries `transition` (`entered`
+  or `exited`) as well as `place_id`, so the service knows which question
+  each follow-up is asking.
+
+**Step 3 (October 25, 2026), on bud-mobile `feature/follow-up-phone`:**
+- **Follow-ups start on every non-initial geofence report,** at once (before
+  the 8 s wake reading), in the Device & Debug mode.
+- **Readings:** the most accurate one at 65 m or better goes as
+  `location.fix.v1` (`reason: follow_up`,
+  `follow_up { place_id, geometry_revision, transition }`). The first goes at
+  once, then at most one every 10 s, with a scheduled flush for a reading held
+  back while standing still.
+- **Stopping:** on a `settled` answer, the same geofence firing again, or the
+  window.
+- **Diagnostics:** `location.follow_up.v1` reasons are `settled`, `geofence`
+  and `timeout`. Instead of a separate `offline` reason, it records `answers`
+  (none means the service wasn't reached) as well as `readings` and `sent`.
+- **Removed from the phone:**
+  - `MonitoredPlace.contains`;
+  - the confirming region entry;
+  - the significant-change point filter (`SignificantPoints`).
+- **Re-deliveries are sent bare** (no reading, no follow-up), and the service
+  ignores them.
+
+**Fixes from the October 25 walks:**
+- **A reading before its report:** a follow-up's first reading reached the
+  service 3 s before its geofence report (the report waits for its wake
+  reading), so the follow-up was "settled" after one reading. An entry
+  follow-up now stays open while approaching or until its report has been
+  processed.
+- **Approaches ending:** Home was confirmed at 2:28 PM, but the Office stayed
+  approaching. A reading definitely inside one place now ends the approach for
+  any place it puts the owner definitely outside, and that follow-up settles.
+- **Confirmed departures publish at once:** "Left the office" came 3 minutes
+  late because a confirmed arrival elsewhere still waited the settle window.
+  It now publishes immediately, at a pending exit's earlier time if there is
+  one, with that exit as evidence. A lone outside reading or a geofence exit
+  still waits. Departures are applied before arrivals.
+
+**Review fixes (October 26, 2026):**
+- **A late answer stopped a newer follow-up:** answers named only the place, so
+  an entry upload answered "settled" after an exit had started a new follow-up
+  stopped the exit's sampling. Geometry changes had the same problem.
+  - Each follow-up now has an ID. Its region report (`follow_up_id`), its
+    readings (`follow_up.id`) and the ACK (`follow_ups` keyed by ID) carry it.
+  - The phone applies an answer only to that follow-up.
+  - The service settles a follow-up for a superseded geometry.
+- **A delayed reading could publish a false departure:** inside evidence was
+  kept only when a departure was pending. A definitely-inside reading now
+  always raises `last_entered_at`, and every non-visit departure (including
+  confirmed ones) checks it.
+- **An entry settled before its own report arrived:** `reportProcessed` matched
+  any nearby report for the place. It now matches this follow-up's report by
+  `follow_up_id` and requires successful processing.
+- **The inline processing limit wasn't enforced:** the deadline was only
+  checked between jobs. The whole step now races a timer. Past 2 s, the ACK
+  goes without `follow_ups` and the work continues in the background.
+- **A completed visit could leave its place inside** (from Phase 7, after an
+  80 m coordinate change): completions now end the stays linked to the visit.
+- **Direct uploads released the background assertion before handling the ACK**
+  (bud-mobile #76): it now lasts through result handling and queueing the
+  next batch.
+- **Second review:**
+  - A geofence exit whose reading was still definitely inside only raised
+    `last_entered_at`, so a pending departure from an earlier outside reading
+    was still published. All inside evidence now goes through re-entry
+    handling (`insideEvidence`).
+  - An entry follow-up was settled while a departure from the previous stay
+    was still pending. It now stays open until that resolves.
+  - The 2 s limit bounds the ACK. Database work past it carries on in the
+    background, as the worker's would.
+
+**Fixes from the October 27 walk:**
+- **A missed Office arrival:** walking back past the house to the Office, the
+  Office geofence fired while a reading still had the walker definitely inside
+  the house, and the October 25 rule ended the Office approach. Readings 22 m,
+  15 m and (on opening Bud) 6 m from the Office then had nothing to confirm.
+  - A definitely-inside reading now arrives whether or not the place was
+    approaching. "Definitely inside" already requires the whole error circle
+    within the radius.
+  - Approaches stay until the geofence exits, as a hint.
+  - An entry follow-up settles once the owner is confirmed at another place
+    within 1 km since its report (arrived there, or a newer definitely-inside
+    reading).
+  - A delayed reading doesn't arrive a place if the owner has been confirmed at
+    a nearby place since.
+  - Initial reports' readings don't apply to other places, so installing
+    geofences never publishes.
+- **A held-back reading waited out a suspension:** the deciding 3:30 PM
+  reading (33 m, ±8) was held by the 10 s limit and sent 1¾ minutes later,
+  when Bud next woke.
+  - The limit is now 5 s.
+  - A held-back reading is sent when the follow-up's background assertion is
+    about to expire.
 
