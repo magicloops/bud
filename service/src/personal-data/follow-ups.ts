@@ -1,9 +1,10 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
 import { dataEventTable as rawEvents, dataProcessingJobTable as jobs, placePresenceTable as presence,
   placeTable as places } from "../db/schema.js";
 import { isRecord, type ValidEvent } from "./contracts.js";
-import { geometryRevision, REGION_TRANSITION_TYPE } from "./place-presence.js";
+import { geometryRevision, NEARBY_PLACE_M, REGION_TRANSITION_TYPE } from "./place-presence.js";
+import { distanceM } from "./places.js";
 
 /** How long an upload waits for its location events to be processed before answering. */
 export const FOLLOW_UP_PROCESSING_MS = 2_000;
@@ -46,37 +47,48 @@ export function followUpRequests(events: ValidEvent[]) {
  * - after an exit: open while the place is inside with no departure wait (a reading definitely
  *   outside will start one); settled once the wait has started or the place is outside;
  * - after an entry: settled once inside with no departure pending (a pending one belongs to the
- *   previous stay, so the return isn't confirmed yet); open while approaching; otherwise open until this
- *   follow-up's own geofence report has been processed (its first reading can arrive before
- *   the report, which waits for its wake reading), then settled (walked past, or the approach
- *   ended because the owner is confirmed elsewhere).
+ *   previous stay, so the return isn't confirmed yet), or once the owner is confirmed at another
+ *   place within `NEARBY_PLACE_M` since this follow-up's report (arrived there, or a definitely-inside
+ *   reading there: the geofence fired on the way, or overlaps); otherwise open while
+ *   approaching, or until the report has been processed (its first reading can arrive before
+ *   the report, which waits for its wake reading), then settled (walked past).
  * A walker who turns back after an exit stays open until the phone's window ends.
  */
 export async function settleFollowUps(owner: string, requests: Map<string, FollowUpRequest>,
   database: Pick<Database, "select"> = db): Promise<Record<string, FollowUpDecision>> {
   if (requests.size === 0) return {};
-  const placeIds = [...new Set([...requests.values()].map(request => request.placeId))];
-  const current = new Map((await database.select().from(places).where(and(eq(places.createdByUserId, owner),
-    inArray(places.id, placeIds), isNull(places.deletedAt)))).map(place => [place.id, geometryRevision(place)]));
-  const rows = new Map((await database.select().from(presence).where(and(eq(presence.createdByUserId, owner),
-    inArray(presence.placeId, placeIds)))).map(row => [row.placeId, row]));
+  const owned = new Map((await database.select().from(places).where(and(eq(places.createdByUserId, owner),
+    isNull(places.deletedAt)))).map(place => [place.id, place]));
+  const current = new Map([...owned.values()].map(place => [place.id, geometryRevision(place)]));
+  const near = (a: string, b: string) => {
+    const one = owned.get(a), two = owned.get(b);
+    return Boolean(one && two && distanceM(one.latitude, one.longitude, two.latitude, two.longitude) <= NEARBY_PLACE_M);
+  };
+  const rows = new Map((await database.select().from(presence).where(eq(presence.createdByUserId, owner)))
+    .map(row => [row.placeId, row]));
   const decisions: Record<string, FollowUpDecision> = {};
   for (const [id, request] of requests) {
     const row = rows.get(request.placeId);
     if (current.get(request.placeId) !== request.revision) decisions[id] = "settled";
     else if (request.transition === "exited") decisions[id] = row?.state === "inside" && row.leavingAt === null ? "open" : "settled";
     else if (row?.state === "inside") decisions[id] = row.leavingAt === null ? "settled" : "open";
-    else if (row?.approachingAt) decisions[id] = "open";
-    else decisions[id] = await reportProcessed(database, owner, id) ? "settled" : "open";
+    else {
+      const reportAt = await processedReportAt(database, owner, id);
+      const arrivedElsewhere = reportAt !== null && [...rows.values()].some(other => other.placeId !== request.placeId
+        && near(other.placeId, request.placeId) && other.state === "inside" && other.leavingAt === null
+        && Math.max(other.since.getTime(), other.lastEnteredAt?.getTime() ?? 0) >= reportAt.getTime());
+      decisions[id] = arrivedElsewhere || (reportAt !== null && !row?.approachingAt) ? "settled" : "open";
+    }
   }
   return decisions;
 }
 
-/** Whether the geofence report that started this follow-up has been processed successfully. */
-async function reportProcessed(database: Pick<Database, "select">, owner: string, followUpId: string) {
-  const [row] = await database.select({ id: rawEvents.id }).from(rawEvents)
+/** When the geofence report that started this follow-up happened, once it has been processed
+ * successfully; null before that. */
+async function processedReportAt(database: Pick<Database, "select">, owner: string, followUpId: string) {
+  const [row] = await database.select({ at: rawEvents.occurredAt }).from(rawEvents)
     .innerJoin(jobs, and(eq(jobs.eventId, rawEvents.id), eq(jobs.createdByUserId, owner)))
     .where(and(eq(rawEvents.createdByUserId, owner), eq(rawEvents.eventType, REGION_TRANSITION_TYPE),
       sql`${rawEvents.rawEnvelope}->'payload'->>'follow_up_id' = ${followUpId}`, eq(jobs.status, "processed"))).limit(1);
-  return Boolean(row);
+  return row?.at ?? null;
 }

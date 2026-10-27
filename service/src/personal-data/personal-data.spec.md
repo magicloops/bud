@@ -556,15 +556,16 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - **`applyReading`:** every reading counts for each place the owner is
     inside or approaching. That means the wake reading for the other places,
     `location.fix.v1`, and significant-change points at 65 m or better.
-    - Approaching and definitely inside: an arrival (source `reading`).
+    - Definitely inside a place the owner isn't at: an arrival (source
+      `reading`), whether or not it was approaching. A delayed reading older
+      than a confirmation at a nearby place (within 1 km) doesn't arrive.
+      Approaches stay until the geofence exits, as a hint for agents.
     - Inside with a departure pending, and definitely inside: a re-entry.
     - Inside, and definitely inside another place: departed at once (with a
       pending exit's earlier time, if any), since the owner is confirmed
       elsewhere. Geofence exits can lag by many minutes.
     - Inside, and definitely outside: the departure wait starts at the
       reading's time.
-    - Approaching, and definitely outside while definitely inside another
-      place: the approach ends.
     - Departures are applied before arrivals. A region exit applies to its own
       place first, so the exit time is kept.
     - **Inside evidence:** a definitely-inside reading while inside, from any
@@ -588,8 +589,9 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - The upload handler first drains that owner's pending jobs inline, so
     presence reflects the batch. The whole step is bounded to 2 s: past that,
     the ACK goes without `follow_ups` and the work continues in the background.
-  - **After an entry:** settled once inside with no departure pending; open
-    while a departure is pending (the previous stay doesn't confirm the
+  - **After an entry:** settled once inside with no departure pending, or once
+    the owner is confirmed at another place within 1 km since the report.
+    Open while a departure is pending (the previous stay doesn't confirm the
     return), while the place is approaching, or until this
     follow-up's own geofence report (matched by `follow_up_id`) has been
     processed. The phone's first reading can arrive before the report, which

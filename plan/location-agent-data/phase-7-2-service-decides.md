@@ -275,3 +275,26 @@ older service runs every follow-up to its window.
   - The 2 s limit bounds the ACK. Database work past it carries on in the
     background, as the worker's would.
 
+**Fixes from the October 27 walk:**
+- **A missed Office arrival:** walking back past the house to the Office, the
+  Office geofence fired while a reading still had the walker definitely inside
+  the house, and the October 25 rule ended the Office approach. Readings 22 m,
+  15 m and (on opening Bud) 6 m from the Office then had nothing to confirm.
+  - A definitely-inside reading now arrives whether or not the place was
+    approaching. "Definitely inside" already requires the whole error circle
+    within the radius.
+  - Approaches stay until the geofence exits, as a hint.
+  - An entry follow-up settles once the owner is confirmed at another place
+    within 1 km since its report (arrived there, or a newer definitely-inside
+    reading).
+  - A delayed reading doesn't arrive a place if the owner has been confirmed at
+    a nearby place since.
+  - Initial reports' readings don't apply to other places, so installing
+    geofences never publishes.
+- **A held-back reading waited out a suspension:** the deciding 3:30 PM
+  reading (33 m, ±8) was held by the 10 s limit and sent 1¾ minutes later,
+  when Bud next woke.
+  - The limit is now 5 s.
+  - A held-back reading is sent when the follow-up's background assertion is
+    about to expire.
+

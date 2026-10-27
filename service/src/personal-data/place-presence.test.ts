@@ -82,6 +82,8 @@ test("geofences and visits share one presence state: one arrival, settled depart
     const lines = values.map(([type, payload, at]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
       occurred_at: (at ?? ago(0)).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" },
       context: { time_zone: "America/Los_Angeles" }, payload }));
+    // This test uploads more batches than the per-owner rate limit (60 a minute) allows.
+    await db.update(s.dataOwnerStateTable).set({ requestCount: 0 });
     await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
     while (await processor.processNext()) { /* drain */ }
   };
@@ -232,16 +234,15 @@ test("geofences and visits share one presence state: one arrival, settled depart
   // An exit while the reading is still inside North is ignored.
   await upload([confirmed(north.id, "exited", ago(80), 38.30)]);
   assert.equal((await state(north.id)).leavingAt, null);
-  // Walking to South: North's exit with a reading outside it departs, and South's entry with a
-  // reading inside arrives once (sent twice). South's earlier approach ended when the ago(80)
-  // reading confirmed the walker at North.
+  // Walking to South: North's exit with a reading outside it departs, and the same reading,
+  // definitely inside South, arrives there; South's own entry (sent twice) adds nothing.
   const atSouth = 38.30 - 117 / 111_195;
   await upload([confirmed(north.id, "exited", ago(60), atSouth)]);
   await upload([confirmed(south.id, "entered", ago(59), atSouth)]);
   await upload([confirmed(south.id, "entered", ago(59), atSouth)]);
   // The same reading confirms South, so North's departure publishes at once, at its exit time.
   assert.deepEqual(await of(north.id), [["place.departed", ago(60).getTime()]]);
-  assert.deepEqual(await of(south.id), [["place.arrived", ago(59).getTime()]]);
+  assert.deepEqual(await of(south.id), [["place.arrived", ago(60).getTime() + 3000]]);
   assert.equal((await state(south.id)).approachingAt, null, "the arrival ends the approach");
   const [settled] = await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, north.id));
   assert.ok(settled.rawEventId, "a settled departure keeps its exit as evidence");
@@ -325,12 +326,14 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const [workLeft] = await db.select().from(s.placePresenceEventTable).where(and(eq(s.placePresenceEventTable.placeId, work.id),
     eq(s.placePresenceEventTable.transition, "departed")));
   assert.deepEqual([workLeft.source, workLeft.occurredAt.getTime()], ["reading", ago(50).getTime()]);
-  // Both geofences fire on the way home (October 25, 2:28 PM): Work approaching from an uncertain
-  // reading; a reading confirmed at the House ends Work's approach, and its follow-up settles.
+  // Both geofences fire near home (October 25, 2:28 PM): Work approaching from an uncertain
+  // reading; a reading confirming the House settles Work's follow-up. Work stays approaching (a
+  // hint for agents) until its geofence exits.
   await upload([wake(work.id, "entered", ago(46), workCenter + 55 / 111_195, 15, false, "way-home")]);
   assert.ok((await state(work.id)).approachingAt);
+  assert.equal(await ask(work.id, "entered", "way-home"), "open");
   await upload([fix(fromHouse(5), ago(45), 10)]);
-  assert.equal((await state(work.id)).approachingAt, null);
+  assert.ok((await state(work.id)).approachingAt);
   assert.equal(await ask(work.id, "entered", "way-home"), "settled");
   // Readings arrive out of order: back at the House at ago(43) and confirmed inside again at
   // ago(42); then delayed readings from ago(42.5), definitely outside it and definitely inside
@@ -352,6 +355,29 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await presence.settleDepartures(() => ago(0));
   assert.deepEqual([(await state(house.id)).state, await houseEvents()], ["inside", before]);
   assert.equal(await ask(house.id, "entered", "back-again"), "settled");
+  // October 27: walking back past the house to the Office. The Office geofence fires while a
+  // reading still puts the walker at the house; later readings inside the Office arrive it (its
+  // approach isn't dropped), and the house departure publishes at once. A reading definitely
+  // inside a place that isn't approaching arrives too (the fix when Bud opens).
+  const corner = await places.create(owner, { name: "Corner", latitude: 38.60, longitude: -122.4, radius_m: 50 }, "user");
+  const studio = await places.create(owner, { name: "Studio", latitude: 38.60 - 117 / 111_195, longitude: -122.4, radius_m: 50 }, "user");
+  for (const id of [corner.id, studio.id]) await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, id));
+  await refreshRevisions();
+  const fromCorner = (metres: number) => 38.60 - metres / 111_195;
+  await upload([wake(corner.id, "entered", ago(35), fromCorner(5), 10, true), wake(studio.id, "entered", ago(35), fromCorner(5), 10, true)]);
+  await upload([wake(studio.id, "entered", ago(30), fromCorner(37), 10, false, "to-studio")]);
+  await upload([fix(fromCorner(40), ago(29.8), 5)]);
+  assert.ok((await state(studio.id)).approachingAt, "still approaching while confirmed at Corner");
+  assert.equal(await ask(studio.id, "entered", "to-studio"), "settled", "its follow-up settles while confirmed at Corner");
+  await upload([fix(fromCorner(117 - 22), ago(29.5), 5)]);
+  const changesAt = async (id: string) => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, id))
+    .orderBy(asc(s.placePresenceEventTable.createdAt))).map(row => [row.transition, row.source, row.occurredAt.getTime()]);
+  assert.deepEqual(await changesAt(studio.id), [["arrived", "reading", ago(29.5).getTime()]]);
+  assert.deepEqual(await changesAt(corner.id), [["departed", "reading", ago(29.5).getTime()]], "confirmed at Studio: no settle wait");
+  await upload([fix(fromCorner(3), ago(20), 12)]);
+  assert.deepEqual((await changesAt(corner.id)).at(-1), ["arrived", "reading", ago(20).getTime()], "no approach needed");
+  assert.deepEqual((await changesAt(studio.id)).at(-1), ["departed", "reading", ago(20).getTime()]);
+
   // CLMonitor re-delivers a report, once as initial and again as a transition: only the first counts.
   const [type, payload] = region(work.id, "entered", ago(40), true);
   const again = { ...(payload as object), initial: false, fix: reading(workCenter, ago(40), 5) };
@@ -389,7 +415,7 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const [southRun] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.automationId, "south"));
   const [southInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, southRun.invocationId!));
   const [southInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, southInvocation.inputMessageId));
-  assert.match(southInput.content, /- Detected by the phone's geofence for this place and confirmed by a precise reading 0 m from its centre \(±8 m\)\./);
+  assert.match(southInput.content, /- Detected from a precise reading 0 m from its centre \(±8 m\)\./);
   const southEvidence = await db.transaction(tx => automationStartEvidence(tx, southInvocation));
   assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).transition.reading, { distance_m: 0, accuracy_m: 8 });
 });

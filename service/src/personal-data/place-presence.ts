@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataDomainEventTable as domains, dataEventTable as rawEvents, dataOwnerStateTable as owners, placePresenceEventTable as presenceEvents,
@@ -66,6 +66,9 @@ function parseFix(value: unknown): FixReading | null {
   return Number.isFinite(at.getTime()) ? { latitude, longitude, accuracyM: accuracy, at } : null;
 }
 
+/** Places this close are neighbours: a reading can glitch between them, and walks pass by. */
+export const NEARBY_PLACE_M = 1_000;
+
 /** Readings from significant-change points coarser than this are ignored for presence. */
 export const POINT_MAX_ACCURACY_M = 65;
 
@@ -123,7 +126,11 @@ export async function processRegionTransition(tx: Transaction, owner: string, ra
   const change = { at: parsed.at, source: "region" as const, rawEventId, initial };
   // The reading counts for every other place too. For an entry they go first, so their departures
   // come before this arrival; for an exit this place goes first, so its exit time is kept.
-  const others = async () => { if (parsed.fix && reading !== "unknown") await applyReading(tx, owner, parsed.fix, rawEventId, owned, place.id); };
+  // An initial report (a geofence just installed) is a baseline only: it never publishes, here
+  // or for other places.
+  const others = async () => {
+    if (parsed.fix && reading !== "unknown" && !initial) await applyReading(tx, owner, parsed.fix, rawEventId, owned, place.id);
+  };
   if (parsed.transition === "arrived") await others();
   if (reading === "unknown") {
     await applyPresence(tx, owner, place, { ...change, transition: parsed.transition });
@@ -157,15 +164,15 @@ async function isRedelivery(tx: Transaction, owner: string, rawEventId: string,
 
 /**
  * A precise reading from any source (a geofence wake, a follow-up, the fix when Bud opens, a
- * significant-change point) as evidence about every place the owner is at or approaching:
- * - approaching, and definitely inside: arrival at the reading's time;
- * - inside with a departure pending, and definitely inside: a re-entry (cancels it, or
- *   publishes the departure and a new arrival if it's past the settle window);
+ * significant-change point) as evidence about every saved place:
+ * - definitely inside a place the owner isn't at: arrival at the reading's time, whether or not
+ *   it was approaching, unless they've been confirmed at another place since (a delayed reading). "Definitely inside" already needs the whole error circle within the
+ *   radius; requiring an approach as well lost an arrival on October 27, when the Office's
+ *   approach had been dropped while passing the house on the way there;
+ * - inside, and definitely inside: inside evidence (a re-entry if a departure is pending);
  * - inside, and definitely inside another place: departed at the reading's time, at once (the
  *   owner is confirmed elsewhere; geofence exits can lag by many minutes);
  * - inside, and definitely outside: the departure wait starts at the reading's time;
- * - approaching, and definitely outside while definitely inside another place: the approach
- *   ends (the geofence fired on the way to the other place);
  * - uncertain or unknown: no change.
  * Departures are applied before arrivals, so "left the Office" comes before "arrived home".
  * `except` is the place a region report already decided.
@@ -173,26 +180,33 @@ async function isRedelivery(tx: Transaction, owner: string, rawEventId: string,
 export async function applyReading(tx: Transaction, owner: string, fix: FixReading, rawEventId: string,
   owned?: Place[], except?: string) {
   if (fix.accuracyM > FIX_MAX_ACCURACY_M) return;
-  const current = await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner),
-    sql`(${presence.state} = 'inside' or ${presence.approachingAt} is not null)`));
-  if (current.length === 0) return;
   const all = owned ?? await placesForOwner(tx, owner);
   const classes = new Map(all.map(place => [place.id, classifyReading(fix, place, all).state]));
-  const insideElsewhere = (id: string) => [...classes].some(([other, state]) => other !== id && state === "inside");
+  const insideIds = all.filter(place => classes.get(place.id) === "inside").map(place => place.id);
+  const rows = await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner),
+    insideIds.length ? or(eq(presence.state, "inside"), inArray(presence.placeId, insideIds)) : eq(presence.state, "inside")));
+  const candidates = [...new Set([...rows.map(row => row.placeId), ...insideIds])];
+  const insideElsewhere = (id: string) => insideIds.some(other => other !== id);
   const change = { at: fix.at, source: "reading" as const, rawEventId };
-  const ordered = [...current].sort((a, b) => (a.state === "inside" ? 0 : 1) - (b.state === "inside" ? 0 : 1));
-  for (const row of ordered) {
-    const place = all.find(candidate => candidate.id === row.placeId);
-    if (!place || place.id === except || fix.at < place.geometryChangedAt || fix.at < row.since) continue;
+  const rowFor = (id: string) => rows.find(row => row.placeId === id);
+  // Newer evidence wins: a delayed reading doesn't move the owner from a nearby place (within
+  // `NEARBY_PLACE_M`) they've been confirmed at since.
+  const confirmedElsewhereAfter = (id: string) => rows.some(row => {
+    const here = all.find(place => place.id === id), there = all.find(place => place.id === row.placeId);
+    return row.placeId !== id && row.state === "inside" && here && there
+      && distanceM(here.latitude, here.longitude, there.latitude, there.longitude) <= NEARBY_PLACE_M
+      && Math.max(row.since.getTime(), row.lastEnteredAt?.getTime() ?? 0) > fix.at.getTime();
+  });
+  const ordered = candidates.sort((a, b) => (rowFor(a)?.state === "inside" ? 0 : 1) - (rowFor(b)?.state === "inside" ? 0 : 1));
+  for (const id of ordered) {
+    const place = all.find(candidate => candidate.id === id), row = rowFor(id);
+    if (!place || place.id === except || fix.at < place.geometryChangedAt || (row && fix.at < row.since)) continue;
     const state = classes.get(place.id);
-    const elsewhere = insideElsewhere(place.id);
-    if (row.state !== "inside") {
-      if (!row.approachingAt || fix.at < row.approachingAt) continue;
-      if (state === "inside") await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
-      else if (state === "outside" && elsewhere) await endApproach(tx, owner, place.id);
+    if (row?.state !== "inside") {
+      if (state === "inside" && !confirmedElsewhereAfter(place.id)) await applyPresence(tx, owner, place, { ...change, transition: "arrived" });
     } else if (state === "inside") {
       await insideEvidence(tx, owner, place, fix.at, rawEventId, row);
-    } else if (elsewhere && state !== "unknown") {
+    } else if (insideElsewhere(place.id) && state !== "unknown") {
       await applyPresence(tx, owner, place, { ...change, transition: "departed", confirmed: true });
     } else if (state === "outside") {
       await applyPresence(tx, owner, place, { ...change, transition: "departed" });
@@ -226,11 +240,6 @@ async function noteInside(tx: Transaction, owner: string, placeId: string, at: D
   await tx.update(presence).set({ lastEnteredAt: sql`greatest(coalesce(${presence.lastEnteredAt}, ${at.toISOString()}::timestamptz), ${at.toISOString()}::timestamptz)`,
     updatedAt: sql`clock_timestamp()` })
     .where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, placeId), eq(presence.state, "inside")));
-}
-
-async function endApproach(tx: Transaction, owner: string, placeId: string) {
-  await tx.update(presence).set({ approachingAt: null, updatedAt: sql`clock_timestamp()` })
-    .where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, placeId)));
 }
 
 /** The precise reading behind a presence change, for evidence: its distance from the place's
