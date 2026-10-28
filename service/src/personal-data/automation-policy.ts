@@ -43,12 +43,14 @@ export async function loadAutomationDataCeiling(threadId: string, owner: string,
     grantVersion: revision.grantVersion, binding: `${current.invocation.id}:${current.invocation.fence}:${revision.automationId}:${revision.revision}` };
 }
 
-/** Current authority for a persisted delivery; caller separately checks thread/Bud ownership. */
+/** Current authority for a persisted run; caller separately checks thread/Bud ownership. A
+ * grouped location run (Phase 7.3) has several deliveries: every one must still be authorized,
+ * and any paused rule holds the whole run. */
 export async function checkAutomationPolicy(invocation: Invocation, checkPause = true, database: Pick<Database, "select"> = db): Promise<"ready" | "retry_wait"> {
   if (invocation.origin !== "automation") return "ready";
   const owner = invocation.createdByUserId;
   // Grants are optional: a rule without data scopes needs none.
-  let [policy]: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
+  const rows: PolicyRow[] = await database.select({ state: rules.state, definition: revisions.definition,
     grantVersion: revisions.grantVersion, scopes: grants.scopes, historyDays: grants.historyDays,
     currentGrantVersion: grants.version, domainEventId: deliveries.domainEventId, healthTypes: grants.healthTypes,
     workoutId: events.workoutId, visitId: events.visitId, presenceEventId: events.presenceEventId }).from(deliveries)
@@ -56,15 +58,44 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
     .innerJoin(revisions, and(eq(revisions.automationId, rules.id), eq(revisions.revision, deliveries.revision), eq(revisions.createdByUserId, owner)))
     .leftJoin(grants, eq(grants.createdByUserId, owner))
     .leftJoin(events, and(eq(events.id, deliveries.domainEventId), eq(events.createdByUserId, owner)))
-    .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"))).limit(1);
-  if (policy?.presenceEventId) {
+    .where(and(eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted")));
+  for (const policy of rows) await checkEvidence(policy, owner, database);
+  const policies = rows.length ? rows : [await bootstrapPolicy(invocation, database)];
+  const [input] = await database.select({ metadata: messages.metadata }).from(messages).where(and(
+    eq(messages.messageId, invocation.inputMessageId), eq(messages.threadId, invocation.threadId), eq(messages.createdByUserId, owner))).limit(1);
+  const snapshot = input?.metadata?.model_resolution as { model?: string; reasoning_effort?: string } | undefined;
+  // Pre-cutover invocations have no resolution metadata. Their persisted model
+  // remains frozen; never compare it with the newly inherited revision policy.
+  if (snapshot && (snapshot.model !== invocation.model || snapshot.reasoning_effort !== invocation.reasoningEffort))
+    throw new InvocationError("automation_target_changed");
+  let paused = false;
+  for (const policy of policies) {
+    if (!policy || policy.state === "deleted") throw new InvocationError("automation_authority_lost");
+    const definition = parseAutomationInput(automationDefinitionSchema, policy.definition);
+    if (definition.bud_id !== invocation.budId ||
+      (definition.target.mode === "existing_thread" && definition.target.thread_id !== invocation.threadId)) {
+      throw new InvocationError("automation_target_changed");
+    }
+    const grant = policy.currentGrantVersion === null ? null
+      : { version: policy.currentGrantVersion, scopes: policy.scopes ?? [], historyDays: policy.historyDays ?? 0 };
+    if (!grantCoversDefinition(grant, definition, policy.grantVersion)) throw new InvocationError("data_permission_changed");
+    // Pause gates starts/continuations. Already-running work follows explicit
+    // cancel-active semantics; revocation still applies at every checkpoint.
+    if (policy.state !== "enabled") paused = true;
+  }
+  return checkPause && paused ? "retry_wait" : "ready";
+}
+
+/** A delivery's trigger evidence must still exist (and, for workouts, the grant's type). */
+async function checkEvidence(policy: PolicyRow, owner: string, database: Pick<Database, "select">) {
+  if (policy.presenceEventId) {
     // Presence changes are kept; the place is checked at admission and evidence. Places are labels, not authority.
-  } else if (policy?.visitId) {
+  } else if (policy.visitId) {
     // Visit deliveries need the visit to still exist; places are labels, not authority.
     const [visit] = await database.select({ id: locationVisits.id }).from(locationVisits)
       .where(and(eq(locationVisits.id, policy.visitId), eq(locationVisits.createdByUserId, owner))).limit(1);
     if (!visit) throw new InvocationError("automation_authority_lost");
-  } else if (policy?.workoutId) {
+  } else if (policy.workoutId) {
     // Workout deliveries need the workout, its source and the grant's workouts type.
     const [lineage] = await database.select({ id: workouts.id }).from(workouts)
       .innerJoin(epochs, and(eq(epochs.id, workouts.epochId), eq(epochs.createdByUserId, owner), isNull(epochs.revokedAt)))
@@ -72,7 +103,7 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
       .where(and(eq(workouts.id, policy.workoutId), eq(workouts.createdByUserId, owner))).limit(1);
     if (!lineage) throw new InvocationError("automation_authority_lost");
     if (!(policy.healthTypes ?? []).includes("workouts")) throw new InvocationError("data_permission_changed");
-  } else if (policy?.domainEventId) {
+  } else if (policy.domainEventId) {
     // Event deliveries keep their source lineage requirement.
     const [lineage] = await database.select({ id: events.id }).from(events)
       .innerJoin(evidence, and(eq(evidence.id, events.revisionId), eq(evidence.createdByUserId, owner)))
@@ -83,26 +114,6 @@ export async function checkAutomationPolicy(invocation: Invocation, checkPause =
       .where(and(eq(events.id, policy.domainEventId), eq(events.createdByUserId, owner))).limit(1);
     if (!lineage) throw new InvocationError("automation_authority_lost");
   }
-  if (!policy) policy = await bootstrapPolicy(invocation, database);
-  if (!policy || policy.state === "deleted") throw new InvocationError("automation_authority_lost");
-  const definition = parseAutomationInput(automationDefinitionSchema, policy.definition);
-  const [input] = await database.select({ metadata: messages.metadata }).from(messages).where(and(
-    eq(messages.messageId, invocation.inputMessageId), eq(messages.threadId, invocation.threadId), eq(messages.createdByUserId, owner))).limit(1);
-  const snapshot = input?.metadata?.model_resolution as { model?: string; reasoning_effort?: string } | undefined;
-  // Pre-cutover invocations have no resolution metadata. Their persisted model
-  // remains frozen; never compare it with the newly inherited revision policy.
-  if (snapshot && (snapshot.model !== invocation.model || snapshot.reasoning_effort !== invocation.reasoningEffort))
-    throw new InvocationError("automation_target_changed");
-  if (definition.bud_id !== invocation.budId ||
-    (definition.target.mode === "existing_thread" && definition.target.thread_id !== invocation.threadId)) {
-    throw new InvocationError("automation_target_changed");
-  }
-  const grant = policy.currentGrantVersion === null ? null
-    : { version: policy.currentGrantVersion, scopes: policy.scopes ?? [], historyDays: policy.historyDays ?? 0 };
-  if (!grantCoversDefinition(grant, definition, policy.grantVersion)) throw new InvocationError("data_permission_changed");
-  // Pause gates starts/continuations. Already-running work follows explicit
-  // cancel-active semantics; revocation still applies at every checkpoint.
-  return checkPause && policy.state !== "enabled" ? "retry_wait" : "ready";
 }
 
 async function bootstrapPolicy(invocation: Invocation, database: Pick<Database, "select">) {

@@ -79,3 +79,28 @@ export function admissionText(input: { event: string; instruction: string; autom
   return `${input.event}\n\n${input.instruction}\n\n---\nFor reference. Don't mention these details unless the instruction asks for them.\n`
     + lines.map(line => `- ${line}`).join("\n");
 }
+
+/**
+ * A run for several events in one conversation (Phase 7.3): the timeline in the order things
+ * happened, each rule's instruction once (labelled with the rule), then the reference section.
+ * One run means one reply and one notification. `items` are in time order.
+ */
+export function timelineAdmissionText(items: Array<{ event: string; instruction: string; automationName: string;
+  automationId: string; reference: string[] }>) {
+  const rules = new Map<string, { name: string; instruction: string }>();
+  for (const item of items) if (!rules.has(item.automationId)) rules.set(item.automationId, { name: item.automationName, instruction: item.instruction });
+  const names = [...rules.values()].map(rule => `"${rule.name}"`);
+  const triggered = `Triggered by the ${names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`} `
+    + `automation${names.length === 1 ? "" : "s"} (ID${rules.size === 1 ? "" : "s"} ${[...rules.keys()].join(", ")}).`;
+  // Lines every event shares (the time zone) once; the rest labelled with their event.
+  const shared = items[0].reference.filter(line => items.every(item => item.reference.includes(line)));
+  const perEvent = items.flatMap(item => {
+    const own = item.reference.filter(line => !shared.includes(line));
+    return own.length ? [`${item.event.replace(/\.$/, "")}: ${own.join(" ")}`] : [];
+  });
+  const lines = [triggered, ...shared, ...perEvent, "Your reply appears in this conversation, and its start is shown as a push notification."];
+  return `Since the last update:\n${items.map(item => `- ${item.event}`).join("\n")}\n\n`
+    + [...rules.values()].map(rule => rules.size === 1 ? rule.instruction : `For "${rule.name}": ${rule.instruction}`).join("\n")
+    + "\n\n---\nFor reference. Don't mention these details unless the instructions ask for them.\n"
+    + lines.map(line => `- ${line}`).join("\n");
+}

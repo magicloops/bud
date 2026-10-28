@@ -1782,7 +1782,8 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Across revisions: editing a schedule never runs the same window twice.
   scheduleKey: unique("automation_delivery_schedule_key").on(t.automationId, t.scheduledFor),
   triggerCheck: check("automation_delivery_trigger_check", sql`(${t.domainEventId} is null) <> (${t.scheduledFor} is null)`),
-  invocationKey: unique("automation_delivery_invocation_key").on(t.invocationId),
+  // Several location deliveries for one conversation can share a run (Phase 7.3).
+  invocationIdx: index("automation_delivery_invocation_idx").on(t.invocationId),
   ownerIdx: index("automation_delivery_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
   dueIdx: index("automation_delivery_due_idx").on(t.status, t.nextAttemptAt),
   revisionFk: foreignKey({ name: "automation_delivery_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),

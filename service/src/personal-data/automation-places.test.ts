@@ -159,7 +159,10 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   assert.equal(arrived.input.metadata?.automation_name, "Places");
   assert.deepEqual([arrived.input.metadata?.visit_id, arrived.input.metadata?.place_id], [a, home.id]);
   assert.match((await invocationFor("leave-home", a)).input.content, /^Left Home at [^\n]*, after 25 minutes there\./);
-  assert.match((await invocationFor("ended-any", d)).input.content, /^A visit at a place ended at [^\n]*, after 14 minutes\./);
+  // Phase 7.3: the rule's four visit ends were pending together, so they share one timeline run.
+  const endedRun = (await invocationFor("ended-any", d)).input.content;
+  assert.match(endedRun, /^Since the last update:\n(- A visit at a place ended at [^\n]*\.\n){4}\nNote it\.\n/);
+  assert.match(endedRun, /- A visit at a place ended at [^\n]*, after 14 minutes\./);
   assert.equal(await checkAutomationPolicy(arrived.invocation, true, db), "ready");
 
   const evidence = await db.transaction(tx => automationStartEvidence(tx, arrived.invocation));
