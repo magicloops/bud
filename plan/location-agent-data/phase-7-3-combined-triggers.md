@@ -157,3 +157,35 @@ start one run each. Each family opts in. Schedules don't group.
 - **The local test automations** were re-activated without the lateness
   clause. That's a data change, not code.
 
+**Step 2 (October 27, 2026), on `feat/combined-triggers`:**
+- **Admission** (`automation-admission.ts`) splits each delivery's checks into
+  `prepare`.
+  - A location delivery for a conversation with a location run still queued or
+    running waits (`location_run_in_progress`, 5 s).
+  - Otherwise `locationSiblings` adds every other due location delivery for the
+    same conversation with the same Bud, resolved model and data access, up to
+    20. Each passes its own checks.
+  - Grouping only deliveries that agree on those means the run's model and data
+    ceiling are those of every rule in it.
+- **Migration 0060** replaces the unique delivery-to-invocation key with an
+  index.
+- **Input:** `timelineAdmissionText` writes the timeline, the instructions
+  labelled with their rule, and the reference section (shared lines once,
+  per-event lines labelled). A run of one keeps the single-event form.
+- **Metadata:** `automation_name` joins the names ("Leave Home, Visit ended and
+  Arrive at Office"), so the web and iOS labels need no change. The lists
+  (`automation_names`, `automation_ids`, `delivery_ids`, `domain_event_ids`) are
+  added.
+- **Start:** `checkAutomationPolicy` checks every delivery (any paused rule
+  holds the run; a deleted or revoked one ends it). `automationVisitContext`
+  lists evidence for every event under `events`.
+- **Known limit:** deleting one rule cancels a shared run, which drops the other
+  rules' events from it.
+- **Different data access in one conversation:** two location rules posting to
+  the same conversation with different data access (or models) can't share a
+  run. A run has one permission set, and widening or narrowing either rule's
+  approval isn't acceptable. The second rule's events therefore form the next
+  run, one agent turn later. **Follow-up:** activation could warn when a
+  location rule's data access differs from another location rule posting to
+  the same conversation.
+

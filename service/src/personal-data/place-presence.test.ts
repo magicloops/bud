@@ -404,18 +404,24 @@ test("geofences and visits share one presence state: one arrival, settled depart
   while (await new AutomationAdmission(db).admitNext(owner)) { /* drain */ }
   const admitted = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.automationId, "welcome"));
   assert.equal(admitted.length, 3, "one delivery per published home arrival");
+  // Phase 7.3: the three arrivals were pending together, so they share one run (one timeline).
+  assert.deepEqual([...new Set(admitted.map(delivery => [delivery.status, delivery.invocationId].join(":")))].length, 1);
   const first = admitted.find(delivery => delivery.status === "admitted")!;
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, first.invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /^Arrived at Home at [^\n]+\.\n\nSay hi\.\n\n---\n/);
-  assert.match(input.content, /- Times are in America\/Los_Angeles, the phone's time zone\.\n- Detected by the phone's geofence/);
+  assert.match(input.content, /^Since the last update:\n- Arrived at Home at [^\n]+\.\n- Arrived at Home at [^\n]+\.\n- Arrived at Home at [^\n]+\.\n\nSay hi\.\n\n---\n/);
+  assert.match(input.content, /- Times are in America\/Los_Angeles, the phone's time zone\./);
+  assert.match(input.content, /- Arrived at Home at \d+:\d+ [AP]M: Detected by the phone's geofence/);
+  assert.deepEqual(input.metadata?.delivery_ids && (input.metadata.delivery_ids as string[]).length, 3);
   const evidence = await db.transaction(tx => automationStartEvidence(tx, invocation));
   const json = JSON.parse(evidence!.slice(evidence!.indexOf("{")));
-  assert.deepEqual([json.transition.source, json.place.name, json.visit], ["region", "Home", null]);
+  assert.equal(json.events.length, 3, "one evidence entry per event, in time order");
+  assert.deepEqual([json.events[0].transition.source, json.events[0].place.name, json.events[0].visit], ["region", "Home", null]);
   const [southRun] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.automationId, "south"));
   const [southInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, southRun.invocationId!));
   const [southInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, southInvocation.inputMessageId));
-  assert.match(southInput.content, /- Detected from a precise reading 0 m from its centre \(±8 m\)\./);
+  // South's two arrivals were pending together: one timeline run.
+  assert.match(southInput.content, /- Arrived at South at \d+:\d+ [AP]M: Detected from a precise reading 0 m from its centre \(±8 m\)\./);
   const southEvidence = await db.transaction(tx => automationStartEvidence(tx, southInvocation));
-  assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).transition.reading, { distance_m: 0, accuracy_m: 8 });
+  assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).events[0].transition.reading, { distance_m: 0, accuracy_m: 8 });
 });
