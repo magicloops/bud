@@ -43,6 +43,7 @@ order, because each builds on the one before.
 | 7 | [Timely place triggers](phase-7-geofences.md) | Geofences plus a single presence state, so arrive/leave runs within about a minute | iOS, service |
 | 7.1 | [Precise confirmation](phase-7-1-precise-confirmation.md) | A precise reading on each geofence wake confirms arrivals and departures (places 100 m apart work); prompt uploads from background wakes | iOS, service |
 | 7.2 | [The phone collects, the service decides](phase-7-2-service-decides.md) | Every precise reading decides presence on the service (arrive only when definitely inside); follow-ups run until the service settles them | Service, iOS |
+| 7.3 | [One timeline per conversation](phase-7-3-combined-triggers.md) | Location triggers for a conversation combine into one run (everything since the last run); older events join the timeline instead of notifying; no lateness talk | Service, web, iOS |
 | 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
 
 **Why this order:**

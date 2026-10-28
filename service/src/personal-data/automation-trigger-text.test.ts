@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { admissionText, duration, localTime, timeAgo, timeZoneLine, when } from "./automation-trigger-text.js";
+import { admissionText, duration, lateReport, localTime, timeZoneLine } from "./automation-trigger-text.js";
 
 test("trigger times read as people say them, in the phone's time zone", () => {
   const zone = "America/Los_Angeles";
@@ -10,12 +10,10 @@ test("trigger times read as people say them, in the phone's time zone", () => {
   assert.equal(localTime(new Date("2026-10-20T16:05:00Z"), zone, now), "Tue, Oct 20 at 9:05 AM");
   // Without a reported zone: UTC, labelled.
   assert.equal(localTime(new Date("2026-10-24T00:36:00Z"), null, now), "12:36 AM UTC");
-  assert.equal(timeAgo(new Date(now.getTime() - 30_000), now), null);
-  assert.equal(timeAgo(new Date(now.getTime() - 60_000), now), "about a minute ago");
-  assert.equal(timeAgo(new Date(now.getTime() - 4 * 60_000), now), "about 4 minutes ago");
-  assert.equal(timeAgo(new Date(now.getTime() - 3 * 3600_000), now), "about 3 hours ago");
-  assert.equal(timeAgo(new Date(now.getTime() - 3 * 86_400_000), now), null);
-  assert.equal(when(new Date("2026-10-24T00:36:00Z"), zone, now), "5:36 PM (about 4 minutes ago)");
+  // Lateness is only mentioned past 10 minutes (an upload backlog), never as "N minutes ago".
+  assert.equal(lateReport(new Date("2026-10-27T22:30:57Z"), new Date("2026-10-27T22:32:43Z")), null);
+  assert.equal(lateReport(new Date("2026-10-27T21:44:43Z"), new Date("2026-10-27T22:01:57Z")), "Reported 17 minutes after it happened.");
+  assert.equal(lateReport(new Date("2026-10-26T17:37:46Z"), new Date("2026-10-27T00:35:01Z")), "Reported about 7 hours after it happened.");
   assert.equal(timeZoneLine(zone), "Times are in America/Los_Angeles, the phone's time zone.");
 });
 

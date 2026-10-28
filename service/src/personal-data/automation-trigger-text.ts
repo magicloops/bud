@@ -42,16 +42,6 @@ export function localTime(at: Date, timeZone: string | null, now: Date) {
   return `${formatter(`date:${zone}`, { timeZone: zone, weekday: "short", month: "short", day: "numeric" }).format(at)} at ${time}`;
 }
 
-/** "about 4 minutes ago" for an event a minute or more before `now` (up to a day), else null. */
-export function timeAgo(at: Date, now: Date) {
-  const elapsed = now.getTime() - at.getTime();
-  if (elapsed < 60_000) return null;
-  const minutes = Math.round(elapsed / 60_000);
-  if (minutes < 90) return minutes === 1 ? "about a minute ago" : `about ${minutes} minutes ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 36 ? `about ${hours} hours ago` : null;
-}
-
 /** "25 minutes", "about 3 hours", "about 2 days". */
 export function duration(seconds: number) {
   const minutes = Math.max(1, Math.round(seconds / 60));
@@ -61,10 +51,16 @@ export function duration(seconds: number) {
   return `about ${Math.round(hours / 24)} days`;
 }
 
-/** "5:36 PM (about 4 minutes ago)". */
-export function when(at: Date, timeZone: string | null, now: Date) {
-  const ago = timeAgo(at, now);
-  return `${localTime(at, timeZone, now)}${ago ? ` (${ago})` : ""}`;
+/** Events reported later than this get a reference line saying so (an upload backlog, or the
+ * service offline). Shorter delays aren't mentioned: an arrival's time is the first reading
+ * inside the place's radius, which is before someone feels they've arrived. */
+export const LATE_REPORT_MS = 10 * 60_000;
+
+/** "Reported 25 minutes after it happened." for an event reported more than
+ * `LATE_REPORT_MS` after it happened, else null. */
+export function lateReport(happenedAt: Date, reportedAt: Date) {
+  const delay = reportedAt.getTime() - happenedAt.getTime();
+  return delay > LATE_REPORT_MS ? `Reported ${duration(delay / 1000)} after it happened.` : null;
 }
 
 export function timeZoneLine(timeZone: string | null) {
