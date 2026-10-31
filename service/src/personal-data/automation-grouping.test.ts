@@ -104,6 +104,47 @@ test("location triggers for one conversation combine into one timeline run, one 
   const json = JSON.parse(evidence!.slice(evidence!.indexOf("{")));
   assert.deepEqual(json.events.map((entry: { trigger: string }) => entry.trigger), ["place.departed", "visit.ended", "place.arrived"]);
 
+  // A straggler (a visit that ended before the Office arrival already told) joins the run while
+  // it hasn't started: the input becomes the timeline with it in its place.
+  await upload([visit("x", ago(70), ago(25), 37.75)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const visitDelivery = async (key: string) => {
+    const [row] = await db.select({ delivery: s.automationDeliveryTable }).from(s.automationDeliveryTable)
+      .innerJoin(s.dataDomainEventTable, eq(s.dataDomainEventTable.id, s.automationDeliveryTable.domainEventId))
+      .innerJoin(s.locationVisitTable, eq(s.locationVisitTable.id, s.dataDomainEventTable.visitId))
+      .where(eq(s.locationVisitTable.visitKey, key));
+    return row.delivery;
+  };
+  const joined = await visitDelivery("x");
+  assert.deepEqual([joined.status, joined.invocationId, joined.outcomeCode], ["admitted", invocation.id, "joined_unstarted_run"]);
+  const [rewritten] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
+  // Visit x ended (25 minutes ago) before leaving home (20 minutes ago), so it comes first.
+  assert.match(rewritten.content, /^Since the last update:\n- A visit at [^\n]+ ended at [^\n]+, after 45 minutes\.\n- Left Home at [^\n]+\.\n- A visit at [^\n]+ ended at [^\n]+\.\n- Arrived at Office at [^\n]+\.\n/);
+  assert.equal((rewritten.metadata?.delivery_ids as string[]).length, 4);
+
+  // Once the run has started, a straggler can't join: it's a quiet entry, with no run and no push.
+  await db.update(s.agentInvocationTable).set({ status: "running", workerId: "worker", leaseExpiresAt: ago(-5) })
+    .where(eq(s.agentInvocationTable.id, invocation.id));
+  await upload([visit("y", ago(60), ago(30), 37.76)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const folded = await visitDelivery("y");
+  assert.deepEqual([folded.status, folded.invocationId, folded.outcomeCode], ["folded", null, "older_than_last_update"]);
+  const [entry] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, folded.timelineMessageId!));
+  assert.match(entry.content, /^Earlier: A visit at [^\n]+ ended at [^\n]+, after 30 minutes\.$/);
+  assert.deepEqual([entry.role, entry.threadId, entry.metadata?.timeline_entry, entry.metadata?.origin], ["system", thread, true, "automation"]);
+  const runs = await db.select().from(s.agentInvocationTable);
+  assert.equal(runs.length, 1, "no run for the straggler");
+  // A newer event while the run is running still waits for the next run.
+  await upload([visit("z", ago(9), ago(4), 37.80)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const newer = await visitDelivery("z");
+  assert.deepEqual([newer.status, newer.outcomeCode], ["pending", "location_run_in_progress"]);
+  await db.update(s.agentInvocationTable).set({ status: "pending", workerId: null, leaseExpiresAt: null })
+    .where(eq(s.agentInvocationTable.id, invocation.id));
+
   // Every rule in the run is checked at start: one paused holds it, one deleted ends it.
   assert.equal(await checkAutomationPolicy(invocation, true, db), "ready");
   await db.update(s.automationTable).set({ state: "paused" }).where(eq(s.automationTable.id, "ended"));

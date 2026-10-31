@@ -10,7 +10,8 @@ import { automationTable as rules, automationRevisionTable as revisions, automat
   dataCollectionEpochTable as epochs, dataInstallationTable as installations, healthWorkoutTable as workouts,
   locationVisitTable as locationVisits, locationVisitNameTable as visitNames, placeTable as placeRows,
   placePresenceEventTable as presenceEvents,
-  threadTable as threads, budTable as buds, agentInvocationTable as invocationRows } from "../db/schema.js";
+  threadTable as threads, budTable as buds, agentInvocationTable as invocationRows, messageTable as messages } from "../db/schema.js";
+import { generateMessageClientId } from "../db/message-client-id.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, parseAutomationInput, withinHistory,
   type AutomationDefinition } from "./automation-contracts.js";
 import { describeLocalWindow } from "./automation-schedule.js";
@@ -31,6 +32,8 @@ const groupKey = (definition: AutomationDefinition, automationId: string) =>
   definition.target.mode === "existing_thread" ? `thread:${definition.target.thread_id}` : `rule:${automationId}`;
 /** At most this many deliveries share one run. */
 const GROUP_LIMIT = 20;
+/** A run in these states hasn't read its input yet (its start takes the owner lock first). */
+const UNSTARTED_INVOCATION_STATES = ["pending", "retry_wait", "leased"] as const;
 const ACTIVE_INVOCATION_STATES = ["pending", "retry_wait", "leased", "waiting_for_bud", "waiting_for_model", "running",
   "waiting_for_user"] as const;
 const joinNames = (names: string[]) => names.length <= 1 ? names.join("")
@@ -77,6 +80,18 @@ export class AutomationAdmission {
       const first = await this.prepare(tx, owner, delivery);
       if (!("trigger" in first)) return true;
       let group = [first];
+      if (isLocationTrigger(first.definition) && first.definition.target.mode === "existing_thread") {
+        // A straggler (older than an event already told to this conversation) never starts a run:
+        // it joins one that hasn't started, or becomes a quiet entry in the conversation.
+        const threadId = first.definition.target.thread_id;
+        const newest = await this.newestToldAt(tx, owner, threadId);
+        if (newest && first.trigger.at < newest) {
+          const run = await this.unstartedRun(tx, owner, threadId, first);
+          if (run) await this.joinRun(tx, owner, run, first);
+          else await this.fold(tx, owner, threadId, first);
+          return true;
+        }
+      }
       if (isLocationTrigger(first.definition)) {
         // One location run at a time per conversation: what arrives meanwhile forms the next one.
         if (await this.locationRunActive(tx, owner, groupKey(first.definition, delivery.automationId))) {
@@ -169,6 +184,81 @@ export class AutomationAdmission {
   private async wait(tx: Transaction, delivery: Delivery, outcomeCode: string, seconds: number) {
     await tx.update(deliveries).set({ outcomeCode, nextAttemptAt: sql`clock_timestamp() + ${seconds} * interval '1 second'`,
       updatedAt: sql`clock_timestamp()` }).where(eq(deliveries.id, delivery.id));
+  }
+
+  /** The newest location event time among runs already admitted to this conversation. */
+  private async newestToldAt(tx: Transaction, owner: string, threadId: string) {
+    const result = await tx.execute<{ at: string | null }>(sql`
+      select max(coalesce(pe.occurred_at, v.departure_at)) as at
+      from automation_delivery d
+      join agent_invocation i on i.id = d.invocation_id and i.created_by_user_id = ${owner}
+      join data_domain_event e on e.id = d.domain_event_id and e.created_by_user_id = ${owner}
+      left join place_presence_event pe on pe.id = e.presence_event_id and pe.created_by_user_id = ${owner}
+      left join location_visit v on v.id = e.visit_id and e.event_type = 'visit.ended' and v.created_by_user_id = ${owner}
+      where d.created_by_user_id = ${owner} and d.status = 'admitted' and i.thread_id = ${threadId}
+        and e.event_type in ('place.arrived', 'place.departed', 'visit.ended')`);
+    const at = result.rows[0]?.at;
+    return at ? new Date(at) : null;
+  }
+
+  /** A location run in this conversation that hasn't started yet and can take this delivery
+   * (the same Bud, model and data access). The owner lock keeps it from starting meanwhile. */
+  private async unstartedRun(tx: Transaction, owner: string, threadId: string, item: Prepared) {
+    const runs = await tx.select({ invocation: invocationRows, definition: revisions.definition }).from(deliveries)
+      .innerJoin(invocationRows, and(eq(invocationRows.id, deliveries.invocationId), eq(invocationRows.createdByUserId, owner)))
+      .innerJoin(revisions, and(eq(revisions.automationId, deliveries.automationId), eq(revisions.revision, deliveries.revision),
+        eq(revisions.createdByUserId, owner)))
+      .where(and(eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"), eq(invocationRows.threadId, threadId),
+        inArray(invocationRows.status, UNSTARTED_INVOCATION_STATES)));
+    return runs.find(run => {
+      const definition = parseAutomationInput(automationDefinitionSchema, run.definition);
+      return isLocationTrigger(definition) && definition.bud_id === item.definition.bud_id
+        && run.invocation.model === item.modelResolution.model && run.invocation.reasoningEffort === item.modelResolution.reasoning_effort
+        && JSON.stringify(definition.data_access) === JSON.stringify(item.definition.data_access);
+    })?.invocation ?? null;
+  }
+
+  /** Adds a straggler to a run that hasn't started, rewriting its input as the timeline. */
+  private async joinRun(tx: Transaction, owner: string, run: typeof invocationRows.$inferSelect, item: Prepared) {
+    await tx.update(deliveries).set({ status: "admitted", invocationId: run.id, outcomeCode: "joined_unstarted_run",
+      updatedAt: sql`clock_timestamp()` }).where(eq(deliveries.id, item.delivery.id));
+    const members = await tx.select().from(deliveries).where(and(eq(deliveries.createdByUserId, owner),
+      eq(deliveries.invocationId, run.id), eq(deliveries.status, "admitted")));
+    const items: Array<{ event: string; at: Date; instruction: string; automationName: string; automationId: string; reference: string[];
+      deliveryId: string; domainEventId: string | null }> = [];
+    const [grant] = await tx.select().from(grants).where(eq(grants.createdByUserId, owner));
+    for (const member of members) {
+      const [revision] = await tx.select({ definition: revisions.definition }).from(revisions).where(and(
+        eq(revisions.automationId, member.automationId), eq(revisions.revision, member.revision), eq(revisions.createdByUserId, owner))).limit(1);
+      if (!revision) continue;
+      const definition = parseAutomationInput(automationDefinitionSchema, revision.definition);
+      const trigger = await this.triggerInput(tx, owner, member, definition, grant?.healthTypes ?? [], grant?.historyDays ?? 0);
+      if (typeof trigger === "string") continue;
+      items.push({ event: trigger.event, at: trigger.at, instruction: definition.instruction, automationName: definition.name,
+        automationId: member.automationId, reference: trigger.reference, deliveryId: member.id, domainEventId: member.domainEventId });
+    }
+    items.sort((a, b) => a.at.getTime() - b.at.getTime());
+    const names = [...new Map(items.map(entry => [entry.automationId, entry.automationName])).values()];
+    const [input] = await tx.select().from(messages).where(and(eq(messages.messageId, run.inputMessageId), eq(messages.createdByUserId, owner)));
+    await tx.update(messages).set({ content: timelineAdmissionText(items), metadata: { ...input.metadata,
+      automation_name: joinNames(names), automation_names: names, automation_ids: [...new Set(items.map(entry => entry.automationId))],
+      delivery_ids: items.map(entry => entry.deliveryId), domain_event_ids: items.map(entry => entry.domainEventId) } })
+      .where(and(eq(messages.messageId, run.inputMessageId), eq(messages.createdByUserId, owner)));
+  }
+
+  /** A straggler with no run to join: a quiet entry in the conversation (no run, no push). The
+   * agent sees it in the conversation history, in order, on its next run. */
+  private async fold(tx: Transaction, owner: string, threadId: string, item: Prepared) {
+    const [thread] = await tx.select({ tenantId: threads.tenantId }).from(threads)
+      .where(and(eq(threads.threadId, threadId), eq(threads.createdByUserId, owner))).limit(1);
+    const [entry] = await tx.insert(messages).values({ clientId: generateMessageClientId(), threadId, role: "system", displayRole: "Automation",
+      content: `Earlier: ${item.trigger.event}`, createdByUserId: owner, tenantId: thread?.tenantId ?? null,
+      metadata: { origin: "automation", timeline_entry: true, automation_id: item.delivery.automationId, automation_name: item.definition.name,
+        automation_revision: item.delivery.revision, delivery_id: item.delivery.id, domain_event_id: item.delivery.domainEventId,
+        ...item.trigger.metadata } }).returning();
+    await tx.update(threads).set({ messageCount: sql`${threads.messageCount} + 1` }).where(eq(threads.threadId, threadId));
+    await tx.update(deliveries).set({ status: "folded", timelineMessageId: entry.messageId, outcomeCode: "older_than_last_update",
+      updatedAt: sql`clock_timestamp()` }).where(eq(deliveries.id, item.delivery.id));
   }
 
   /** Whether a location run for this conversation is still queued or running. */

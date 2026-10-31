@@ -189,3 +189,23 @@ start one run each. Each family opts in. Schedules don't group.
   location rule's data access differs from another location rule posting to
   the same conversation.
 
+**Step 3 (October 28, 2026), on `feat/timeline-stragglers`:**
+- **Detecting a straggler:** in admission, a location delivery for an existing
+  conversation whose event time is before `newestToldAt` (the newest place or
+  visit-ended event among runs admitted to that conversation) is a straggler.
+- **Joining:** `unstartedRun` finds a compatible location run (the same Bud,
+  model and data access) that is pending, retry_wait or leased. `joinRun` adds
+  the delivery (`joined_unstarted_run`) and rewrites the input message as the
+  timeline from all its deliveries.
+- **Folding:** otherwise `fold` inserts a system message, "Earlier: <event>"
+  (origin automation, `timeline_entry`), with no run and no push. The delivery
+  becomes `folded` (`older_than_last_update`, `timeline_message_id`; migration
+  0061).
+- **A change from the design:** the next run doesn't repeat folded entries under
+  "Earlier". Messages that aren't a run's input are in the agent's conversation
+  history in order, so it already sees them.
+- **Clients:** quiet entries show as the existing "Triggered by <rule>" rows,
+  with the text on expansion. No client change is needed.
+- **New-conversation rules** run stragglers normally: there's no ongoing
+  timeline to join.
+
