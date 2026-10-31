@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0060` currently)
+- Snapshot files for each migration (`0000` through `0061` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -578,4 +578,10 @@ Phase 7.3. Generated: `automation_delivery_invocation_key` (unique) becomes the
 index `automation_delivery_invocation_idx`, so several location deliveries for
 one conversation can share a run. Existing rows already satisfy it. Applied
 locally as exact SQL.
+
+### `0061_folded_deliveries.sql`
+
+Phase 7.3. Generated, additive: `automation_delivery.status` also allows
+`folded`, plus `timeline_message_id` (the quiet conversation entry a straggler
+became), with a check that the two go together. Applied locally as exact SQL.
 

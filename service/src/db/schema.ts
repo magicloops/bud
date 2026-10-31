@@ -1771,6 +1771,9 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Exactly one trigger reference: a published domain event or a schedule window.
   domainEventId: text("domain_event_id"), scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
   invocationId: text("invocation_id"),
+  // A straggler (an event older than one already told to its conversation) becomes a quiet
+  // timeline entry instead of a run: status `folded`, and this is that message (Phase 7.3).
+  timelineMessageId: uuid("timeline_message_id"),
   status: text("status").notNull().default("pending"), outcomeCode: text("outcome_code"),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1789,7 +1792,8 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   revisionFk: foreignKey({ name: "automation_delivery_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
   eventFk: foreignKey({ name: "automation_delivery_event_fk", columns: [t.domainEventId, t.createdByUserId], foreignColumns: [dataDomainEventTable.id, dataDomainEventTable.createdByUserId] }),
   invocationFk: foreignKey({ name: "automation_delivery_invocation_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }),
-  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed')`),
+  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed','folded')`),
+  foldedCheck: check("automation_delivery_folded_check", sql`(${t.status} = 'folded') = (${t.timelineMessageId} is not null)`),
   admissionCheck: check("automation_delivery_admission_check", sql`(${t.status} = 'admitted') = (${t.invocationId} is not null)`),
 }));
 

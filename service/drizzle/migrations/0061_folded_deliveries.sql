@@ -1,0 +1,4 @@
+ALTER TABLE "automation_delivery" DROP CONSTRAINT "automation_delivery_state_check";--> statement-breakpoint
+ALTER TABLE "automation_delivery" ADD COLUMN "timeline_message_id" uuid;--> statement-breakpoint
+ALTER TABLE "automation_delivery" ADD CONSTRAINT "automation_delivery_folded_check" CHECK (("automation_delivery"."status" = 'folded') = ("automation_delivery"."timeline_message_id" is not null));--> statement-breakpoint
+ALTER TABLE "automation_delivery" ADD CONSTRAINT "automation_delivery_state_check" CHECK ("automation_delivery"."status" in ('pending','admitted','suppressed','expired','canceled','failed','folded'));
