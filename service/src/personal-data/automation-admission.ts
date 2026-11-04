@@ -16,7 +16,7 @@ import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, p
   type AutomationDefinition } from "./automation-contracts.js";
 import { describeLocalWindow } from "./automation-schedule.js";
 import { presenceReading } from "./place-presence.js";
-import { placesForOwner, visitPlace } from "./places.js";
+import { placeOfVisit, placesForOwner } from "./places.js";
 import { admissionText, duration, lateReport, localTime, phoneTimeZone, timeZoneLine, timelineAdmissionText } from "./automation-trigger-text.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -325,7 +325,14 @@ export class AutomationAdmission {
       if (!place) return "place_unavailable";
       const [visit] = row.change.visitId ? await tx.select().from(locationVisits)
         .where(and(eq(locationVisits.id, row.change.visitId), eq(locationVisits.createdByUserId, owner))).limit(1) : [];
-      const stayed = visit?.arrivalAt && visit.departureAt ? duration((visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 1000) : null;
+      // A departure's stay runs from this place's arrival before it (November 4: "Left Home at
+      // 12:35 PM" knew nothing of the 8:55 AM arrival), else from its visit's arrival.
+      const [previous] = definition.event_type === "place.departed" ? await tx.select({ transition: presenceEvents.transition,
+        at: presenceEvents.occurredAt }).from(presenceEvents).where(and(eq(presenceEvents.createdByUserId, owner),
+        eq(presenceEvents.placeId, place.id), lt(presenceEvents.occurredAt, row.change.occurredAt)))
+        .orderBy(desc(presenceEvents.occurredAt), desc(presenceEvents.id)).limit(1) : [];
+      const arrivedAt = previous?.transition === "arrived" ? previous.at : visit?.departureAt ? visit.arrivalAt : null;
+      const stayed = arrivedAt ? duration((row.change.occurredAt.getTime() - arrivedAt.getTime()) / 1000) : null;
       const zone = await phoneTimeZone(tx, owner, row.event.publishedAt);
       const at = localTime(row.change.occurredAt, zone, now);
       const event = definition.event_type === "place.arrived"
@@ -360,7 +367,7 @@ export class AutomationAdmission {
         return "history_outside_grant";
       const address = (row.name?.address as { short?: string } | null)?.short ?? null;
       // A visit at a saved place is named by it ("A visit at Home"), with the address for reference.
-      const saved = visitPlace(await placesForOwner(tx, owner), row.visit);
+      const saved = await placeOfVisit(tx, owner, await placesForOwner(tx, owner), row.visit);
       const where = saved?.name ?? address ?? "a place";
       const stayed = row.visit.arrivalAt && row.visit.departureAt
         ? duration((row.visit.departureAt.getTime() - row.visit.arrivalAt.getTime()) / 1000) : null;

@@ -577,8 +577,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
       the earlier time (source
       `region` if it was this place's own geofence report, else `reading`). A
       definitely-outside reading, a definitely-inside reading at another
-      place, or an outside geofence exit cancels it. Visits, and geofence
-      entries without a usable reading, arrive at once.
+      place, or an outside geofence exit cancels it, unless that exit is this
+      place's own and at least 5 minutes later (`ARRIVAL_STAY_MS`): then it
+      arrived at the first reading, and the exit starts the departure wait.
+      Visits, and geofence entries without a usable reading, arrive at once.
     - Inside with a departure pending, and definitely inside: a re-entry.
     - Inside, and definitely inside another place: departed at once (with a
       pending exit's earlier time, if any), since the owner is confirmed
@@ -598,9 +600,12 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
       `last_entered_at`. A delayed exit or reading from before it
       can't then publish a departure; one more than 3 minutes older publishes
       a departure and a return.
-  - **Visits** match only the nearest saved place they fit (`visitPlace`):
-    places can be closer together than a visit is accurate. The same rule
-    applies to rule place filters and to places listed in query results.
+  - **Visits** are at one saved place (`placeOfVisit`): of the places they fit,
+    the one where presence had the owner longest during the visit (stays the
+    visit started don't count), else the nearest (`visitPlace`). Places can be
+    closer together than a visit is accurate, and iOS can merge stays at both
+    into one visit. The same rule applies to rule place filters, messages,
+    evidence and places listed in query results.
   - **Visit completions** end the stays they confirmed (`visit_id`), even when
     the completed report's revised coordinate no longer matches the place.
   - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
@@ -697,7 +702,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **Admission and start:**
   - admission rechecks history (`history_outside_grant`) and the place
     (`place_unavailable`), and writes "Arrived at …", "Left … after N
-    minutes" or "A visit at … ended …" (the saved place's name when the visit
+    minutes there" (the stay from the place's previous arrival, else its
+    visit) or "A visit at … ended …" (the saved place's name when the visit
     is at one, with its address in the reference) with the visit ID;
   - the policy check fails a run whose visit disappeared;
   - `automation-visit-context.ts` adds visit evidence at first start: times,

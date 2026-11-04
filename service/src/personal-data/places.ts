@@ -1,9 +1,9 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { db, type Database } from "../db/client.js";
 import { placeTable as places, dataOwnerStateTable as owners, dataDomainEventTable as domains,
-  locationVisitTable as visits, placePresenceTable as presenceRows } from "../db/schema.js";
+  locationVisitTable as visits, placePresenceTable as presenceRows, placePresenceEventTable as presenceEvents } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
 import { applyPresence, geometryRevision, resetPresence } from "./place-presence.js";
 
@@ -48,6 +48,44 @@ export function visitPlace<P extends Pick<Place, "latitude" | "longitude" | "rad
     if (!nearest || distance < nearest.distance) nearest = { place, distance };
   }
   return nearest?.place ?? null;
+}
+
+type VisitSpan = { latitude: number; longitude: number; horizontalAccuracyM: number; startedAt: Date; arrivalAt: Date | null;
+  departureAt: Date | null };
+
+/** The saved place a visit was at. When it fits several (`visitAtPlace`), the one where readings and
+ * geofences put the owner longest during it: on November 4 iOS merged the Office, Home and the
+ * Office again into one visit (±62 m, 8:53 AM–12:45 PM) nearer the Office, while Bud had the owner
+ * home from 8:55 to 12:35. Without any, the nearest (`visitPlace`). */
+export async function placeOfVisit<P extends Pick<Place, "id" | "latitude" | "longitude" | "radiusM">>(tx: Pick<Database, "select">,
+  owner: string, owned: P[], visit: VisitSpan): Promise<P | null> {
+  const fits = owned.filter(place => visitAtPlace(visit, place));
+  if (fits.length < 2) return fits[0] ?? null;
+  let best: { place: P; ms: number } | null = null;
+  for (const place of fits) {
+    const ms = await presenceDuringMs(tx, owner, place.id, visit.arrivalAt ?? visit.startedAt, visit.departureAt);
+    if (ms > 0 && (!best || ms > best.ms)) best = { place, ms };
+  }
+  return best?.place ?? visitPlace(fits, visit);
+}
+
+/** How long presence had the owner at a place between `start` and `end` (open: now). Stays that a
+ * visit started don't count, so a visit can't vote for the place it chose itself. */
+async function presenceDuringMs(tx: Pick<Database, "select">, owner: string, placeId: string, start: Date, end: Date | null) {
+  const columns = { transition: presenceEvents.transition, source: presenceEvents.source, at: presenceEvents.occurredAt };
+  const mine = and(eq(presenceEvents.createdByUserId, owner), eq(presenceEvents.placeId, placeId));
+  const [before] = await tx.select(columns).from(presenceEvents).where(and(mine, lt(presenceEvents.occurredAt, start)))
+    .orderBy(desc(presenceEvents.occurredAt), desc(presenceEvents.id)).limit(1);
+  const during = await tx.select(columns).from(presenceEvents).where(and(mine, gte(presenceEvents.occurredAt, start),
+    end ? lt(presenceEvents.occurredAt, end) : undefined)).orderBy(asc(presenceEvents.occurredAt), asc(presenceEvents.id));
+  let total = 0, from = before?.transition === "arrived" && before.source !== "visit" ? start.getTime() : null;
+  for (const event of during) {
+    if (event.transition === "departed") {
+      if (from !== null) total += event.at.getTime() - from;
+      from = null;
+    } else if (from === null && event.source !== "visit") from = event.at.getTime();
+  }
+  return from === null ? total : total + (end ?? new Date()).getTime() - from;
 }
 
 export function presentPlace(row: Place) {
@@ -116,8 +154,15 @@ export async function placesForOwner(database: Pick<Database, "select">, owner: 
     .limit(PLACE_LIMITS.places_per_owner);
 }
 
-export function matchingPlaces(owned: Place[], visit: { latitude: number; longitude: number; horizontalAccuracyM: number }) {
-  const place = visitPlace(owned, visit);
+/** The saved place at a reading (the nearest it fits), as a list for query results. */
+export function matchingPlaces(owned: Place[], point: { latitude: number; longitude: number; horizontalAccuracyM: number }) {
+  const place = visitPlace(owned, point);
+  return place ? [{ id: place.id, name: place.name }] : [];
+}
+
+/** The saved place a visit was at (`placeOfVisit`), as a list for query results and evidence. */
+export async function visitPlaces(tx: Pick<Database, "select">, owner: string, owned: Place[], visit: VisitSpan) {
+  const place = await placeOfVisit(tx, owner, owned, visit);
   return place ? [{ id: place.id, name: place.name }] : [];
 }
 
@@ -129,9 +174,9 @@ type VisitRow = typeof visits.$inferSelect;
 export async function publishVisitEvents(tx: Transaction, owner: string, visit: VisitRow, transition: { arrived: boolean; completed: boolean }) {
   if (!transition.arrived && !transition.completed) return;
   const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, owner), isNull(places.deletedAt)));
-  // The nearest place it matches, unless that place was created or moved after the visit began.
-  const nearest = visitPlace(owned, visit);
-  const at = nearest && nearest.geometryChangedAt <= visit.startedAt ? [nearest] : [];
+  // The place it was at (`placeOfVisit`), unless that place was created or moved after the visit began.
+  const place = await placeOfVisit(tx, owner, owned, visit);
+  const at = place && place.geometryChangedAt <= visit.startedAt ? [place] : [];
   if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
     at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
   if (transition.completed) {

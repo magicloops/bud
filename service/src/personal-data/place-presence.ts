@@ -29,6 +29,10 @@ export const STILL_M = 15;
  * the Office centre (±4 m), with no more readings, became a departure, then a false arrival when
  * Bud opened 80 minutes later. */
 export const DEPARTURE_CONFIRM_MS = 30_000;
+/** A waiting arrival this long before the place's own geofence exit, with no outside reading
+ * between, was a stay: on November 4 the fix when Bud opened (7 m from the Office's centre) was
+ * the only reading until the exit 10 minutes later. Walking past exits within a minute or two. */
+export const ARRIVAL_STAY_MS = 5 * 60_000;
 
 export type PresenceChange = {
   /** `reading`: a precise reading (fix, follow-up or significant-change point) decided it. */
@@ -387,6 +391,16 @@ export async function applyPresence(tx: Transaction, owner: string, place: Pick<
   // A departure while outside ends an approach, or a waiting arrival, that never arrived.
   if (!inside && change.transition === "departed") {
     const approach = row?.approachingAt && change.at >= row.approachingAt, arriving = row?.arrivingAt && change.at >= row.arrivingAt;
+    // Unless the exit came long enough after it (`ARRIVAL_STAY_MS`): then it arrived, at its first
+    // reading, and this exit starts the departure.
+    if (arriving && change.source === "region" && change.at.getTime() - row.arrivingAt!.getTime() >= ARRIVAL_STAY_MS) {
+      const arrivedAt = row.arrivingAt!;
+      await set({ state: "inside", since: arrivedAt, leavingAt: null, lastEnteredAt: arrivedAt, visitId: null, approachingAt: null,
+        arrivingAt: null, arrivingEventId: null });
+      await publishPresence(tx, owner, place.id, { transition: "arrived", at: arrivedAt,
+        source: await arrivalSource(tx, owner, row.arrivingEventId, place.id), rawEventId: row.arrivingEventId }, null);
+      return applyPresence(tx, owner, place, change);
+    }
     if (approach || arriving) return set({ ...(approach ? { approachingAt: null } : {}), ...(arriving ? { arrivingAt: null, arrivingEventId: null } : {}) });
   }
   if (change.transition === "arrived") {

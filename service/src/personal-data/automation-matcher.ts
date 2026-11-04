@@ -7,7 +7,7 @@ import { dataOwnerStateTable as owners, dataDomainEventTable as events,
   automationBootstrapTable as bootstraps, automationBootstrapMemberTable as members,
   healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions,
   locationVisitTable as visits, placeTable as places, placePresenceEventTable as presenceEvents } from "../db/schema.js";
-import { visitPlace } from "./places.js";
+import { placeOfVisit } from "./places.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput, type AutomationDefinition } from "./automation-contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -132,7 +132,7 @@ export class AutomationMatcher {
       let atPlace = !filter.place_ids.length;
       if (!atPlace) {
         const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, event.createdByUserId), isNull(places.deletedAt)));
-        const place = visitPlace(owned, visit);
+        const place = await placeOfVisit(tx, event.createdByUserId, owned, visit);
         atPlace = place !== null && filter.place_ids.includes(place.id);
       }
       const long = filter.min_duration_minutes === 0 || (durationMinutes !== null && durationMinutes >= filter.min_duration_minutes);

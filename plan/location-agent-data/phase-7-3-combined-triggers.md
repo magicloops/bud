@@ -305,3 +305,40 @@ office". The visit shows a stay from 11:35 AM to 1:11 PM.
   1 hour 35 minutes" up to 6 hours.
 - Visit messages name the saved place ("A visit at Home ended …"), with the
   address in the reference section.
+
+## Fixes from the November 4 data
+
+The service was unreachable from about 11 PM on November 3 until 10:38 AM, so
+the morning's events were skipped as too old, as intended. The trip itself
+(Home → a stop 420 m away → the Office → Home, then the Office at 12:35 PM and
+out at 12:45) was mostly right. Three problems remained.
+
+**1. A merged visit named the wrong place.** iOS reported one visit from 8:53 AM
+to 12:45 PM (±62 m), 46 m from the Office and 71 m from Home, covering the
+Office, Home and the Office again. It fits both, so the nearest won: "A visit at
+Office ended at 12:45 PM, after about 3 hours 50 minutes". Readings had the
+owner home from 8:55 to 12:35.
+- **Fix:** `placeOfVisit` picks, among the places a visit fits, the one where
+  presence had the owner longest during it. Stays the visit itself started
+  don't count. Without any, the nearest (`visitPlace`). It's used for
+  presence, rule place filters, the message, evidence and query results.
+
+**2. A departure didn't say how long the stay was.** "Left Home at 12:35 PM"
+took the stay only from a visit, and had none, though Bud had published the
+8:55 AM arrival. The agent replied it didn't know.
+- **Fix:** a departure's stay runs from the place's previous presence event when
+  that's an arrival, else from its visit.
+
+**3. A stay with one reading was missed.** The fix when Bud opened at 12:35 PM,
+7 m from the Office's centre, was the only reading until the Office's geofence
+exit at 12:45. The arrival waited for a confirming reading, and the exit
+cancelled it.
+- **Fix:** the place's own geofence exit at least 5 minutes after a waiting
+  arrival (`ARRIVAL_STAY_MS`) confirms it, at its first reading, and starts the
+  departure wait. An outside reading in between would already have cancelled
+  it. Walking past exits within a minute or two (October 29: 12 s).
+
+**Not fixable:** the walk from Home to the Office around 12:30 woke nothing.
+iOS had the phone inside both geofences from 8:55 AM to 12:45 PM (the places
+are 117 m apart, and geofences are accurate to 100–200 m), and its visit merged
+the stays. Only opening Bud noticed the move.

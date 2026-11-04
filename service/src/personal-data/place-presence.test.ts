@@ -12,7 +12,7 @@ import { parseBatch } from "./parser.js";
 import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { automationStartEvidence } from "./automation-contact-context.js";
-import { Places } from "./places.js";
+import { placeOfVisit, Places, placesForOwner } from "./places.js";
 import { settleFollowUps } from "./follow-ups.js";
 import { classifyReading, DEPARTURE_SETTLE_MS, geometryRevision, parseRegionTransition, PlacePresence } from "./place-presence.js";
 
@@ -435,6 +435,20 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([fix(onLane(23), ago(6), 5, 6.4), fix(onLane(18), second(ago(6), 12), 5, 0.0), fix(onLane(24), second(ago(6), 30), 5, 0.3)]);
   assert.deepEqual(await laneChanges(), [["arrived", ago(6).getTime()]], "stopped: arrived at the first reading inside");
 
+  // November 4, 12:35 PM: the fix when Bud opened was the only reading at the Office until its
+  // geofence exit 10 minutes later. An exit that long after a waiting arrival confirms the stay.
+  const shop = await places.create(owner, { name: "Shop", latitude: 38.90, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, shop.id));
+  await refreshRevisions();
+  const shopChanges = async () => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, shop.id))
+    .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.source, row.occurredAt.getTime()]);
+  await upload([fix(38.90 + 7 / 111_195, ago(13), 7)]);
+  assert.deepEqual([await shopChanges(), (await state(shop.id)).arrivingAt?.getTime()], [[], ago(13).getTime()]);
+  await upload([wake(shop.id, "exited", ago(7), 38.90 + 243 / 111_195, 4)]);
+  assert.deepEqual(await shopChanges(), [["arrived", "reading", ago(13).getTime()]]);
+  assert.equal(await presence.settleDepartures(() => new Date(ago(7).getTime() + DEPARTURE_SETTLE_MS)), true);
+  assert.deepEqual((await shopChanges()).at(-1), ["departed", "region", ago(7).getTime()]);
+
   // A visit matches only the nearest saved place it fits (November 3, 2:50 PM: ±87 m, 17 m from one
   // place and 101 m from the other, 117 m apart).
   const near = await places.create(owner, { name: "Near", latitude: 38.80, longitude: -122.4, radius_m: 50 }, "user");
@@ -443,6 +457,18 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([["location.visit.v2", { visit_key: "between", phase: "arrived", arrival_at: ago(5).toISOString(), departure_at: null,
     coordinate: { lat: 38.80 - 17 / 111_195, lon: -122.4 }, horizontal_accuracy_m: 87 }]]);
   assert.deepEqual([(await state(near.id))?.state, (await state(far.id))?.state ?? null], ["inside", null]);
+  // November 4: iOS merged stays at both into one visit nearer Near, but readings put the owner at
+  // Far for most of it. Its place is Far (the stay the visit itself started doesn't count).
+  const onFar = (metres: number) => 38.80 - 117 / 111_195 + metres / 111_195;
+  await upload([fix(onFar(3), ago(4), 5, 0), fix(onFar(4), second(ago(4), 40), 5, 0)]);
+  const between = { latitude: 38.80 - 17 / 111_195, longitude: -122.4, horizontalAccuracyM: 87, startedAt: ago(5), arrivalAt: ago(5), departureAt: ago(1) };
+  const pair = (await placesForOwner(db, owner)).filter(place => place.id === near.id || place.id === far.id);
+  assert.equal((await placeOfVisit(db, owner, pair, between))?.name, "Far");
+  assert.equal((await placeOfVisit(db, owner, pair, { ...between, departureAt: ago(4.5) }))?.name, "Near", "no readings: the nearest");
+  await upload([["location.visit.v2", { visit_key: "between", phase: "completed", arrival_at: ago(5).toISOString(), departure_at: ago(1).toISOString(),
+    coordinate: { lat: 38.80 - 17 / 111_195, lon: -122.4 }, horizontal_accuracy_m: 87 }]]);
+  assert.deepEqual((await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, far.id))
+    .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.source]), [["arrived", "reading"], ["departed", "visit"]]);
 
   // CLMonitor re-delivers a report, once as initial and again as a transition: only the first counts.
   const [type, payload] = region(work.id, "entered", ago(40), true);
@@ -465,6 +491,11 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const southRule = { ...definition, name: "South", place_trigger: { place_ids: [south.id] } };
   await db.insert(s.automationTable).values({ id: "south", state: "enabled", version: 1, activeRevision: 1, draft: southRule, createdByUserId: owner, updatedByUserId: owner });
   await db.insert(s.automationRevisionTable).values({ automationId: "south", revision: 1, definition: southRule, publicationBoundary: 0,
+    grantVersion: 1, activatedByUserId: owner, createdByUserId: owner });
+  const leaveShop = { ...definition, name: "Leave Shop", event_type: "place.departed", place_trigger: { place_ids: [shop.id] } };
+  await db.insert(s.automationTable).values({ id: "leave-shop", state: "enabled", version: 1, activeRevision: 1, draft: leaveShop,
+    createdByUserId: owner, updatedByUserId: owner });
+  await db.insert(s.automationRevisionTable).values({ automationId: "leave-shop", revision: 1, definition: leaveShop, publicationBoundary: 0,
     grantVersion: 1, activatedByUserId: owner, createdByUserId: owner });
   while (await new AutomationMatcher(db).matchNext(owner)) { /* drain */ }
   while (await new AutomationAdmission(db).admitNext(owner)) { /* drain */ }
@@ -490,4 +521,11 @@ test("geofences and visits share one presence state: one arrival, settled depart
   assert.match(southInput.content, /^Arrived at South [^\n]+\.\n[\s\S]*- Detected from a precise reading 0 m from its centre \(±8 m\)/);
   const southEvidence = await db.transaction(tx => automationStartEvidence(tx, southInvocation));
   assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).transition.reading, { distance_m: 0, accuracy_m: 8 });
+
+  // A departure says how long the stay was, from the place's arrival (November 4: "Left Home at
+  // 12:35 PM" had no visit, so it didn't).
+  const [leaveRun] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.automationId, "leave-shop"));
+  const [leaveInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, leaveRun.invocationId!));
+  const [leaveInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, leaveInvocation.inputMessageId));
+  assert.match(leaveInput.content, /^Left Shop (?:yesterday )?at \d+:\d+ [AP]M, after 6 minutes there\.\n/);
 });

@@ -5,7 +5,7 @@ import { db, type Database } from "../db/client.js";
 import { locationObservationTable as locations, contactTable as contacts, locationVisitNameTable as names,
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
-import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents } from "./places.js";
+import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents, visitPlaces } from "./places.js";
 
 /** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits.
  * Fixes are one-off positions the phone takes when Bud opens; their `fix_key` is stored as the
@@ -179,7 +179,9 @@ export class LocationQueries {
     const now = Date.now();
     const owned = await placesForOwner(this.database, owner);
     const page = rows.slice(0, limit), last = page.at(-1);
-    return { items: page.map(row => ({ ...presentVisit(row.visit, row.name, now), places: matchingPlaces(owned, row.visit) })),
+    const items = [];
+    for (const row of page) items.push({ ...presentVisit(row.visit, row.name, now), places: await visitPlaces(this.database, owner, owned, row.visit) });
+    return { items,
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ binding, time: last.visit.startedAt.toISOString(), id: last.visit.id })).toString("base64url") : null,
       coverage: { from: from.toISOString(), to: to.toISOString(), continuous: false,
         note: "Visits are places iOS noticed you staying; time between visits is not tracked." } };
@@ -204,7 +206,7 @@ export class LocationQueries {
     const point = pointRow?.location;
     const now = Date.now();
     const owned = await placesForOwner(this.database, owner);
-    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: matchingPlaces(owned, visitRow.visit) } : null;
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: await visitPlaces(this.database, owner, owned, visitRow.visit) } : null;
     // Age is always the time since the phone observed this location; an unfinished visit is not
     // "now". The newest observation wins (a fix, a coarse point or a visit report); a newer fix or
     // point within accuracy of an in-progress visit says so, since iOS can miss departures.
