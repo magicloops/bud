@@ -36,6 +36,20 @@ export function visitAtPlace(visit: { latitude: number; longitude: number; horiz
     <= place.radiusM + Math.min(visit.horizontalAccuracyM, PLACE_LIMITS.accuracy_padding_cap_m);
 }
 
+/** The saved place a visit is at: the nearest one it matches (`visitAtPlace`). Places can be
+ * closer together than a visit is accurate (Home and the Office are 117 m apart; a visit on
+ * November 3 was ±87 m), and a visit can't be at two. */
+export function visitPlace<P extends Pick<Place, "latitude" | "longitude" | "radiusM">>(owned: P[],
+  visit: { latitude: number; longitude: number; horizontalAccuracyM: number }): P | null {
+  let nearest: { place: P; distance: number } | null = null;
+  for (const place of owned) {
+    if (!visitAtPlace(visit, place)) continue;
+    const distance = distanceM(visit.latitude, visit.longitude, place.latitude, place.longitude);
+    if (!nearest || distance < nearest.distance) nearest = { place, distance };
+  }
+  return nearest?.place ?? null;
+}
+
 export function presentPlace(row: Place) {
   return { id: row.id, name: row.name, note: row.note, coordinate: { lat: row.latitude, lon: row.longitude }, radius_m: row.radiusM,
     geometry_revision: geometryRevision(row), created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
@@ -103,7 +117,8 @@ export async function placesForOwner(database: Pick<Database, "select">, owner: 
 }
 
 export function matchingPlaces(owned: Place[], visit: { latitude: number; longitude: number; horizontalAccuracyM: number }) {
-  return owned.filter(place => visitAtPlace(visit, place)).map(place => ({ id: place.id, name: place.name }));
+  const place = visitPlace(owned, visit);
+  return place ? [{ id: place.id, name: place.name }] : [];
 }
 
 type VisitRow = typeof visits.$inferSelect;
@@ -113,9 +128,10 @@ type VisitRow = typeof visits.$inferSelect;
  * geofence transitions; `visit.ended` is published here. */
 export async function publishVisitEvents(tx: Transaction, owner: string, visit: VisitRow, transition: { arrived: boolean; completed: boolean }) {
   if (!transition.arrived && !transition.completed) return;
-  const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, owner), isNull(places.deletedAt),
-    sql`${places.geometryChangedAt} <= ${visit.startedAt}`));
-  const at = owned.filter(place => visitAtPlace(visit, place));
+  const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, owner), isNull(places.deletedAt)));
+  // The nearest place it matches, unless that place was created or moved after the visit began.
+  const nearest = visitPlace(owned, visit);
+  const at = nearest && nearest.geometryChangedAt <= visit.startedAt ? [nearest] : [];
   if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
     at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
   if (transition.completed) {

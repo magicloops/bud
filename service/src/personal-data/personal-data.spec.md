@@ -84,7 +84,7 @@ Main-service personal-data ingestion, Contacts/location projections and first-pa
 - `app-key-crypto.ts`: app-key handoff primitives: 256-bit query credentials with verification-only hashes, strict RSA public-recipient validation, context-bound OAEP encrypted delivery and separate PSS retrieval/installation proofs. No routes or issuance permission are provided by these primitives; stored owner/state/expiry checks belong to the phase-7 repository. See the [handoff contract](../../../plan/personal-data-ingestion-and-agent-triggers/app-key-handoff.md).
 - `app-key-crypto.test.ts`: wrong key/context rejection, private/weak/unsupported PEM rejection, credential verification, explicit envelope serialization and retrieval/installation proof separation.
 
-- `automation-worker.ts`: explicitly started serial polling of matching, live admission and bootstrap admission, at most 25 rounds per poll by default. Each queue gets a turn despite another failing; logs only fixed error codes. Stop clears timers and drains the current transaction before any further admission.
+- `automation-worker.ts`: explicitly started serial polling of matching, live admission and bootstrap admission, at most 25 rounds per poll by default. Each round matches every published event (up to 100) before admitting, so events published together are pending together and can share a run. Each queue gets a turn despite another failing; logs only fixed error codes. Stop clears timers and drains the current transaction before any further admission.
 - `automation-worker.test.ts`: lazy start, duplicate-start prevention, bounded/failure-isolated polling and stop-before-next-operation lifecycle tests.
 
 `AutomationBootstrap.captureInTransaction` is the internal shared-transaction
@@ -107,7 +107,7 @@ changes, with rollback of the surrounding decision transaction.
 
 - `automation-policy.ts`: live-delivery or bootstrap-group/revision/owner-bound dispatch authority lookup. Bootstrap checks every frozen group member against current source lineage, visibility and history permission; canceled requests fail closed. Validates immutable target/model, current grant version/scopes/history and non-revoked source lineage. Resolves per-turn data ceilings only for running, leased, uncanceled invocations, with immutable rule scopes/history and invocation/fence/revision cursor binding. Pause defers preflight using `retry_wait`; running checkpoints ignore pause but enforce revocation. Missing or foreign delivery associations fail closed.
 
-- `automation-admission.ts`: owner-serialized delivery admission, current grant/source/target validation, pause/deadline handling and rolling 24-hour owner/rule budgets shared with bootstrap admission through `automationUsage`. Allocates a new thread or resolves the selected existing thread and commits input/invocation/delivery association together. The input (`automation-trigger-text.ts`) reads: the event in plain language and the phone's local time ("Arrived at Home at 5:36 PM.", with no "minutes ago"; the reference says "Reported N minutes after it happened." only past 10 minutes; the time zone comes from the newest `context.time_zone` received up to the trigger's publication, else labelled UTC; schedules use the rule's zone), the rule's instruction verbatim, then a "For reference" section (automation name and ID, time zone, detection, IDs, caveats, where the reply appears). `automation_name` is stamped in metadata for client labels. **Grouping (phase 7.3):**
+- `automation-admission.ts`: owner-serialized delivery admission, current grant/source/target validation, pause/deadline handling and rolling 24-hour owner/rule budgets shared with bootstrap admission through `automationUsage`. Allocates a new thread or resolves the selected existing thread and commits input/invocation/delivery association together. The input (`automation-trigger-text.ts`) reads: the event in plain language and the phone's local time ("Arrived at Home at 5:36 PM.", "… yesterday at 5:36 PM." or "… on Fri, Oct 24 at 5:36 PM.", with no "minutes ago"; the reference says "Reported N minutes after it happened." only past 10 minutes; the time zone comes from the newest `context.time_zone` received up to the trigger's publication, else labelled UTC; schedules use the rule's zone), the rule's instruction verbatim, then a "For reference" section (automation name and ID, time zone, detection, IDs, caveats, where the reply appears). `automation_name` is stamped in metadata for client labels. **Grouping (phase 7.3):**
   - **What groups:** location deliveries (`place.arrived`, `place.departed`, `visit.ended`) for the same conversation (a rule's target thread; new-conversation rules group per rule) become one run. Admission takes the oldest due one plus every other due location delivery for that conversation that passes its own checks and has the same Bud, resolved model and data access, up to 20.
   - **One at a time:** while a location run for the conversation is queued or running, new ones wait (`location_run_in_progress`), then form the next run.
   - **The input:** a time-ordered "Since the last update:" timeline, each rule's instruction once (`For "<rule>": …`), and the reference section with shared lines once and per-event lines labelled.
@@ -555,7 +555,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   outside.
   - **Region reports** carry their wake reading as `fix`. A report without one,
     or with an unknown one, trusts the geofence.
-    - Entered: definitely inside arrives; otherwise `approaching_at` is set.
+    - Entered: definitely inside starts an arrival (below); otherwise
+      `approaching_at` is set.
     - Exited: definitely outside starts the departure wait; otherwise it's
       ignored.
     - Initial: inside only if definitely inside.
@@ -564,16 +565,31 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - **`applyReading`:** every reading counts for each place the owner is
     inside or approaching. That means the wake reading for the other places,
     `location.fix.v1`, and significant-change points at 65 m or better.
-    - Definitely inside a place the owner isn't at: an arrival (source
-      `reading`), whether or not it was approaching. A delayed reading older
-      than a confirmation at a nearby place (within 1 km) doesn't arrive.
-      Approaches stay until the geofence exits, as a hint for agents.
+    - Definitely inside a place the owner isn't at: an arrival, whether or
+      not it was approaching, once confirmed. A delayed reading older than a
+      confirmation at a nearby place (within 1 km) doesn't arrive. Approaches
+      stay until the geofence exits, as a hint for agents.
+    - **Arrival wait** (`ARRIVAL_CONFIRM_MS`, 30 s): walking past a place can
+      put one reading inside it. The first definitely-inside reading sets
+      `arriving_at` and `arriving_event_id`. A second one at least 30 s from
+      it, in either order, that shows the owner stopped (speed under 0.5 m/s,
+      or without a speed, within 15 m of the first), publishes the arrival at
+      the earlier time (source
+      `region` if it was this place's own geofence report, else `reading`). A
+      definitely-outside reading, a definitely-inside reading at another
+      place, or an outside geofence exit cancels it. Visits, and geofence
+      entries without a usable reading, arrive at once.
     - Inside with a departure pending, and definitely inside: a re-entry.
     - Inside, and definitely inside another place: departed at once (with a
       pending exit's earlier time, if any), since the owner is confirmed
       elsewhere. Geofence exits can lag by many minutes.
     - Inside, and definitely outside: the departure wait starts at the
-      reading's time.
+      reading's time, unconfirmed (`leaving_confirmed` false). It settles only
+      once a second outside reading at least 30 s later, or a geofence exit,
+      confirms it; an inside reading first ends it with no departure. A
+      geofence exit's wait is confirmed from the start. A visit completion or
+      a reading inside another place still departs at once (at an unconfirmed
+      wait's time only if it was within 3 minutes).
     - Departures are applied before arrivals. A region exit applies to its own
       place first, so the exit time is kept.
     - **Inside evidence:** a definitely-inside reading while inside, from any
@@ -582,12 +598,20 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
       `last_entered_at`. A delayed exit or reading from before it
       can't then publish a departure; one more than 3 minutes older publishes
       a departure and a return.
+  - **Visits** match only the nearest saved place they fit (`visitPlace`):
+    places can be closer together than a visit is accurate. The same rule
+    applies to rule place filters and to places listed in query results.
   - **Visit completions** end the stays they confirmed (`visit_id`), even when
     the completed report's revised coordinate no longer matches the place.
   - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
     settled departure has its evidence and source.
   - **Replayed significant-change points** (same time and coordinate) aren't
     stored again.
+  - **Processing order:** an owner's due jobs run in the order their events
+    happened (`occurred_at`, then `recorded_at`), not of receipt. A batch's job
+    IDs share a millisecond, so their order within it was random, and presence
+    decisions depend on order. The phone uploads its oldest pending events
+    first.
 - **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
   region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
   `follow_up: { id, place_id, geometry_revision, transition }`) gets
@@ -597,7 +621,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - The upload handler first drains that owner's pending jobs inline, so
     presence reflects the batch. The whole step is bounded to 2 s: past that,
     the ACK goes without `follow_ups` and the work continues in the background.
-  - **After an entry:** settled once inside with no departure pending, or once
+  - **After an entry:** open while an arrival waits for its second reading;
+    settled once inside with no departure pending, or once
     the owner is confirmed at another place within 1 km since the report.
     Open while a departure is pending (the previous stay doesn't confirm the
     return), while the place is approaching, or until this
@@ -606,7 +631,7 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     waits for its wake reading.
   - **Superseded geometry:** a follow-up for another geometry revision is
     settled.
-  - **After an exit:** open while it's inside with no departure wait.
+  - **After an exit:** open while it's inside with no confirmed departure wait.
   - Unknown places are settled. Without the inline processor (injected route
     tests), it's omitted.
 - **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
@@ -672,7 +697,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **Admission and start:**
   - admission rechecks history (`history_outside_grant`) and the place
     (`place_unavailable`), and writes "Arrived at …", "Left … after N
-    minutes" or "A visit at … ended …" with the visit ID;
+    minutes" or "A visit at … ended …" (the saved place's name when the visit
+    is at one, with its address in the reference) with the visit ID;
   - the policy check fails a run whose visit disappeared;
   - `automation-visit-context.ts` adds visit evidence at first start: times,
     coordinate, accuracy, address, likely place, the trigger place, saved

@@ -435,6 +435,13 @@
       "when": 1793174512907,
       "tag": "0061_folded_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793751504751,
+      "tag": "0062_arrival_confirmation",
+      "breakpoints": true
     }
   ]
 }

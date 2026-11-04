@@ -585,3 +585,19 @@ Phase 7.3. Generated, additive: `automation_delivery.status` also allows
 `folded`, plus `timeline_message_id` (the quiet conversation entry a straggler
 became), with a check that the two go together. Applied locally as exact SQL.
 
+
+### `0062_arrival_confirmation.sql`
+
+Phase 7.3 follow-up. Generated and additive, plus one hand-written backfill.
+Three `place_presence` columns:
+- `arriving_at` (nullable): the first definitely-inside reading of an arrival
+  waiting for a confirming one (walking past a place can put a reading inside
+  it).
+- `arriving_event_id` (nullable): that reading's raw event, so the confirmed
+  arrival keeps it as evidence.
+- `leaving_confirmed` (not null, default false): whether a departure wait can
+  settle. A geofence exit starts a confirmed one; one started by a reading needs
+  a second outside reading. The backfill sets it for waits already pending, so
+  they settle as before.
+
+Applied locally as exact SQL.

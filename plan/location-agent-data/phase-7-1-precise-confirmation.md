@@ -266,6 +266,9 @@ don't keep Bud running. Two fixes and an experiment followed:
   - Device & Debug picks the mode: standard updates; `liveUpdates` with a
     `CLBackgroundActivitySession`; alternating between them (the default, for
     the next walk); or off.
+    **Decided on October 31:** live updates only. Standard follow-ups had
+    readings for a median 67 s against live's 179 s (see Phase 7.3, "Fixes
+    from the October 28–30 data"). The setting is now on or off.
   - Each follow-up records `location.follow_up.v1` with its mode, how it
     ended, the number of readings, the closest reading and the last reading's
     time.

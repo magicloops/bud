@@ -29,23 +29,29 @@ const localDay = (at: Date, timeZone: string) =>
   formatter(`day:${timeZone}`, { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 
 /**
- * A time as people say it, in `timeZone` (UTC when null, and then labelled): "5:36 PM" on the
- * same local day as `now`, "yesterday at 5:36 PM", or "Fri, Oct 24 at 5:36 PM".
+ * When, as people say it, in `timeZone` (UTC when null, and then labelled): "at 5:36 PM" on the
+ * same local day as `now`, "yesterday at 5:36 PM", or "on Fri, Oct 24 at 5:36 PM". It includes
+ * its preposition, so a sentence reads "Arrived at Home yesterday at 5:36 PM".
  */
 export function localTime(at: Date, timeZone: string | null, now: Date) {
   const zone = timeZone ?? "UTC";
   const time = formatter(`time:${zone}`, { timeZone: zone, hour: "numeric", minute: "2-digit" }).format(at)
     + (timeZone ? "" : " UTC");
   const day = localDay(at, zone);
-  if (day === localDay(now, zone)) return time;
+  if (day === localDay(now, zone)) return `at ${time}`;
   if (day === localDay(new Date(now.getTime() - 86_400_000), zone)) return `yesterday at ${time}`;
-  return `${formatter(`date:${zone}`, { timeZone: zone, weekday: "short", month: "short", day: "numeric" }).format(at)} at ${time}`;
+  return `on ${formatter(`date:${zone}`, { timeZone: zone, weekday: "short", month: "short", day: "numeric" }).format(at)} at ${time}`;
 }
 
-/** "25 minutes", "about 3 hours", "about 2 days". */
+/** "25 minutes", "about 1 hour 35 minutes" (to 5 minutes, up to 6 hours), "about 9 hours",
+ * "about 2 days". Rounding 95 minutes to "about 2 hours" read as a different stay (November 3). */
 export function duration(seconds: number) {
   const minutes = Math.max(1, Math.round(seconds / 60));
   if (minutes < 90) return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  if (minutes < 360) {
+    const rounded = Math.round(minutes / 5) * 5, whole = Math.floor(rounded / 60), rest = rounded % 60;
+    return `about ${whole} hour${whole === 1 ? "" : "s"}${rest ? ` ${rest} minutes` : ""}`;
+  }
   const hours = Math.round(minutes / 60);
   if (hours < 48) return hours === 1 ? "about an hour" : `about ${hours} hours`;
   return `about ${Math.round(hours / 24)} days`;

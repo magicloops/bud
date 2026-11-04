@@ -153,16 +153,18 @@ test("visits at saved places publish arrival, departure and visit end once, matc
     return { invocation, input };
   };
   const arrived = await invocationFor("arrive-home", a);
-  assert.match(arrived.input.content, /^Arrived at Home at [^\n]+\.\n\n/);
+  assert.match(arrived.input.content, /^Arrived at Home [^\n]+\.\n\n/);
   assert.match(arrived.input.content, /\n---\nFor reference\. Don't mention these details unless the instruction asks for them\.\n- Triggered by the "[^"]+" automation \(ID arrive-home\)\.\n- Times are in UTC; the phone hasn't reported its time zone\./);
-  assert.match(arrived.input.content, /^Arrived at Home at [^\n]+\.\n\nNote it\.\n\n---\n/);
+  assert.match(arrived.input.content, /^Arrived at Home [^\n]+\.\n\nNote it\.\n\n---\n/);
   assert.equal(arrived.input.metadata?.automation_name, "Places");
   assert.deepEqual([arrived.input.metadata?.visit_id, arrived.input.metadata?.place_id], [a, home.id]);
-  assert.match((await invocationFor("leave-home", a)).input.content, /^Left Home at [^\n]*, after 25 minutes there\./);
+  assert.match((await invocationFor("leave-home", a)).input.content, /^Left Home [^\n]*, after 25 minutes there\./);
   // Phase 7.3: the rule's four visit ends were pending together, so they share one timeline run.
   const endedRun = (await invocationFor("ended-any", d)).input.content;
-  assert.match(endedRun, /^Since the last update:\n(- A visit at a place ended at [^\n]*\.\n){4}\nNote it\.\n/);
-  assert.match(endedRun, /- A visit at a place ended at [^\n]*, after 14 minutes\./);
+  assert.match(endedRun, /^Since the last update:\n(- A visit at (?:a place|Home|Office) ended [^\n]*\.\n){4}\nNote it\.\n/);
+  assert.match(endedRun, /- A visit at a place ended [^\n]*, after 14 minutes\./);
+  // A visit at a saved place is named by it.
+  assert.match(endedRun, /- A visit at Home ended [^\n]*, after 25 minutes\./);
   assert.equal(await checkAutomationPolicy(arrived.invocation, true, db), "ready");
 
   const evidence = await db.transaction(tx => automationStartEvidence(tx, arrived.invocation));

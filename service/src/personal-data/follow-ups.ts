@@ -44,9 +44,10 @@ export function followUpRequests(events: ValidEvent[]) {
 /**
  * Whether each follow-up still needs readings, from presence after the batch was processed:
  * - for a place that's gone or was moved since (another geometry revision): settled;
- * - after an exit: open while the place is inside with no departure wait (a reading definitely
- *   outside will start one); settled once the wait has started or the place is outside;
- * - after an entry: settled once inside with no departure pending (a pending one belongs to the
+ * - after an exit: open while the place is inside with no confirmed departure wait (readings
+ *   definitely outside start and confirm one); settled once it's confirmed or the place is outside;
+ * - after an entry: open while an arrival waits for its confirming reading; settled once inside
+ *   with no departure pending (a pending one belongs to the
  *   previous stay, so the return isn't confirmed yet), or once the owner is confirmed at another
  *   place within `NEARBY_PLACE_M` since this follow-up's report (arrived there, or a definitely-inside
  *   reading there: the geofence fired on the way, or overlaps); otherwise open while
@@ -70,14 +71,15 @@ export async function settleFollowUps(owner: string, requests: Map<string, Follo
   for (const [id, request] of requests) {
     const row = rows.get(request.placeId);
     if (current.get(request.placeId) !== request.revision) decisions[id] = "settled";
-    else if (request.transition === "exited") decisions[id] = row?.state === "inside" && row.leavingAt === null ? "open" : "settled";
+    else if (request.transition === "exited")
+      decisions[id] = row?.state === "inside" && (row.leavingAt === null || !row.leavingConfirmed) ? "open" : "settled";
     else if (row?.state === "inside") decisions[id] = row.leavingAt === null ? "settled" : "open";
     else {
       const reportAt = await processedReportAt(database, owner, id);
       const arrivedElsewhere = reportAt !== null && [...rows.values()].some(other => other.placeId !== request.placeId
         && near(other.placeId, request.placeId) && other.state === "inside" && other.leavingAt === null
         && Math.max(other.since.getTime(), other.lastEnteredAt?.getTime() ?? 0) >= reportAt.getTime());
-      decisions[id] = arrivedElsewhere || (reportAt !== null && !row?.approachingAt) ? "settled" : "open";
+      decisions[id] = row?.arrivingAt ? "open" : arrivedElsewhere || (reportAt !== null && !row?.approachingAt) ? "settled" : "open";
     }
   }
   return decisions;

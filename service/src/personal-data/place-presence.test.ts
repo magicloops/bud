@@ -13,7 +13,7 @@ import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { automationStartEvidence } from "./automation-contact-context.js";
 import { Places } from "./places.js";
-import { followUpRequests, settleFollowUps } from "./follow-ups.js";
+import { settleFollowUps } from "./follow-ups.js";
 import { classifyReading, DEPARTURE_SETTLE_MS, geometryRevision, parseRegionTransition, PlacePresence } from "./place-presence.js";
 
 test("region transitions parse strictly", () => {
@@ -22,7 +22,7 @@ test("region transitions parse strictly", () => {
   assert.deepEqual(parseRegionTransition(valid), { placeId: valid.place_id, transition: "arrived", at: new Date(valid.occurred_at), initial: false,
     revision: "1760864400000", fix: null });
   const fix = { latitude: 37.7, longitude: -122.4, horizontal_accuracy_m: 8, occurred_at: "2026-10-19T09:00:03.000Z" };
-  assert.deepEqual(parseRegionTransition({ ...valid, fix })?.fix, { latitude: 37.7, longitude: -122.4, accuracyM: 8, at: new Date(fix.occurred_at) });
+  assert.deepEqual(parseRegionTransition({ ...valid, fix })?.fix, { latitude: 37.7, longitude: -122.4, accuracyM: 8, at: new Date(fix.occurred_at), speedMps: null });
   for (const patch of [{ place_id: "home" }, { transition: "inside" }, { initial: "no" }, { occurred_at: "soon" }, { geometry_revision: undefined },
     { fix: { ...fix, latitude: 91 } }, { fix: { ...fix, horizontal_accuracy_m: -1 } }, { fix: { ...fix, occurred_at: "soon" } }, { fix: "here" }])
     assert.equal(parseRegionTransition({ ...valid, ...patch }), null);
@@ -274,8 +274,8 @@ test("geofences and visits share one presence state: one arrival, settled depart
     const [type, payload] = region(placeId, transition, at, initial);
     return [type, { ...(payload as object), fix: reading(lat, at, accuracy), ...(followUpId ? { follow_up_id: followUpId } : {}) }, at] as [string, unknown, Date];
   };
-  const fix = (lat: number, at: Date, accuracy: number) => ["location.fix.v1", { fix_key: `fix:${randomUUID()}`, reason: "foreground",
-    coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: accuracy }, at] as [string, unknown, Date];
+  const fix = (lat: number, at: Date, accuracy: number, speed = -1) => ["location.fix.v1", { fix_key: `fix:${randomUUID()}`, reason: "foreground",
+    coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: accuracy, speed_mps: speed }, at] as [string, unknown, Date];
   const point = (lat: number, at: Date, accuracy: number) => ["location.significant_change.v1", {
     coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: accuracy }, at] as [string, unknown, Date];
   const workCenter = 38.40 - 117 / 111_195;
@@ -302,10 +302,33 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, kiosk.id));
   await refreshRevisions();
   assert.equal(await ask(kiosk.id, "entered"), "open");
-  // Back towards home: the entry fires 70 m out (±16), then the fix when Bud opens, 5 m away, arrives.
+  // A backlog in one batch, newest first (October 30): processed in the order it happened, it's
+  // an arrival, a departure and a return, at the right times.
+  const atKiosk = (metres: number) => 38.50 + metres / 111_195;
+  await upload([fix(atKiosk(4), ago(1.5), 5), fix(atKiosk(5), ago(2), 5), fix(atKiosk(150), ago(7.5), 5), fix(atKiosk(150), ago(8), 5),
+    fix(atKiosk(3), ago(9.5), 5), fix(atKiosk(2), ago(10), 5)]);
+  const kioskChanges = async () => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, kiosk.id))
+    .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.occurredAt.getTime()]);
+  assert.deepEqual(await kioskChanges(), [["arrived", ago(10).getTime()], ["departed", ago(8).getTime()], ["arrived", ago(2).getTime()]]);
+  // November 3, 11:41 AM: one reading just outside, then none. The wait doesn't settle, the exit's
+  // follow-up stays open, and the next reading inside ends it with no departure.
+  await upload([fix(atKiosk(62), ago(1.2), 4, 1.3)]);
+  assert.deepEqual([(await state(kiosk.id)).leavingAt?.getTime(), (await state(kiosk.id)).leavingConfirmed], [ago(1.2).getTime(), false]);
+  assert.equal(await presence.settleDepartures(() => new Date(now + 3600_000)), false, "an unconfirmed wait doesn't settle");
+  assert.equal(await ask(kiosk.id, "exited"), "open");
+  await upload([fix(atKiosk(7), ago(1), 12)]);
+  assert.deepEqual([(await state(kiosk.id)).state, (await state(kiosk.id)).leavingAt, (await kioskChanges()).length], ["inside", null, 3]);
+  // Back towards home: the entry fires 70 m out (±16), then a fix 5 m away starts the arrival and
+  // one 30 s later confirms it, at the first.
   await upload([wake(house.id, "entered", ago(70), fromHouse(70), 16)]);
   assert.deepEqual([(await state(house.id)).state, Boolean((await state(house.id)).approachingAt)], ["outside", true]);
   await upload([fix(fromHouse(5), ago(68), 10)]);
+  assert.deepEqual([(await state(house.id)).state, (await state(house.id)).arrivingAt?.getTime()], ["outside", ago(68).getTime()]);
+  assert.equal(await ask(house.id, "entered"), "open", "an arrival waiting for its second reading needs readings");
+  await upload([fix(fromHouse(6), ago(67.6), 10)]);
+  assert.equal((await state(house.id)).state, "outside", "20 s later isn't enough");
+  await upload([fix(fromHouse(4), ago(67.5), 10)]);
+  assert.deepEqual([(await state(house.id)).state, (await state(house.id)).arrivingAt], ["inside", null]);
   assert.equal(await ask(house.id, "entered"), "settled", "arrived");
   assert.equal(await ask(house.id, "exited"), "open", "inside with no departure wait: an exit still needs readings");
   assert.equal(await ask("01K00000000000000000000000", "entered"), "settled", "unknown place");
@@ -314,10 +337,12 @@ test("geofences and visits share one presence state: one arrival, settled depart
   assert.deepEqual(houseChanges, [["departed", "region", ago(90).getTime()], ["arrived", "reading", ago(68).getTime()]]);
   assert.deepEqual(await of(work.id), [], "no Office arrival for walking past");
   // A stale Office stay ends on a significant-change point at home (112 m away): confirmed at the
-  // House, so the departure publishes at once. A replay of the point isn't stored again, and a
-  // coarse point counts for nothing.
+  // House, so the departure publishes at once (the House arrival waits for the fix after it). A
+  // replay of the point isn't stored again, and a coarse point counts for nothing.
   await upload([wake(work.id, "entered", ago(60), workCenter, 5)]);
-  await upload([point(fromHouse(5), ago(50), 10), point(fromHouse(5), ago(50), 10), point(workCenter, ago(49), 90)]);
+  await upload([fix(workCenter, ago(59), 5)]);
+  await upload([point(fromHouse(5), ago(50), 10), point(fromHouse(5), ago(50), 10), point(workCenter, ago(49), 90),
+    fix(fromHouse(5), ago(49.5), 10)]);
   assert.deepEqual([(await state(work.id)).state, (await state(work.id)).leavingAt], ["outside", null]);
   assert.equal(await ask(work.id, "exited"), "settled");
   const points = await db.select().from(s.locationObservationTable).where(and(eq(s.locationObservationTable.kind, "significant_change"),
@@ -369,14 +394,55 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([fix(fromCorner(40), ago(29.8), 5)]);
   assert.ok((await state(studio.id)).approachingAt, "still approaching while confirmed at Corner");
   assert.equal(await ask(studio.id, "entered", "to-studio"), "settled", "its follow-up settles while confirmed at Corner");
-  await upload([fix(fromCorner(117 - 22), ago(29.5), 5)]);
+  await upload([fix(fromCorner(117 - 22), ago(29.5), 5), fix(fromCorner(117 - 20), ago(29), 5)]);
   const changesAt = async (id: string) => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, id))
     .orderBy(asc(s.placePresenceEventTable.createdAt))).map(row => [row.transition, row.source, row.occurredAt.getTime()]);
   assert.deepEqual(await changesAt(studio.id), [["arrived", "reading", ago(29.5).getTime()]]);
   assert.deepEqual(await changesAt(corner.id), [["departed", "reading", ago(29.5).getTime()]], "confirmed at Studio: no settle wait");
-  await upload([fix(fromCorner(3), ago(20), 12)]);
+  await upload([fix(fromCorner(3), ago(20), 12), fix(fromCorner(4), ago(19.5), 12)]);
   assert.deepEqual((await changesAt(corner.id)).at(-1), ["arrived", "reading", ago(20).getTime()], "no approach needed");
   assert.deepEqual((await changesAt(studio.id)).at(-1), ["departed", "reading", ago(20).getTime()]);
+  // October 29: walking home past Studio. One reading 45 m from its centre (±4) is inside it, the
+  // next, 7 s later, is outside: no arrival, and no departure either. A geofence wake inside it
+  // waits the same way, and an outside geofence exit ends it.
+  const passed = (await changesAt(studio.id)).length;
+  await upload([wake(studio.id, "entered", ago(15), fromCorner(117 - 45), 4, false, "walk-by")]);
+  assert.equal((await state(studio.id)).arrivingAt?.getTime(), ago(15).getTime());
+  assert.equal(await ask(studio.id, "entered", "walk-by"), "open");
+  await upload([fix(fromCorner(117 - 70), new Date(ago(15).getTime() + 7000), 4)]);
+  assert.equal((await state(studio.id)).arrivingAt, null, "the outside reading cancels it");
+  await upload([fix(fromCorner(117 - 3), ago(14), 4)]);
+  assert.equal((await state(studio.id)).arrivingAt?.getTime(), ago(14).getTime(), "a new reading inside starts over");
+  await upload([wake(studio.id, "exited", ago(13.8), fromCorner(117 - 120), 5)]);
+  assert.deepEqual([(await state(studio.id)).state, (await state(studio.id)).arrivingAt, (await changesAt(studio.id)).length],
+    ["outside", null, passed]);
+  // Readings processed in the reverse order (a backlog) confirm at the earlier one too.
+  await upload([fix(fromCorner(117 - 2), ago(12), 4)]);
+  await upload([fix(fromCorner(117 - 3), ago(12.5), 4)]);
+  assert.deepEqual((await changesAt(studio.id)).at(-1), ["arrived", "reading", ago(12.5).getTime()]);
+
+  // November 3, 9:48 AM: walking straight through a place, inside for over 30 s at 1.1–1.9 m/s, isn't
+  // an arrival; stopping is, at the first reading inside.
+  const lane = await places.create(owner, { name: "Lane", latitude: 38.70, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, lane.id));
+  const onLane = (metres: number) => 38.70 + metres / 111_195;
+  const second = (base: Date, seconds: number) => new Date(base.getTime() + seconds * 1000);
+  await upload([fix(onLane(-44), ago(9), 4, 1.4), fix(onLane(-24), second(ago(9), 11), 5, 1.9), fix(onLane(-1), second(ago(9), 27), 2, 1.1),
+    fix(onLane(24), second(ago(9), 41), 2, 1.2), fix(onLane(41), second(ago(9), 53), 2, 1.1), fix(onLane(63), second(ago(9), 75), 3, 1.7)]);
+  const laneChanges = async () => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, lane.id)))
+    .map(row => [row.transition, row.occurredAt.getTime()]);
+  assert.deepEqual([await laneChanges(), (await state(lane.id))?.arrivingAt ?? null], [[], null], "walked through");
+  await upload([fix(onLane(23), ago(6), 5, 6.4), fix(onLane(18), second(ago(6), 12), 5, 0.0), fix(onLane(24), second(ago(6), 30), 5, 0.3)]);
+  assert.deepEqual(await laneChanges(), [["arrived", ago(6).getTime()]], "stopped: arrived at the first reading inside");
+
+  // A visit matches only the nearest saved place it fits (November 3, 2:50 PM: ±87 m, 17 m from one
+  // place and 101 m from the other, 117 m apart).
+  const near = await places.create(owner, { name: "Near", latitude: 38.80, longitude: -122.4, radius_m: 50 }, "user");
+  const far = await places.create(owner, { name: "Far", latitude: 38.80 - 117 / 111_195, longitude: -122.4, radius_m: 50 }, "user");
+  for (const id of [near.id, far.id]) await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, id));
+  await upload([["location.visit.v2", { visit_key: "between", phase: "arrived", arrival_at: ago(5).toISOString(), departure_at: null,
+    coordinate: { lat: 38.80 - 17 / 111_195, lon: -122.4 }, horizontal_accuracy_m: 87 }]]);
+  assert.deepEqual([(await state(near.id))?.state, (await state(far.id))?.state ?? null], ["inside", null]);
 
   // CLMonitor re-delivers a report, once as initial and again as a transition: only the first counts.
   const [type, payload] = region(work.id, "entered", ago(40), true);
@@ -409,9 +475,9 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const first = admitted.find(delivery => delivery.status === "admitted")!;
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, first.invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /^Since the last update:\n- Arrived at Home at [^\n]+\.\n- Arrived at Home at [^\n]+\.\n- Arrived at Home at [^\n]+\.\n\nSay hi\.\n\n---\n/);
+  assert.match(input.content, /^Since the last update:\n- Arrived at Home [^\n]+\.\n- Arrived at Home [^\n]+\.\n- Arrived at Home [^\n]+\.\n\nSay hi\.\n\n---\n/);
   assert.match(input.content, /- Times are in America\/Los_Angeles, the phone's time zone\./);
-  assert.match(input.content, /- Arrived at Home at \d+:\d+ [AP]M: Detected by the phone's geofence/);
+  assert.match(input.content, /- Arrived at Home (?:yesterday )?at \d+:\d+ [AP]M: Detected by the phone's geofence/);
   assert.deepEqual(input.metadata?.delivery_ids && (input.metadata.delivery_ids as string[]).length, 3);
   const evidence = await db.transaction(tx => automationStartEvidence(tx, invocation));
   const json = JSON.parse(evidence!.slice(evidence!.indexOf("{")));
@@ -420,8 +486,8 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const [southRun] = await db.select().from(s.automationDeliveryTable).where(eq(s.automationDeliveryTable.automationId, "south"));
   const [southInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, southRun.invocationId!));
   const [southInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, southInvocation.inputMessageId));
-  // South's two arrivals were pending together: one timeline run.
-  assert.match(southInput.content, /- Arrived at South at \d+:\d+ [AP]M: Detected from a precise reading 0 m from its centre \(±8 m\)\./);
+  // One South arrival (a single reading no longer arrives and then leaves at once).
+  assert.match(southInput.content, /^Arrived at South [^\n]+\.\n[\s\S]*- Detected from a precise reading 0 m from its centre \(±8 m\)/);
   const southEvidence = await db.transaction(tx => automationStartEvidence(tx, southInvocation));
-  assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).events[0].transition.reading, { distance_m: 0, accuracy_m: 8 });
+  assert.deepEqual(JSON.parse(southEvidence!.slice(southEvidence!.indexOf("{"))).transition.reading, { distance_m: 0, accuracy_m: 8 });
 });

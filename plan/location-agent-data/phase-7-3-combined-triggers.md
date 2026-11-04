@@ -209,3 +209,99 @@ start one run each. Each family opts in. Schedules don't group.
 - **New-conversation rules** run stragglers normally: there's no ongoing
   timeline to join.
 
+
+## Fixes from the October 28–30 data
+
+The service was down from about 5 PM on October 29 until 12:25 AM on October 31,
+and the phone then uploaded its backlog. Old triggers were correctly suppressed.
+Four problems showed up.
+
+**1. Events published together still ran separately (service, on
+`feat/presence-fixes`).** On October 29, "Left the office" and "Arrived home"
+(8:53 AM), and "Left home" with its visit (9:23 AM and 4:42 PM), each became two
+replies 4–10 s apart.
+- **Cause:** each worker round matched one domain event and then admitted it.
+  The next event's delivery, matched 50–100 ms later, found the first run
+  already queued and waited for it. The grouping tests matched everything
+  before admitting, so they never saw this.
+- **Fix:** each round matches every published event (up to 100) before
+  admitting.
+
+**2. The backlog was processed out of order (service and phone).**
+- **Cause, service:** jobs were taken by ID, and a batch's IDs share a
+  millisecond, so their order within it was random.
+- **Cause, phone:** retry delays apply per event. After the outage, events
+  recorded during it were due at once, so they uploaded before the older
+  backlog that had failed.
+- **Effect on October 30:** the 2:07 PM Office arrival was lost (a 2:45 PM
+  reading at Home was processed first). The 5:09 PM Home arrival was dated from
+  the 12:25 AM fix taken when Bud opened, so "You arrived home at 12:25 AM" was
+  sent.
+- **Fix:** the service processes an owner's jobs in the order their events
+  happened, and the phone sends its oldest pending events first once any is due.
+
+**3. Walking past the Office counted as an arrival (service).** At 3:20 PM on
+October 29, one reading 45 m from the Office centre (±4 m) was inside its 50 m
+circle, and the next, 7 s later, was outside. That sent "Arrived at the office"
+and then "Left the office".
+- **Fix:** an arrival from readings waits for a second definitely-inside
+  reading at least 30 s from the first, and is published at the first. Outside
+  evidence first cancels it. Follow-ups stay open while it waits. Visits, and
+  geofence entries without a usable reading, still arrive at once (migration
+  0062: `arriving_at`, `arriving_event_id`).
+
+**4. Standard follow-ups stopped when iOS suspended Bud (phone).** Across 30
+follow-ups, live ones had readings for a median 179 s and standard ones for
+67 s. On October 29 a standard follow-up stopped after 7 s, so a Home arrival
+waited 33 minutes, until Bud was opened.
+- **Fix:** follow-ups always use live updates. Device & Debug keeps an on/off
+  switch, and the `location.follow_up.v1` diagnostics drop `mode`.
+
+**Also:** event text read "Arrived at Home at yesterday at 11:39 PM". The local
+time now includes its preposition ("at 5:36 PM", "yesterday at 5:36 PM", "on
+Fri, Oct 24 at 5:36 PM").
+
+**Still open:** walking between the Office and Home (117 m) can give no
+geofence wake, because iOS already treats both regions as entered. On October 28
+that left the owner "at the Office" overnight. Live follow-ups give more time to
+catch the walk. Revisit after the next device walk.
+
+## Fixes from the November 3 data
+
+The service was offline from October 31 until about 1 PM on November 3. The
+phone ran the old build until then and the new one afterwards, for the trip to
+the airport and back. Combining, folding, the arrival wait, ordered processing
+and live follow-ups all worked. Four problems remained.
+
+**1. A visit could be at two places.** A visit matched every saved place within
+its radius plus the visit's accuracy. One at ±87 m, 17 m from the Office and
+101 m from Home, matched both. Home got a false arrival, folded as "Earlier:
+Arrived at Home at 2:50 PM". Visits at 11:08 and 11:35 AM arrived at both
+places.
+- **Fix:** `visitPlace` returns the nearest matching place only. It's used for
+  presence, rule place filters and the places listed in query results.
+
+**2. Walking straight through the Office arrived.** At 9:48 AM the walk passed
+1 m from the Office's centre and stayed inside for 53 s, at 1.1–1.9 m/s.
+- **Fix:** the confirming reading must show the owner stopped. That means a
+  speed under 0.5 m/s, or, without one, within 15 m of the first reading.
+  Every real arrival had a reading at 0.0–0.3 m/s. The first reading's position
+  comes from its stored event (`storedReading`).
+
+**3. One outside reading became a departure.** At 11:41 AM a reading 62 m from
+the Office's centre (±4 m) started the departure wait. No readings followed, so
+it settled. When Bud opened at 1:03 PM, the next reading sent "Arrived at the
+office". The visit shows a stay from 11:35 AM to 1:11 PM.
+- **Fix:** a wait started by a reading is unconfirmed (`leaving_confirmed`,
+  migration 0062). It settles once a second outside reading at least 30 s
+  later, or a geofence exit, confirms it. An inside reading first ends it with
+  no departure, however long it waited.
+- Exit follow-ups stay open until it's confirmed. A visit completion or a
+  reading inside another place still departs at once, at the wait's time only
+  if that was within 3 minutes.
+
+**4. Wording.**
+- "About 2 hours" for 95 minutes confused the agent. Durations now read "about
+  1 hour 35 minutes" up to 6 hours.
+- Visit messages name the saved place ("A visit at Home ended …"), with the
+  address in the reference section.

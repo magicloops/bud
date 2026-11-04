@@ -3,7 +3,7 @@ import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations, locationVisitNameTable as visitNames } from "../db/schema.js";
 import { parseLocationPayload, parseVisitName, projectVisit, LOCATION_TYPES, VISIT_NAME_TYPE } from "./location.js";
-import { applyReading, POINT_MAX_ACCURACY_M, processRegionTransition, REGION_TRANSITION_TYPE } from "./place-presence.js";
+import { applyReading, POINT_MAX_ACCURACY_M, processRegionTransition, REGION_TRANSITION_TYPE, speedOf } from "./place-presence.js";
 import { HEALTH_TYPES, processHealthEvent } from "./health.js";
 import { canonicalJson } from "./contracts.js";
 import { parseContactPayload, verifyContactScan, type ContactManifest, type ContactRecord } from "./contacts.js";
@@ -51,9 +51,14 @@ export class ContactProcessor {
     try { return await this.database.transaction(async tx => {
       // All publication/rule/bootstrap work uses this same owner lock first.
       await tx.select().from(owners).where(eq(owners.createdByUserId, candidate.owner)).for("update");
-      const [job] = await tx.select().from(jobs).where(and(eq(jobs.createdByUserId, candidate.owner), eq(jobs.status, "pending"), lte(jobs.nextAttemptAt, new Date())))
-        .orderBy(jobs.nextAttemptAt, jobs.id).limit(1).for("update");
-      if (!job) return false;
+      // In the order things happened on the phone, not of receipt: presence decisions depend on
+      // order, and a batch's job IDs share a millisecond, so their order within it is random.
+      const [due] = await tx.select({ job: jobs }).from(jobs)
+        .innerJoin(events, and(eq(events.id, jobs.eventId), eq(events.createdByUserId, jobs.createdByUserId)))
+        .where(and(eq(jobs.createdByUserId, candidate.owner), eq(jobs.status, "pending"), lte(jobs.nextAttemptAt, new Date())))
+        .orderBy(events.occurredAt, events.recordedAt, jobs.id).limit(1).for("update", { of: jobs });
+      if (!due) return false;
+      const job = due.job;
       failedJob = job.id;
       await tx.execute(sql`set local statement_timeout = '30s'`);
       const [event] = await tx.select().from(events).where(and(eq(events.id, job.eventId), eq(events.createdByUserId, candidate.owner)));
@@ -72,7 +77,7 @@ export class ContactProcessor {
             // Fixes and accurate points are presence evidence too.
             else if (location.kind === "fix" || location.horizontalAccuracyM <= POINT_MAX_ACCURACY_M)
               await applyReading(tx, candidate.owner, { latitude: location.latitude, longitude: location.longitude,
-                accuracyM: location.horizontalAccuracyM, at: event.occurredAt }, event.id);
+                accuracyM: location.horizontalAccuracyM, at: event.occurredAt, speedMps: speedOf(event.rawEnvelope.payload as Record<string, unknown>) }, event.id);
           }
         }
         await tx.update(jobs).set({ status: location ? "processed" : "invalid", errorCode: location ? null : "invalid_location", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));

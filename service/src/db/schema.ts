@@ -1559,9 +1559,16 @@ export const placePresenceTable = pgTable("place_presence", {
   visitId: text("visit_id"),
   // The region exit waiting in `leaving_at`, so the settled departure keeps its evidence.
   leavingEventId: text("leaving_event_id"),
+  // Whether the departure wait can settle: started by a geofence exit, or a second outside
+  // reading confirmed one started by a reading (`DEPARTURE_CONFIRM_MS`).
+  leavingConfirmed: boolean("leaving_confirmed").notNull().default(false),
   // A geofence entry whose precise reading was still short of the place: the owner is near it
   // but not yet there. Cleared by an arrival or a departure.
   approachingAt: timestamp("approaching_at", { withTimezone: true }),
+  // The first definitely-inside reading of an arrival not yet confirmed (`ARRIVAL_CONFIRM_MS`),
+  // and its event: walking past a place can put one reading inside it.
+  arrivingAt: timestamp("arriving_at", { withTimezone: true }),
+  arrivingEventId: text("arriving_event_id"),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => ({

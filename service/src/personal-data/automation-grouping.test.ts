@@ -93,7 +93,7 @@ test("location triggers for one conversation combine into one timeline run, one 
 
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, grouped[0].invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /^Since the last update:\n- Left Home at [^\n]+\.\n- A visit at [^\n]+ ended at [^\n]+\.\n- Arrived at Office at [^\n]+\.\n\n/,
+  assert.match(input.content, /^Since the last update:\n- Left Home [^\n]+\.\n- A visit at [^\n]+ ended [^\n]+\.\n- Arrived at Office [^\n]+\.\n\n/,
     "in the order things happened");
   assert.match(input.content, /\n\nFor "Leave Home": Say I left home\.\nFor "Visit ended": Say where I was\.\nFor "Arrive at Office": Say I arrived\.\n\n---\n/);
   assert.match(input.content, /- Triggered by the "Leave Home", "Visit ended" and "Arrive at Office" automations \(IDs leave-home, ended, arrive-office\)\./);
@@ -120,7 +120,7 @@ test("location triggers for one conversation combine into one timeline run, one 
   assert.deepEqual([joined.status, joined.invocationId, joined.outcomeCode], ["admitted", invocation.id, "joined_unstarted_run"]);
   const [rewritten] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
   // Visit x ended (25 minutes ago) before leaving home (20 minutes ago), so it comes first.
-  assert.match(rewritten.content, /^Since the last update:\n- A visit at [^\n]+ ended at [^\n]+, after 45 minutes\.\n- Left Home at [^\n]+\.\n- A visit at [^\n]+ ended at [^\n]+\.\n- Arrived at Office at [^\n]+\.\n/);
+  assert.match(rewritten.content, /^Since the last update:\n- A visit at [^\n]+ ended [^\n]+, after 45 minutes\.\n- Left Home [^\n]+\.\n- A visit at [^\n]+ ended [^\n]+\.\n- Arrived at Office [^\n]+\.\n/);
   assert.equal((rewritten.metadata?.delivery_ids as string[]).length, 4);
 
   // Once the run has started, a straggler can't join: it's a quiet entry, with no run and no push.
@@ -132,7 +132,7 @@ test("location triggers for one conversation combine into one timeline run, one 
   const folded = await visitDelivery("y");
   assert.deepEqual([folded.status, folded.invocationId, folded.outcomeCode], ["folded", null, "older_than_last_update"]);
   const [entry] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, folded.timelineMessageId!));
-  assert.match(entry.content, /^Earlier: A visit at [^\n]+ ended at [^\n]+, after 30 minutes\.$/);
+  assert.match(entry.content, /^Earlier: A visit at [^\n]+ ended [^\n]+, after 30 minutes\.$/);
   assert.deepEqual([entry.role, entry.threadId, entry.metadata?.timeline_entry, entry.metadata?.origin], ["system", thread, true, "automation"]);
   const runs = await db.select().from(s.agentInvocationTable);
   assert.equal(runs.length, 1, "no run for the straggler");
@@ -161,5 +161,5 @@ test("location triggers for one conversation combine into one timeline run, one 
   assert.notEqual(next.invocationId, invocation.id);
   const [nextInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, next.invocationId!));
   const [nextInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, nextInvocation.inputMessageId));
-  assert.match(nextInput.content, /^Arrived at Office at [^\n]+\.\n\nLog it\./, "a run of one keeps the single-event form");
+  assert.match(nextInput.content, /^Arrived at Office [^\n]+\.\n\nLog it\./, "a run of one keeps the single-event form");
 });

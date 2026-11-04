@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { dataOwnerStateTable as owners, dataDomainEventTable as events,
@@ -7,7 +7,7 @@ import { dataOwnerStateTable as owners, dataDomainEventTable as events,
   automationBootstrapTable as bootstraps, automationBootstrapMemberTable as members,
   healthWorkoutTable as workouts, healthSampleDeletionTable as healthDeletions,
   locationVisitTable as visits, placeTable as places, placePresenceEventTable as presenceEvents } from "../db/schema.js";
-import { visitAtPlace } from "./places.js";
+import { visitPlace } from "./places.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, parseAutomationInput, type AutomationDefinition } from "./automation-contracts.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -131,9 +131,9 @@ export class AutomationMatcher {
       const filter = definition.visit_filter;
       let atPlace = !filter.place_ids.length;
       if (!atPlace) {
-        const listed = await tx.select().from(places).where(and(eq(places.createdByUserId, event.createdByUserId),
-          inArray(places.id, filter.place_ids), isNull(places.deletedAt)));
-        atPlace = listed.some(place => visitAtPlace(visit, place));
+        const owned = await tx.select().from(places).where(and(eq(places.createdByUserId, event.createdByUserId), isNull(places.deletedAt)));
+        const place = visitPlace(owned, visit);
+        atPlace = place !== null && filter.place_ids.includes(place.id);
       }
       const long = filter.min_duration_minutes === 0 || (durationMinutes !== null && durationMinutes >= filter.min_duration_minutes);
       await this.insertDelivery(tx, event, revision, definition,
