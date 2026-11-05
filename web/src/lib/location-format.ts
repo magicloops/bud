@@ -26,6 +26,19 @@ export function visitTitle(visit: LocationVisit) {
   return `${visit.coordinate.lat.toFixed(4)}, ${visit.coordinate.lon.toFixed(4)}`
 }
 
+/** A saved place's own address (the user's), from a location's `places` labels. */
+export function savedAddress(places: LocationVisit['places']) {
+  return places?.find(place => place.address)?.address ?? null
+}
+
+/**
+ * The address under a visit's title. At a saved place it's the place's own, or none: Apple's reverse
+ * geocode names the nearest address, which can be a neighbour's. Elsewhere it's Apple's.
+ */
+export function visitAddress(visit: LocationVisit) {
+  return visit.places?.length ? savedAddress(visit.places) : visit.address?.full ?? null
+}
+
 /** "Near Blue Bottle Coffee" when the place is farther than the accuracy, else null. */
 export function visitNearby(visit: LocationVisit) {
   if (!visit.place || visit.place.distance_m <= Math.max(visit.horizontal_accuracy_m, 50)) return null

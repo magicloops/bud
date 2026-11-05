@@ -3,8 +3,7 @@
 Status: implemented (2026-11-05), on the Phase 9 branches (`feat/place-pins`, `feature/place-pins`).
 Service: migration 0063, the API and the 50 m safety net, place answers, `places_create`, and
 messages and evidence. Web and iOS: the Address field, its anchor and the 50 m drop with "Keep it".
-Still to do: try both editors with real search; the terms check below. iOS doesn't show the
-addresses on visit and recent-location labels yet (nothing there shows place labels).
+Still to do: try both editors with real search; the terms check below.
 
 ## Goal
 
@@ -40,6 +39,10 @@ measured, which names the nearest address to a coordinate and is often a neighbo
 - **The saved address wins over reverse geocoding** wherever we describe a saved place. A
   visit's own reverse-geocoded address is still reported for the visit, labelled as Apple's
   nearest match, so a mismatch stays visible rather than hidden.
+- **On the Location screens (web and iOS), a visit at a saved place shows only the place's own
+  address**, or none: Apple's reverse-geocoded line is hidden there, and "Last known" shows the
+  saved address under "Here: Home". Visits not at a saved place keep Apple's address. (Agents
+  still get both, labelled.)
 - **The same privacy as a street address.** Agents see it under `location.read`, like the
   place. App keys with `rounded_2_decimals` get no saved places today, so no addresses either.
 

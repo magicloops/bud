@@ -7,7 +7,7 @@ import { useRequireAuthenticatedUser } from '@/lib/route-auth'
 import { apiFetch, apiFetchJson, isApiError } from '@/lib/transport'
 import { usePlaces } from '@/lib/places'
 import type { ApiPlace } from '@/lib/api-types'
-import { dayWindow, visitDuration, visitNearby, visitTitle, type LocationVisit } from '@/lib/location-format'
+import { dayWindow, savedAddress, visitAddress, visitDuration, visitNearby, visitTitle, type LocationVisit } from '@/lib/location-format'
 import { PLACE_RADIUS, placeCreateBody, placeErrorMessage, placeUpdateBody, type PlacePin } from '@/lib/place-pin'
 
 type Recent = { location: (LocationVisit & { kind: 'visit' }) | { kind: 'point' | 'fix'; coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number
@@ -56,6 +56,7 @@ function LocationView() {
           ? `Here: ${recent.location.places?.map(place => place.name).join(' · ') || recent.location.address?.short || recent.location.address?.city || `${recent.location.coordinate.lat.toFixed(4)}, ${recent.location.coordinate.lon.toFixed(4)}`}`
           : `${recent.location.coordinate.lat.toFixed(3)}, ${recent.location.coordinate.lon.toFixed(3)} (approximate)`}
         {recent.age_seconds !== undefined && ` · ${Math.round(recent.age_seconds / 60)} min ago`}{recent.stale ? ' · may be out of date' : ''}</p>
+        {savedAddress(recent.location.places) && <p className="text-xs text-muted-foreground">{savedAddress(recent.location.places)}</p>}
         {/* A fix or visit is precise enough to save; a coarse point isn't. */}
         {recent.location.kind !== 'point' && !recent.location.places?.length && <SavePlace key={`${recent.location.coordinate.lat},${recent.location.coordinate.lon}`}
           suggestion={recent.location.address?.short ?? ''} coordinate={recent.location.coordinate} accuracy={recent.location.horizontal_accuracy_m} onSaved={placesChanged} />}</div>}
@@ -72,7 +73,7 @@ function LocationView() {
               <span className="block font-semibold">{visitTitle(visit)}</span>
               <span className="block text-sm">{time(visit.arrival_at)} – {visit.state === 'completed' ? time(visit.departure_at) : '…'} · {visitDuration(visit)}</span>
               {visitNearby(visit) && <span className="block text-xs text-muted-foreground">{visitNearby(visit)}</span>}
-              {visit.address?.full && <span className="block text-xs text-muted-foreground">{visit.address.full}</span>}
+              {visitAddress(visit) && <span className="block text-xs text-muted-foreground">{visitAddress(visit)}</span>}
             </button>)}
         </section>
         {shown && <section aria-label="Map" className="space-y-2">
