@@ -316,6 +316,10 @@ test("durable admission: atomic inputs, concurrency, stale fences and ambiguous 
     await database.insert(schema.threadTable).values({ threadId, budId: buds[0], createdByUserId: owners[0] });
     const admitted = await repo.admit({ ...input, threadId, origin: "automation", idempotencyKey: "automation-priority",
       clientId: generateMessageClientId(), text: "Imported contact text" });
+    // A folded location event (Phase 7.3) is an automation message with no invocation.
+    await database.insert(schema.messageTable).values({ threadId, clientId: generateMessageClientId(), role: "system",
+      displayRole: "Automation", content: "Earlier: Arrived at Saved place text", createdByUserId: owners[0],
+      metadata: { origin: "automation", timeline_entry: true } });
     const leased = await repo.claim("automation-context-worker", owners[0]);
     assert.equal(leased?.id, admitted.invocation.id);
     await repo.start(leased!);
@@ -323,6 +327,8 @@ test("durable admission: atomic inputs, concurrency, stale fences and ambiguous 
     assert.equal(messages.filter(message => message.role === "system").length, 1);
     const automation = messages.find(message => JSON.stringify(message.content).includes("Imported contact text"));
     assert.equal(automation?.role, "user");
+    const folded = messages.find(message => JSON.stringify(message.content).includes("Saved place text"));
+    assert.equal(folded?.role, "user");
     await repo.finish(leased!, "succeeded", "completed");
   });
 

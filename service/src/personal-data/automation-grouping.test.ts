@@ -108,7 +108,6 @@ test("location triggers for one conversation combine into one timeline run, one 
   // it hasn't started: the input becomes the timeline with it in its place.
   await upload([visit("x", ago(70), ago(25), 37.75)]);
   while (await matcher.matchNext(owner)) { /* drain */ }
-  while (await admission.admitNext(owner)) { /* drain */ }
   const visitDelivery = async (key: string) => {
     const [row] = await db.select({ delivery: s.automationDeliveryTable }).from(s.automationDeliveryTable)
       .innerJoin(s.dataDomainEventTable, eq(s.dataDomainEventTable.id, s.automationDeliveryTable.domainEventId))
@@ -116,12 +115,19 @@ test("location triggers for one conversation combine into one timeline run, one 
       .where(eq(s.locationVisitTable.visitKey, key));
     return row.delivery;
   };
+  // Its deadline is earlier than the run's (it may start for 30 more minutes, the run for an hour).
+  await db.update(s.automationDeliveryTable).set({ latestStartAt: ago(-30) }).where(eq(s.automationDeliveryTable.id, (await visitDelivery("x")).id));
+  while (await admission.admitNext(owner)) { /* drain */ }
   const joined = await visitDelivery("x");
   assert.deepEqual([joined.status, joined.invocationId, joined.outcomeCode], ["admitted", invocation.id, "joined_unstarted_run"]);
   const [rewritten] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
   // Visit x ended (25 minutes ago) before leaving home (20 minutes ago), so it comes first.
   assert.match(rewritten.content, /^Since the last update:\n- A visit at [^\n]+ ended at [^\n]+, after 45 minutes\.\n- Left Home at [^\n]+\.\n- A visit at [^\n]+ ended at [^\n]+\.\n- Arrived at Office at [^\n]+\.\n/);
   assert.equal((rewritten.metadata?.delivery_ids as string[]).length, 4);
+  // The run must start by the earliest deadline among its deliveries, the straggler's included.
+  const [rescheduled] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, invocation.id));
+  assert.ok(ago(-30) < invocation.latestStartAt!);
+  assert.equal(rescheduled.latestStartAt?.getTime(), ago(-30).getTime());
 
   // Once the run has started, a straggler can't join: it's a quiet entry, with no run and no push.
   await db.update(s.agentInvocationTable).set({ status: "running", workerId: "worker", leaseExpiresAt: ago(-5) })
@@ -142,6 +148,18 @@ test("location triggers for one conversation combine into one timeline run, one 
   while (await admission.admitNext(owner)) { /* drain */ }
   const newer = await visitDelivery("z");
   assert.deepEqual([newer.status, newer.outcomeCode], ["pending", "location_run_in_progress"]);
+  // A run resuming after the user answered is `leased` again, but it has started (its input has
+  // `model_context_at`): a straggler folds instead of rewriting that input.
+  await db.update(s.messageTable).set({ metadata: { ...rewritten.metadata, model_context_at: ago(5).toISOString() } })
+    .where(eq(s.messageTable.messageId, invocation.inputMessageId));
+  await db.update(s.agentInvocationTable).set({ status: "leased", workerId: "worker", leaseExpiresAt: ago(-5) })
+    .where(eq(s.agentInvocationTable.id, invocation.id));
+  await upload([visit("w", ago(55), ago(35), 37.77)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  assert.equal((await visitDelivery("w")).status, "folded");
+  assert.equal((await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId)))[0].content,
+    rewritten.content, "the started run's input is unchanged");
   await db.update(s.agentInvocationTable).set({ status: "pending", workerId: null, leaseExpiresAt: null })
     .where(eq(s.agentInvocationTable.id, invocation.id));
 
