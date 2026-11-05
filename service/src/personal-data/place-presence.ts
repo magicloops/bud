@@ -258,7 +258,7 @@ async function exitSource(tx: Transaction, owner: string, leavingEventId: string
  * owner stopped (`stopped`); otherwise the arrival keeps waiting. Inside already, it's the region
  * report's arrival (a re-entry is decided there).
  */
-async function arriveOnReading(tx: Transaction, owner: string, place: Pick<Place, "id">,
+async function arriveOnReading(tx: Transaction, owner: string, place: Pick<Place, "id" | "geometryChangedAt">,
   change: { at: Date; source: "region" | "reading"; rawEventId: string; fix: FixReading }) {
   const [row] = await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, place.id)))
     .for("update");
@@ -272,11 +272,16 @@ async function arriveOnReading(tx: Transaction, owner: string, place: Pick<Place
     if (later && stopped(later, earlier)) {
       const start = change.at < first ? evidence
         : { at: first, source: await arrivalSource(tx, owner, row.arrivingEventId, place.id), rawEventId: row.arrivingEventId };
-      return applyPresence(tx, owner, place, { ...start, transition: "arrived" });
+      await applyPresence(tx, owner, place, { ...start, transition: "arrived" });
+      // The later reading is the newest inside evidence, so an exit from between the two (processed
+      // late) can't then depart.
+      return noteInside(tx, owner, place.id, change.at < first ? first : change.at);
     }
   }
   if (first && first <= change.at) return;
-  await tx.insert(presence).values({ placeId: place.id, createdByUserId: owner, state: "outside", since: change.at,
+  // A place never seen before starts outside as of its geometry, not this reading: an earlier
+  // reading processed next (a backlog) must still confirm this one.
+  await tx.insert(presence).values({ placeId: place.id, createdByUserId: owner, state: "outside", since: place.geometryChangedAt,
     arrivingAt: change.at, arrivingEventId: change.rawEventId })
     .onConflictDoUpdate({ target: [presence.createdByUserId, presence.placeId],
       set: { arrivingAt: change.at, arrivingEventId: change.rawEventId, updatedAt: sql`clock_timestamp()` } });
@@ -347,11 +352,12 @@ export async function presenceReading(tx: Pick<Database, "select">, owner: strin
 }
 
 /** A geofence entry the reading shows is still short of the place. Nothing publishes. */
-async function markApproaching(tx: Transaction, owner: string, place: Pick<Place, "id">, at: Date) {
+async function markApproaching(tx: Transaction, owner: string, place: Pick<Place, "id" | "geometryChangedAt">, at: Date) {
   const [row] = await tx.select().from(presence).where(and(eq(presence.createdByUserId, owner), eq(presence.placeId, place.id)))
     .for("update");
   if (row && (row.state === "inside" || at < row.since || (row.approachingAt && at <= row.approachingAt))) return;
-  await tx.insert(presence).values({ placeId: place.id, createdByUserId: owner, state: "outside", since: at, approachingAt: at })
+  // Like a waiting arrival, an approach doesn't set the state's boundary (`arriveOnReading`).
+  await tx.insert(presence).values({ placeId: place.id, createdByUserId: owner, state: "outside", since: place.geometryChangedAt, approachingAt: at })
     .onConflictDoUpdate({ target: [presence.createdByUserId, presence.placeId],
       set: { approachingAt: at, updatedAt: sql`clock_timestamp()` } });
 }
