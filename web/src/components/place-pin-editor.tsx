@@ -26,8 +26,12 @@ function PlaceMap({ mapkit, target, radius, accuracy, onCenterChange, label }: {
   const latest = useRef({ target, radius, accuracy, onCenterChange })
   useEffect(() => { latest.current = { target, radius, accuracy, onCenterChange } })
   const shown = useRef(target)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
-    const created = createMap(mapkit, element.current!, latest.current, center => latest.current.onCenterChange?.(center))
+    // A MapKit failure stays inside the map, not the page.
+    let created: ReturnType<typeof createMap>
+    try { created = createMap(mapkit, element.current!, latest.current, center => latest.current.onCenterChange?.(center)) }
+    catch { setFailed(true); return }
     map.current = created
     return () => { map.current = null; created.destroy() }
   }, [mapkit])
@@ -38,6 +42,7 @@ function PlaceMap({ mapkit, target, radius, accuracy, onCenterChange, label }: {
   }, [target])
   useEffect(() => { if (radius !== undefined) map.current?.setRadius(radius) }, [radius])
   const editing = Boolean(onCenterChange)
+  if (failed) return <p role="status" className="rounded border border-dashed p-3">The map couldn't load.</p>
   return <div className="relative h-80 w-full border">
     <div ref={element} role="application" aria-label={label} className="h-full w-full" />
     {editing && <MapPin aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-full fill-red-500 text-black" />}

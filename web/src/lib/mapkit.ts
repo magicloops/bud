@@ -57,7 +57,8 @@ export function loadMapKit(): Promise<MapKit | null> {
       const script = document.createElement('script')
       script.src = MAPKIT_SRC
       script.crossOrigin = 'anonymous'
-      script.dataset.libraries = 'map,services'
+      // The pin editor's circles need overlays, and the visit map's marker annotations.
+      script.dataset.libraries = 'map,annotations,overlays,services'
       script.dataset.callback = callback
       script.onerror = () => { script.remove(); reject(new Error('MapKit JS failed to load')) }
       document.head.append(script)
