@@ -34,6 +34,21 @@ test("automation worker does not poll until started and drains active work befor
   await worker.stop();
 });
 
+test("automation polling matches every published event before admitting", async () => {
+  const done = deferred();
+  const calls: string[] = [];
+  let pending = 3;
+  const worker = new AutomationWorker({
+    matchNext: async () => { calls.push("match"); return pending-- > 0; },
+    admitLive: async () => { calls.push("live"); return false; },
+    admitBootstrap: async () => { calls.push("bootstrap"); done.resolve(); return false; },
+  }, () => {}, 1, 100000);
+  worker.start();
+  try { await reached(done.promise); }
+  finally { await worker.stop(); }
+  assert.deepEqual(calls, ["match", "match", "match", "match", "live", "bootstrap"]);
+});
+
 test("automation polling bounds rounds and isolates failures between work queues", async () => {
   const done = deferred();
   const calls: string[] = [], errors: string[] = [];

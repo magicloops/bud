@@ -15,7 +15,8 @@ type Page<T> = { items: T[]; next_cursor: string | null }
 type Status = { projection_status: string; pending_processing_count: number; failed_processing_count?: number; reconciliation_scan_count?: number;
   scans?: { scan_id: string; generation: number; status: string; waiting_reason: string | null; error_code: string | null }[];
   sources: { installation_id: string; last_received_at: string | null }[]
-  health?: { workouts_last_received_at: string | null; sleep_last_received_at: string | null } }
+  health?: { workouts_last_received_at: string | null; sleep_last_received_at: string | null }
+  location?: { last_received_at: string | null; latest_visit_at: string | null; latest_point_at: string | null } }
 const name = (fields: Fields) => [fields.given_name, fields.family_name].filter(Boolean).join(' ') || fields.organization || 'Unnamed contact'
 const time = (value: string) => new Date(value).toLocaleString()
 
@@ -81,16 +82,21 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
           </details>
         </>}
       </section>
+      <section aria-label="Location source" className="rounded border p-4 text-sm space-y-3">
+        <h2 className="text-xl font-semibold">Location</h2>
+        <p>Places you visit and large moves, not a continuous track. Turn location on, and allow it all the time for background visits, in the mobile app under Data sources → Location.</p>
+        {status?.location && <p>{status.location.last_received_at ? `Last received ${time(status.location.last_received_at)}` : 'Nothing received yet'}{status.location.latest_visit_at ? ` · Latest visit ${time(status.location.latest_visit_at)}` : ''}</p>}
+      </section>
       <section aria-label="Health source" className="rounded border p-4 text-sm space-y-3">
         <h2 className="text-xl font-semibold">Health</h2>
         <p>Workouts and sleep from the phone's Health app, starting with the last 30 days. Allow Health access in the mobile app; HealthKit does not tell Bud when reading is denied.</p>
         {status?.health && <p>Workouts: {status.health.workouts_last_received_at ? `last received ${time(status.health.workouts_last_received_at)}` : 'nothing received yet'} · Sleep: {status.health.sleep_last_received_at ? `last received ${time(status.health.sleep_last_received_at)}` : 'nothing received yet'}</p>}
       </section>
-      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
+      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><Link to="/data/location" className="settings-action">Browse location →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
       {error && <p role="alert">{error}</p>}
       </>}
       {browse && <>
-      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span><Link to="/data/health">Health</Link>{['Location', 'Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
+      <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><span aria-current="page" className="font-semibold">Contacts</span><Link to="/data/health">Health</Link><Link to="/data/location">Location</Link>{['Photos'].map(type => <span key={type} aria-disabled="true" className="text-muted-foreground">{type} · Coming later</span>)}</nav>
       <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); setQuery(search); setCursor(null); setSelected(null); setRefresh(value => value + 1) }}>
         <input aria-label="Search contacts" placeholder="Search collected contact fields" className="min-w-0 flex-1 rounded border bg-background p-2" value={search} maxLength={200} onChange={event => setSearch(event.target.value)} />
         <button className="rounded border px-4 py-2" type="submit">Search</button>

@@ -84,7 +84,7 @@ Main-service personal-data ingestion, Contacts/location projections and first-pa
 - `app-key-crypto.ts`: app-key handoff primitives: 256-bit query credentials with verification-only hashes, strict RSA public-recipient validation, context-bound OAEP encrypted delivery and separate PSS retrieval/installation proofs. No routes or issuance permission are provided by these primitives; stored owner/state/expiry checks belong to the phase-7 repository. See the [handoff contract](../../../plan/personal-data-ingestion-and-agent-triggers/app-key-handoff.md).
 - `app-key-crypto.test.ts`: wrong key/context rejection, private/weak/unsupported PEM rejection, credential verification, explicit envelope serialization and retrieval/installation proof separation.
 
-- `automation-worker.ts`: explicitly started serial polling of matching, live admission and bootstrap admission, at most 25 rounds per poll by default. Each queue gets a turn despite another failing; logs only fixed error codes. Stop clears timers and drains the current transaction before any further admission.
+- `automation-worker.ts`: explicitly started serial polling of matching, live admission and bootstrap admission, at most 25 rounds per poll by default. Each round matches every published event (up to 100) before admitting, so events published together are pending together and can share a run. Each queue gets a turn despite another failing; logs only fixed error codes. Stop clears timers and drains the current transaction before any further admission.
 - `automation-worker.test.ts`: lazy start, duplicate-start prevention, bounded/failure-isolated polling and stop-before-next-operation lifecycle tests.
 
 `AutomationBootstrap.captureInTransaction` is the internal shared-transaction
@@ -107,7 +107,15 @@ changes, with rollback of the surrounding decision transaction.
 
 - `automation-policy.ts`: live-delivery or bootstrap-group/revision/owner-bound dispatch authority lookup. Bootstrap checks every frozen group member against current source lineage, visibility and history permission; canceled requests fail closed. Validates immutable target/model, current grant version/scopes/history and non-revoked source lineage. Resolves per-turn data ceilings only for running, leased, uncanceled invocations, with immutable rule scopes/history and invocation/fence/revision cursor binding. Pause defers preflight using `retry_wait`; running checkpoints ignore pause but enforce revocation. Missing or foreign delivery associations fail closed.
 
-- `automation-admission.ts`: owner-serialized delivery admission, current grant/source/target validation, pause/deadline handling and rolling 24-hour owner/rule budgets shared with bootstrap admission through `automationUsage`. Allocates a new thread or resolves the selected existing thread and commits input/invocation/delivery association together. No model calls; remains unscheduled until dispatch policy checks are connected. Contact processor fixtures cover concurrent admission, no duplicate thread, pause, expiry, limits and revoked grants.
+- `automation-admission.ts`: owner-serialized delivery admission, current grant/source/target validation, pause/deadline handling and rolling 24-hour owner/rule budgets shared with bootstrap admission through `automationUsage`. Allocates a new thread or resolves the selected existing thread and commits input/invocation/delivery association together. The input (`automation-trigger-text.ts`) reads: the event in plain language and the phone's local time ("Arrived at Home at 5:36 PM.", "… yesterday at 5:36 PM." or "… on Fri, Oct 24 at 5:36 PM.", with no "minutes ago"; the reference says "Reported N minutes after it happened." only past 10 minutes; the time zone comes from the newest `context.time_zone` received up to the trigger's publication, else labelled UTC; schedules use the rule's zone), the rule's instruction verbatim, then a "For reference" section (automation name and ID, time zone, detection, IDs, caveats, where the reply appears). `automation_name` is stamped in metadata for client labels. **Grouping (phase 7.3):**
+  - **What groups:** location deliveries (`place.arrived`, `place.departed`, `visit.ended`) for the same conversation (a rule's target thread; new-conversation rules group per rule) become one run. Admission takes the oldest due one plus every other due location delivery for that conversation that passes its own checks and has the same Bud, resolved model and data access, up to 20.
+  - **One at a time:** while a location run for the conversation is queued or running, new ones wait (`location_run_in_progress`), then form the next run.
+  - **The input:** a time-ordered "Since the last update:" timeline, each rule's instruction once (`For "<rule>": …`), and the reference section with shared lines once and per-event lines labelled.
+  - **Metadata** adds `automation_names`, `automation_ids`, `delivery_ids` and `domain_event_ids`. `automation_name` joins the names, so existing clients label "Triggered by A, B and C".
+  - **Policy and evidence:** the policy check covers every delivery in a run (any paused rule holds it), and first-start evidence lists every event under `events`.
+  - **Stragglers:** a location delivery for an existing conversation whose event happened before the newest location event already admitted there never starts a run.
+    - If a compatible location run in that conversation hasn't started (pending, retry_wait or leased; the owner lock keeps it from starting meanwhile), the straggler joins it and the run's input is rewritten as the timeline.
+    - Otherwise it becomes a quiet entry: a system message "Earlier: …" (origin automation, `timeline_entry`), with no run and no push. The delivery is `folded`, with `timeline_message_id` set. The agent sees the entry in the conversation history, in order, on its next run. No model calls; remains unscheduled until dispatch policy checks are connected. Contact processor fixtures cover concurrent admission, no duplicate thread, pause, expiry, limits and revoked grants.
 
 - `automation-matcher.ts`: owner-locked durable domain-event matching with publication-time revision selection, source filtering, deadline classification and idempotent delivery insertion. Historical unsequenced events are marked matched without live deliveries. Selected bootstrap membership suppresses delayed live matching at or before the captured boundary, including after snapshot cancellation. Does not call models; the optional automation worker schedules matching and admission.
 
@@ -457,3 +465,251 @@ Plan: [location and health agent data](../../../plan/location-and-health-agent-d
 - `automation-workout.test.ts`: isolated-schema PostgreSQL fixture for
   publication rules, filters, age, deletion before and after matching,
   admission, policy, evidence and withdrawn health types.
+
+## Location capture (phase 6.1)
+
+`location.ts` accepts `location.visit.v2` (adds `visit_key` and `phase`) as a
+visit; both versions project into `location_observation`, and the raw event
+keeps the key for the 6.3 visit projection. `repository.ts` status adds
+`location { last_received_at, latest_visit_at, latest_point_at }`.
+`location-status.test.ts` (isolated PostgreSQL) covers v2 projection and owner
+isolation. Plan: [location for agents](../../../plan/location-agent-data/README.md).
+
+## Visit names (phase 6.2)
+
+- `location.ts`:
+  - `parseVisitName` validates `location.visit_named.v1`: the key, the `apple`
+    source, `named_at`, address strings (`full`, `short`, `city`,
+    `city_with_context`, `region`, `region_code`) and an optional place (name,
+    category, coordinate, distance).
+  - v2 visits require `visit_key`, which is stored on `location_observation`.
+- The processor upserts `location_visit_name` per owner and key; a later
+  `named_at` wins and older lookups never overwrite.
+- `LocationQueries.list` and `contactContext` join names and present
+  `visit_key`, `address` and `place`.
+- `app-queries.ts` reduces names for `rounded_2_decimals` keys to
+  city/region with no place.
+- Tests: `location.test.ts` (parsing), `location-status.test.ts` (isolated
+  PostgreSQL replacement and join) and `app-queries.test.ts` (rounding).
+
+## Visits and recent location (phase 6.3)
+
+- **`location_visit`** (migration 0055, backfilled) holds one row per owner and
+  visit key. `projectVisit` merges reports during processing: earliest arrival,
+  latest departure, and the coordinate from a completed report, then the most
+  accurate one.
+- **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
+  (default desc), cursors bound to the window, order and policy. Visits are
+  joined to names.
+- **`LocationQueries.recent`:** the latest in-progress visit, visit end or
+  point, with age, `stale` after 2 hours, and a `notBefore` history limit.
+- **`list`** accepts `kind: visits | points | all`.
+- **Exposure:**
+  - agent tools `location_recent` and `location_visits` (`location.read`);
+  - routes `/api/data/location/{visits,recent}`;
+  - app operations and routes with shared precision rules (`restrict` in
+    `app-queries.ts`).
+- Test: `location-visits.test.ts`.
+
+## Place presence (phase 7)
+
+- **`place-presence.ts`** keeps one presence state per owner and place
+  (`place_presence`: inside or outside, since, `leaving_at`, `approaching_at`,
+  linked visit).
+  Geofence transitions (`location.region_transition.v1`) and visits both feed
+  it under the processor's owner lock.
+- **Publishing:** `place.arrived` and `place.departed` are published only when
+  the state changes. Each change is a `place_presence_event` (source `region` or
+  `visit`), which is the domain event's subject, so a rule runs once per
+  arrival whichever signal comes first.
+- **Rules:**
+  - transitions older than the current state are ignored, but a visit
+    overlapping the current stay links to it. One that ended before the stay
+    began never links, and is unlinked when its completion shows that;
+  - initial geofence reports, and reports from before the place was last
+    moved, set state without publishing;
+  - a region exit waits in `leaving_at`. Re-entry within 3 minutes (by source
+    time) cancels it; a later re-entry publishes the departure and a new
+    arrival. That holds even if both are processed before settling, or the
+    re-entry is processed first (`last_entered_at`). Otherwise
+    `PlacePresence.settleDepartures` (in the automation worker) publishes it;
+  - a completed visit is a confirmed departure and publishes at once;
+  - a different visit arriving during a stay starts a new stay, if the stay
+    came from a visit or a geofence stay is over 12 hours old (its exit was
+    missed);
+  - moving or resizing a place deletes its presence;
+  - each region report carries the `geometry_revision` its geofence was
+    installed for (`place.geometry_changed_at` in ms, shown in place
+    responses). Reports for a superseded revision are ignored, so the old
+    boundary can't trigger the edited place.
+- **Readings (phases 7.1–7.2):** `classifyReading` puts a precise reading
+  against a place's own radius `r` (not the 100 m geofence). With distance `d`
+  and accuracy `a`, it's one of:
+  - **definitely inside:** `d + a ≤ r`, and no nearer saved place also contains
+    it;
+  - **definitely outside:** `d − a > r`;
+  - **uncertain:** in between;
+  - **unknown:** coarser than 100 m.
+
+  Arriving needs the whole error circle inside, and leaving needs it wholly
+  outside.
+  - **Region reports** carry their wake reading as `fix`. A report without one,
+    or with an unknown one, trusts the geofence.
+    - Entered: definitely inside starts an arrival (below); otherwise
+      `approaching_at` is set.
+    - Exited: definitely outside starts the departure wait; otherwise it's
+      ignored.
+    - Initial: inside only if definitely inside.
+  - **Re-delivered reports** (same place, revision and `occurred_at` as an
+    earlier one, whatever `initial` says) are ignored. The first recorded wins.
+  - **`applyReading`:** every reading counts for each place the owner is
+    inside or approaching. That means the wake reading for the other places,
+    `location.fix.v1`, and significant-change points at 65 m or better.
+    - Definitely inside a place the owner isn't at: an arrival, whether or
+      not it was approaching, once confirmed. A delayed reading older than a
+      confirmation at a nearby place (within 1 km) doesn't arrive. Approaches
+      stay until the geofence exits, as a hint for agents.
+    - **Arrival wait** (`ARRIVAL_CONFIRM_MS`, 30 s): walking past a place can
+      put one reading inside it. The first definitely-inside reading sets
+      `arriving_at` and `arriving_event_id`. A second one at least 30 s from
+      it, in either order, that shows the owner stopped (speed under 0.5 m/s,
+      or without a speed, within 15 m of the first), publishes the arrival at
+      the earlier time (source
+      `region` if it was this place's own geofence report, else `reading`). A
+      definitely-outside reading, a definitely-inside reading at another
+      place, or an outside geofence exit cancels it, unless that exit is this
+      place's own and at least 5 minutes later (`ARRIVAL_STAY_MS`): then it
+      arrived at the first reading, and the exit starts the departure wait.
+      Visits, and geofence entries without a usable reading, arrive at once.
+    - Inside with a departure pending, and definitely inside: a re-entry.
+    - Inside, and definitely inside another place: departed at once (with a
+      pending exit's earlier time, if any), since the owner is confirmed
+      elsewhere. Geofence exits can lag by many minutes.
+    - Inside, and definitely outside: the departure wait starts at the
+      reading's time, unconfirmed (`leaving_confirmed` false). It settles only
+      once a second outside reading at least 30 s later, or a geofence exit,
+      confirms it; an inside reading first ends it with no departure. A
+      geofence exit's wait is confirmed from the start. A visit completion or
+      a reading inside another place still departs at once (at an unconfirmed
+      wait's time only if it was within 3 minutes).
+    - Departures are applied before arrivals. A region exit applies to its own
+      place first, so the exit time is kept.
+    - **Inside evidence:** a definitely-inside reading while inside, from any
+      source (including a geofence exit whose reading is still inside), is a
+      re-entry when a departure is pending. Otherwise it still raises
+      `last_entered_at`. A delayed exit or reading from before it
+      can't then publish a departure; one more than 3 minutes older publishes
+      a departure and a return.
+  - **Visits** are at one saved place (`placeOfVisit`): of the places they fit,
+    the one where presence had the owner longest during the visit (stays the
+    visit started don't count), else the nearest (`visitPlace`). Places can be
+    closer together than a visit is accurate, and iOS can merge stays at both
+    into one visit. The same rule applies to rule place filters, messages,
+    evidence and places listed in query results.
+  - **Visit completions** end the stays they confirmed (`visit_id`), even when
+    the completed report's revised coordinate no longer matches the place.
+  - **`leaving_event_id`** keeps the exit (a region report or a reading), so a
+    settled departure has its evidence and source.
+  - **Replayed significant-change points** (same time and coordinate) aren't
+    stored again.
+  - **Processing order:** an owner's due jobs run in the order their events
+    happened (`occurred_at`, then `recorded_at`), not of receipt. A batch's job
+    IDs share a millisecond, so their order within it was random, and presence
+    decisions depend on order. The phone uploads its oldest pending events
+    first.
+- **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
+  region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
+  `follow_up: { id, place_id, geometry_revision, transition }`) gets
+  `follow_ups` in its ACK: per follow-up ID, `settled` or `open`. Answers are
+  keyed by follow-up, not place, so a late answer for an earlier follow-up
+  never stops a newer one.
+  - The upload handler first drains that owner's pending jobs inline, so
+    presence reflects the batch. The whole step is bounded to 2 s: past that,
+    the ACK goes without `follow_ups` and the work continues in the background.
+  - **After an entry:** open while an arrival waits for its second reading;
+    settled once inside with no departure pending, or once
+    the owner is confirmed at another place within 1 km since the report.
+    Open while a departure is pending (the previous stay doesn't confirm the
+    return), while the place is approaching, or until this
+    follow-up's own geofence report (matched by `follow_up_id`) has been
+    processed. The phone's first reading can arrive before the report, which
+    waits for its wake reading.
+  - **Superseded geometry:** a follow-up for another geometry revision is
+    settled.
+  - **After an exit:** open while it's inside with no confirmed departure wait.
+  - Unknown places are settled. Without the inline processor (injected route
+    tests), it's omitted.
+- **`location.follow_up.v1`** (iOS diagnostics: how a follow-up ended, its mode
+  and readings) is stored raw and not processed.
+- **`visit.ended`** stays visit-based. The matcher, admission (text says how
+  the change was detected, with the reading's distance and accuracy when there
+  is one), policy and evidence (`transition` with its `reading`, optional
+  `visit`) read the presence event.
+- Tests: `place-presence.test.ts` and `automation-places.test.ts`.
+
+## Fixes (phase 6.5)
+
+- **`location.fix.v1`:** a one-off precise position the phone takes when Bud
+  comes to the foreground. It's stored in `location_observation` as kind `fix`.
+- **Naming:** its `fix_key` (`fix:<uuid>`) goes in the `visit_key` column. That
+  column holds the naming key for both visits and fixes, so a
+  `location.visit_named.v1` for the key names the fix through the same join.
+- **`recent`:** considers fixes alongside points, and reports `kind: fix` with
+  its address and saved `places`.
+  - `age_seconds` and `stale` always measure time since the phone observed the
+    location. An in-progress visit counts from its arrival, not from now.
+  - The newest observation wins: a fix, a coarse point or a visit report. A
+    newer fix or point within the combined accuracy (at least 100 m) of an
+    in-progress visit adds `within_visit` (the visit and its arrival time).
+- **Other queries:** `timeline_query` `kind: points` and the status
+  `latest_point_at` include fixes. App keys round fixes like any other
+  location.
+- Test: `location-visits.test.ts` (near and far fixes, names, invalid keys).
+
+## Places and location triggers (phase 6.4)
+
+- **`place`** (migration 0056): owner, name, centre, radius 50–2,000 m, note,
+  `created_by` (`user` or `agent`), `geometry_changed_at` and a soft
+  `deleted_at`. `places.ts` holds `Places` (list, create with a 200-per-owner
+  limit under the owner lock, update, delete) and the matching helpers.
+- **Matching:** a visit is at a place when its coordinate is within the radius
+  plus the visit's accuracy, capped at 200 m. Places can overlap.
+- **Labels:** `visits` and `recent` add `places` (`id`, `name`) to each visit.
+  App keys with `rounded_2_decimals` get an empty list.
+- **Exposure:** `/api/data/places` (GET, POST, PUT `/:id`, DELETE `/:id`), and
+  agent tools `places_list` and `places_create` (`location.read`). Agents may
+  save places at a coordinate or at a `visit_id` within approved history;
+  places are labels, not permissions.
+- **Publication:** `projectVisit` calls `publishVisitEvents` for v2 visits
+  under the processor's owner lock. When a visit first appears with an arrival
+  it publishes `place.arrived` per matching place. When it first completes it
+  publishes `place.departed` per matching place, then `visit.ended`.
+  - Only places whose `geometry_changed_at` is at or before the visit's start
+    count, so saving, moving or resizing a place never acts on a visit already
+    under way.
+  - `data_domain_event.visit_id` and `place_id` are the subject; unique indexes
+    on (visit, type, place) and (visit, type) for `visit.ended` make
+    re-uploads no-ops.
+- **Rules:** `place.arrived` and `place.departed` need `place_trigger.place_ids`
+  (1–20). `visit.ended` takes `visit_filter` (place IDs, empty for anywhere, and
+  a minimum duration). All need `location.read` and `max_event_age_seconds`
+  (defaults: 1 hour for arrive/leave, 6 hours for visit-ended).
+- **Matcher:**
+  - place rules match only their places; a deleted place is `place_deleted`;
+  - a filter miss is `visit_filter_mismatch`;
+  - age (from arrival or departure) past the maximum is `event_too_old`;
+  - the first start is bounded by that time plus the maximum age.
+- **Admission and start:**
+  - admission rechecks history (`history_outside_grant`) and the place
+    (`place_unavailable`), and writes "Arrived at …", "Left … after N
+    minutes there" (the stay from the place's previous arrival, else its
+    visit) or "A visit at … ended …" (the saved place's name when the visit
+    is at one, with its address in the reference) with the visit ID. A visit end
+    waits (`visit_naming_pending`, up to 60 s after publication) until the
+    visit has a name from after it ended: the phone names it again at iOS's
+    final coordinate, and that can be processed after the completion;
+  - the policy check fails a run whose visit disappeared;
+  - `automation-visit-context.ts` adds visit evidence at first start: times,
+    coordinate, accuracy, address, likely place, the trigger place, saved
+    places at the visit, and delay.
+- Test: `automation-places.test.ts` (isolated PostgreSQL).

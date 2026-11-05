@@ -245,7 +245,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0053` currently)
+- Snapshot files for each migration (`0000` through `0061` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -521,3 +521,83 @@ constraint moved before the foreign key that references it, because Postgres
 requires the unique key to exist first. Additive: existing domain events keep
 their `revision_id`, which satisfies the new subject check. Applied locally as
 exact SQL.
+
+### `0054_location_visit_names.sql`
+
+Generated, plus a final hand-written `UPDATE` that backfills
+`location_observation.visit_key` from stored `location.visit.v2` raw envelopes.
+Additive and idempotent (it only fills null keys). Applied locally as exact SQL.
+
+### `0055_location_visits.sql`
+
+Generated table, plus a hand-written backfill `INSERT … ON CONFLICT DO NOTHING`.
+It groups stored visit observations by key (v1 rows by `v1:<raw event>`), takes
+the earliest arrival and latest departure, and uses the completed and most
+accurate report for the coordinate. Applied locally (48 visits backfilled).
+
+### `0056_places_and_visit_events.sql`
+
+Generated, then reordered so `location_visit_owner_key` exists before the
+`data_domain_visit_fk` that references it. Additive: new table, nullable
+columns, a widened subject check (existing rows have exactly one of revision or
+workout), and partial unique indexes. Applied locally as exact SQL.
+
+### `0057_place_presence.sql`
+
+The generated tables, column, keys and checks, plus a hand-written conversion
+placed before the new unique index and subject check:
+- 6.4 place events become visit-sourced `place_presence_event` rows with the
+  same IDs;
+- their domain events point at those rows (`visit_id` is cleared);
+- `place_presence` is filled from each place's latest event, with
+  `last_entered_at` for places you're inside.
+
+Applied locally as exact SQL. There were no place events locally, so the
+conversion ran on empty data.
+
+### `0058_presence_confirmation.sql`
+
+Phase 7.1. Generated, additive: two nullable `place_presence` columns.
+- `approaching_at`: a geofence entry whose precise reading was still short of
+  the place.
+- `leaving_event_id`: the region exit waiting in `leaving_at`, so the settled
+  departure keeps its raw event as evidence.
+
+Applied locally as exact SQL.
+
+### `0059_presence_reading_source.sql`
+
+Phase 7.2. Generated: `place_presence_event.source` also allows `reading`, for
+arrivals and departures decided by a precise reading (a fix, a follow-up or a
+significant-change point) rather than a geofence report or a visit. It's a
+widened check, so existing rows pass. Applied locally as exact SQL.
+
+### `0060_grouped_deliveries.sql`
+
+Phase 7.3. Generated: `automation_delivery_invocation_key` (unique) becomes the
+index `automation_delivery_invocation_idx`, so several location deliveries for
+one conversation can share a run. Existing rows already satisfy it. Applied
+locally as exact SQL.
+
+### `0061_folded_deliveries.sql`
+
+Phase 7.3. Generated, additive: `automation_delivery.status` also allows
+`folded`, plus `timeline_message_id` (the quiet conversation entry a straggler
+became), with a check that the two go together. Applied locally as exact SQL.
+
+
+### `0062_arrival_confirmation.sql`
+
+Phase 7.3 follow-up. Generated and additive, plus one hand-written backfill.
+Three `place_presence` columns:
+- `arriving_at` (nullable): the first definitely-inside reading of an arrival
+  waiting for a confirming one (walking past a place can put a reading inside
+  it).
+- `arriving_event_id` (nullable): that reading's raw event, so the confirmed
+  arrival keeps it as evidence.
+- `leaving_confirmed` (not null, default false): whether a departure wait can
+  settle. A geofence exit starts a confirmed one; one started by a reading needs
+  a second outside reading. The backfill sets it for waits already pending, so
+  they settle as before.
+
+Applied locally as exact SQL.

@@ -212,6 +212,8 @@ export async function registerMeRoutes(server: FastifyInstance): Promise<void> {
     const body = bodyResult.data;
 
     if (body.provider === "apns" && !isAllowedApnsTopic(body.app_id)) {
+      request.log.warn({ app_id: body.app_id, allowed_app_ids: config.apnsAllowedTopics },
+        "Push endpoint rejected: app_id is not in APNS_ALLOWED_TOPICS");
       return reply.status(400).send({
         error: "invalid_app_id",
         allowed_app_ids: config.apnsAllowedTopics,

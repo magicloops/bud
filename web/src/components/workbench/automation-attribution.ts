@@ -4,9 +4,10 @@ export function automationAttribution(message: {
 }) {
   const metadata = message.metadata
   if (message.role !== 'system' || metadata?.origin !== 'automation') return null
-  const firstLine = message.content.split('\n', 1)[0]
-  const name = firstLine.startsWith('Automation: ') ? firstLine.slice(12).trim() : ''
   const text = (key: string) => typeof metadata[key] === 'string' ? metadata[key] as string : null
+  // Messages admitted before `automation_name` began with "Automation: <name>" and stay in conversations.
+  const firstLine = message.content.split('\n', 1)[0]
+  const name = text('automation_name')?.trim() || (firstLine.startsWith('Automation: ') ? firstLine.slice(12).trim() : '')
   return {
     label: `Triggered by ${name || 'automation'}`,
     automationId: text('automation_id'),

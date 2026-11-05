@@ -26,20 +26,26 @@ import { contactManifestDigest } from "./contacts.js";
 
 test("Postgres contact scans publish complete generations once, suppress baseline and rebuild actions", { skip: process.env.BUD_DATA_DB_TEST !== "1" }, async t => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(config.databaseUrl).hostname));
-  const pool = new Pool({ connectionString: config.databaseUrl });
+  // Its own schema (node runs each test file in its own process): a running dev service's worker
+  // claims any owner's due invocations in the shared tables, so it could lease the ones this test
+  // claims.
+  const isolated = "contacts_" + randomUUID().replaceAll("-", "");
+  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${isolated},public` });
   const db = drizzle(pool, { schema: s });
   const owner = "contacts-test-" + randomUUID();
   t.after(async () => {
-    try {
-      for (const table of [s.automationBootstrapGroupTable, s.automationBootstrapMemberTable, s.automationBootstrapTable, s.automationDeliveryTable, s.automationRevisionTable, s.automationTable, s.dataDomainEventTable, s.contactRevisionTable, s.contactTable, s.contactScanRecordTable, s.contactScanTable, s.contactSourceTable, s.dataProcessingJobTable, s.dataEventTable, s.dataCollectionEpochTable, s.dataInstallationTable, s.dataOwnerStateTable]) {
-        await db.delete(table).where(eq(table.createdByUserId, owner));
-      }
-      for (const table of [s.agentInvocationTable, s.messageTable, s.threadTable, s.budTable, s.agentDataGrantTable]) {
-        await db.delete(table).where(eq(table.createdByUserId, owner));
-      }
-      await db.delete(s.authUserTable).where(eq(s.authUserTable.id, owner));
-    } finally { await pool.end(); }
+    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    finally { await pool.end(); }
   });
+  await pool.query(`create schema "${isolated}"`);
+  for (const { tablename } of (await pool.query("select tablename from pg_tables where schemaname='public'")).rows) {
+    assert.match(tablename, /^[a-zA-Z0-9_]+$/);
+    await pool.query(`create table "${isolated}"."${tablename}" (like public."${tablename}" including all)`);
+  }
+  // `like` doesn't copy foreign keys, and this test checks them.
+  for (const key of (await pool.query(`select c.relname, k.conname, pg_get_constraintdef(k.oid) as def from pg_constraint k
+    join pg_class c on c.oid = k.conrelid where k.contype = 'f' and k.connamespace = 'public'::regnamespace`)).rows)
+    await pool.query(`alter table "${isolated}"."${key.relname}" add constraint "${key.conname}" ${key.def.replaceAll("REFERENCES public.", "REFERENCES ")}`);
   await db.insert(s.authUserTable).values({ id: owner, name: "Contact fixture", email: owner + "@example.invalid", emailVerified: false });
   const repo = new PostgresIngestRepository(db);
   const processor = new ContactProcessor(db);

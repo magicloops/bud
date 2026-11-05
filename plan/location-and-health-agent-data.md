@@ -17,7 +17,8 @@
   mobile #65). See "Phase 4 implementation" below.
 - **Phase 5 implemented October 15, 2026** (branches `feat/workout-trigger`
   here and mobile `feature/workout-trigger`). See "Phase 5 implementation" below.
-  Phases 6–8 are not started.
+  Phases 6–8 are not started; location is now planned in
+  [location-agent-data](location-agent-data/README.md).
 - Builds on [personal data ingestion and agent triggers](../design/personal-data-ingestion-and-agent-triggers.md)
   and its [implementation spec](personal-data-ingestion-and-agent-triggers/implementation-spec.md).
   Replaces the two deferred items in [TODO.md](../TODO.md) ("HealthKit durability…"
@@ -211,40 +212,17 @@ later.
   - A duplicate upload produces one delivery.
   - Delete-then-re-add on device produces no second run for the same UUID.
 
-### Phase 6 — Places and location triggers
+### Phases 6–7 — Location
 
-- **Places.** A `place` table (owner, name, center, radius) with routes, client
-  screens and agent tools (`places_list`, `places_create`). Places are labels,
-  not permissions, so agents may create them; the user sees and edits them in
-  Personal data.
-- **Presence.** Evaluated from visits:
-  - A visit arriving inside a place publishes `place.arrived`.
-  - A departure publishes `place.departed`.
-  - Creating a place establishes a baseline and doesn't fire for a visit
-    already in progress.
-  - Significant-change points alone never fire triggers.
-- **Visit trigger.** `visit.ended` for "log where I was" automations, with
-  optional place matches.
-- **Queries.** `timeline_query` results are annotated with matching places. A
-  location history and map view in Personal data on both clients.
-- **Acceptance.**
-  - Overlapping places.
-  - Visits with missing arrival or departure.
-  - Late uploads within and past the event age.
-  - The trigger delay (visit latency plus upload) is shown in the client.
+Superseded on October 15, 2026 by [location for agents, automations and apps](location-agent-data/README.md).
+Phase 6 was split into four sub-phases, because location also needed reliable
+capture, naming and screens before triggers would be useful:
+- 6.1 reliable capture and permission;
+- 6.2 place names;
+- 6.3 location for agents and screens;
+- 6.4 named places and triggers.
 
-### Phase 7 — Timely place triggers (mobile, optional)
-
-Only if phase 6's latency is too slow in practice.
-
-- `CLMonitor` circular regions for the user's places (iOS 17+, within the
-  system's region limit, nearest places first). Transitions become
-  `location.region_transition.v1` with an immediate upload attempt.
-- The server de-duplicates region and visit transitions for the same place
-  within a window. This requires Always location permission, which the
-  onboarding copy must explain.
-- Acceptance is device-only: app killed, locked device, low power, and limit
-  rotation.
+Phase 7 (geofences) stays optional.
 
 ### Phase 8 — More health types
 

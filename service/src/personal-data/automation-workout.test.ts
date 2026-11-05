@@ -107,7 +107,8 @@ test("new workouts publish once, match workout rules by filter, age and deletion
   assert.equal(admitted.status, "admitted");
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, admitted.invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /A workout was recorded: running, 30 minutes/);
+  assert.match(input.content, /^Finished a 30-minute running workout at [^\n]+\.\n\n/);
+  assert.match(input.content, /- Workout ID: /);
   assert.equal(input.metadata?.workout_id, w1.id);
   assert.equal(await checkAutomationPolicy(invocation, true, db), "ready");
 

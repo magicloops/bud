@@ -379,6 +379,69 @@
       "when": 1792049569609,
       "tag": "0053_workout_domain_events",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792105711035,
+      "tag": "0054_location_visit_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792106722192,
+      "tag": "0055_location_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792107443221,
+      "tag": "0056_places_and_visit_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792543822719,
+      "tag": "0057_place_presence",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792799214008,
+      "tag": "0058_presence_confirmation",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792910615524,
+      "tag": "0059_presence_reading_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1793164180278,
+      "tag": "0060_grouped_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1793174512907,
+      "tag": "0061_folded_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793751504751,
+      "tag": "0062_arrival_confirmation",
+      "breakpoints": true
     }
   ]
 }

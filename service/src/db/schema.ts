@@ -1508,9 +1508,96 @@ export const healthSampleDeletionTable = pgTable("health_sample_deletion", {
   kindCheck: check("health_sample_deletion_kind_check", sql`${t.sampleKind} in ('workout','sleep_segment')`),
 }));
 
-// Exactly one subject: a contact revision (contact.added) or a workout (workout.completed).
+// One row per visit: iOS's arrival and completed reports merge by visit key (v2);
+// a v1 visit, which has no key, is its own visit keyed by its raw event.
+export const locationVisitTable = pgTable("location_visit", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  // Start time used for ordering and windows: arrival, else departure.
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  firstEventId: text("first_event_id").notNull(), lastEventId: text("last_event_id").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_visit_key").on(t.createdByUserId, t.visitKey),
+  ownerKey: unique("location_visit_owner_key").on(t.id, t.createdByUserId),
+  ownerStartIdx: index("location_visit_owner_start_idx").on(t.createdByUserId, t.startedAt, t.id),
+}));
+
+// A user's named place (a label, not a permission): centre and radius. `geometryChangedAt`
+// is the baseline for presence: visits that started before it never trigger for it.
+export const placeTable = pgTable("place", {
+  id: text("id").primaryKey(), name: text("name").notNull(), note: text("note"),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  radiusM: doublePrecision("radius_m").notNull(),
+  createdBy: text("created_by").notNull(),
+  geometryChangedAt: timestamp("geometry_changed_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_owner_key").on(t.id, t.createdByUserId),
+  ownerIdx: index("place_owner_idx").on(t.createdByUserId, t.id),
+  radiusCheck: check("place_radius_check", sql`${t.radiusM} between 50 and 2000`),
+  createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
+}));
+
+// Whether the owner is at each place, fed by geofence transitions and visits. A region exit
+// waits in `leaving_at` until the flap window passes; re-entry cancels it.
+export const placePresenceTable = pgTable("place_presence", {
+  placeId: text("place_id").notNull(), state: text("state").notNull(),
+  since: timestamp("since", { withTimezone: true }).notNull(),
+  leavingAt: timestamp("leaving_at", { withTimezone: true }),
+  // The newest evidence of being inside during this stay (an arrival, a re-entry or a
+  // definitely-inside reading), so an exit or reading processed out of order can tell whether
+  // newer evidence followed it.
+  lastEnteredAt: timestamp("last_entered_at", { withTimezone: true }),
+  // The visit that last confirmed the owner is inside, when one did.
+  visitId: text("visit_id"),
+  // The region exit waiting in `leaving_at`, so the settled departure keeps its evidence.
+  leavingEventId: text("leaving_event_id"),
+  // Whether the departure wait can settle: started by a geofence exit, or a second outside
+  // reading confirmed one started by a reading (`DEPARTURE_CONFIRM_MS`).
+  leavingConfirmed: boolean("leaving_confirmed").notNull().default(false),
+  // A geofence entry whose precise reading was still short of the place: the owner is near it
+  // but not yet there. Cleared by an arrival or a departure.
+  approachingAt: timestamp("approaching_at", { withTimezone: true }),
+  // The first definitely-inside reading of an arrival not yet confirmed (`ARRIVAL_CONFIRM_MS`),
+  // and its event: walking past a place can put one reading inside it.
+  arrivingAt: timestamp("arriving_at", { withTimezone: true }),
+  arrivingEventId: text("arriving_event_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "place_presence_pk", columns: [t.createdByUserId, t.placeId] }),
+  leavingIdx: index("place_presence_leaving_idx").on(t.leavingAt).where(sql`${t.leavingAt} is not null`),
+  placeFk: foreignKey({ name: "place_presence_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  stateCheck: check("place_presence_state_check", sql`${t.state} in ('inside', 'outside')`),
+}));
+
+// Each published arrival or departure, from a region transition or a visit.
+export const placePresenceEventTable = pgTable("place_presence_event", {
+  id: text("id").primaryKey(), placeId: text("place_id").notNull(), transition: text("transition").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  source: text("source").notNull(), visitId: text("visit_id"), rawEventId: text("raw_event_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_presence_event_owner_key").on(t.id, t.createdByUserId),
+  placeFk: foreignKey({ name: "place_presence_event_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  visitFk: foreignKey({ name: "place_presence_event_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  transitionCheck: check("place_presence_event_transition_check", sql`${t.transition} in ('arrived', 'departed')`),
+  sourceCheck: check("place_presence_event_source_check", sql`${t.source} in ('region', 'visit', 'reading')`),
+}));
+
+// Exactly one subject: a contact revision (contact.added), a workout (workout.completed), a
+// visit (visit.ended) or a presence change (place.arrived/place.departed, with their place).
 export const dataDomainEventTable = pgTable("data_domain_event", {
   id: text("id").primaryKey(), revisionId: text("revision_id"), workoutId: text("workout_id"),
+  visitId: text("visit_id"), placeId: text("place_id"), presenceEventId: text("presence_event_id"),
   eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
   publicationSequence: bigint("publication_sequence", { mode: "number" }),
   publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1523,7 +1610,13 @@ export const dataDomainEventTable = pgTable("data_domain_event", {
   revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
   workoutKey: unique("data_domain_workout_key").on(t.workoutId, t.eventType),
   workoutFk: foreignKey({ name: "data_domain_workout_fk", columns: [t.workoutId, t.createdByUserId], foreignColumns: [healthWorkoutTable.id, healthWorkoutTable.createdByUserId] }),
-  subjectCheck: check("data_domain_subject_check", sql`(${t.revisionId} is null) <> (${t.workoutId} is null)`),
+  subjectCheck: check("data_domain_subject_check", sql`num_nonnulls(${t.revisionId}, ${t.workoutId}, ${t.visitId}, ${t.presenceEventId}) = 1`),
+  visitFk: foreignKey({ name: "data_domain_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  placeFk: foreignKey({ name: "data_domain_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  presenceFk: foreignKey({ name: "data_domain_presence_fk", columns: [t.presenceEventId, t.createdByUserId], foreignColumns: [placePresenceEventTable.id, placePresenceEventTable.createdByUserId] }),
+  // One event per presence change; one visit.ended per visit.
+  presenceKey: unique("data_domain_presence_key").on(t.presenceEventId, t.eventType),
+  visitEndedKey: uniqueIndex("data_domain_visit_ended_key").on(t.visitId, t.eventType).where(sql`${t.visitId} is not null`),
 }));
 
 
@@ -1534,12 +1627,29 @@ export const locationObservationTable = pgTable("location_observation", {
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  // v2 visits only: shared by iOS's arrival and completed reports of one visit.
+  visitKey: text("visit_key"),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
 }, t => ({
   eventKey: unique("location_observation_event_key").on(t.rawEventId),
+  visitIdx: index("location_observation_visit_idx").on(t.createdByUserId, t.visitKey),
   ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
   eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+// Names for a visit (address and likely place), looked up on the phone. One row per
+// owner and visit key; a later lookup (by named_at) replaces an earlier one.
+export const locationVisitNameTable = pgTable("location_visit_name", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id").notNull(),
+  address: jsonb("address").$type<Record<string, string | null> | null>(),
+  place: jsonb("place").$type<Record<string, unknown> | null>(),
+  namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_name_visit_key").on(t.createdByUserId, t.visitKey),
+  eventFk: foreignKey({ name: "location_visit_name_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.
@@ -1668,6 +1778,9 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Exactly one trigger reference: a published domain event or a schedule window.
   domainEventId: text("domain_event_id"), scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
   invocationId: text("invocation_id"),
+  // A straggler (an event older than one already told to its conversation) becomes a quiet
+  // timeline entry instead of a run: status `folded`, and this is that message (Phase 7.3).
+  timelineMessageId: uuid("timeline_message_id"),
   status: text("status").notNull().default("pending"), outcomeCode: text("outcome_code"),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1679,13 +1792,15 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Across revisions: editing a schedule never runs the same window twice.
   scheduleKey: unique("automation_delivery_schedule_key").on(t.automationId, t.scheduledFor),
   triggerCheck: check("automation_delivery_trigger_check", sql`(${t.domainEventId} is null) <> (${t.scheduledFor} is null)`),
-  invocationKey: unique("automation_delivery_invocation_key").on(t.invocationId),
+  // Several location deliveries for one conversation can share a run (Phase 7.3).
+  invocationIdx: index("automation_delivery_invocation_idx").on(t.invocationId),
   ownerIdx: index("automation_delivery_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
   dueIdx: index("automation_delivery_due_idx").on(t.status, t.nextAttemptAt),
   revisionFk: foreignKey({ name: "automation_delivery_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
   eventFk: foreignKey({ name: "automation_delivery_event_fk", columns: [t.domainEventId, t.createdByUserId], foreignColumns: [dataDomainEventTable.id, dataDomainEventTable.createdByUserId] }),
   invocationFk: foreignKey({ name: "automation_delivery_invocation_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }),
-  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed')`),
+  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed','folded')`),
+  foldedCheck: check("automation_delivery_folded_check", sql`(${t.status} = 'folded') = (${t.timelineMessageId} is not null)`),
   admissionCheck: check("automation_delivery_admission_check", sql`(${t.status} = 'admitted') = (${t.invocationId} is not null)`),
 }));
 

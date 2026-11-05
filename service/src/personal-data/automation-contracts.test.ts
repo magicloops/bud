@@ -75,3 +75,20 @@ test("workout rules need health access, a bounded filter and a maximum event age
     { sources: { source_ids: [] } }, { schedule: { local_time: "09:00", weekdays: [1], timezone: "UTC" } }])
     assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...workout, ...patch }), { code: "invalid_automation" });
 });
+
+test("location rules need location access, saved place IDs and a maximum event age", () => {
+  const { sources: _omitted, ...base } = definition;
+  const arrived = { ...base, event_type: "place.arrived", place_trigger: { place_ids: ["home"] }, max_event_age_seconds: 3600,
+    data_access: { scopes: ["location.read"], history_days: 30 } };
+  assert.equal(parseAutomationInput(automationDefinitionSchema, arrived).event_type, "place.arrived");
+  assert.equal(parseAutomationInput(automationDefinitionSchema, { ...arrived, event_type: "place.departed" }).event_type, "place.departed");
+  for (const patch of [{ data_access: { scopes: ["health.read"], history_days: 30 } }, { max_event_age_seconds: 60 },
+    { place_trigger: { place_ids: [] } }, { place_trigger: { place_ids: ["a", "a"] } }, { place_trigger: undefined },
+    { place_trigger: { place_ids: Array.from({ length: 21 }, (_, i) => `p${i}`) } }, { workout_filter: { activity_types: [], min_duration_minutes: 0 } }])
+    assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...arrived, ...patch }), { code: "invalid_automation" });
+  const { place_trigger: _p, ...rest } = arrived;
+  const ended = { ...rest, event_type: "visit.ended", visit_filter: { place_ids: [], min_duration_minutes: 30 } };
+  assert.equal(parseAutomationInput(automationDefinitionSchema, ended).event_type, "visit.ended");
+  for (const patch of [{ visit_filter: { place_ids: [], min_duration_minutes: 2000 } }, { visit_filter: undefined }, { place_trigger: { place_ids: ["home"] } }])
+    assert.throws(() => parseAutomationInput(automationDefinitionSchema, { ...ended, ...patch }), { code: "invalid_automation" });
+});

@@ -292,6 +292,33 @@
         "retry_after_s": 0
       },
       "valid": false
+    },
+    {
+      "name": "follow_ups",
+      "response": {
+        "batch_id": "wire-fixture-batch",
+        "acked_event_ids": [
+          "00000000-0000-4000-8000-000000000001"
+        ],
+        "accepted_count": 1,
+        "duplicate_count": 0,
+        "rejected_count": 0,
+        "rejected": [],
+        "request_id": "req-1",
+        "retry_after_s": 0,
+        "follow_ups": {
+          "6f3c1d2a-entry": "settled",
+          "9b7e4f10-exit": "open"
+        }
+      },
+      "valid": true,
+      "acked": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "follow_ups": {
+        "6f3c1d2a-entry": "settled",
+        "9b7e4f10-exit": "open"
+      }
     }
   ]
 }

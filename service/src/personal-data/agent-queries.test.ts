@@ -16,14 +16,17 @@ function fixture() {
   };
   type Dependencies = ConstructorParameters<typeof AgentDataQueries>;
   const contacts = { list: query("search"), get: query("contact"), getRevision: query("revision"), history: query("history") } as unknown as Dependencies[0];
-  const locations = { list: query("timeline"), contactContext: query("context") } as unknown as Dependencies[1];
+  const locations = { list: query("timeline"), contactContext: query("context"), visits: query("visits"), recent: query("recent"),
+    visitById: async (_owner: string, id: string) => id === "v-new" ? { latitude: 37.7, longitude: -122.4, startedAt: new Date("2026-09-03T00:00:00Z") }
+      : id === "v-old" ? { latitude: 1, longitude: 1, startedAt: new Date("2026-07-01T00:00:00Z") } : null } as unknown as Dependencies[1];
   const grants = { require: async (_owner: string, required: DataScope[]) => {
     if (!required.every(s => scopes.includes(s))) throw new DataRequestError(403, "data_permission_required", "Permission required");
     return { scopes: [...scopes], version, history_days: 30, updated_at: null, consumer: "your_agents", fields: [...fields],
       location_precision: "as_collected", health_types: [...healthTypes] };
   } };
   const health = { workouts: query("workouts"), sleep: query("sleep") } as unknown as Dependencies[4];
-  return { calls, adapter: new AgentDataQueries(contacts, locations, grants, () => new Date("2026-09-04T12:00:00Z"), health),
+  const places = { list: query("places"), create: query("createPlace") } as unknown as Dependencies[5];
+  return { calls, adapter: new AgentDataQueries(contacts, locations, grants, () => new Date("2026-09-04T12:00:00Z"), health, places),
     grantHealth: () => { scopes = [...scopes, "health.read"]; }, setHealthTypes: (next: string[]) => { healthTypes = next; },
     revoke: () => { scopes = []; version++; }, contactsOnly: () => { scopes = ["contacts.read"]; },
     setFields: (next: string[]) => { fields = next; version++; },
@@ -144,4 +147,43 @@ test("health tools need the health scope and the matching health type, within ap
   await assert.rejects(f.adapter.execute("alice", "health_workouts", window, { scopes: ["contacts.read"], historyDays: 30, grantVersion: 1, binding: "rule" }),
     { code: "automation_data_scope" });
   assert.equal(f.calls.length, calls, "an automation without health scope reads nothing");
+});
+
+test("location visit and recent tools need location access and respect approved history", async () => {
+  const f = fixture();
+  const window = { from: "2026-09-01T00:00:00Z", to: "2026-09-04T00:00:00Z" };
+  f.contactsOnly();
+  await assert.rejects(f.adapter.execute("alice", "location_visits", window), { code: "data_permission_required" });
+  await assert.rejects(f.adapter.execute("alice", "location_recent", {}), { code: "data_permission_required" });
+  const f2 = fixture();
+  await f2.adapter.execute("alice", "location_visits", { ...window, order: "asc", limit: 5 });
+  assert.deepEqual(f2.calls.at(-1), { method: "visits", args: ["alice", { ...window, limit: 5, cursor: undefined, order: "asc" }] });
+  await f2.adapter.execute("alice", "location_recent", {});
+  assert.deepEqual(f2.calls.at(-1), { method: "recent", args: ["alice", { notBefore: new Date("2026-08-05T12:00:00Z") }] });
+  await f2.adapter.execute("alice", "timeline_query", { ...window, kind: "visits" });
+  assert.equal((f2.calls.at(-1)!.args[1] as { kind: string }).kind, "visits");
+  await assert.rejects(f2.adapter.execute("alice", "location_visits", { from: "2026-08-01T00:00:00Z", to: "2026-08-10T00:00:00Z" }), { code: "history_outside_grant" });
+  await assert.rejects(f2.adapter.execute("alice", "location_recent", { owner: "bob" }), { code: "invalid_query" });
+});
+
+test("place tools need location access, and agents save places at coordinates or visits within approved history", async () => {
+  const f = fixture();
+  f.contactsOnly();
+  await assert.rejects(f.adapter.execute("alice", "places_list", {}), { code: "data_permission_required" });
+  await assert.rejects(f.adapter.execute("alice", "places_create", { name: "Home", latitude: 1, longitude: 2 }), { code: "data_permission_required" });
+  const f2 = fixture();
+  await f2.adapter.execute("alice", "places_list", {});
+  assert.deepEqual(f2.calls.at(-1), { method: "places", args: ["alice"] });
+  await f2.adapter.execute("alice", "places_create", { name: "Gym", latitude: 1, longitude: 2, radius_m: 150 });
+  assert.deepEqual(f2.calls.at(-1), { method: "createPlace", args: ["alice", { name: "Gym", latitude: 1, longitude: 2, radius_m: 150 }, "agent"] });
+  // OpenAI's strict schemas send unused optional arguments as null: absent, so radius_m defaults.
+  await f2.adapter.execute("alice", "places_create", { name: "Gym", visit_id: null, latitude: 1, longitude: 2, radius_m: null, note: null });
+  assert.deepEqual(f2.calls.at(-1), { method: "createPlace", args: ["alice", { name: "Gym", latitude: 1, longitude: 2 }, "agent"] });
+  await f2.adapter.execute("alice", "places_create", { name: "Home", visit_id: "v-new", latitude: null, longitude: null });
+  assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
+  await f2.adapter.execute("alice", "places_create", { name: "Home", visit_id: "v-new" });
+  assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
+  await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "Old", visit_id: "v-old" }), { code: "visit_not_found" });
+  await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "X", visit_id: "missing" }), { code: "visit_not_found" });
+  await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "X", owner: "bob" }), { code: "invalid_query" });
 });

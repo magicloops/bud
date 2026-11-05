@@ -93,6 +93,12 @@ export class AutomationManagement {
           : eventType === "workout.completed"
           ? { ...common, event_type: "workout.completed", workout_filter: { activity_types: [], min_duration_minutes: 0 },
             max_event_age_seconds: 21_600, data_access: { scopes: ["health.read"], history_days: historyDays } }
+          : eventType === "place.arrived" || eventType === "place.departed"
+          ? { ...common, event_type: eventType, place_trigger: { place_ids: [] }, max_event_age_seconds: 3600,
+            data_access: { scopes: ["location.read"], history_days: historyDays } }
+          : eventType === "visit.ended"
+          ? { ...common, event_type: "visit.ended", visit_filter: { place_ids: [], min_duration_minutes: 0 }, max_event_age_seconds: 21_600,
+            data_access: { scopes: ["location.read"], history_days: historyDays } }
           : { ...common, event_type: "contact.added", sources: { source_ids: [] },
             data_access: { scopes: ["contacts.read"], history_days: historyDays } };
         const definition = resolveAgentAutomationDraft(args, defaults);

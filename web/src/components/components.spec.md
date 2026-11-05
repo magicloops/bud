@@ -258,3 +258,22 @@ access. `data-screen.tsx` adds a Health source summary, a Browse health link and
 agent Health toggles (per type, shown only when the service advertises
 `supported_health_types`). App access requests and agent summaries show health
 types.
+
+`data-screen.tsx` Data sources also shows a Location summary (last received and
+latest visit) from `/api/data/status`, pointing to the mobile Location section
+for permission.
+
+### `location-screen.tsx`
+
+Owner view at `/data/location`:
+- a last-known line from `/api/data/location/recent` (a fix reads "Here:
+  <address>", a point is marked approximate);
+- a day picker and the day's visits (`/api/data/location/visits`, local-day
+  window, oldest first);
+- an OpenStreetMap embed of the selected visit, with "Save as place" (name and
+  radius) when the visit isn't at a saved place;
+- a Places section listing saved places (radius, "saved by an agent") with
+  inline edit and delete.
+
+Labels come from `lib/location-format.ts`; places load through
+`lib/places.ts`.

@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { admissionText, duration, lateReport, localTime, timeZoneLine } from "./automation-trigger-text.js";
+
+test("trigger times read as people say them, in the phone's time zone", () => {
+  const zone = "America/Los_Angeles";
+  const now = new Date("2026-10-24T00:40:00Z"); // 5:40 PM PDT on Oct 23
+  assert.equal(localTime(new Date("2026-10-24T00:36:00Z"), zone, now), "at 5:36 PM");
+  assert.equal(localTime(new Date("2026-10-23T06:10:00Z"), zone, now), "yesterday at 11:10 PM");
+  assert.equal(localTime(new Date("2026-10-20T16:05:00Z"), zone, now), "on Tue, Oct 20 at 9:05 AM");
+  // Without a reported zone: UTC, labelled.
+  assert.equal(localTime(new Date("2026-10-24T00:36:00Z"), null, now), "at 12:36 AM UTC");
+  // Lateness is only mentioned past 10 minutes (an upload backlog), never as "N minutes ago".
+  assert.equal(lateReport(new Date("2026-10-27T22:30:57Z"), new Date("2026-10-27T22:32:43Z")), null);
+  assert.equal(lateReport(new Date("2026-10-27T21:44:43Z"), new Date("2026-10-27T22:01:57Z")), "Reported 17 minutes after it happened.");
+  assert.equal(lateReport(new Date("2026-10-26T17:37:46Z"), new Date("2026-10-27T00:35:01Z")), "Reported about 7 hours after it happened.");
+  assert.equal(timeZoneLine(zone), "Times are in America/Los_Angeles, the phone's time zone.");
+});
+
+test("durations read naturally", () => {
+  assert.equal(duration(20), "1 minute");
+  assert.equal(duration(25 * 60), "25 minutes");
+  assert.equal(duration(95 * 60), "about 1 hour 35 minutes", "not about 2 hours (November 3)");
+  assert.equal(duration(119 * 60), "about 2 hours");
+  assert.equal(duration(5 * 3600 + 58 * 60), "about 6 hours");
+  assert.equal(duration(7 * 3600), "about 7 hours");
+  assert.equal(duration(93_665), "about 26 hours", "not 1561 minutes (October 24)");
+  assert.equal(duration(3 * 86_400), "about 3 days");
+});
+
+test("the run's input puts the event first, the instruction next and bookkeeping last", () => {
+  assert.equal(admissionText({ event: "Arrived at Home at 5:36 PM.", instruction: "Remind me to water the plants.",
+    automationName: "Arrive at Home", automationId: "rule-1", reference: ["Times are in UTC."] }),
+  "Arrived at Home at 5:36 PM.\n\nRemind me to water the plants.\n\n---\n" +
+    "For reference. Don't mention these details unless the instruction asks for them.\n" +
+    "- Triggered by the \"Arrive at Home\" automation (ID rule-1).\n- Times are in UTC.\n" +
+    "- Your reply appears in this conversation, and its start is shown as a push notification.");
+});

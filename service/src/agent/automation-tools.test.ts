@@ -78,7 +78,8 @@ test("schedule drafts and replacements accept provider nulls for the other trigg
   assert.throws(() => parseAutomationToolInput("automations_update_draft", { automation_id: "rule", expected_version: 1,
     definition: { ...definition, schedule: null } }), "a schedule replacement still requires its schedule");
   const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
-  assert.deepEqual((create.parameters.properties!.event_type as { enum: string[] }).enum, ["contact.added", "schedule", "workout.completed"]);
+  assert.deepEqual((create.parameters.properties!.event_type as { enum: string[] }).enum, ["contact.added", "schedule", "workout.completed",
+    "place.arrived", "place.departed", "visit.ended"]);
 });
 
 test("workout drafts accept provider nulls for other triggers and expose their own settings", () => {
@@ -90,4 +91,16 @@ test("workout drafts accept provider nulls for other triggers and expose their o
   const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
   assert.ok((create.parameters.properties!.event_type as { enum: string[] }).enum.includes("workout.completed"));
   assert.ok(create.parameters.properties!.workout_filter);
+});
+
+test("place drafts require place IDs and accept provider nulls for other triggers", () => {
+  const parsed = parseAutomationToolInput("automations_create_draft", { name: "Home", instruction: "Say welcome home",
+    event_type: "place.arrived", place_trigger: { place_ids: ["home"] }, visit_filter: null, workout_filter: null, schedule: null, sources: null });
+  assert.deepEqual(parsed, { name: "Home", instruction: "Say welcome home", event_type: "place.arrived", place_trigger: { place_ids: ["home"] } });
+  assert.throws(() => parseAutomationToolInput("automations_create_draft", { name: "Home", instruction: "x", event_type: "place.departed" }));
+  const ended = parseAutomationToolInput("automations_create_draft", { name: "Visits", instruction: "Log it", event_type: "visit.ended",
+    visit_filter: { place_ids: [], min_duration_minutes: 30 }, place_trigger: null });
+  assert.equal(ended.event_type, "visit.ended");
+  const create = AUTOMATION_CANONICAL_TOOLS.find(tool => tool.name === "automations_create_draft")!;
+  assert.ok(create.parameters.properties!.place_trigger && create.parameters.properties!.visit_filter);
 });

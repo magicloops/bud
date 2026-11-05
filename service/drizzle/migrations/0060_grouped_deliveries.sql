@@ -1,0 +1,2 @@
+ALTER TABLE "automation_delivery" DROP CONSTRAINT "automation_delivery_invocation_key";--> statement-breakpoint
+CREATE INDEX "automation_delivery_invocation_idx" ON "automation_delivery" USING btree ("invocation_id");
