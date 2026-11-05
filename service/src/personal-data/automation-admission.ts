@@ -25,6 +25,9 @@ type Prepared = { delivery: Delivery; definition: AutomationDefinition; trigger:
   grantVersion: number };
 type TriggerInput = { event: string; at: Date; reference: string[]; metadata: Record<string, unknown> };
 
+/** How long a visit-ended delivery waits for the name of the visit's final coordinate. */
+const NAMING_WAIT_SECONDS = 60;
+
 /** Location triggers for a conversation form one timeline (Phase 7.3). */
 const LOCATION_TRIGGERS = new Set(["place.arrived", "place.departed", "visit.ended"]);
 const isLocationTrigger = (definition: AutomationDefinition) => LOCATION_TRIGGERS.has(definition.event_type ?? "");
@@ -165,6 +168,10 @@ export class AutomationAdmission {
         eq(threads.createdByUserId, owner), isNull(threads.deletedAt))).limit(1);
       if (!thread) return finish("failed", "automation_target_unavailable");
     }
+    if (definition.event_type === "visit.ended" && await this.namingPending(tx, owner, delivery)) {
+      await this.wait(tx, delivery, "visit_naming_pending", 5);
+      return { outcome: "visit_naming_pending" };
+    }
     const trigger = await this.triggerInput(tx, owner, delivery, definition, grant?.healthTypes ?? [], grant?.historyDays ?? 0);
     if (typeof trigger === "string") return finish("failed", trigger);
     if (policy.rule.state !== "enabled") return wait("automation_paused");
@@ -180,6 +187,20 @@ export class AutomationAdmission {
       throw error;
     }
     return { delivery, definition, trigger, modelResolution, grantVersion: grant?.version ?? 0 };
+  }
+
+  /** Whether a visit's name is still from before it ended, for up to `NAMING_WAIT_SECONDS` after
+   * its event was published. The phone names a visit on arrival and again on completion (iOS's
+   * final coordinate), and the completion can be processed before its new name: on November 4 a
+   * message said "300 Bartlett St" while its evidence, built 10 s later, said "1245 Valencia St". */
+  private async namingPending(tx: Transaction, owner: string, delivery: Delivery) {
+    if (!delivery.domainEventId) return false;
+    const [row] = await tx.select({ pending: sql<boolean>`(${visitNames.namedAt} is null or ${visitNames.namedAt} < ${locationVisits.departureAt})
+      and clock_timestamp() < ${events.publishedAt} + ${NAMING_WAIT_SECONDS} * interval '1 second'` }).from(events)
+      .innerJoin(locationVisits, and(eq(locationVisits.id, events.visitId), eq(locationVisits.createdByUserId, owner)))
+      .leftJoin(visitNames, and(eq(visitNames.createdByUserId, owner), eq(visitNames.visitKey, locationVisits.visitKey)))
+      .where(and(eq(events.id, delivery.domainEventId), eq(events.createdByUserId, owner))).limit(1);
+    return row?.pending === true;
   }
 
   private async wait(tx: Transaction, delivery: Delivery, outcomeCode: string, seconds: number) {

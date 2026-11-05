@@ -704,7 +704,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     (`place_unavailable`), and writes "Arrived at …", "Left … after N
     minutes there" (the stay from the place's previous arrival, else its
     visit) or "A visit at … ended …" (the saved place's name when the visit
-    is at one, with its address in the reference) with the visit ID;
+    is at one, with its address in the reference) with the visit ID. A visit end
+    waits (`visit_naming_pending`, up to 60 s after publication) until the
+    visit has a name from after it ended: the phone names it again at iOS's
+    final coordinate, and that can be processed after the completion;
   - the policy check fails a run whose visit disappeared;
   - `automation-visit-context.ts` adds visit evidence at first start: times,
     coordinate, accuracy, address, likely place, the trigger place, saved
