@@ -486,6 +486,16 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([fix(39.10, second(ago(2), 30), 5, 0)]);
   await upload([fix(39.10, ago(2), 5, 0)]);
   assert.deepEqual(await changesOf(dock.id), [["arrived", ago(2).getTime()]]);
+  // November 5, 12:50 PM: iOS dated a visit 44 m from Home (±3) 3 minutes early, while follow-up
+  // readings had the owner 60–106 m away, walking past. The visit doesn't arrive.
+  const gate = await places.create(owner, { name: "Gate", latitude: 39.20, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, gate.id));
+  const fromGate = (metres: number) => 39.20 + metres / 111_195;
+  await upload([fix(fromGate(106), second(ago(3), 110), 4, 1.1), fix(fromGate(86), second(ago(3), 140), 2, 1.3),
+    fix(fromGate(60), second(ago(3), 160), 2, 1.1)]);
+  await upload([["location.visit.v2", { visit_key: "walk-past", phase: "arrived", arrival_at: ago(3).toISOString(), departure_at: null,
+    coordinate: { lat: fromGate(44), lon: -122.4 }, horizontal_accuracy_m: 3 }]]);
+  assert.deepEqual([await changesOf(gate.id), (await state(gate.id))?.state ?? null], [[], null], "walked past: no arrival");
 
   // A geofence approach creates a new presence row without blocking earlier readings. Separate
   // uploads deliver the inside readings newest first; they still confirm at the earlier time.

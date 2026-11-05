@@ -352,3 +352,31 @@ new one. The agent replied that the two disagreed.
 iOS had the phone inside both geofences from 8:55 AM to 12:45 PM (the places
 are 117 m apart, and geofences are accurate to 100–200 m), and its visit merged
 the stays. Only opening Bud noticed the move.
+
+## Fixes from the November 5 data
+
+A walk on the newest builds, after moving both pins at 1:38 AM: every geofence report was for
+the new geometry, and the walk from the Office home, a quick trip out and back, and arriving at
+the Office were all right. (The service was unreachable from about 9:56 to 11:03 AM, so those
+follow-ups ran their full 3 minutes.) Three problems remained, all after 12:30 PM.
+
+**1. A merged visit's times came from iOS.** iOS reported one visit from 10:48 AM to 12:30 PM,
+covering the Office (10:53–12:16), Home and a trip out. Phase 9 named it Office, but the message
+said "ended at 12:30 PM, after about 1 hour 40 minutes".
+- **Fix:** at a saved place, the visit-ended message takes Bud's own stay there that overlaps the
+  visit most ("ended at 12:16 PM, after 83 minutes"), when it differs from the visit by more than
+  2 minutes, and says iOS's times in the reference. Stays a visit started don't count.
+
+**2. "Left Home at 12:30 PM" was folded.** A departure publishes after its 3-minute settle wait; a
+visit end 40 s later had been told first, so the departure counted as a straggler.
+- **Fix:** an event folds only when it's more than 5 minutes older than the newest one told
+  (`STRAGGLER_GRACE_MS`, the settle wait plus 2 minutes). Within that it's a new event: its own run,
+  after any run in progress.
+
+**3. A visit arrived at Home while readings had the owner walking past.** iOS dated a visit 44 m
+from Home (±3 m) at 12:50:55, about 3 minutes early; follow-up readings from 12:52 had the owner
+60–106 m away, then walking past Home without stopping. The visit arrived at once, and a false
+"Left Home" followed.
+- **Fix:** a visit doesn't arrive at a place when a precise reading in its first 5 minutes
+  (`VISIT_ARRIVAL_CHECK_MS`), within 1 km of the place, is definitely outside it. Readings-based
+  arrivals still count when the owner stops.

@@ -15,8 +15,8 @@ import { generateMessageClientId } from "../db/message-client-id.js";
 import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, parseAutomationInput, withinHistory,
   type AutomationDefinition } from "./automation-contracts.js";
 import { describeLocalWindow } from "./automation-schedule.js";
-import { presenceReading } from "./place-presence.js";
-import { placeOfVisit, placesForOwner } from "./places.js";
+import { DEPARTURE_SETTLE_MS, presenceReading } from "./place-presence.js";
+import { placeOfVisit, placesForOwner, presenceStays } from "./places.js";
 import { admissionText, duration, lateReport, localTime, phoneTimeZone, timeZoneLine, timelineAdmissionText } from "./automation-trigger-text.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -28,6 +28,14 @@ type TriggerInput = { event: string; at: Date; reference: string[]; metadata: Re
 /** A saved place's own address (Phase 10): what the user gave, so it's preferred over reverse geocoding. */
 const savedAddress = (place: { name: string; address: string | null }) =>
   place.address ? [`${place.name} is at ${place.address} (the user's saved address).`] : [];
+
+/** How much older than the newest event already told an event must be to fold (Phase 7.3). On
+ * November 5, "Left Home at 12:30 PM" (published after its 3-minute settle wait) was folded because
+ * a visit end 40 s later had been told first. The settle wait plus margin. */
+const STRAGGLER_GRACE_MS = DEPARTURE_SETTLE_MS + 2 * 60_000;
+
+/** A visit's own times stand when Bud's stay at its place is within this of them. */
+const STAY_TIME_TOLERANCE_MS = 2 * 60_000;
 
 /** How long a visit-ended delivery waits for the name of the visit's final coordinate. */
 const NAMING_WAIT_SECONDS = 60;
@@ -90,10 +98,12 @@ export class AutomationAdmission {
       let group = [first];
       if (isLocationTrigger(first.definition) && first.definition.target.mode === "existing_thread") {
         // A straggler (older than an event already told to this conversation) never starts a run:
-        // it joins one that hasn't started, or becomes a quiet entry in the conversation.
+        // it joins one that hasn't started, or becomes a quiet entry in the conversation. Only by
+        // more than `STRAGGLER_GRACE_MS`: a departure is published after its settle wait, so one
+        // seconds older than a visit end already told isn't a backlog.
         const threadId = first.definition.target.thread_id;
         const newest = await this.newestToldAt(tx, owner, threadId);
-        if (newest && first.trigger.at < newest) {
+        if (newest && first.trigger.at.getTime() < newest.getTime() - STRAGGLER_GRACE_MS) {
           const run = await this.unstartedRun(tx, owner, threadId, first);
           if (run) await this.joinRun(tx, owner, run, first);
           else await this.fold(tx, owner, threadId, first);
@@ -191,6 +201,21 @@ export class AutomationAdmission {
       throw error;
     }
     return { delivery, definition, trigger, modelResolution, grantVersion: grant?.version ?? 0 };
+  }
+
+  /** The stay presence recorded at a place that overlaps a visit most, if it differs from the visit's
+   * own times by more than a couple of minutes (otherwise the visit's times stand). A stay still open
+   * ends with the visit. */
+  private async stayDuring(tx: Transaction, owner: string, placeId: string, visit: typeof locationVisits.$inferSelect) {
+    const start = visit.arrivalAt ?? visit.startedAt, end = visit.departureAt;
+    if (!end) return null;
+    const overlap = (stay: { arrivedAt: Date; departedAt: Date | null }) =>
+      Math.min(stay.departedAt?.getTime() ?? end.getTime(), end.getTime()) - Math.max(stay.arrivedAt.getTime(), start.getTime());
+    const [best] = (await presenceStays(tx, owner, placeId, start, end)).sort((a, b) => overlap(b) - overlap(a));
+    if (!best || overlap(best) <= 0) return null;
+    const departedAt = best.departedAt && best.departedAt < end ? best.departedAt : end;
+    const close = (a: Date, b: Date) => Math.abs(a.getTime() - b.getTime()) <= STAY_TIME_TOLERANCE_MS;
+    return close(best.arrivedAt, start) && close(departedAt, end) ? null : { arrivedAt: best.arrivedAt, departedAt };
   }
 
   /** Whether a visit's name is still from before it ended, for up to `NAMING_WAIT_SECONDS` after
@@ -401,13 +426,19 @@ export class AutomationAdmission {
       // A visit at a saved place is named by it ("A visit at Home"), with the address for reference.
       const saved = await placeOfVisit(tx, owner, await placesForOwner(tx, owner), row.visit);
       const where = saved?.name ?? address ?? "a place";
-      const stayed = row.visit.arrivalAt && row.visit.departureAt
-        ? duration((row.visit.departureAt.getTime() - row.visit.arrivalAt.getTime()) / 1000) : null;
+      // At a saved place, Bud's own stay there gives the times: iOS can merge stays at nearby
+      // places into one visit (November 5: 10:48 AM–12:30 PM, while the owner left the Office at 12:16).
+      const stay = saved ? await this.stayDuring(tx, owner, saved.id, row.visit) : null;
+      const startedAt = stay?.arrivedAt ?? row.visit.arrivalAt, endedAt = stay?.departedAt ?? row.visit.departureAt!;
+      const stayed = startedAt ? duration((endedAt.getTime() - startedAt.getTime()) / 1000) : null;
       const zone = await phoneTimeZone(tx, owner, row.publishedAt);
+      const iosTimes = stay && row.visit.arrivalAt
+        ? [`These times are from Bud's arrival and departure at ${saved!.name}; iOS reported the visit from ${localTime(row.visit.arrivalAt, zone, now)} `
+          + `to ${localTime(row.visit.departureAt!, zone, now)}.`] : [];
       return {
         at: row.visit.departureAt!,
-        event: `A visit at ${where} ended ${localTime(row.visit.departureAt!, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
-        reference: [timeZoneLine(zone), ...late(row.visit.departureAt!, row.publishedAt),
+        event: `A visit at ${where} ended ${localTime(endedAt, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
+        reference: [timeZoneLine(zone), ...late(row.visit.departureAt!, row.publishedAt), ...iosTimes,
           ...(saved?.address ? savedAddress(saved) : saved && address ? [`${saved.name}'s nearest address from Apple Maps is ${address}.`] : []),
           `Visit ID: ${row.visit.id}.`,
           "iOS reports visits several minutes after they happen, then uploads, so this may arrive late.",

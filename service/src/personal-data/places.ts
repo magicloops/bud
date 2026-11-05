@@ -1,11 +1,12 @@
-import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { db, type Database } from "../db/client.js";
 import { placeTable as places, dataOwnerStateTable as owners, dataDomainEventTable as domains,
-  locationVisitTable as visits, placePresenceTable as presenceRows, placePresenceEventTable as presenceEvents } from "../db/schema.js";
+  locationVisitTable as visits, placePresenceTable as presenceRows, placePresenceEventTable as presenceEvents,
+  locationObservationTable as observations } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
-import { applyPresence, geometryRevision, resetPresence } from "./place-presence.js";
+import { applyPresence, classifyReading, geometryRevision, NEARBY_PLACE_M, POINT_MAX_ACCURACY_M, resetPresence } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Place = typeof places.$inferSelect;
@@ -74,23 +75,34 @@ export async function placeOfVisit<P extends Pick<Place, "id" | "latitude" | "lo
   return best?.place ?? visitPlace(fits, visit);
 }
 
-/** How long presence had the owner at a place between `start` and `end` (open: now). Stays that a
- * visit started don't count, so a visit can't vote for the place it chose itself. */
+/** How long presence had the owner at a place between `start` and `end` (open: now). */
 async function presenceDuringMs(tx: Pick<Database, "select">, owner: string, placeId: string, start: Date, end: Date | null) {
+  const until = (end ?? new Date()).getTime();
+  return (await presenceStays(tx, owner, placeId, start, end))
+    .reduce((total, stay) => total + Math.min(stay.departedAt?.getTime() ?? until, until) - Math.max(stay.arrivedAt.getTime(), start.getTime()), 0);
+}
+
+/** The stays presence recorded at a place that overlap `start`–`end` (open: now), with their own
+ * arrival and departure times (`departedAt` null while still there, or past `end`). Stays that a visit
+ * started don't count, so a visit can't vote for, or time, the place it chose itself. */
+export async function presenceStays(tx: Pick<Database, "select">, owner: string, placeId: string, start: Date, end: Date | null) {
   const columns = { transition: presenceEvents.transition, source: presenceEvents.source, at: presenceEvents.occurredAt };
   const mine = and(eq(presenceEvents.createdByUserId, owner), eq(presenceEvents.placeId, placeId));
   const [before] = await tx.select(columns).from(presenceEvents).where(and(mine, lt(presenceEvents.occurredAt, start)))
     .orderBy(desc(presenceEvents.occurredAt), desc(presenceEvents.id)).limit(1);
   const during = await tx.select(columns).from(presenceEvents).where(and(mine, gte(presenceEvents.occurredAt, start),
     end ? lt(presenceEvents.occurredAt, end) : undefined)).orderBy(asc(presenceEvents.occurredAt), asc(presenceEvents.id));
-  let total = 0, from = before?.transition === "arrived" && before.source !== "visit" ? start.getTime() : null;
+  // A stay that began before `start` keeps its own arrival time.
+  const stays: Array<{ arrivedAt: Date; departedAt: Date | null }> = [];
+  let open: Date | null = before?.transition === "arrived" && before.source !== "visit" ? before.at : null;
   for (const event of during) {
     if (event.transition === "departed") {
-      if (from !== null) total += event.at.getTime() - from;
-      from = null;
-    } else if (from === null && event.source !== "visit") from = event.at.getTime();
+      if (open) stays.push({ arrivedAt: open, departedAt: event.at });
+      open = null;
+    } else if (!open && event.source !== "visit") open = event.at;
   }
-  return from === null ? total : total + (end ?? new Date()).getTime() - from;
+  if (open) stays.push({ arrivedAt: open, departedAt: null });
+  return stays;
 }
 
 export function presentPlace(row: Place) {
@@ -179,6 +191,27 @@ export async function visitPlaces(tx: Pick<Database, "select">, owner: string, o
 }
 
 type VisitRow = typeof visits.$inferSelect;
+
+/** A visit's arrival doesn't count for a place when a precise reading this soon after it puts the
+ * owner near the place but definitely outside it (`outsideDuringVisit`). */
+export const VISIT_ARRIVAL_CHECK_MS = 5 * 60_000;
+
+/** Whether the owner was walking past rather than arriving: a precise reading in the visit's first
+ * `VISIT_ARRIVAL_CHECK_MS`, within `NEARBY_PLACE_M` of the place, definitely outside it. Newer, precise
+ * evidence wins over a visit's arrival: on November 5 iOS dated a visit 44 m from Home 3 minutes early,
+ * while follow-up readings had the owner 60–106 m away, walking past it. A reading-based arrival
+ * still counts when the owner does stop. */
+async function outsideDuringVisit(tx: Transaction, owner: string, place: Place, owned: Place[], visit: VisitRow) {
+  const start = visit.arrivalAt ?? visit.startedAt;
+  const end = new Date(Math.min(start.getTime() + VISIT_ARRIVAL_CHECK_MS, visit.departureAt?.getTime() ?? Infinity));
+  const readings = await tx.select().from(observations).where(and(eq(observations.createdByUserId, owner),
+    inArray(observations.kind, ["fix", "significant_change"]), gt(observations.occurredAt, start), lt(observations.occurredAt, end)))
+    .orderBy(asc(observations.occurredAt)).limit(200);
+  return readings.some(row => (row.kind === "fix" || row.horizontalAccuracyM <= POINT_MAX_ACCURACY_M)
+    && distanceM(row.latitude, row.longitude, place.latitude, place.longitude) <= NEARBY_PLACE_M
+    && classifyReading({ latitude: row.latitude, longitude: row.longitude, accuracyM: row.horizontalAccuracyM, at: row.occurredAt },
+      place, owned).state === "outside");
+}
 /** Called under the processor's owner lock when a v2 visit first appears or completes.
  * Places created or moved after the visit started are its baseline and never fire.
  * Arrivals and departures go through place presence, which de-duplicates them against
@@ -189,8 +222,11 @@ export async function publishVisitEvents(tx: Transaction, owner: string, visit: 
   // The place it was at (`placeOfVisit`), unless that place was created or moved after the visit began.
   const place = await placeOfVisit(tx, owner, owned, visit);
   const at = place && place.geometryChangedAt <= visit.startedAt ? [place] : [];
-  if (transition.arrived) for (const place of at) await applyPresence(tx, owner, place, { transition: "arrived",
-    at: visit.arrivalAt ?? visit.startedAt, source: "visit", visitId: visit.id, visitDepartureAt: visit.departureAt });
+  if (transition.arrived) for (const place of at) {
+    if (await outsideDuringVisit(tx, owner, place, owned, visit)) continue;
+    await applyPresence(tx, owner, place, { transition: "arrived", at: visit.arrivalAt ?? visit.startedAt, source: "visit",
+      visitId: visit.id, visitDepartureAt: visit.departureAt });
+  }
   if (transition.completed) {
     // The completed report can move its coordinate (by ~70–80 m on device). Stays this visit
     // confirmed end too, even where the revised coordinate no longer matches the place.

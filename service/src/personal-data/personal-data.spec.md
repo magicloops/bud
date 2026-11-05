@@ -113,7 +113,7 @@ changes, with rollback of the surrounding decision transaction.
   - **The input:** a time-ordered "Since the last update:" timeline, each rule's instruction once (`For "<rule>": …`), and the reference section with shared lines once and per-event lines labelled.
   - **Metadata** adds `automation_names`, `automation_ids`, `delivery_ids` and `domain_event_ids`. `automation_name` joins the names, so existing clients label "Triggered by A, B and C".
   - **Policy and evidence:** the policy check covers every delivery in a run (any paused rule holds it), and first-start evidence lists every event under `events`.
-  - **Stragglers:** a location delivery for an existing conversation whose event happened before the newest location event already admitted there never starts a run.
+  - **Stragglers:** a location delivery for an existing conversation whose event happened more than 5 minutes (`STRAGGLER_GRACE_MS`, the departure settle wait plus 2 minutes) before the newest location event already admitted there never starts a run. Closer than that it's treated as new: a departure publishes after its settle wait, so it can be seconds older than a visit end already told.
     - If a compatible location run in that conversation hasn't started (pending, retry_wait or leased; the owner lock keeps it from starting meanwhile), the straggler joins it and the run's input is rewritten as the timeline.
     - Otherwise it becomes a quiet entry: a system message "Earlier: …" (origin automation, `timeline_entry`), with no run and no push. The delivery is `folded`, with `timeline_message_id` set. The agent sees the entry in the conversation history, in order, on its next run. No model calls; remains unscheduled until dispatch policy checks are connected. Contact processor fixtures cover concurrent admission, no duplicate thread, pause, expiry, limits and revoked grants.
 
@@ -690,6 +690,9 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   `user-question-repository.ts`): a new place saved by the user, or the asked-about
   place updated with only what changed. The answer's `address`, the one the user
   accepted, is saved with it.
+- **Visit-ended times:** at a saved place, the message uses Bud's own stay there that overlaps the
+  visit most, when it differs from the visit by more than 2 minutes (iOS can merge stays at nearby
+  places into one visit), and gives iOS's times in the reference. Stays a visit started don't count.
 - **Addresses in messages (Phase 10):** a saved place's address is the user's and
   wins over reverse geocoding: "Home is at … (the user's saved address)." on
   arrivals, departures and visit ends, and `address` on the evidence's `place`,
@@ -703,7 +706,9 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   without a key; 400 `invalid_origin` otherwise.
 - **Publication:** `projectVisit` calls `publishVisitEvents` for v2 visits
   under the processor's owner lock. When a visit first appears with an arrival
-  it publishes `place.arrived` per matching place. When it first completes it
+  it publishes `place.arrived` per matching place, unless a precise reading in
+  the visit's first 5 minutes, within 1 km of the place, puts the owner
+  definitely outside it (walking past; `outsideDuringVisit`). When it first completes it
   publishes `place.departed` per matching place, then `visit.ended`.
   - Only places whose `geometry_changed_at` is at or before the visit's start
     count, so saving, moving or resizing a place never acts on a visit already

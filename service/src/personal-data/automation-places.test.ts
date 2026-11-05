@@ -213,6 +213,21 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   while (await admission.admitNext(owner)) { /* drain */ }
   assert.match((await invocationFor("ended-any", f)).input.content, /^A visit at Old St ended /);
 
+  // November 5: iOS merged the Office stay with time elsewhere into one visit (10:48 AM–12:30 PM)
+  // while readings had the owner leave the Office at 12:16. At a saved place, Bud's own stay times it.
+  await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
+  const desk = await places.create(owner, { name: "Desk", latitude: 38.65, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, desk.id));
+  await db.insert(s.placePresenceEventTable).values([
+    { id: randomUUID(), placeId: desk.id, transition: "arrived", occurredAt: ago(25), source: "reading", createdByUserId: owner },
+    { id: randomUUID(), placeId: desk.id, transition: "departed", occurredAt: ago(15), source: "reading", createdByUserId: owner }]);
+  await upload([visit("g", ago(30), ago(4), 38.65)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const merged = (await invocationFor("ended-any", await visitId("g"))).input.content;
+  assert.match(merged, /^A visit at Desk ended [^\n]*, after 10 minutes\./);
+  assert.match(merged, /- These times are from Bud's arrival and departure at Desk; iOS reported the visit from [^\n]+ to [^\n]+\./);
+
   // Deleting the place after admission fails a later admission for it, and withdrawing location access stops runs at their policy check.
   await places.delete(owner, home.id);
   await db.update(s.automationDeliveryTable).set({ status: "pending", invocationId: null })

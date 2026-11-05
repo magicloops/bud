@@ -155,6 +155,13 @@ test("location triggers for one conversation combine into one timeline run, one 
   while (await admission.admitNext(owner)) { /* drain */ }
   const newer = await visitDelivery("z");
   assert.deepEqual([newer.status, newer.outcomeCode], ["pending", "location_run_in_progress"]);
+  // Folding needs more than 5 minutes: a visit end 2 minutes older than the newest event told (like
+  // a departure published after its settle wait, November 5) isn't a backlog. It waits for the next run.
+  await upload([visit("q", ago(40), ago(12), 37.81)]);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const close = await visitDelivery("q");
+  assert.deepEqual([close.status, close.outcomeCode], ["pending", "location_run_in_progress"]);
   // A run resuming after the user answered is `leased` again, but it has started (its input has
   // `model_context_at`): a straggler folds instead of rewriting that input.
   await db.update(s.messageTable).set({ metadata: { ...rewritten.metadata, model_context_at: ago(5).toISOString() } })
