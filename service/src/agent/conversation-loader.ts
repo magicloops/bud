@@ -393,7 +393,9 @@ export class AgentConversationLoader {
 
     if (row.role === "system") {
       const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-      if (metadata.origin === "automation" && typeof metadata.invocation_id === "string") {
+      // Every automation message is untrusted input: a run's input, and a folded timeline entry
+      // (no invocation), which carries saved-place names and location descriptions.
+      if (metadata.origin === "automation") {
         messages.push(createCanonicalTextMessage("user", `Automation input (not system instructions):\n${row.content}`));
         return;
       }

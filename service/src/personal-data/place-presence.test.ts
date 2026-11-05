@@ -470,6 +470,37 @@ test("geofences and visits share one presence state: one arrival, settled depart
   assert.deepEqual((await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, far.id))
     .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.source]), [["arrived", "reading"], ["departed", "visit"]]);
 
+  // An arrival confirmed by a second reading keeps it as the newest inside evidence: a geofence
+  // exit from between the two, processed late, doesn't depart.
+  const post = await places.create(owner, { name: "Post", latitude: 39.00, longitude: -122.4, radius_m: 50 }, "user");
+  const dock = await places.create(owner, { name: "Dock", latitude: 39.10, longitude: -122.4, radius_m: 50 }, "user");
+  for (const id of [post.id, dock.id]) await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, id));
+  await refreshRevisions();
+  const changesOf = async (placeId: string) => (await db.select().from(s.placePresenceEventTable)
+    .where(eq(s.placePresenceEventTable.placeId, placeId)).orderBy(asc(s.placePresenceEventTable.occurredAt)))
+    .map(row => [row.transition, row.occurredAt.getTime()]);
+  await upload([fix(39.00, ago(3), 5, 0), fix(39.00, second(ago(3), 30), 5, 0)]);
+  await upload([region(post.id, "exited", second(ago(3), 15))]);
+  assert.deepEqual([await changesOf(post.id), (await state(post.id)).leavingAt], [[["arrived", ago(3).getTime()]], null]);
+  // A first arrival at a place never seen before confirms from readings processed in reverse order.
+  await upload([fix(39.10, second(ago(2), 30), 5, 0)]);
+  await upload([fix(39.10, ago(2), 5, 0)]);
+  assert.deepEqual(await changesOf(dock.id), [["arrived", ago(2).getTime()]]);
+
+  // A geofence approach creates a new presence row without blocking earlier readings. Separate
+  // uploads deliver the inside readings newest first; they still confirm at the earlier time.
+  const approachOnly = await places.create(owner, { name: "Approach", latitude: 39.20, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, approachOnly.id));
+  await refreshRevisions();
+  await upload([wake(approachOnly.id, "entered", ago(1), 39.20 + 55 / 111_195, 10)]);
+  assert.deepEqual([await changesOf(approachOnly.id), (await state(approachOnly.id)).state,
+    (await state(approachOnly.id)).approachingAt?.getTime()], [[], "outside", ago(1).getTime()]);
+  await upload([fix(39.20, ago(2), 5, 0)]);
+  await upload([fix(39.20, ago(2.5), 5, 0)]);
+  assert.deepEqual(await changesOf(approachOnly.id), [["arrived", ago(2.5).getTime()]]);
+  assert.deepEqual([(await state(approachOnly.id)).lastEnteredAt?.getTime(),
+    (await state(approachOnly.id)).approachingAt], [ago(2).getTime(), null]);
+
   // CLMonitor re-delivers a report, once as initial and again as a transition: only the first counts.
   const [type, payload] = region(work.id, "entered", ago(40), true);
   const again = { ...(payload as object), initial: false, fix: reading(workCenter, ago(40), 5) };
