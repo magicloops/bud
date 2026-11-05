@@ -76,7 +76,9 @@ export class AgentDataQueries {
       data = await this.places.list(owner);
     } else if (tool === "places_create") {
       // Places are labels, not permissions: agents may save them; the user sees and edits them.
-      const { visit_id: visitId, ...rest } = input;
+      // Strict tool schemas send unused optional arguments as null: absent, so `radius_m` defaults
+      // and a coordinate call doesn't look up a visit.
+      const { visit_id: visitId, ...rest } = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== null));
       let center = { latitude: rest.latitude, longitude: rest.longitude };
       if (visitId !== undefined) {
         const visit = typeof visitId === "string" ? await this.locations.visitById(owner, visitId) : null;

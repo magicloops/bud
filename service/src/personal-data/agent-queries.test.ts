@@ -176,6 +176,11 @@ test("place tools need location access, and agents save places at coordinates or
   assert.deepEqual(f2.calls.at(-1), { method: "places", args: ["alice"] });
   await f2.adapter.execute("alice", "places_create", { name: "Gym", latitude: 1, longitude: 2, radius_m: 150 });
   assert.deepEqual(f2.calls.at(-1), { method: "createPlace", args: ["alice", { name: "Gym", latitude: 1, longitude: 2, radius_m: 150 }, "agent"] });
+  // OpenAI's strict schemas send unused optional arguments as null: absent, so radius_m defaults.
+  await f2.adapter.execute("alice", "places_create", { name: "Gym", visit_id: null, latitude: 1, longitude: 2, radius_m: null, note: null });
+  assert.deepEqual(f2.calls.at(-1), { method: "createPlace", args: ["alice", { name: "Gym", latitude: 1, longitude: 2 }, "agent"] });
+  await f2.adapter.execute("alice", "places_create", { name: "Home", visit_id: "v-new", latitude: null, longitude: null });
+  assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
   await f2.adapter.execute("alice", "places_create", { name: "Home", visit_id: "v-new" });
   assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
   await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "Old", visit_id: "v-old" }), { code: "visit_not_found" });
