@@ -83,6 +83,10 @@ test('formatAskUserQuestionsAnswer covers fallback answer formatting', () => {
     formatAskUserQuestionsAnswer({ kind: 'place', name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50 }),
     'Home at 37.749003, -122.416487 with a 50 m radius',
   )
+  assert.equal(
+    formatAskUserQuestionsAnswer({ kind: 'place', name: 'Café', address: '500 Valencia St', latitude: 37.76, longitude: -122.42, radius_m: 50 }),
+    'Café, 500 Valencia St, at 37.760000, -122.420000 with a 50 m radius',
+  )
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'place', name: 'Home' }), '(answered)')
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'unknown' }), '(answered)')
 })

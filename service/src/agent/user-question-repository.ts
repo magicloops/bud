@@ -202,13 +202,18 @@ async function savePlaceAnswers(tx: Transaction, owner: string, request: AskUser
           eq(placeTable.createdByUserId, owner), isNull(placeTable.deletedAt))).limit(1);
         if (!current) throw new DataRequestError(404, "place_not_found", "That place no longer exists");
         const moved = current.latitude !== pin.latitude || current.longitude !== pin.longitude;
+        // The answer's address is the one the user accepted, so it's always sent with a move (an
+        // absent one clears it); an address change alone keeps presence.
+        const address = pin.address ?? null;
         const changes = { ...(current.name !== pin.name ? { name: pin.name } : {}),
           ...(moved ? { latitude: pin.latitude, longitude: pin.longitude } : {}),
-          ...(current.radiusM !== pin.radius_m ? { radius_m: pin.radius_m } : {}) };
+          ...(current.radiusM !== pin.radius_m ? { radius_m: pin.radius_m } : {}),
+          ...(moved || current.address !== address ? { address } : {}) };
         if (Object.keys(changes).length) await places.update(owner, current.id, changes);
         id = current.id;
       } else {
-        id = (await places.create(owner, { name: pin.name, latitude: pin.latitude, longitude: pin.longitude, radius_m: pin.radius_m }, "user")).id;
+        id = (await places.create(owner, { name: pin.name, latitude: pin.latitude, longitude: pin.longitude, radius_m: pin.radius_m,
+          address: pin.address ?? null }, "user")).id;
       }
       answers.push({ ...answer, answer: { ...pin, place_id: id, operation: asked.place_id ? "updated" : "created" } });
     } catch (error) {

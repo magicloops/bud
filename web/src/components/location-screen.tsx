@@ -128,13 +128,14 @@ function PlacesSection({ places, onChanged }: { places: ApiPlace[] | null; onCha
     <p className="text-sm text-muted-foreground">Visits within a place's radius are labeled with it, and automations can run when you arrive or leave. Save a place from a visit above.</p>
     {error && <p role="alert">{error}</p>}
     {!places ? <p>Loading places…</p> : !places.length ? <p>No saved places yet.</p> : places.map(place => <div key={place.id} className="flex flex-wrap items-center gap-3 border-b py-2">
-      <span className="font-semibold">{place.name}</span>
+      <span><span className="block font-semibold">{place.name}</span>
+        {place.address && <span className="block text-sm text-muted-foreground">{place.address}</span>}</span>
       <span className="text-sm text-muted-foreground">{place.radius_m} m{place.created_by === 'agent' ? ' · saved by an agent' : ''}{place.note ? ` · ${place.note}` : ''}</span>
       <button className="ml-auto rounded border px-2 py-1 text-sm" onClick={() => setEditing(place)}>View on map / Move</button>
       <button className="rounded border px-2 py-1 text-sm" onClick={() => void remove(place)}>Delete</button>
     </div>)}
     {editing && <PlacePinDialog key={editing.id} title={editing.name} existing
-      start={{ name: editing.name, center: editing.coordinate, radius: editing.radius_m }}
+      start={{ name: editing.name, center: editing.coordinate, radius: editing.radius_m, address: editing.address ?? '' }}
       onSave={pin => save(editing, pin)} onCancel={() => setEditing(null)} />}
   </section>
 }

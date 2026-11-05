@@ -90,7 +90,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts, including separate HTTP proxy and WebSocket/HMR transport readiness |
 | `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
 | `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
-| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts, including the `place` kind (`ApiAskUserQuestionPlace`; answer `{ kind: "place", name, latitude, longitude, radius_m }`, plus `place_id`/`operation` once saved) |
+| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts, including the `place` kind (`ApiAskUserQuestionPlace`; answer `{ kind: "place", name, latitude, longitude, radius_m, address? }`, plus `place_id`/`operation` once saved) |
 
 **Capability Normalization**:
 ```typescript
@@ -496,5 +496,12 @@ Map-free pin-editor logic: radius limits, `pinCenter` (an unmoved pin keeps
 the exact starting coordinate), `placeCreateBody`, `placeUpdateBody` (only
 changed fields; a coordinate within ~0.1 m isn't a move), `restartsPresence`,
 the place question's `placeAnswer`, `placeQuestionStart` and
-`placeQuestionTitle`, `placeErrorMessage`, and `regionSpan`. Tested in
+`placeQuestionTitle`, `placeErrorMessage`, and `regionSpan`. Addresses (Phase
+10): `AddressState` keeps the field's value, its anchor and a dropped value;
+`startAddress`, `addressAtPin` (anchors an unanchored address, clears it past
+`ADDRESS_DROP_M` = 50 m), `addressAtResult` (a picked result fills and
+anchors; the seed search only anchors), `typeAddress` (re-anchors at the pin)
+and `keepAddress`. Create bodies and answers carry a non-empty address; update
+bodies send it when it changed and always with a move (kept, or null), because
+the service clears an address omitted from a move of more than 50 m. Tested in
 `place-pin.test.ts`.

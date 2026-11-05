@@ -25,6 +25,10 @@ type Prepared = { delivery: Delivery; definition: AutomationDefinition; trigger:
   grantVersion: number };
 type TriggerInput = { event: string; at: Date; reference: string[]; metadata: Record<string, unknown> };
 
+/** A saved place's own address (Phase 10): what the user gave, so it's preferred over reverse geocoding. */
+const savedAddress = (place: { name: string; address: string | null }) =>
+  place.address ? [`${place.name} is at ${place.address} (the user's saved address).`] : [];
+
 /** How long a visit-ended delivery waits for the name of the visit's final coordinate. */
 const NAMING_WAIT_SECONDS = 60;
 
@@ -377,8 +381,8 @@ export class AutomationAdmission {
             : "Detected by the phone's geofence for this place, usually within a minute or two.";
       return {
         event, at: row.change.occurredAt,
-        reference: [timeZoneLine(zone), how, ...late(row.change.occurredAt, row.event.publishedAt), ...(visit ? [`Visit ID: ${visit.id}.`] : []),
-          "Places are the user's saved labels."],
+        reference: [timeZoneLine(zone), how, ...late(row.change.occurredAt, row.event.publishedAt), ...savedAddress(place),
+          ...(visit ? [`Visit ID: ${visit.id}.`] : []), "Places are the user's saved labels."],
         metadata: { domain_event_id: delivery.domainEventId, presence_event_id: row.change.id, place_id: place.id,
           visit_id: row.change.visitId },
       };
@@ -404,7 +408,8 @@ export class AutomationAdmission {
         at: row.visit.departureAt!,
         event: `A visit at ${where} ended ${localTime(row.visit.departureAt!, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
         reference: [timeZoneLine(zone), ...late(row.visit.departureAt!, row.publishedAt),
-          ...(saved && address ? [`${saved.name} is at ${address}.`] : []), `Visit ID: ${row.visit.id}.`,
+          ...(saved?.address ? savedAddress(saved) : saved && address ? [`${saved.name}'s nearest address from Apple Maps is ${address}.`] : []),
+          `Visit ID: ${row.visit.id}.`,
           "iOS reports visits several minutes after they happen, then uploads, so this may arrive late.",
           "Places are the user's saved labels; a likely place from Apple Maps is not verified."],
         metadata: { domain_event_id: delivery.domainEventId, visit_id: row.visit.id },

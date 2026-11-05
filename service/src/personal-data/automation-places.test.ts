@@ -67,7 +67,7 @@ test("visits at saved places publish arrival, departure and visit end once, matc
     .map(({ event, change }) => ({ ...event, visitId: event.visitId ?? change?.visitId ?? null }));
 
   // Saved places; their geometry predates the fixture visits.
-  const home = await places.create(owner, { name: "Home", latitude: 37.70, longitude: -122.4 }, "user");
+  const home = await places.create(owner, { name: "Home", latitude: 37.70, longitude: -122.4, address: "3327 26th St, San Francisco" }, "user");
   const gym = await places.create(owner, { name: "Gym", latitude: 37.80, longitude: -122.4, radius_m: 100 }, "agent");
   await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) });
   await assert.rejects(places.create(owner, { name: "Tiny", latitude: 1, longitude: 1, radius_m: 10 }, "user"), { code: "invalid_place" });
@@ -84,7 +84,9 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   await upload([visit("b", ago(100), ago(70), 37.8012, 150)]);
   // Visit c: a place saved during the visit is its baseline and never fires for it.
   await places.create(owner, { name: "Office", latitude: 37.90, longitude: -122.4 }, "user");
-  await upload([visit("c", ago(20), ago(2), 37.90)]);
+  // Its Apple name: the Office has no saved address, so messages fall back to it, labelled as Apple's.
+  await upload([visit("c", ago(20), ago(2), 37.90), ["location.visit_named.v1", { visit_key: "c", source: "apple",
+    named_at: ago(0).toISOString(), address: { short: "3384 26th St" }, place: null }]], { names: false });
   // Visit d: far from everything.
   await upload([visit("d", ago(15), ago(1), 38.5)]);
   events = await published();
@@ -172,12 +174,18 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   assert.match(endedRun, /- A visit at a place ended [^\n]*, after 14 minutes\./);
   // A visit at a saved place is named by it.
   assert.match(endedRun, /- A visit at Home ended [^\n]*, after 25 minutes\./);
+  // Phase 10: the place's saved address, the user's, wins over reverse geocoding; without one, the
+  // visit's address is Apple's nearest match.
+  assert.match(endedRun, /Home is at 3327 26th St, San Francisco \(the user's saved address\)\./);
+  assert.match(endedRun, /Office's nearest address from Apple Maps is 3384 26th St\./);
+  assert.match(arrived.input.content, /\n- Home is at 3327 26th St, San Francisco \(the user's saved address\)\.\n/);
   assert.equal(await checkAutomationPolicy(arrived.invocation, true, db), "ready");
 
   const evidence = await db.transaction(tx => automationStartEvidence(tx, arrived.invocation));
   const json = JSON.parse(evidence!.slice(evidence!.indexOf("{")));
   assert.equal(json.visit.visit_id, a);
   assert.equal(json.place.name, "Home");
+  assert.equal(json.place.address, "3327 26th St, San Francisco");
   assert.deepEqual(json.saved_places_at_visit.map((place: { name: string }) => place.name), ["Home"]);
 
   // A visit end waits (up to a minute) for the name of its final coordinate, which can be

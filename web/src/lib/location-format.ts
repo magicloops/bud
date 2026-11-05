@@ -10,7 +10,7 @@ export type LocationVisit = {
   address: { full?: string | null; short?: string | null; city?: string | null } | null
   place: { name: string; distance_m: number } | null
   /** Saved places the visit is within (radius plus accuracy). */
-  places?: Array<{ id: string; name: string }>
+  places?: Array<{ id: string; name: string; address?: string | null }>
 }
 
 /**

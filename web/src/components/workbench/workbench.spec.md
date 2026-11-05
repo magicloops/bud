@@ -363,7 +363,7 @@ Inline structured prompt form for pending `ask_user_questions` tool calls.
 
 **Features**:
 - renders boolean, single-choice, multi-choice, text, number, and place question kinds
-- a `place` question is a row ("Home — 3327 26th St", or the saved place's name for a move) with "Choose on map", opening `PlacePinDialog` seeded by `placeQuestionStart` (search for `query`, or the saved `place_id`'s centre and radius; radius from `place.radius_m`, else 100); the chosen pin, radius and name become the answer, and the service saves the place when it accepts it
+- a `place` question is a row ("Home — 3327 26th St", or the saved place's name for a move) with "Choose on map", opening `PlacePinDialog` seeded by `placeQuestionStart` (search for `query`, or the saved `place_id`'s centre and radius; radius from `place.radius_m`, else 100); the chosen pin, radius, name and address (when given) become the answer, and the row shows the address, and the service saves the place when it accepts it
 - a refused place answer (409 `place_not_found`, `place_limit_reached`) shows as words via `placeErrorMessage` and the prompt stays to retry or skip
 - supports per-question skip plus skip-all
 - generates a browser UUIDv7 `client_response_id`

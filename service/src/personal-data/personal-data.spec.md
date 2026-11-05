@@ -670,7 +670,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 
 - **`place`** (migration 0056): owner, name, centre, radius 50–2,000 m, note,
   `created_by` (`user` or `agent`), `geometry_changed_at` and a soft
-  `deleted_at`. `places.ts` holds `Places` (list, create with a 200-per-owner
+  `deleted_at`. `address` (0063, Phase 10): the address the user gave or picked,
+  up to 300 characters; blank clears it. Changing only the name, note or address
+  keeps presence. Moving more than 50 m (`ADDRESS_DROP_M`) without an `address`
+  clears it; the editors drop it themselves and send what the user kept. `places.ts` holds `Places` (list, create with a 200-per-owner
   limit under the owner lock, update, delete) and the matching helpers.
 - **Matching:** a visit is at a place when its coordinate is within the radius
   plus the visit's accuracy, capped at 200 m. Places can overlap.
@@ -685,7 +688,13 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   on a map (search stays on the device or in the browser), and accepting the
   answer saves it in the same transaction (`savePlaceAnswers` in
   `user-question-repository.ts`): a new place saved by the user, or the asked-about
-  place updated with only what changed. A failed save (deleted place, limit)
+  place updated with only what changed. The answer's `address`, the one the user
+  accepted, is saved with it.
+- **Addresses in messages (Phase 10):** a saved place's address is the user's and
+  wins over reverse geocoding: "Home is at … (the user's saved address)." on
+  arrivals, departures and visit ends, and `address` on the evidence's `place`,
+  `saved_places_at_visit` and the `places` on visits and `recent`. Without one, a
+  visit end at a saved place says "Home's nearest address from Apple Maps is …". A failed save (deleted place, limit)
   refuses the answer with 409 and the prompt stays.
 - **Maps:** `GET /api/maps/token?origin=` (`maps.ts`) issues a 30-minute MapKit
   JS token (ES256 JWT from the team's Apple Maps key, `APPLE_MAPS_KEY_ID`,

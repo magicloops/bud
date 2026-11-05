@@ -273,8 +273,8 @@ Owner view at `/data/location`:
 - a MapKit JS map of the selected visit (`VisitMap`, with its accuracy circle;
   the OpenStreetMap embed when maps are unavailable), with "Save as place" when
   the visit isn't at a saved place; the last-known fix or visit has it too;
-- a Places section listing saved places (radius, "saved by an agent") with
-  "View on map / Move" and delete.
+- a Places section listing saved places (address under the name, radius,
+  "saved by an agent") with "View on map / Move" and delete.
 
 "Save as place" and "View on map / Move" open the pin editor
 (`place-pin-editor.tsx`): create is a `POST`, edit a `PUT` with only the changed
@@ -290,7 +290,12 @@ questions (`workbench/question-request-card.tsx`):
   user moves the map under it), the radius as a circle that follows the centre,
   an optional dashed accuracy circle for the starting reading, a search box
   (`mapkit.Search`; results stay in the browser, only the saved pin is sent), a
-  name field and a 50–2000 m radius slider (step 25). A start with `query` and no
+  name field, an optional address field and a 50–2000 m radius slider (step 25).
+  The address (Phase 10) is filled by a picked result's formatted address,
+  seeded from a question's `query` or a saved place's address, and editable;
+  when the pin moves more than `ADDRESS_DROP_M` (50 m) from where it was set,
+  the field clears with "Keep it" to restore it (anchor rules in
+  `lib/place-pin.ts`). A start with `query` and no
   centre searches and centres on the first result, listing the others. Editing a
   saved place says that moving or resizing restarts its arrivals and departures.
   When maps are unavailable (`/api/maps/token` 503, or MapKit fails to load) it

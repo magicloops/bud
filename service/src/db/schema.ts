@@ -1532,6 +1532,8 @@ export const placeTable = pgTable("place", {
   id: text("id").primaryKey(), name: text("name").notNull(), note: text("note"),
   latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
   radiusM: doublePrecision("radius_m").notNull(),
+  // The address the user gave or picked (Phase 10): a label, preferred over reverse geocoding.
+  address: text("address"),
   createdBy: text("created_by").notNull(),
   geometryChangedAt: timestamp("geometry_changed_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -1542,6 +1544,7 @@ export const placeTable = pgTable("place", {
   ownerKey: unique("place_owner_key").on(t.id, t.createdByUserId),
   ownerIdx: index("place_owner_idx").on(t.createdByUserId, t.id),
   radiusCheck: check("place_radius_check", sql`${t.radiusM} between 50 and 2000`),
+  addressCheck: check("place_address_check", sql`${t.address} is null or char_length(${t.address}) between 1 and 300`),
   createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
 }));
 

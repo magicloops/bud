@@ -601,3 +601,11 @@ Three `place_presence` columns:
   they settle as before.
 
 Applied locally as exact SQL.
+
+### `0063_place_address.sql`
+
+Phase 10. Generated and additive. `place.address` (nullable text): the address the
+user gave or picked for the place, a label preferred over reverse geocoding. A
+check keeps it null or 1–300 characters. Existing places get null.
+
+Applied locally as exact SQL.

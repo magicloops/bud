@@ -137,7 +137,7 @@ test('buildAskUserQuestionsResponseInput serializes a chosen place pin', () => {
       place: { name: 'Home', query: '3327 26th St, San Francisco', radius_m: 100 },
     }],
   }
-  const pin = { kind: 'place' as const, name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50 }
+  const pin = { kind: 'place' as const, name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50, address: '3327 26th St, San Francisco' }
 
   assert.deepEqual(buildInitialQuestionAnswers(request), { home: { status: 'skipped' } })
   assert.deepEqual(

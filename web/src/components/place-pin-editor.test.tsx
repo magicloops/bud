@@ -16,7 +16,7 @@ const text = (view: ReactTestRenderer) => JSON.stringify(view.toJSON())
 // The token request resolves over several microtasks; let it land inside act.
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 
-test('without a Maps key the editor says so and still saves the starting pin with a new name and radius', async () => {
+test('without a Maps key the editor says so and still saves the starting pin with a new name, address and radius', async () => {
   const originalFetch = globalThis.fetch, originalWindow = globalThis.window
   const urls: string[] = []
   globalThis.fetch = async url => { urls.push(String(url)); return Response.json({ error: 'maps_unavailable' }, { status: 503 }) }
@@ -38,9 +38,10 @@ test('without a Maps key the editor says so and still saves the starting pin wit
     await act(async () => {
       view.root.findByProps({ type: 'range' }).props.onChange({ target: { value: '75' } })
       view.root.findByProps({ required: true }).props.onChange({ target: { value: 'House' } })
+      view.root.findByProps({ placeholder: 'Optional' }).props.onChange({ target: { value: ' 3327 26th St ' } })
     })
     await act(async () => view.root.findByType('form').props.onSubmit({ preventDefault() {}, stopPropagation() {} }))
-    assert.deepEqual(saved, [{ name: 'House', center: { lat: 37.749003, lon: -122.416487 }, radius: 75 }])
+    assert.deepEqual(saved, [{ name: 'House', center: { lat: 37.749003, lon: -122.416487 }, radius: 75, address: '3327 26th St' }])
   } finally {
     await act(async () => view?.unmount())
     globalThis.fetch = originalFetch

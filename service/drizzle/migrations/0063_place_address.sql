@@ -1,0 +1,2 @@
+ALTER TABLE "place" ADD COLUMN "address" text;--> statement-breakpoint
+ALTER TABLE "place" ADD CONSTRAINT "place_address_check" CHECK ("place"."address" is null or char_length("place"."address") between 1 and 300);

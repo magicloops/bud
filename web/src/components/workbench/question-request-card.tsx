@@ -306,14 +306,17 @@ function PlaceQuestionControl({
   const existing = places?.find((saved) => saved.id === place.place_id)
   const answer = value.answer?.kind === 'place' ? value.answer : null
   const start = answer
-    ? { name: answer.name, center: { lat: answer.latitude, lon: answer.longitude }, radius: answer.radius_m, ...(place.query ? { query: place.query } : {}) }
+    ? { name: answer.name, center: { lat: answer.latitude, lon: answer.longitude }, radius: answer.radius_m, address: answer.address ?? '',
+      ...(place.query ? { query: place.query } : {}) }
     : placeQuestionStart(place, existing)
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-1.5 text-xs text-foreground">
       <MapPin className="h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0 flex-1">
         <div>{placeQuestionTitle(place, existing)}</div>
-        {answer && <div className="text-[11px] text-muted-foreground">{answer.name} at {formatPin(answer)}</div>}
+        {answer && <div className="text-[11px] text-muted-foreground">
+          {answer.name}{answer.address ? `, ${answer.address},` : ''} at {formatPin(answer)}
+        </div>}
         {place.place_id && places && !existing && (
           <div className="text-[11px] text-muted-foreground">That place no longer exists. Skip, or ask for a new one.</div>
         )}

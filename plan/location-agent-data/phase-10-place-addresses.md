@@ -1,7 +1,10 @@
 # Phase 10: Place addresses — the address the user gave, saved with the place
 
-Status: planned (2026-11-05). Built on the Phase 9 branches (`feat/place-pins`,
-`feature/place-pins`).
+Status: implemented (2026-11-05), on the Phase 9 branches (`feat/place-pins`, `feature/place-pins`).
+Service: migration 0063, the API and the 50 m safety net, place answers, `places_create`, and
+messages and evidence. Web and iOS: the Address field, its anchor and the 50 m drop with "Keep it".
+Still to do: try both editors with real search; the terms check below. iOS doesn't show the
+addresses on visit and recent-location labels yet (nothing there shows place labels).
 
 ## Goal
 

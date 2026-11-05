@@ -36,7 +36,7 @@ export function formatAskUserQuestionsAnswer(answer: unknown): string {
     case 'place':
       return typeof answer.name === 'string' && typeof answer.latitude === 'number' && typeof answer.longitude === 'number'
         && typeof answer.radius_m === 'number'
-        ? `${answer.name} at ${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`
+        ? `${answer.name}${typeof answer.address === 'string' && answer.address ? `, ${answer.address},` : ''} at ${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`
         : '(answered)'
     default:
       return '(answered)'

@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { MapPin } from 'lucide-react'
 import { useMapKit, type MapKit, type MapKitCircle, type MapKitPlace } from '@/lib/mapkit'
 import {
-  PLACE_NAME_MAX, PLACE_RADIUS, pinCenter, regionSpan, restartsPresence,
+  ADDRESS_DROP_M, PLACE_ADDRESS_MAX, PLACE_NAME_MAX, PLACE_RADIUS, addressAtPin, addressAtResult, keepAddress, pinCenter, regionSpan,
+  restartsPresence, startAddress, typeAddress,
   type Coordinate, type PlacePin, type PlacePinStart,
 } from '@/lib/place-pin'
 
@@ -115,6 +116,7 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
   const [center, setCenter] = useState(start.center)
   const [target, setTarget] = useState(start.center)
   const [query, setQuery] = useState(start.query ?? '')
+  const [address, setAddress] = useState(() => startAddress(start))
   const [results, setResults] = useState<MapKitPlace[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -122,19 +124,25 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
   const seeded = useRef(false)
   const mapkit = maps.status === 'ready' ? maps.mapkit : null
 
-  const choose = (place: MapKitPlace) => {
+  // Until an address search returns, the map isn't at the place yet.
+  const seeding = !start.center && Boolean(start.query) && Boolean(mapkit) && results === null
+  // Each pin move checks the address against where it was set (`ADDRESS_DROP_M`); a seed search anchors it first.
+  const moveTo = (point: Coordinate) => { setCenter(point); if (!seeding) setAddress(state => addressAtPin(state, point)) }
+  /** `fill`: the user picked this result, so its address replaces the field; the seed search only anchors it. */
+  const choose = (place: MapKitPlace, fill: boolean) => {
     const point = { lat: place.coordinate.latitude, lon: place.coordinate.longitude }
+    setAddress(state => addressAtResult(state, point, fill ? place.formattedAddress ?? place.name : null))
     setTarget(point); setCenter(point)
   }
   // Results stay in the browser; only the pin the user saves reaches the server.
-  const search = (text: string, centreFirst: boolean) => {
+  const search = (text: string, seed: boolean) => {
     if (!mapkit || !text.trim()) return
     setSearching(true)
     new mapkit.Search().search(text.trim(), (failure, data) => {
       setSearching(false)
       const places = failure ? [] : data.places ?? []
       setResults(places)
-      if (centreFirst && places[0]) choose(places[0])
+      if (places[0]) choose(places[0], !seed)
     })
   }
   // A question that starts from an address centres on its first result.
@@ -143,14 +151,15 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
     seeded.current = true
     search(start.query, true)
   })
+  const currentPin = center ? pinCenter(start.center, center) : null
 
   const save = async () => {
     if (!center || !name.trim()) return
     setSaving(true); setError('')
-    try { await onSave({ name: name.trim(), center: pinCenter(start.center, center), radius }) }
+    try { await onSave({ name: name.trim(), center: pinCenter(start.center, center), radius, address: address.value.trim() }) }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not save the place.'); setSaving(false) }
   }
-  const pin = center ? { name, center: pinCenter(start.center, center), radius } : null
+  const pin = currentPin ? { name, center: currentPin, radius, address: address.value } : null
 
   return <form aria-label={title} className="space-y-3 text-sm" onSubmit={event => { event.preventDefault(); event.stopPropagation(); void save() }}>
     <h2 className="text-lg font-semibold">{title}</h2>
@@ -158,34 +167,41 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
       <div className="flex gap-2">
         <input className={`${input} min-w-0 flex-1`} type="search" aria-label="Search for a place or address" placeholder="Search for a place or address"
           value={query} onChange={event => setQuery(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(query, true) } }} />
-        <button type="button" className={button} disabled={searching || !query.trim()} onClick={() => search(query, true)}>{searching ? 'Searching…' : 'Search'}</button>
+          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(query, false) } }} />
+        <button type="button" className={button} disabled={searching || !query.trim()} onClick={() => search(query, false)}>{searching ? 'Searching…' : 'Search'}</button>
       </div>
       {results && (results.length ? <ul aria-label="Search results" className="max-h-32 space-y-1 overflow-y-auto">
-        {results.map((place, index) => <li key={index}><button type="button" className="w-full rounded px-2 py-1 text-left hover:bg-muted" onClick={() => choose(place)}>
+        {results.map((place, index) => <li key={index}><button type="button" className="w-full rounded px-2 py-1 text-left hover:bg-muted" onClick={() => choose(place, true)}>
           <span className="font-medium">{place.name}</span>{place.formattedAddress && <span className="block text-xs text-muted-foreground">{place.formattedAddress}</span>}
         </button></li>)}
       </ul> : <p>No results. Try another search, or move the map to the spot.</p>)}
-      <PlaceMap mapkit={mapkit} target={target} radius={radius} accuracy={accuracy} onCenterChange={setCenter} label={`Map for ${name || 'the place'}`} />
+      <PlaceMap mapkit={mapkit} target={target} radius={radius} accuracy={accuracy} onCenterChange={moveTo} label={`Map for ${name || 'the place'}`} />
       <p className="text-xs text-muted-foreground">Move the map to put the pin on the spot.{accuracy ? ' The dashed circle is the reading\'s accuracy.' : ''}</p>
     </> : maps.status === 'loading' ? <p>Loading the map…</p> : <p role="status" className="rounded border border-dashed p-3">
       {maps.status === 'unavailable' ? "Maps aren't set up on this server" : "The map couldn't load"}, so you can't search or move the pin here.
-      {start.center ? ` You can still change the name and radius.` : ' Without a map there is no pin to save yet.'}
+      {start.center ? ` You can still change the name, address and radius.` : ' Without a map there is no pin to save yet.'}
     </p>}
     {pin && <p className="text-xs text-muted-foreground">Pin at {pin.center.lat.toFixed(6)}, {pin.center.lon.toFixed(6)}</p>}
     <div className="flex flex-wrap items-end gap-3">
       <label>Name<input className={`${input} block`} required maxLength={PLACE_NAME_MAX} value={name} onChange={event => setName(event.target.value)} /></label>
+      <label className="w-full">Address
+        <input className={`${input} block w-full`} maxLength={PLACE_ADDRESS_MAX} placeholder="Optional" value={address.value}
+          onChange={event => setAddress(typeAddress(event.target.value, currentPin))} />
+      </label>
       <label className="min-w-48 flex-1">Radius: {radius} m
         <input className="block w-full" type="range" min={PLACE_RADIUS.min} max={PLACE_RADIUS.max} step={PLACE_RADIUS.step} value={radius}
           onChange={event => setRadius(Number(event.target.value))} />
       </label>
     </div>
+    {address.dropped !== null && <p role="status" className="flex flex-wrap items-center gap-2">
+      Address cleared: the pin is now more than {ADDRESS_DROP_M} m from it.
+      <button type="button" className="rounded border px-2 py-1" onClick={() => setAddress(state => keepAddress(state, currentPin))}>Keep it</button>
+    </p>}
     {existing && <p className={pin && restartsPresence(start, pin) ? 'font-medium' : 'text-muted-foreground'}>
       Moving or resizing a place restarts its arrivals and departures: a stay that began before the change doesn't trigger for it.</p>}
     {error && <p role="alert">{error}</p>}
     <div className="flex gap-2">
-      {/* Until an address search returns, the map isn't at the place yet. */}
-      <button className={button} disabled={saving || !center || !name.trim() || (!start.center && !!start.query && !!mapkit && results === null)}>{saving ? 'Saving…' : saveLabel}</button>
+      <button className={button} disabled={saving || !center || !name.trim() || seeding}>{saving ? 'Saving…' : saveLabel}</button>
       <button type="button" className={button} onClick={onCancel}>Cancel</button>
     </div>
   </form>

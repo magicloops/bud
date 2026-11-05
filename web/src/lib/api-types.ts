@@ -187,7 +187,7 @@ export type ApiAskUserQuestionAnswer =
   | { kind: 'text'; value: string }
   | { kind: 'number'; value: number }
   /** The user's pin. The service adds `place_id` and `operation` once it has saved the place. */
-  | { kind: 'place'; name: string; latitude: number; longitude: number; radius_m: number
+  | { kind: 'place'; name: string; latitude: number; longitude: number; radius_m: number; address?: string
     place_id?: string; operation?: 'created' | 'updated' }
 
 export type ApiAskUserQuestion = {
@@ -442,6 +442,8 @@ export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes:
 
 /** A saved place, from `/api/data/places`. */
 export type ApiPlace = { id: string; name: string; note: string | null; coordinate: { lat: number; lon: number }; radius_m: number
+  /** The address the user gave or picked for the place (≤300 characters). */
+  address: string | null
   /** Changes when the place is moved or resized; phone geofences are installed per revision. */
   geometry_revision: string
   created_by: 'user' | 'agent'; created_at: string; updated_at: string }

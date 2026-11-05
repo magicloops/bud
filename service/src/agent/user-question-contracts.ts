@@ -80,6 +80,8 @@ export type AskUserQuestionPlaceAnswer = {
   latitude: number;
   longitude: number;
   radius_m: number;
+  /** The address the user accepted (Phase 10), saved with the place; absent for none. */
+  address?: string;
   place_id?: string;
   operation?: "created" | "updated";
 };
@@ -192,6 +194,7 @@ const ClientAnswerSchema = z.discriminatedUnion("kind", [
     latitude: z.number().finite().min(-90).max(90),
     longitude: z.number().finite().min(-180).max(180),
     radius_m: z.number().finite().min(PLACE_RADIUS.min).max(PLACE_RADIUS.max),
+    address: z.string().trim().max(300).optional().transform(value => value || undefined),
   }),
 ]);
 
@@ -552,8 +555,8 @@ function formatAnswer(question: AskUserQuestion, answer: AskUserQuestionAnswer):
     case "number":
       return `${answer.value}${question.unit ? ` ${question.unit}` : ""}`;
     case "place":
-      return `${answer.operation === "updated" ? "Updated" : "Saved"} ${answer.name} at ${answer.latitude.toFixed(6)}, `
-        + `${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`;
+      return `${answer.operation === "updated" ? "Updated" : "Saved"} ${answer.name}${answer.address ? `, ${answer.address},` : ""} at `
+        + `${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`;
   }
 }
 

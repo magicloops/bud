@@ -16,10 +16,15 @@ export const PLACE_EVENT_TYPES = ["place.arrived", "place.departed", "visit.ende
 const name = z.string().trim().min(1).max(120);
 const latitude = z.number().finite().min(-90).max(90), longitude = z.number().finite().min(-180).max(180);
 const radius = z.number().finite().min(50).max(2000);
+/** The address the user gave or picked (Phase 10). Blank clears it. */
+const address = z.string().trim().max(300).nullable().optional().transform(value => value === "" ? null : value);
+/** A move this far from the place's centre leaves its address behind (Phase 10): the editor drops
+ * it, and a move without an `address` clears it here. */
+export const ADDRESS_DROP_M = 50;
 export const placeCreateSchema = z.object({ name, latitude, longitude, radius_m: radius.default(100),
-  note: z.string().trim().max(500).nullable().optional() }).strict();
+  note: z.string().trim().max(500).nullable().optional(), address }).strict();
 export const placeUpdateSchema = z.object({ name: name.optional(), latitude: latitude.optional(), longitude: longitude.optional(),
-  radius_m: radius.optional(), note: z.string().trim().max(500).nullable().optional() }).strict()
+  radius_m: radius.optional(), note: z.string().trim().max(500).nullable().optional(), address }).strict()
   .refine(value => (value.latitude === undefined) === (value.longitude === undefined), "Move a place with both coordinates");
 
 /** Great-circle distance in metres. */
@@ -89,7 +94,7 @@ async function presenceDuringMs(tx: Pick<Database, "select">, owner: string, pla
 }
 
 export function presentPlace(row: Place) {
-  return { id: row.id, name: row.name, note: row.note, coordinate: { lat: row.latitude, lon: row.longitude }, radius_m: row.radiusM,
+  return { id: row.id, name: row.name, note: row.note, address: row.address, coordinate: { lat: row.latitude, lon: row.longitude }, radius_m: row.radiusM,
     geometry_revision: geometryRevision(row), created_by: row.createdBy, created_at: row.createdAt, updated_at: row.updatedAt };
 }
 
@@ -113,24 +118,31 @@ export class Places {
       if (count.value >= PLACE_LIMITS.places_per_owner) throw new DataRequestError(409, "place_limit_reached", "Place limit reached");
       const value = parsed.data;
       const [row] = await tx.insert(places).values({ id: ulid(), name: value.name, note: value.note ?? null, latitude: value.latitude,
-        longitude: value.longitude, radiusM: value.radius_m, createdBy, createdByUserId: owner }).returning();
+        longitude: value.longitude, radiusM: value.radius_m, address: value.address ?? null, createdBy, createdByUserId: owner }).returning();
       return presentPlace(row);
     });
   }
 
-  /** Moving or resizing resets the presence baseline: visits already started never trigger. */
+  /** Moving or resizing resets the presence baseline: visits already started never trigger. A name,
+   * note or address change alone doesn't. Moving more than `ADDRESS_DROP_M` without an `address`
+   * clears the old one. */
   async update(owner: string, id: string, input: unknown) {
     const parsed = placeUpdateSchema.safeParse(input);
-    if (!parsed.success) throw new DataRequestError(400, "invalid_place", "Check the place name, coordinate and radius");
+    if (!parsed.success) throw new DataRequestError(400, "invalid_place", "Check the place name, coordinate, radius and address");
     const value = parsed.data;
     const geometry = value.latitude !== undefined || value.radius_m !== undefined;
     return this.database.transaction(async tx => {
       // The processor's owner lock, so presence isn't reset under a transition being applied.
       if (geometry) await tx.select().from(owners).where(eq(owners.createdByUserId, owner)).for("update");
+      const [current] = value.latitude !== undefined && value.address === undefined ? await tx.select().from(places)
+        .where(and(eq(places.id, id), eq(places.createdByUserId, owner), isNull(places.deletedAt))).for("update") : [];
+      const dropAddress = current?.address != null
+        && distanceM(current.latitude, current.longitude, value.latitude!, value.longitude!) > ADDRESS_DROP_M;
       const [row] = await tx.update(places).set({
         ...(value.name !== undefined ? { name: value.name } : {}), ...(value.note !== undefined ? { note: value.note } : {}),
         ...(value.latitude !== undefined ? { latitude: value.latitude, longitude: value.longitude! } : {}),
         ...(value.radius_m !== undefined ? { radiusM: value.radius_m } : {}),
+        ...(value.address !== undefined ? { address: value.address } : dropAddress ? { address: null } : {}),
         ...(geometry ? { geometryChangedAt: sql`clock_timestamp()` } : {}), updatedAt: sql`clock_timestamp()`,
       }).where(and(eq(places.id, id), eq(places.createdByUserId, owner), isNull(places.deletedAt))).returning();
       if (!row) throw new DataRequestError(404, "place_not_found", "Place not found");
@@ -157,13 +169,13 @@ export async function placesForOwner(database: Pick<Database, "select">, owner: 
 /** The saved place at a reading (the nearest it fits), as a list for query results. */
 export function matchingPlaces(owned: Place[], point: { latitude: number; longitude: number; horizontalAccuracyM: number }) {
   const place = visitPlace(owned, point);
-  return place ? [{ id: place.id, name: place.name }] : [];
+  return place ? [{ id: place.id, name: place.name, address: place.address }] : [];
 }
 
 /** The saved place a visit was at (`placeOfVisit`), as a list for query results and evidence. */
 export async function visitPlaces(tx: Pick<Database, "select">, owner: string, owned: Place[], visit: VisitSpan) {
   const place = await placeOfVisit(tx, owner, owned, visit);
-  return place ? [{ id: place.id, name: place.name }] : [];
+  return place ? [{ id: place.id, name: place.name, address: place.address }] : [];
 }
 
 type VisitRow = typeof visits.$inferSelect;
