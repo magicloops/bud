@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { config } from "../config.js";
@@ -18,20 +18,25 @@ import { generateMessageClientId } from "../db/message-client-id.js";
 
 test("durable admission: atomic inputs, concurrency, stale fences and ambiguous effects", { skip: process.env.BUD_DATA_DB_TEST !== "1" }, async t => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(config.databaseUrl).hostname));
-  const pool = new Pool({ connectionString: config.databaseUrl, max: 6 });
+  // Its own schema, for this test and the service pool its helpers use (node runs each test file
+  // in its own process): a running dev service's worker claims any owner's due invocations in
+  // the shared tables, and once leased one of these mid-test, so a claim here got the next one.
+  const isolated = "invocation_repo_" + randomUUID().replaceAll("-", "");
+  const pool = new Pool({ connectionString: config.databaseUrl, max: 6, options: `-c search_path=${isolated},public` });
+  servicePool.on("connect", client => { void client.query(`set search_path to "${isolated}", public`); });
   const database = drizzle(pool, { schema });
   const owners = ["invocation-test-" + randomUUID(), "invocation-test-" + randomUUID()];
   const buds = owners.map(() => "bud-test-" + randomUUID());
   const threads = owners.map(() => randomUUID());
   t.after(async () => {
-    try {
-      await database.delete(schema.agentInvocationTable).where(inArray(schema.agentInvocationTable.createdByUserId, owners));
-      await database.delete(schema.messageTable).where(inArray(schema.messageTable.threadId, threads));
-      await database.delete(schema.threadTable).where(inArray(schema.threadTable.threadId, threads));
-      await database.delete(schema.budTable).where(inArray(schema.budTable.budId, buds));
-      await database.delete(schema.authUserTable).where(inArray(schema.authUserTable.id, owners));
-    } finally { await pool.end(); await servicePool.end(); }
+    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    finally { await pool.end(); await servicePool.end(); }
   });
+  await pool.query(`create schema "${isolated}"`);
+  for (const { tablename } of (await pool.query("select tablename from pg_tables where schemaname='public'")).rows) {
+    assert.match(tablename, /^[a-zA-Z0-9_]+$/);
+    await pool.query(`create table "${isolated}"."${tablename}" (like public."${tablename}" including all)`);
+  }
   await database.insert(schema.authUserTable).values(owners.map(id => ({ id, name: "Invocation fixture", email: `${id}@example.invalid`, emailVerified: false })));
   await database.insert(schema.budTable).values(owners.map((owner, i) => ({ budId: buds[i], name: "Fixture", os: "test", arch: "test", createdByUserId: owner })));
   await database.insert(schema.threadTable).values(owners.map((owner, i) => ({ threadId: threads[i], budId: buds[i], createdByUserId: owner })));

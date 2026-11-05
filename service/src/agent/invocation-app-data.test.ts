@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
 import { test } from "node:test";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { config } from "../config.js";
@@ -25,29 +25,24 @@ import { AgentConversationLoader } from "./conversation-loader.js";
 
 test("app permission parking and same-turn replay survive approval, expiry and cancellation", { skip: process.env.BUD_DATA_DB_TEST !== "1" }, async t => {
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(config.databaseUrl).hostname));
-  const pool = new Pool({ connectionString: config.databaseUrl, max: 5 });
+  // Its own schema, for this test and the service pool (node runs each test file in its own
+  // process): a running dev service's worker claims any owner's due invocations in the shared
+  // tables, so it could lease the ones this test claims.
+  const isolated = "app_data_" + randomUUID().replaceAll("-", "");
+  const pool = new Pool({ connectionString: config.databaseUrl, max: 5, options: `-c search_path=${isolated},public` });
+  defaultPool.on("connect", client => { void client.query(`set search_path to "${isolated}", public`); });
   const database = drizzle(pool, { schema });
   const owner = "permission-replay-" + randomUUID();
   const bud = "bud-" + randomUUID(), site = "site-" + randomUUID();
-  const threads: string[] = [];
   t.after(async () => {
-    try {
-      await database.delete(schema.dataAppKeyTable).where(eq(schema.dataAppKeyTable.createdByUserId, owner));
-      await database.delete(schema.dataAccessRequestTable).where(eq(schema.dataAccessRequestTable.createdByUserId, owner));
-      await database.delete(schema.agentInvocationTable).where(eq(schema.agentInvocationTable.createdByUserId, owner));
-      await database.delete(schema.messageTable).where(inArray(schema.messageTable.threadId, threads));
-      await database.delete(schema.threadTable).where(inArray(schema.threadTable.threadId, threads));
-      await database.delete(schema.proxiedSiteTable).where(eq(schema.proxiedSiteTable.proxiedSiteId, site));
-      await database.delete(schema.budTable).where(eq(schema.budTable.budId, bud));
-      for (const table of [schema.dataDomainEventTable, schema.contactRevisionTable, schema.contactTable,
-        schema.contactScanRecordTable, schema.contactScanTable, schema.contactSourceTable, schema.locationObservationTable,
-        schema.dataProcessingJobTable, schema.dataEventTable, schema.dataCollectionEpochTable, schema.dataInstallationTable]) {
-        await database.delete(table).where(eq(table.createdByUserId, owner));
-      }
-      await database.delete(schema.dataOwnerStateTable).where(eq(schema.dataOwnerStateTable.createdByUserId, owner));
-      await database.delete(schema.authUserTable).where(eq(schema.authUserTable.id, owner));
-    } finally { await pool.end(); await defaultPool.end(); }
+    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    finally { await pool.end(); await defaultPool.end(); }
   });
+  await pool.query(`create schema "${isolated}"`);
+  for (const { tablename } of (await pool.query("select tablename from pg_tables where schemaname='public'")).rows) {
+    assert.match(tablename, /^[a-zA-Z0-9_]+$/);
+    await pool.query(`create table "${isolated}"."${tablename}" (like public."${tablename}" including all)`);
+  }
   await database.insert(schema.authUserTable).values({ id: owner, name: "Fixture", email: `${owner}@example.invalid`, emailVerified: false });
   await database.insert(schema.budTable).values({ budId: bud, name: "Fixture", os: "test", arch: "test", createdByUserId: owner });
   await database.insert(schema.proxiedSiteTable).values({ proxiedSiteId: site, budId: bud, displayName: "Private app", slug: site,
@@ -68,7 +63,7 @@ test("app permission parking and same-turn replay survive approval, expiry and c
     contact_fields: ["names"], history_days: 90, location_precision: "rounded_2_decimals" },
     destination: { proxied_site_id: site, public_key: identity.public_key } };
   const setup = async () => {
-    const thread = randomUUID(); threads.push(thread);
+    const thread = randomUUID();
     await database.insert(schema.threadTable).values({ threadId: thread, budId: bud, createdByUserId: owner });
     await repo.admit({ owner, threadId: thread, origin: "human", idempotencyKey: thread,
       text: "Build my contact app", model: "fixture-model", reasoningEffort: "low" });
