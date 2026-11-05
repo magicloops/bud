@@ -65,6 +65,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           xfwd: true
         },
+        // Daemon media attaches through the public app origin, including HTTP dev.
+        '/ws': {
+          target: proxyTarget,
+          changeOrigin: true,
+          xfwd: true,
+          ws: true
+        },
         '/term': {
           target: proxyTarget,
           changeOrigin: true,

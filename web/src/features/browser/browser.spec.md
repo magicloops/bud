@@ -349,8 +349,9 @@ is in `../threads/client-recovery.test.tsx`, alongside existing `pane.test.tsx`.
   retain one dirty follow-up. Obsolete requests abort on disconnect/disposal.
 - `state-feed.fixture.ts`: fake state socket for mounted viewer/hook tests.
 - `state-feed.test.tsx`: shared-consumer 60s passive/private request counts,
-  hidden/resume, burst/in-flight reconciliation, revocation clearing, stalled
-  channel watchdog/reconnect and cleanup.
+  hidden/resume media reattachment with unchanged metadata, page restoration,
+  late detached callbacks, burst/in-flight reconciliation, revocation clearing,
+  stalled channel watchdog/reconnect and cleanup.
 
 Healthy unchanged views make no recurring inventory/metadata/resource GETs.
 15s server liveness messages do not refresh metadata; missing messages for 45s
@@ -555,6 +556,11 @@ the returned ID. Missing delivery falls back to six-second daemon/service expiry
 Visible active control renews every two seconds; passive reconnect/foreground never
 acquires. Pause and proof recovery are removed; explicit Return ends the override.
 Saved shared frames are passive fallbacks while current agent viewing reconnects.
+Document visibility gates live attachments and saved-frame requests. Detaching
+explicitly clears connected/empty presentation, since old media callbacks are
+identity-fenced. Foreground visibility and pageshow restore passive media even
+when session generation and control state are unchanged; hidden views do not
+reattach. See `debug/browser-view-background-resume.md` for the tab-switch regression.
 Keyboard/menu focus alone is not a lifecycle exit. Service execution_ready is
 separate from binary public authority; internal cleanup never asks for manual Return.
 
