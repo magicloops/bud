@@ -270,10 +270,37 @@ Owner view at `/data/location`:
   <address>", a point is marked approximate);
 - a day picker and the day's visits (`/api/data/location/visits`, local-day
   window, oldest first);
-- an OpenStreetMap embed of the selected visit, with "Save as place" (name and
-  radius) when the visit isn't at a saved place;
+- a MapKit JS map of the selected visit (`VisitMap`, with its accuracy circle;
+  the OpenStreetMap embed when maps are unavailable), with "Save as place" when
+  the visit isn't at a saved place; the last-known fix or visit has it too;
 - a Places section listing saved places (radius, "saved by an agent") with
-  inline edit and delete.
+  "View on map / Move" and delete.
 
-Labels come from `lib/location-format.ts`; places load through
+"Save as place" and "View on map / Move" open the pin editor
+(`place-pin-editor.tsx`): create is a `POST`, edit a `PUT` with only the changed
+fields (`placeUpdateBody`), since moving or resizing restarts the place's
+presence. Labels come from `lib/location-format.ts`; places load through
 `lib/places.ts`.
+
+### `place-pin-editor.tsx`
+
+The place pin editor (Phase 9), used by the location screen and by place
+questions (`workbench/question-request-card.tsx`):
+- `PlacePinEditor`: MapKit JS map with a fixed pin at the visual centre (the
+  user moves the map under it), the radius as a circle that follows the centre,
+  an optional dashed accuracy circle for the starting reading, a search box
+  (`mapkit.Search`; results stay in the browser, only the saved pin is sent), a
+  name field and a 50–2000 m radius slider (step 25). A start with `query` and no
+  centre searches and centres on the first result, listing the others. Editing a
+  saved place says that moving or resizing restarts its arrivals and departures.
+  When maps are unavailable (`/api/maps/token` 503, or MapKit fails to load) it
+  says so and still saves the starting coordinate with the chosen name and
+  radius; with no starting coordinate there's nothing to save.
+- `PlacePinDialog`: the editor in a native modal, portalled to `document.body`
+  so its form never nests in the question form.
+- `VisitMap`: a read-only MapKit map with a marker and accuracy circle, or the
+  OpenStreetMap embed when maps are unavailable.
+
+MapKit loading lives in `lib/mapkit.ts`; seeding, changed fields and answers in
+`lib/place-pin.ts`. `place-pin-editor.test.tsx` mounts the editor with maps
+unavailable.

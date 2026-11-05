@@ -36,10 +36,12 @@ const toNullable = (value: string | undefined) => {
 };
 const normalizeMultiline = (value: string | undefined) =>
   value ? value.replace(/\\n/g, "\n") : null;
+/** A `.p8` key from a file or inline (APNs, and the Apple Maps key). */
 export function resolveApnsPrivateKey(
   keyFile: string | undefined,
   inlineKey: string | undefined,
   shouldResolveFile = true,
+  variable = "APNS_KEY_FILE",
 ): string | null {
   const trimmedKeyFile = keyFile?.trim();
   if (trimmedKeyFile && !shouldResolveFile) {
@@ -50,7 +52,7 @@ export function resolveApnsPrivateKey(
     try {
       return readFileSync(trimmedKeyFile, "utf8");
     } catch (err) {
-      throw new Error(`Failed to read APNS_KEY_FILE at ${trimmedKeyFile}`, { cause: err });
+      throw new Error(`Failed to read ${variable} at ${trimmedKeyFile}`, { cause: err });
     }
   }
 
@@ -132,6 +134,9 @@ const toDaemonTransportPolicy = (value: string | undefined): DaemonTransportPoli
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
 const apnsTeamId = toNullable(process.env.APNS_TEAM_ID);
 const apnsKeyFile = toNullable(process.env.APNS_KEY_FILE);
+// MapKit JS tokens for the web map and search (Phase 9): the team's Maps key.
+const appleMapsKeyId = toNullable(process.env.APPLE_MAPS_KEY_ID);
+const appleMapsTeamId = toNullable(process.env.APPLE_MAPS_TEAM_ID) ?? apnsTeamId;
 const dataPlaneMaxChunkBytes = toPositiveInteger(
   process.env.DATA_PLANE_MAX_CHUNK_BYTES ?? process.env.GRPC_DATA_MAX_CHUNK_BYTES,
   16 * 1024,
@@ -334,6 +339,14 @@ export const config = {
     process.env.APNS_KEY_FILE,
     process.env.APNS_PRIVATE_KEY,
     Boolean(apnsKeyId && apnsTeamId),
+  ),
+  appleMapsKeyId,
+  appleMapsTeamId,
+  appleMapsPrivateKey: resolveApnsPrivateKey(
+    process.env.APPLE_MAPS_KEY_FILE,
+    process.env.APPLE_MAPS_PRIVATE_KEY,
+    Boolean(appleMapsKeyId && appleMapsTeamId),
+    "APPLE_MAPS_KEY_FILE",
   ),
   apnsDefaultTopic: toNullable(process.env.APNS_DEFAULT_TOPIC),
   apnsAllowedTopics: toList(process.env.APNS_ALLOWED_TOPICS ?? DEFAULT_APNS_ALLOWED_TOPICS),

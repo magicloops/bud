@@ -680,6 +680,18 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   agent tools `places_list` and `places_create` (`location.read`). Agents may
   save places at a coordinate or at a `visit_id` within approved history;
   places are labels, not permissions.
+- **Place questions (Phase 9):** for an address, a business or a move, agents
+  ask an `ask_user_questions` `place` question instead. The user places the pin
+  on a map (search stays on the device or in the browser), and accepting the
+  answer saves it in the same transaction (`savePlaceAnswers` in
+  `user-question-repository.ts`): a new place saved by the user, or the asked-about
+  place updated with only what changed. A failed save (deleted place, limit)
+  refuses the answer with 409 and the prompt stays.
+- **Maps:** `GET /api/maps/token?origin=` (`maps.ts`) issues a 30-minute MapKit
+  JS token (ES256 JWT from the team's Apple Maps key, `APPLE_MAPS_KEY_ID`,
+  `APPLE_MAPS_TEAM_ID` or `APNS_TEAM_ID`, `APPLE_MAPS_KEY_FILE` or
+  `APPLE_MAPS_PRIVATE_KEY`) for a trusted web origin. 503 `maps_unavailable`
+  without a key; 400 `invalid_origin` otherwise.
 - **Publication:** `projectVisit` calls `publishVisitEvents` for v2 visits
   under the processor's owner lock. When a visit first appears with an arrival
   it publishes `place.arrived` per matching place. When it first completes it

@@ -126,6 +126,26 @@ test('buildAskUserQuestionsResponseInput serializes per-question and skip-all an
   assert.equal(skipped.answers.every((answer) => answer.skip_reason === 'user_skipped'), true)
 })
 
+test('buildAskUserQuestionsResponseInput serializes a chosen place pin', () => {
+  const request: ApiAskUserQuestionsRequest = {
+    ...REQUEST,
+    questions: [{
+      question_id: 'home',
+      kind: 'place',
+      label: 'Where is Home?',
+      skippable: true,
+      place: { name: 'Home', query: '3327 26th St, San Francisco', radius_m: 100 },
+    }],
+  }
+  const pin = { kind: 'place' as const, name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50 }
+
+  assert.deepEqual(buildInitialQuestionAnswers(request), { home: { status: 'skipped' } })
+  assert.deepEqual(
+    buildAskUserQuestionsResponseInput(request, { home: { status: 'answered', answer: pin } }, 'id').answers,
+    [{ question_id: 'home', status: 'answered', answer: pin }],
+  )
+})
+
 test('buildInitialQuestionAnswers uses matching default answers only', () => {
   const initial = buildInitialQuestionAnswers({
     ...REQUEST,

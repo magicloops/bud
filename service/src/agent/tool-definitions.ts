@@ -143,7 +143,10 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: ASK_USER_QUESTIONS_TOOL,
     description:
-      "Ask the user one or more structured, skippable questions before continuing the current task. Use only when the answer is needed to proceed.",
+      "Ask the user one or more structured, skippable questions before continuing the current task. Use only when the answer is needed to proceed. "
+      + "To save a place from an address, a business or a description, or to move or resize a saved place, ask a place question: the user "
+      + "places the pin on a map, starting from your query, and the answer is the saved place (its id, coordinate and radius). Never guess or "
+      + "look up coordinates for a place; ask several places in one call.",
     parameters: {
       type: "object",
       properties: {
@@ -175,7 +178,7 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
               },
               kind: {
                 type: "string",
-                enum: ["boolean", "single_choice", "multi_choice", "text", "number"],
+                enum: ["boolean", "single_choice", "multi_choice", "text", "number", "place"],
               },
               label: {
                 type: "string",
@@ -203,9 +206,21 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
                   additionalProperties: false,
                 },
               },
+              place: {
+                type: "object",
+                description: "Required for place questions: the place the user will pin on a map and save.",
+                properties: {
+                  name: { type: "string", description: "The place's name, e.g. Home or Office." },
+                  query: { type: "string", description: "Address or search text the map starts from, e.g. 3327 26th St, San Francisco." },
+                  place_id: { type: "string", description: "A saved place to move or resize instead of creating one (from places_list)." },
+                  radius_m: { type: "number", minimum: 50, maximum: 2000, description: "Suggested radius; the user sets the final one. Defaults to 100 for a new place." },
+                },
+                required: ["name"],
+                additionalProperties: false,
+              },
               default_answer: {
                 type: "object",
-                description: "Optional typed default answer matching the question kind.",
+                description: "Optional typed default answer matching the question kind (not for place questions).",
               },
               multiline: { type: "boolean" },
               placeholder: { type: "string" },

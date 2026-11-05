@@ -1,9 +1,11 @@
 import { invocationTimingTransaction, recordInvocationChange } from "./invocation-timing.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
-import { db } from "../db/client.js";
+import { db, type Database } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
-import { agentQuestionRequestTable } from "../db/schema.js";
+import { agentQuestionRequestTable, placeTable } from "../db/schema.js";
+import { DataRequestError } from "../personal-data/contracts.js";
+import { Places } from "../personal-data/places.js";
 import {
   ASK_USER_QUESTIONS_TOOL,
   ASK_USER_QUESTIONS_RESPONSE_SCHEMA,
@@ -11,6 +13,7 @@ import {
   buildAskUserQuestionsToolResult,
   parseStoredAskUserQuestionsRequest,
   validateAskUserQuestionsResponse,
+  type AskUserQuestionResponseAnswer,
   type AskUserQuestionsRequest,
   type AskUserQuestionsResponse,
   type AskUserQuestionsToolResult,
@@ -18,6 +21,7 @@ import {
 import type { ExecutedUserQuestionTool, UserQuestionToolCallDirective } from "./contracts.js";
 
 export type AgentQuestionRequestRow = typeof agentQuestionRequestTable.$inferSelect;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export type AcceptedQuestionResponse = {
   questionRequest: AgentQuestionRequestRow;
@@ -135,7 +139,8 @@ export async function acceptAgentQuestionResponse(args: {
       throw new AgentQuestionRequestError("question_request_not_pending", 409);
     }
 
-    const response = validateAskUserQuestionsResponse(args.response, request);
+    const response = await savePlaceAnswers(tx, row.createdByUserId ?? args.answeredByUserId, request,
+      validateAskUserQuestionsResponse(args.response, request));
     const toolResult = buildAskUserQuestionsToolResult(
       request,
       response,
@@ -174,6 +179,44 @@ export async function acceptAgentQuestionResponse(args: {
       alreadyAnswered: false,
     };
   });
+}
+
+/**
+ * Saves each answered place question as the user's own place, in the answer's transaction
+ * (Phase 9): a new place, or the asked-about place updated. A save that fails (the place was
+ * deleted, or the limit is reached) refuses the whole answer, so the prompt stays. Moving or
+ * resizing restarts the place's presence (`Places.update`); an unchanged pin changes nothing.
+ */
+async function savePlaceAnswers(tx: Transaction, owner: string, request: AskUserQuestionsRequest,
+  response: AskUserQuestionsResponse): Promise<AskUserQuestionsResponse> {
+  const places = new Places(tx as unknown as Database);
+  const answers: AskUserQuestionResponseAnswer[] = [];
+  for (const answer of response.answers) {
+    const asked = request.questions.find(question => question.question_id === answer.question_id)?.place;
+    if (answer.status !== "answered" || answer.answer?.kind !== "place" || !asked) { answers.push(answer); continue; }
+    const pin = answer.answer;
+    try {
+      let id: string;
+      if (asked.place_id) {
+        const [current] = await tx.select().from(placeTable).where(and(eq(placeTable.id, asked.place_id),
+          eq(placeTable.createdByUserId, owner), isNull(placeTable.deletedAt))).limit(1);
+        if (!current) throw new DataRequestError(404, "place_not_found", "That place no longer exists");
+        const moved = current.latitude !== pin.latitude || current.longitude !== pin.longitude;
+        const changes = { ...(current.name !== pin.name ? { name: pin.name } : {}),
+          ...(moved ? { latitude: pin.latitude, longitude: pin.longitude } : {}),
+          ...(current.radiusM !== pin.radius_m ? { radius_m: pin.radius_m } : {}) };
+        if (Object.keys(changes).length) await places.update(owner, current.id, changes);
+        id = current.id;
+      } else {
+        id = (await places.create(owner, { name: pin.name, latitude: pin.latitude, longitude: pin.longitude, radius_m: pin.radius_m }, "user")).id;
+      }
+      answers.push({ ...answer, answer: { ...pin, place_id: id, operation: asked.place_id ? "updated" : "created" } });
+    } catch (error) {
+      if (error instanceof DataRequestError) throw new AgentQuestionRequestError(error.code, 409, error.message);
+      throw error;
+    }
+  }
+  return { ...response, answers };
 }
 
 export async function acceptPendingAgentQuestionRequestsAsSkipped(args: {

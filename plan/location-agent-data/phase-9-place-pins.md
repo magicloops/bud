@@ -1,6 +1,13 @@
 # Phase 9: Place pins — see, move and choose places on a map
 
-Status: planned (2026-11-05).
+Status: implemented, not yet run against real maps (2026-11-05).
+- Service: the MapKit JS token endpoint (`maps.ts`), the `place` question kind and saving
+  answers (`user-question-contracts.ts`, `user-question-repository.ts`), and agent guidance.
+- Web: `place-pin-editor.tsx` (MapKit JS), the location screen and place questions; without a
+  Maps key it falls back to saving the starting pin, and the OpenStreetMap visit map.
+- iOS: `PlaceMapEditor.swift`, Browse location and place questions.
+- Still to do: create the Apple Maps key, try both editors with real maps and search, and the
+  terms check below.
 
 ## Goal
 

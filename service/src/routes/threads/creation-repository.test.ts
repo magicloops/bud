@@ -40,7 +40,11 @@ test("atomic creation: race, current-state retry, owner isolation, rollback and 
   const unsubscribe = subscribeInvocationChanges(database, ids => notifications.push(ids));
   t.after(async () => {
     unsubscribe();
-    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    try {
+      await pool.query(`drop schema if exists "${isolated}" cascade`);
+      // Users live in the shared auth schema, outside the isolated one.
+      await pool.query(`delete from auth."user" where id = any($1)`, [owners]);
+    }
     finally { await pool.end(); await servicePool.end(); }
   });
   await pool.query(`create schema "${isolated}"`);

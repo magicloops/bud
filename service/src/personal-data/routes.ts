@@ -8,6 +8,8 @@ import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, type LocationQuery } from "./location.js";
 import { DataGrants } from "./grants.js";
 import { Places } from "./places.js";
+import { mapKitToken, type MapKitKey } from "./maps.js";
+import { config } from "../config.js";
 import { HealthQueries, type SleepQuery, type WorkoutQuery } from "./health.js";
 import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
@@ -43,6 +45,8 @@ type Dependencies = {
   /** The inline processing budget (default `FOLLOW_UP_PROCESSING_MS`); injectable for tests. */
   followUpProcessingMs?: number;
   authenticate?: (request: FastifyRequest) => Promise<{ userId: string } | null>;
+  /** The Maps key for MapKit JS tokens (default from config); injectable for route tests. */
+  mapsKey?: MapKitKey;
 };
 
 export async function registerPersonalDataRoutes(server: FastifyInstance, dependencies: Dependencies = {}) {
@@ -54,6 +58,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
   const grants = dependencies.grants ?? new DataGrants();
   const automations = dependencies.automations ?? new Automations();
   const bootstrap = dependencies.bootstrap ?? new AutomationBootstrap();
+  const mapsKey = dependencies.mapsKey ?? { teamId: config.appleMapsTeamId, keyId: config.appleMapsKeyId, privateKey: config.appleMapsPrivateKey };
   let contactsV2Ready = false;
   // Normal composition must verify migration 0035 before workers or HTTP readiness.
   // Injected repositories do not imply compatible capture; fixtures opt in explicitly.
@@ -213,6 +218,9 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     app.post("/api/data/places", async request => places.create(viewers.get(request)!.userId, request.body, "user"));
     app.put<{ Params: { id: string } }>("/api/data/places/:id", async request => places.update(viewers.get(request)!.userId, request.params.id, request.body));
     app.delete<{ Params: { id: string } }>("/api/data/places/:id", async request => places.delete(viewers.get(request)!.userId, request.params.id));
+    // The web map and place search (MapKit JS); the page passes its own origin.
+    app.get<{ Querystring: { origin?: string } }>("/api/maps/token", async request =>
+      mapKitToken(mapsKey, request.query.origin, config.betterAuthTrustedOrigins));
     app.get<{ Params: { id: string }; Querystring: Pick<LocationQuery, "from" | "to"> }>("/api/data/contacts/:id/location-context", async request =>
       locationQueries.contactContext(viewers.get(request)!.userId, request.params.id, request.query));
     // First-party owner reads; agents and apps go through their grant-aware adapters.

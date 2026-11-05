@@ -90,7 +90,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts, including separate HTTP proxy and WebSocket/HMR transport readiness |
 | `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
 | `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
-| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts |
+| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts, including the `place` kind (`ApiAskUserQuestionPlace`; answer `{ kind: "place", name, latitude, longitude, radius_m }`, plus `place_id`/`operation` once saved) |
 
 **Capability Normalization**:
 ```typescript
@@ -479,3 +479,22 @@ Visit labels shared by the location screen:
 - `visitNearby`, `visitDuration`, and `dayWindow` (local-midnight bounds).
 
 Tested in `location-format.test.ts`.
+
+### `mapkit.ts`
+
+MapKit JS for the pin editor and visit map (Phase 9). `loadMapKit()` first
+requests `/api/maps/token?origin=<page origin>`; a 503 resolves null ("maps
+aren't set up on this server", cached for the page), otherwise it loads
+`mapkit.core.js` (`map`, `services`) from Apple's CDN once and initialises it
+with an `authorizationCallback` that fetches a fresh token when MapKit asks.
+`useMapKit()` exposes `loading | ready | unavailable | error`. Declares the small
+part of the MapKit API used (no published types installed).
+
+### `place-pin.ts`
+
+Map-free pin-editor logic: radius limits, `pinCenter` (an unmoved pin keeps
+the exact starting coordinate), `placeCreateBody`, `placeUpdateBody` (only
+changed fields; a coordinate within ~0.1 m isn't a move), `restartsPresence`,
+the place question's `placeAnswer`, `placeQuestionStart` and
+`placeQuestionTitle`, `placeErrorMessage`, and `regionSpan`. Tested in
+`place-pin.test.ts`.
