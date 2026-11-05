@@ -202,15 +202,18 @@ export class AutomationAdmission {
     return at ? new Date(at) : null;
   }
 
-  /** A location run in this conversation that hasn't started yet and can take this delivery
-   * (the same Bud, model and data access). The owner lock keeps it from starting meanwhile. */
+  /** A location run in this conversation that has never started and can take this delivery
+   * (the same Bud, model and data access). The owner lock keeps it from starting meanwhile. A run
+   * resuming after the user answered is also `leased` or `retry_wait`, so status alone isn't
+   * enough: `start()` stamps `model_context_at` on the input the first time. */
   private async unstartedRun(tx: Transaction, owner: string, threadId: string, item: Prepared) {
     const runs = await tx.select({ invocation: invocationRows, definition: revisions.definition }).from(deliveries)
       .innerJoin(invocationRows, and(eq(invocationRows.id, deliveries.invocationId), eq(invocationRows.createdByUserId, owner)))
       .innerJoin(revisions, and(eq(revisions.automationId, deliveries.automationId), eq(revisions.revision, deliveries.revision),
         eq(revisions.createdByUserId, owner)))
+      .innerJoin(messages, and(eq(messages.messageId, invocationRows.inputMessageId), eq(messages.createdByUserId, owner)))
       .where(and(eq(deliveries.createdByUserId, owner), eq(deliveries.status, "admitted"), eq(invocationRows.threadId, threadId),
-        inArray(invocationRows.status, UNSTARTED_INVOCATION_STATES)));
+        inArray(invocationRows.status, UNSTARTED_INVOCATION_STATES), sql`${messages.metadata}->>'model_context_at' is null`));
     return runs.find(run => {
       const definition = parseAutomationInput(automationDefinitionSchema, run.definition);
       return isLocationTrigger(definition) && definition.bud_id === item.definition.bud_id
@@ -219,10 +222,14 @@ export class AutomationAdmission {
     })?.invocation ?? null;
   }
 
-  /** Adds a straggler to a run that hasn't started, rewriting its input as the timeline. */
+  /** Adds a straggler to a run that hasn't started, rewriting its input as the timeline. The run
+   * must start by the earliest deadline of its deliveries, as when a group is admitted. */
   private async joinRun(tx: Transaction, owner: string, run: typeof invocationRows.$inferSelect, item: Prepared) {
     await tx.update(deliveries).set({ status: "admitted", invocationId: run.id, outcomeCode: "joined_unstarted_run",
       updatedAt: sql`clock_timestamp()` }).where(eq(deliveries.id, item.delivery.id));
+    await tx.update(invocationRows).set({ latestStartAt: sql`least(coalesce(${invocationRows.latestStartAt},
+      ${item.delivery.latestStartAt.toISOString()}::timestamptz), ${item.delivery.latestStartAt.toISOString()}::timestamptz)`,
+      updatedAt: sql`clock_timestamp()` }).where(and(eq(invocationRows.id, run.id), eq(invocationRows.createdByUserId, owner)));
     const members = await tx.select().from(deliveries).where(and(eq(deliveries.createdByUserId, owner),
       eq(deliveries.invocationId, run.id), eq(deliveries.status, "admitted")));
     const items: Array<{ event: string; at: Date; instruction: string; automationName: string; automationId: string; reference: string[];
