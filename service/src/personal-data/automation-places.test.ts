@@ -44,8 +44,15 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   const visit = (key: string, arrival: Date | null, departure: Date | null, lat: number, accuracy = 20) =>
     ["location.visit.v2", { visit_key: key, phase: departure ? "completed" : "arrived", arrival_at: arrival?.toISOString() ?? null,
       departure_at: departure?.toISOString() ?? null, coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: accuracy }] as [string, unknown];
-  const upload = async (values: Array<[string, unknown]>) => {
+  const upload = async (sent: Array<[string, unknown]>, options: { names?: boolean } = {}) => {
     const context = { userId: owner, installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
+    // The phone names a completed visit at its final coordinate, and admission waits for that name.
+    const names = options.names === false ? [] : sent.flatMap(([type, payload]) => {
+      const visit = payload as { phase?: string; visit_key?: string };
+      return type === "location.visit.v2" && visit.phase === "completed" ? [["location.visit_named.v1", { visit_key: visit.visit_key,
+        source: "apple", named_at: ago(0).toISOString(), address: null, place: null }] as [string, unknown]] : [];
+    });
+    const values = [...sent, ...names];
     const lines = values.map(([type, payload]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
       occurred_at: ago(0).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" }, payload }));
     await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
@@ -172,6 +179,31 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   assert.equal(json.visit.visit_id, a);
   assert.equal(json.place.name, "Home");
   assert.deepEqual(json.saved_places_at_visit.map((place: { name: string }) => place.name), ["Home"]);
+
+  // A visit end waits (up to a minute) for the name of its final coordinate, which can be
+  // processed after the completion (November 4: the message and its evidence named two addresses).
+  await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
+  const named = (key: string, short: string, at = ago(0)) => ["location.visit_named.v1", { visit_key: key, source: "apple",
+    named_at: at.toISOString(), address: { short }, place: null }] as [string, unknown];
+  await upload([visit("e", ago(40), null, 38.6), named("e", "300 Bartlett St", ago(39))]);
+  await upload([visit("e", ago(40), ago(3), 38.6)], { names: false });
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const e = await visitId("e");
+  assert.deepEqual([(await admitted("ended-any", e)).status, (await admitted("ended-any", e)).outcomeCode], ["pending", "visit_naming_pending"]);
+  await upload([named("e", "1245 Valencia St")]);
+  await db.update(s.automationDeliveryTable).set({ nextAttemptAt: ago(1) }).where(eq(s.automationDeliveryTable.id, (await admitted("ended-any", e)).id));
+  while (await admission.admitNext(owner)) { /* drain */ }
+  assert.match((await invocationFor("ended-any", e)).input.content, /^A visit at 1245 Valencia St ended /);
+  // Without a newer name a minute after publication, it goes ahead with the one it has.
+  await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
+  await upload([visit("f", ago(30), null, 38.7), named("f", "Old St", ago(29))]);
+  await upload([visit("f", ago(30), ago(2), 38.7)], { names: false });
+  const f = await visitId("f");
+  await db.update(s.dataDomainEventTable).set({ publishedAt: ago(1.5) }).where(eq(s.dataDomainEventTable.visitId, f));
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  assert.match((await invocationFor("ended-any", f)).input.content, /^A visit at Old St ended /);
 
   // Deleting the place after admission fails a later admission for it, and withdrawing location access stops runs at their policy check.
   await places.delete(owner, home.id);

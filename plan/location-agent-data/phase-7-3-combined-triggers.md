@@ -338,6 +338,16 @@ cancelled it.
   departure wait. An outside reading in between would already have cancelled
   it. Walking past exits within a minute or two (October 29: 12 s).
 
+**4. A visit message and its evidence named different addresses** (found on the
+afternoon trip). The phone names a visit on arrival (300 Bartlett St) and again
+on completion, at iOS's final coordinate (1245 Valencia St). Both reports came
+in one upload, and the completion, dated by the visit's arrival, was processed
+first. The message used the old name, and the evidence, built 10 s later, the
+new one. The agent replied that the two disagreed.
+- **Fix:** a visit-ended delivery waits (`visit_naming_pending`, rechecked every
+  5 s) until the visit has a name from after it ended, for up to 60 s after
+  publication, then goes ahead with the name it has.
+
 **Not fixable:** the walk from Home to the Office around 12:30 woke nothing.
 iOS had the phone inside both geofences from 8:55 AM to 12:45 PM (the places
 are 117 m apart, and geofences are accurate to 100–200 m), and its visit merged
