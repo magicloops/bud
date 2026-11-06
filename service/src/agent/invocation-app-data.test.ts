@@ -35,7 +35,11 @@ test("app permission parking and same-turn replay survive approval, expiry and c
   const owner = "permission-replay-" + randomUUID();
   const bud = "bud-" + randomUUID(), site = "site-" + randomUUID();
   t.after(async () => {
-    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    try {
+      await pool.query(`drop schema if exists "${isolated}" cascade`);
+      // Users live in the shared auth schema, outside the isolated one.
+      await pool.query(`delete from auth."user" where id = any($1)`, [[owner]]);
+    }
     finally { await pool.end(); await defaultPool.end(); }
   });
   await pool.query(`create schema "${isolated}"`);

@@ -90,7 +90,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts, including separate HTTP proxy and WebSocket/HMR transport readiness |
 | `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
 | `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
-| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts |
+| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts, including the `place` kind (`ApiAskUserQuestionPlace`; answer `{ kind: "place", name, latitude, longitude, radius_m, address? }`, plus `place_id`/`operation` once saved) |
 
 **Capability Normalization**:
 ```typescript
@@ -479,3 +479,39 @@ Visit labels shared by the location screen:
 - `visitNearby`, `visitDuration`, and `dayWindow` (local-midnight bounds).
 
 Tested in `location-format.test.ts`.
+
+### `mapkit.ts`
+
+MapKit JS for the pin editor and visit map (Phase 9). `loadMapKit()` first
+requests `/api/maps/token?origin=<page origin>`; a 503 resolves null ("maps
+aren't set up on this server", cached for the page), otherwise it loads
+`mapkit.core.js` (`map`, `annotations`, `overlays`; MapKit only draws maps,
+search is `place-search.ts`) from Apple's CDN once and initialises it
+with an `authorizationCallback` that fetches a fresh token when MapKit asks.
+`useMapKit()` exposes `loading | ready | unavailable | error`. Declares the small
+part of the MapKit API used (no published types installed).
+
+### `place-search.ts`
+
+Pin-editor search through the service (Phase 11, Geoapify, whose results may
+be stored): `PlaceSearchResult` / `PlaceSearchResponse` for
+`GET /api/places/search`, `placeSearchPath` (2–200 characters, `near` = map
+centre), `placeSearchLabel` (a named place over its address, or the address
+alone) and `placeSearchErrorMessage` (429 rate limit, 503 unavailable or
+failed, 400 short query). Tested in `place-search.test.ts`.
+
+### `place-pin.ts`
+
+Map-free pin-editor logic: radius limits, `pinCenter` (an unmoved pin keeps
+the exact starting coordinate), `placeCreateBody`, `placeUpdateBody` (only
+changed fields; a coordinate within ~0.1 m isn't a move), `restartsPresence`,
+the place question's `placeAnswer`, `placeQuestionStart` and
+`placeQuestionTitle`, `placeErrorMessage`, and `regionSpan`. Addresses (Phase
+10): `AddressState` keeps the field's value, its anchor and a dropped value;
+`startAddress`, `addressAtPin` (anchors an unanchored address, clears it past
+`ADDRESS_DROP_M` = 50 m), `addressAtResult` (a picked result fills and
+anchors; the seed search only anchors), `typeAddress` (re-anchors at the pin)
+and `keepAddress`. Create bodies and answers carry a non-empty address; update
+bodies send it when it changed and always with a move (kept, or null), because
+the service clears an address omitted from a move of more than 50 m. Tested in
+`place-pin.test.ts`.

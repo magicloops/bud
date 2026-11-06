@@ -12,11 +12,21 @@ export type AskUserQuestionKind =
   | "single_choice"
   | "multi_choice"
   | "text"
-  | "number";
+  | "number"
+  | "place";
 
 export type AskUserQuestionImportance = "required" | "important" | "optional";
 export type AskUserQuestionAnswerStatus = "answered" | "skipped";
 export type AskUserQuestionSkipReason = "user_skipped" | "not_applicable" | "unknown";
+
+/** A place to choose on a map (Phase 9): the user places the pin, starting from `query` or the
+ * existing place, and sets the radius. Only the user's pin is saved; search results never are. */
+export type AskUserQuestionPlace = {
+  name: string;
+  query?: string;
+  place_id?: string;
+  radius_m?: number;
+};
 
 export type AskUserQuestionChoice = {
   choice_id: string;
@@ -32,6 +42,7 @@ export type AskUserQuestion = {
   importance: AskUserQuestionImportance;
   skippable: true;
   choices?: AskUserQuestionChoice[];
+  place?: AskUserQuestionPlace;
   default_answer?: AskUserQuestionAnswer;
   multiline?: boolean;
   placeholder?: string;
@@ -58,7 +69,22 @@ export type AskUserQuestionAnswer =
   | { kind: "single_choice"; choice_id: string }
   | { kind: "multi_choice"; choice_ids: string[] }
   | { kind: "text"; value: string }
-  | { kind: "number"; value: number };
+  | { kind: "number"; value: number }
+  | AskUserQuestionPlaceAnswer;
+
+/** The client sends the chosen pin; the service adds `place_id` and `operation` once it has saved
+ * it (`savePlaceAnswers`), so the agent learns which place was created or updated. */
+export type AskUserQuestionPlaceAnswer = {
+  kind: "place";
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_m: number;
+  /** The address the user accepted (Phase 10), saved with the place; absent for none. */
+  address?: string;
+  place_id?: string;
+  operation?: "created" | "updated";
+};
 
 export type AskUserQuestionResponseAnswer = {
   question_id: string;
@@ -81,6 +107,7 @@ export type AskUserQuestionsToolResultResponse = {
     label: string;
     help_text?: string;
     choices?: AskUserQuestionChoice[];
+    place?: AskUserQuestionPlace;
   };
   status: AskUserQuestionAnswerStatus;
   answer?: AskUserQuestionAnswer;
@@ -114,14 +141,25 @@ const RawChoiceSchema = z.object({
   description: z.string().trim().min(1).optional(),
 });
 
+/** Place limits match saved places (`placeCreateSchema`). */
+const PLACE_NAME_MAX = 120;
+const PLACE_RADIUS = { min: 50, max: 2000, default: 100 } as const;
+const RawPlaceSchema = z.object({
+  name: z.string().trim().min(1).max(PLACE_NAME_MAX),
+  query: z.string().trim().min(1).max(300).optional(),
+  place_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  radius_m: z.number().min(PLACE_RADIUS.min).max(PLACE_RADIUS.max).optional(),
+});
+
 const RawQuestionSchema = z.object({
   question_id: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1).optional(),
-  kind: z.enum(["boolean", "single_choice", "multi_choice", "text", "number"]),
+  kind: z.enum(["boolean", "single_choice", "multi_choice", "text", "number", "place"]),
   label: z.string().trim().min(1),
   help_text: z.string().trim().min(1).optional(),
   importance: z.enum(["required", "important", "optional"]).optional(),
   choices: z.array(RawChoiceSchema).optional(),
+  place: RawPlaceSchema.optional(),
   default_answer: z.unknown().optional(),
   multiline: z.boolean().optional(),
   placeholder: z.string().trim().min(1).optional(),
@@ -150,6 +188,14 @@ const ClientAnswerSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("text"), value: z.string() }),
   z.object({ kind: z.literal("number"), value: z.number() }),
+  z.object({
+    kind: z.literal("place"),
+    name: z.string().trim().min(1).max(PLACE_NAME_MAX),
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+    radius_m: z.number().finite().min(PLACE_RADIUS.min).max(PLACE_RADIUS.max),
+    address: z.string().trim().max(300).optional().transform(value => value || undefined),
+  }),
 ]);
 
 const ClientResponseSchema = z.object({
@@ -184,6 +230,7 @@ export function normalizeAskUserQuestionsRequest(input: unknown): AskUserQuestio
     seenQuestionIds.add(questionId);
 
     const choices = normalizeChoices(question);
+    const place = normalizePlace(question);
     const normalized: AskUserQuestion = {
       question_id: questionId,
       kind: question.kind,
@@ -192,6 +239,7 @@ export function normalizeAskUserQuestionsRequest(input: unknown): AskUserQuestio
       importance: question.importance ?? "optional",
       skippable: true,
       ...(choices ? { choices } : {}),
+      ...(place ? { place } : {}),
       ...(question.multiline === true ? { multiline: true } : {}),
       ...(question.placeholder ? { placeholder: question.placeholder.trim() } : {}),
       ...(typeof question.min_length === "number" ? { min_length: question.min_length } : {}),
@@ -334,6 +382,7 @@ export function buildAskUserQuestionsToolResult(
         label: question.label,
         help_text: question.help_text,
         choices: question.choices,
+        place: question.place,
       }),
       status: answer.status,
       answer: answer.answer,
@@ -400,6 +449,25 @@ function normalizeChoices(question: z.infer<typeof RawQuestionSchema>): AskUserQ
       label: choice.label.trim(),
       description: choice.description?.trim(),
     });
+  });
+}
+
+/** A place question carries what the picker starts from. New places default to 100 m; a move
+ * keeps the place's own radius unless the agent suggests another. */
+function normalizePlace(question: z.infer<typeof RawQuestionSchema>): AskUserQuestionPlace | undefined {
+  if (question.kind !== "place") return undefined;
+  if (!question.place) {
+    throw new AskUserQuestionsContractError("missing_place", "place questions require a place with at least a name");
+  }
+  if (question.default_answer !== undefined) {
+    throw new AskUserQuestionsContractError("invalid_default_answer", "place questions can't have a default answer: the user places the pin");
+  }
+  const { name, query, place_id: placeId, radius_m: radius } = question.place;
+  return removeUndefinedFields({
+    name: name.trim(),
+    query: query?.trim(),
+    place_id: placeId,
+    radius_m: radius ?? (placeId ? undefined : PLACE_RADIUS.default),
   });
 }
 
@@ -486,6 +554,9 @@ function formatAnswer(question: AskUserQuestion, answer: AskUserQuestionAnswer):
       return answer.value;
     case "number":
       return `${answer.value}${question.unit ? ` ${question.unit}` : ""}`;
+    case "place":
+      return `${answer.operation === "updated" ? "Updated" : "Saved"} ${answer.name}${answer.address ? `, ${answer.address},` : ""} at `
+        + `${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`;
   }
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE "location_visit_name" ADD COLUMN "nearby" jsonb;

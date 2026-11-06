@@ -10,7 +10,7 @@ export type LocationVisit = {
   address: { full?: string | null; short?: string | null; city?: string | null } | null
   place: { name: string; distance_m: number } | null
   /** Saved places the visit is within (radius plus accuracy). */
-  places?: Array<{ id: string; name: string }>
+  places?: Array<{ id: string; name: string; address?: string | null }>
 }
 
 /**
@@ -24,6 +24,19 @@ export function visitTitle(visit: LocationVisit) {
   if (visit.address?.short) return visit.address.short
   if (visit.address?.city) return visit.address.city
   return `${visit.coordinate.lat.toFixed(4)}, ${visit.coordinate.lon.toFixed(4)}`
+}
+
+/** A saved place's own address (the user's), from a location's `places` labels. */
+export function savedAddress(places: LocationVisit['places']) {
+  return places?.find(place => place.address)?.address ?? null
+}
+
+/**
+ * The address under a visit's title. At a saved place it's the place's own, or none: Apple's reverse
+ * geocode names the nearest address, which can be a neighbour's. Elsewhere it's Apple's.
+ */
+export function visitAddress(visit: LocationVisit) {
+  return visit.places?.length ? savedAddress(visit.places) : visit.address?.full ?? null
 }
 
 /** "Near Blue Bottle Coffee" when the place is farther than the accuracy, else null. */

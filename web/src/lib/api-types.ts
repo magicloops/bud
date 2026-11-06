@@ -164,6 +164,15 @@ export type ApiAskUserQuestionKind =
   | 'multi_choice'
   | 'text'
   | 'number'
+  | 'place'
+
+/** A place to choose on a map: start from `query` or the saved place `place_id`, with `radius_m` suggested. */
+export type ApiAskUserQuestionPlace = {
+  name: string
+  query?: string
+  place_id?: string
+  radius_m?: number
+}
 
 export type ApiAskUserQuestionChoice = {
   choice_id: string
@@ -177,6 +186,9 @@ export type ApiAskUserQuestionAnswer =
   | { kind: 'multi_choice'; choice_ids: string[] }
   | { kind: 'text'; value: string }
   | { kind: 'number'; value: number }
+  /** The user's pin. The service adds `place_id` and `operation` once it has saved the place. */
+  | { kind: 'place'; name: string; latitude: number; longitude: number; radius_m: number; address?: string
+    place_id?: string; operation?: 'created' | 'updated' }
 
 export type ApiAskUserQuestion = {
   question_id: string
@@ -186,6 +198,7 @@ export type ApiAskUserQuestion = {
   importance?: 'required' | 'important' | 'optional'
   skippable?: boolean
   choices?: ApiAskUserQuestionChoice[]
+  place?: ApiAskUserQuestionPlace
   default_answer?: ApiAskUserQuestionAnswer
   multiline?: boolean
   placeholder?: string
@@ -229,7 +242,7 @@ export type ApiAskUserQuestionsToolResult = {
   body?: string
   responses: Array<{
     question_id: string
-    question: Pick<ApiAskUserQuestion, 'question_id' | 'kind' | 'label' | 'help_text' | 'choices'>
+    question: Pick<ApiAskUserQuestion, 'question_id' | 'kind' | 'label' | 'help_text' | 'choices' | 'place'>
     status: 'answered' | 'skipped'
     answer?: ApiAskUserQuestionAnswer
     display_answer?: string
@@ -429,6 +442,8 @@ export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes:
 
 /** A saved place, from `/api/data/places`. */
 export type ApiPlace = { id: string; name: string; note: string | null; coordinate: { lat: number; lon: number }; radius_m: number
+  /** The address the user gave or picked for the place (≤300 characters). */
+  address: string | null
   /** Changes when the place is moved or resized; phone geofences are installed per revision. */
   geometry_revision: string
   created_by: 'user' | 'agent'; created_at: string; updated_at: string }

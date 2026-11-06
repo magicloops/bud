@@ -181,10 +181,11 @@ Shared validation and normalization for the `ask_user_questions` tool.
 - validate client responses against the stored request, not client-supplied labels
 - build the single structured tool result that repeats each question before each answer
 - build a markdown Q/A summary used by restart fallback user messages
+- `place` questions (Phase 9): the question carries `place` (`name`, optional `query`, `place_id` to update a saved place, and `radius_m`, 100 by default for a new place); the answer is the user's pin (`name`, `latitude`, `longitude`, `radius_m`). Clients can't set `place_id` or `operation`; the repository adds them once it has saved the pin
 
 ### `user-question-contracts.test.ts`
 
-Standalone tests for mixed request normalization, duplicate-id rejection, invalid answer rejection, skipped answers, and self-contained tool-result summaries.
+Standalone tests for mixed request normalization, duplicate-id rejection, invalid answer rejection, skipped answers, and self-contained tool-result summaries, plus place question defaults, limits and display answers.
 
 ### `user-question-registry.ts`
 

@@ -1,0 +1,135 @@
+# Phase 10: Place addresses — the address the user gave, saved with the place
+
+Status: implemented (2026-11-05), on the Phase 9 branches (`feat/place-pins`, `feature/place-pins`).
+Service: migration 0063, the API and the 50 m safety net, place answers, `places_create`, and
+messages and evidence. Web and iOS: the Address field, its anchor and the 50 m drop with "Keep it".
+Still to do: try both editors with real search; the terms check below.
+
+## Goal
+
+When the user names a place by its address ("save 3327 26th St as Home"), or picks a search
+result while placing a pin, the place keeps that address. Agents and messages then say "Home,
+3327 26th St" from what the user told us, instead of the reverse geocode of whatever the phone
+measured, which names the nearest address to a coordinate and is often a neighbour's (November
+4: a visit at the Office was named "3384 26th St").
+
+## Decisions
+
+- **A place has an optional `address`: text the user saw and accepted.** It's a label, like the
+  name. It never moves the pin, and only moving the pin well away from it removes it (below).
+- **Where it comes from:**
+  - picking a search result in the pin editor fills it with that result's address;
+  - a place question starts it from the agent's `query`, which is usually the user's own words,
+    until a search result replaces it;
+  - the user can type, edit or clear it, in the pin editor and when editing a saved place on
+    the web Location screen and in Browse location on iOS;
+  - an agent may pass one to `places_create` only if the user stated it. Agents never look one
+    up or fill one in from reverse geocoding.
+- **Moving the pin more than 50 m from the address drops it** (`ADDRESS_DROP_M`). The address
+  belongs to where it was set, its anchor:
+  - a picked search result: the result's coordinate;
+  - a place question's `query`: the first result the map centred on (or the starting pin);
+  - a saved place's address: the place's saved centre;
+  - a typed address: the pin where the user typed it (typing re-anchors).
+
+  Within 50 m the address stays (adjusting the pin onto the building, or across a lot, is the
+  point of the editor; 50 m is also the smallest radius). Beyond it, the editor clears the field
+  and says "Address cleared: the pin is now more than 50 m from it", with "Keep it", which
+  restores it and re-anchors at the current pin. The user can type a new one.
+- **The saved address wins over reverse geocoding** wherever we describe a saved place. A
+  visit's own reverse-geocoded address is still reported for the visit, labelled as Apple's
+  nearest match, so a mismatch stays visible rather than hidden.
+- **On the Location screens (web and iOS), a visit at a saved place shows only the place's own
+  address**, or none: Apple's reverse-geocoded line is hidden there, and "Last known" shows the
+  saved address under "Here: Home". Visits not at a saved place keep Apple's address. (Agents
+  still get both, labelled.)
+- **The same privacy as a street address.** Agents see it under `location.read`, like the
+  place. App keys with `rounded_2_decimals` get no saved places today, so no addresses either.
+
+Not in scope: geocoding an address into a pin (Phase 9 decided the user places the pin); keeping
+addresses in sync with the pin; structured address fields.
+
+## Service
+
+**Schema** (migration `0063_place_address.sql`): `place.address text null`, at most 300
+characters once trimmed (a check constraint, like the radius one). Existing places get null.
+
+**API** (`places.ts`, `routes.ts`)
+- `placeCreateSchema` and `placeUpdateSchema` accept `address` (string, or null to clear on
+  update). Empty after trimming means null.
+- An address-only update is not a geometry change: no presence reset, no new geometry revision.
+- Safety net for callers without the editor: a move of more than 50 m from the place's current
+  centre that doesn't include `address` clears it. A move that includes `address` keeps what
+  was sent (the editor has already applied the rule, or the user kept it).
+- `presentPlace` returns `address`.
+
+**Place questions** (`user-question-contracts.ts`, `user-question-repository.ts`)
+- The answer gains optional `address` (≤300 characters). `savePlaceAnswers` saves it with the
+  place: on create, and on update only when it changed (an address change alone keeps presence).
+- The tool result and `display_answer` include it ("Saved Home, 3327 26th St, San Francisco,
+  at 37.749003, -122.416487 with a 50 m radius").
+
+**Agent tools** (`agent-queries.ts`, `personal-data-tools.ts`)
+- `places_list` and `places_create` results include `address`.
+- `places_create` takes `address` for an address the user stated; its description says never
+  to guess or look one up. (`null` already means absent, from the November 4 review fix.)
+
+**Messages and evidence** (`automation-admission.ts`, `automation-visit-context.ts`,
+`location.ts`)
+- **Visit ended at a saved place:** the reference line becomes "Home is at 3327 26th St, San
+  Francisco (the user's saved address)." from `place.address`. Without one it keeps today's line
+  from the visit's name, worded as Apple's nearest address ("Home's nearest address from Apple
+  Maps is …").
+- **Arrived and left:** the reference adds "Home is at …" when the place has an address. Today
+  these lines have no address at all.
+- **Evidence** (`automationVisitContext`): the trigger `place` and `saved_places_at_visit`
+  entries carry `address`. A visit's own `address` stays as it is, alongside.
+- **Query results:** places listed on visits and `recent` (`visitPlaces`, `matchingPlaces`)
+  carry `address`, except for rounded app keys (which get no places).
+- The fixed "Place event evidence" preamble says a saved place's address is the user's, and a
+  visit's address is Apple's nearest match.
+
+## Web
+
+- **Pin editor** (`place-pin-editor.tsx`, `lib/place-pin.ts`): an Address field below the name.
+  Picking a search result sets it to the result's formatted address; seeded from the question's
+  `query` or the place's address; editable and clearable. The 50 m drop and "Keep it" as above
+  (the anchor and distance check live in `lib/place-pin.ts`, testable without MapKit). Saving
+  sends it; edits send it only when it changed.
+- **Location screen:** saved places show their address under the name.
+- **Place questions** (`question-request-card.tsx`): the row shows the chosen address, and the
+  answer carries it.
+
+## iOS
+
+- **`PlaceMapEditor`**: the same Address field. A chosen `MKLocalSearch` result fills it (its
+  placemark's formatted address); seeded from `query` or the place; editable and clearable. The
+  same 50 m drop and "Keep it", with the anchor logic in `PlacePin` so it's unit-testable.
+- **Browse location:** saved places show their address; `PersonalPlace`, `PersonalPlaceCreate`
+  and `PersonalPlaceUpdate` gain `address` (update sends it only when it changed).
+- **Place questions:** the answer carries the address.
+
+## Order
+
+One pass on each branch, after the Phase 9 work: service (migration, API, answers, messages and
+evidence), then web and iOS. Deploy order: service first, so the clients can send `address`.
+
+## Testing
+
+- Service: migration up on a copy; create, update and clear an address; an address-only update
+  keeps presence and the geometry revision; place answers save it; the tool result shows it;
+  the visit-ended and arrival messages use it, and the fallback wording when there's none;
+  rounded app keys see no saved places; `places_create` stores a given address.
+- Web and iOS: a search result fills the field; the question's `query` seeds it; moving the pin
+  up to 50 m keeps it and past 50 m clears it; "Keep it" restores and re-anchors; typing
+  re-anchors; edits send it only when it changed; clearing sends null.
+- Service: a move of more than 50 m without `address` clears it; with `address`, keeps it.
+- Device: save Home from its address and nudge the pin; the next arrival message says Home's
+  saved address, not the reverse geocode.
+
+## Open questions
+
+- **Apple terms (with Phase 9's check):** the address can be Apple's formatted text from a
+  search result the user picked, stored with the place. Check that alongside the pin.
+- **The 50 m threshold:** starting value; revisit after real use (a large site may want the
+  place's radius instead).

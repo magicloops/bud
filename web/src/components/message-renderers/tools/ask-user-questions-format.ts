@@ -32,6 +32,12 @@ export function formatAskUserQuestionsAnswer(answer: unknown): string {
       return typeof answer.value === 'string' ? answer.value : '(answered)'
     case 'number':
       return typeof answer.value === 'number' ? String(answer.value) : '(answered)'
+    // The service's `display_answer` ("Saved Home at … with a 50 m radius") normally covers this.
+    case 'place':
+      return typeof answer.name === 'string' && typeof answer.latitude === 'number' && typeof answer.longitude === 'number'
+        && typeof answer.radius_m === 'number'
+        ? `${answer.name}${typeof answer.address === 'string' && answer.address ? `, ${answer.address},` : ''} at ${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`
+        : '(answered)'
     default:
       return '(answered)'
   }
