@@ -10,15 +10,45 @@ import { DataRequestError } from "./contracts.js";
 export const GEOAPIFY_ATTRIBUTION = "Powered by Geoapify · © OpenStreetMap contributors";
 
 /** Stored with names in `location_visit_name.address` (the phone's MapKit lookups used the same keys). */
-export type NamedAddress = { full: string | null; short: string | null; city: string | null; city_with_context: string | null;
+/** `area` is the neighbourhood or district (Phase 12). */
+export type NamedAddress = { full: string | null; short: string | null; area?: string | null; city: string | null; city_with_context: string | null;
   region: string | null; region_code: string | null };
-export type NearbyPlace = { name: string; category: string | null; coordinate: { lat: number; lon: number }; distance_m: number };
+export type NearbyPlace = { name: string; category: string | null; category_label?: string | null; coordinate: { lat: number; lon: number };
+  distance_m: number };
 export type SearchResult = { name: string | null; address: string | null; coordinate: { lat: number; lon: number }; category: string | null };
 
 const BASE = "https://api.geoapify.com";
 const TIMEOUT_MS = 8_000;
-/** Points of interest further than this from a visit aren't its likely place. */
+/** Points of interest further than this from a visit aren't its likely place; a coarse visit widens
+ * the circle to its accuracy, up to `NEARBY_PLACE_MAX_RADIUS_M` (Phase 12). */
 export const NEARBY_PLACE_RADIUS_M = 100;
+export const NEARBY_PLACE_MAX_RADIUS_M = 200;
+/** Candidates kept for a visit not at a saved place (Phase 12). */
+export const NEARBY_PLACES_KEPT = 5;
+export const nearbyRadius = (accuracyM: number) => Math.round(Math.max(NEARBY_PLACE_RADIUS_M, Math.min(accuracyM, NEARBY_PLACE_MAX_RADIUS_M)));
+
+/** Readable labels for the categories a likely place comes from, most specific first. */
+const CATEGORY_LABELS: Array<[string, string]> = [
+  ["catering.cafe", "café"], ["catering.restaurant", "restaurant"], ["catering.fast_food", "fast food"], ["catering.bar", "bar"],
+  ["catering.pub", "pub"], ["catering.ice_cream", "ice cream"], ["catering", "food and drink"],
+  ["commercial.supermarket", "supermarket"], ["commercial.convenience", "convenience store"], ["commercial", "shop"],
+  ["healthcare.pharmacy", "pharmacy"], ["healthcare.hospital", "hospital"], ["healthcare", "healthcare"],
+  ["education.school", "school"], ["education.university", "university"], ["education", "education"],
+  ["leisure.park", "park"], ["leisure", "leisure"], ["sport.fitness", "gym"], ["sport.stadium", "stadium"],
+  ["sport.swimming_pool", "pool"], ["sport", "sports"], ["accommodation.hotel", "hotel"], ["accommodation", "lodging"],
+  ["tourism.attraction", "attraction"], ["tourism", "sights"], ["public_transport.train", "train station"],
+  ["public_transport.subway", "subway station"], ["public_transport", "transit"], ["religion", "place of worship"],
+  ["office", "office"], ["service", "service"], ["entertainment", "entertainment"], ["childcare", "childcare"],
+  ["rental", "rental"], ["pet", "pet services"], ["activity", "activity"], ["airport", "airport"],
+];
+
+/** A place's category for display: its most specific one we label (the first array item isn't
+ * necessarily the relevant one), else the first, as words. */
+export function categoryLabel(categories: readonly string[]): string | null {
+  for (const [prefix, label] of CATEGORY_LABELS)
+    if (categories.some(category => category === prefix || category.startsWith(prefix + "."))) return label;
+  return categories[0]?.split(".").at(-1)?.replaceAll("_", " ") ?? null;
+}
 /**
  * The categories a visit's likely place can come from (places people go, not roads or areas), in two
  * requests. Geoapify silently drops broad categories such as `catering` and `commercial` from a list
@@ -76,7 +106,7 @@ export function namedAddress(row: Record<string, unknown>): NamedAddress | null 
   const state = string(row.state_code) ?? string(row.state);
   return { full: full?.replace(/(\d+);(\d+)/g, "$1–$2") ?? null, short: line1 && city && line1 !== city ? `${line1}, ${city}` : line1 ?? city, city,
     city_with_context: city ? (state ? `${city}, ${state}` : city) : null, region: string(row.country),
-    region_code: string(row.country_code)?.toUpperCase() ?? null };
+    region_code: string(row.country_code)?.toUpperCase() ?? null, area: string(row.suburb) ?? string(row.district) ?? string(row.quarter) };
 }
 
 export class Geoapify {
@@ -104,28 +134,36 @@ export class Geoapify {
   }
 
   /**
-   * The nearest named point of interest within `NEARBY_PLACE_RADIUS_M`: both category groups, merged
-   * by distance (up to 20 places each, one credit each). Null when there's none; undefined when a
-   * request failed, so the answer is unknown rather than "nothing nearby".
+   * The named points of interest within `radiusM`, nearest first, up to `NEARBY_PLACES_KEPT`: both
+   * category groups, merged by distance and de-duplicated (up to 20 places each, one credit each).
+   * Empty when there are none; undefined when a request failed, so the answer is unknown rather
+   * than "nothing nearby".
    */
-  async nearbyPlace(lat: number, lon: number): Promise<NearbyPlace | null | undefined> {
+  async nearbyPlaces(lat: number, lon: number, radiusM = NEARBY_PLACE_RADIUS_M): Promise<NearbyPlace[] | undefined> {
     const bodies = [];
     for (const group of PLACE_CATEGORY_GROUPS) {
-      const body = await this.get("/v2/places", { categories: group.join(","), filter: `circle:${lon},${lat},${NEARBY_PLACE_RADIUS_M}`,
+      const body = await this.get("/v2/places", { categories: group.join(","), filter: `circle:${lon},${lat},${radiusM}`,
         bias: `proximity:${lon},${lat}`, conditions: "named", limit: "20", lang: "en" });
       if (body === null) return undefined;
       bodies.push(body);
     }
     const seen = new Set<string>();
     // Bus stops are named by their intersection ("26th Street & Mission Street"), not a place to be.
-    const nearest = bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.includes("public_transport.bus")))
+    return bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.includes("public_transport.bus")))
       .filter(row => { const id = string(row.place_id); if (!id) return true; if (seen.has(id)) return false; seen.add(id); return true; })
-      .map(row => ({ name: string(row.name), lat: number(row.lat), lon: number(row.lon),
-        distance: number(row.distance), category: Array.isArray(row.categories) ? string(row.categories[0]) : null }))
-      .filter(row => row.name && row.lat !== null && row.lon !== null && row.distance !== null && row.distance <= NEARBY_PLACE_RADIUS_M)
-      .sort((a, b) => a.distance! - b.distance!)[0];
-    return nearest ? { name: nearest.name!, category: nearest.category, coordinate: { lat: nearest.lat!, lon: nearest.lon! },
-      distance_m: nearest.distance! } : null;
+      .flatMap(row => {
+        const name = string(row.name), lat = number(row.lat), lon = number(row.lon), distance = number(row.distance);
+        if (!name || lat === null || lon === null || distance === null || distance > radiusM) return [];
+        const categories = Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [];
+        return [{ name, category: categories[0] ?? null, category_label: categoryLabel(categories), coordinate: { lat, lon }, distance_m: distance }];
+      })
+      .sort((a, b) => a.distance_m - b.distance_m).slice(0, NEARBY_PLACES_KEPT);
+  }
+
+  /** The nearest of `nearbyPlaces`: null when there's none, undefined when unknown. */
+  async nearbyPlace(lat: number, lon: number, radiusM = NEARBY_PLACE_RADIUS_M): Promise<NearbyPlace | null | undefined> {
+    const places = await this.nearbyPlaces(lat, lon, radiusM);
+    return places === undefined ? undefined : places[0] ?? null;
   }
 
   /** Addresses and places matching typed text, nearest first when `near` is given. */

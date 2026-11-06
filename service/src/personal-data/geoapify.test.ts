@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DailyCredits, Geoapify, namedAddress, PLACE_CATEGORY_GROUPS } from "./geoapify.js";
+import { categoryLabel, DailyCredits, Geoapify, namedAddress, nearbyRadius, PLACE_CATEGORY_GROUPS } from "./geoapify.js";
 
 /** Responses recorded in Geoapify's documented shapes (no live calls in tests). */
 const reverse = { results: [{ name: "26th Street", formatted: "3327 26th Street, San Francisco, CA 94110, United States of America",
@@ -34,7 +34,8 @@ const client = (bodies: Record<string, unknown>, credits = 100) => {
 test("Geoapify names a coordinate in the stored address shape, and finds its nearest named place", async () => {
   assert.deepEqual(namedAddress(reverse.results[0]), { full: "3327 26th Street, San Francisco, CA 94110, United States of America",
     short: "3327 26th Street, San Francisco", city: "San Francisco", city_with_context: "San Francisco, CA",
-    region: "United States", region_code: "US" });
+    region: "United States", region_code: "US", area: null });
+  assert.equal(namedAddress({ ...reverse.results[0], suburb: "Mission District" })?.area, "Mission District");
   // November 5 replay: the first line can be a business or an intersection; OpenStreetMap lists
   // house numbers as "3328;3330".
   assert.equal(namedAddress({ address_line1: "Fort Help Mission", housenumber: "3353", street: "26th Street", city: "San Francisco" })?.short,
@@ -48,7 +49,7 @@ test("Geoapify names a coordinate in the stored address shape, and finds its nea
   assert.equal((await geoapify.reverse(37.749, -122.4165))?.short, "3327 26th Street, San Francisco");
   // The nearest named one, not the first returned; an unnamed building or a bus stop doesn't count.
   assert.deepEqual(await geoapify.nearbyPlace(37.749, -122.4165),
-    { name: "Blue Bottle Coffee", category: "catering.cafe", coordinate: { lat: 37.7491, lon: -122.4166 }, distance_m: 12 });
+    { name: "Blue Bottle Coffee", category: "catering.cafe", category_label: "café", coordinate: { lat: 37.7491, lon: -122.4166 }, distance_m: 12 });
   const [reverseUrl, ...placesUrls] = urls.map(url => new URL(url));
   assert.deepEqual([reverseUrl.searchParams.get("lat"), reverseUrl.searchParams.get("format"), reverseUrl.searchParams.get("apiKey")],
     ["37.749", "json", "test-key"]);
@@ -88,4 +89,18 @@ test("the daily credit budget stops calls once it's spent, and resets each UTC d
   assert.ok(await geoapify.reverse(1, 2));
   assert.equal(await geoapify.reverse(1, 2), null);
   assert.equal(urls.length, 1, "no call once the budget is spent");
+});
+
+test("Phase 12: up to 5 candidates within the visit's accuracy (100–200 m), with readable categories", async () => {
+  assert.deepEqual([nearbyRadius(3), nearbyRadius(150), nearbyRadius(500)], [100, 150, 200]);
+  const many = { features: Array.from({ length: 8 }, (_, i) => ({ properties: { name: `Place ${i}`, place_id: `p${i}`,
+    categories: i % 2 ? ["commercial", "commercial.health_and_beauty"] : ["building", "catering.cafe"], lat: 37.749, lon: -122.4165,
+    distance: 10 + i * 30 } })) };
+  const { geoapify, urls } = client({ "/v2/places": many });
+  const found = await geoapify.nearbyPlaces(37.749, -122.4165, 150);
+  assert.deepEqual(found?.map(place => [place.name, place.distance_m, place.category_label]),
+    [["Place 0", 10, "café"], ["Place 1", 40, "shop"], ["Place 2", 70, "café"], ["Place 3", 100, "shop"], ["Place 4", 130, "café"]],
+    "nearest first, within 150 m, at most 5, labelled from the most specific category we know");
+  assert.equal(new URL(urls[0]).searchParams.get("filter"), "circle:-122.4165,37.749,150");
+  assert.deepEqual([categoryLabel(["sport", "sport.fitness"]), categoryLabel(["man_made.tower"]), categoryLabel([])], ["gym", "tower", null]);
 });

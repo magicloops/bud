@@ -1,7 +1,9 @@
 # Phase 12: Unknown places — more context for visits not at a saved place
 
-Status: planned (2026-11-06). Builds on Phase 11 (Geoapify names); on the same branches
-(`feat/place-pins`, `feature/place-pins`) unless decided otherwise.
+Status: implemented (2026-11-06), service only, on `feat/place-pins`. One change from the plan:
+the candidates are a new `nearby` column (migration 0065), not keys inside `place`, which several
+places present directly as the likely place. Apps get candidates on visits only (not timeline
+points), and none at rounded precision.
 
 ## Why
 
@@ -61,10 +63,11 @@ reference section.
   `sport.fitness` → gym, `office` → office), with a fallback to the last segment.
 
 **Clarity** (computed when presented, so the rule can change without renaming)
-- `clear`: the nearest candidate is within the visit's accuracy (at least 30 m) and at least
-  twice as close as the next one, or it's the only one.
-- `several`: two or more candidates within the accuracy (at least 30 m), with no clear nearest.
 - `none_close`: no candidate within the accuracy (at least 30 m); the nearest is further.
+- `clear`: the nearest is within reach, and the next candidate is further by at least the
+  accuracy (at least 10 m), so the reading's error can't swap them; or there's no other.
+- `several`: otherwise. (Built first as "twice as close"; on November 5 that called a ±96 m visit
+  with places at 15 m and 35 m clear.)
 - Presented as `match: "clear" | "several" | "none_close"` with one sentence for the agent.
 
 **Earlier visits** (`location.ts`)

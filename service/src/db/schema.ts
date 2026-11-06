@@ -1649,6 +1649,8 @@ export const locationVisitNameTable = pgTable("location_visit_name", {
   source: text("source").notNull().default("apple"),
   address: jsonb("address").$type<Record<string, string | null> | null>(),
   place: jsonb("place").$type<Record<string, unknown> | null>(),
+  // Up to 5 named places nearby, nearest first (Phase 12): candidates for a visit not at a saved place.
+  nearby: jsonb("nearby").$type<Array<Record<string, unknown>> | null>(),
   namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),

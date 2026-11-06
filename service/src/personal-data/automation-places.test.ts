@@ -233,6 +233,39 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   assert.match(merged, /^A visit at Desk ended [^\n]*, after 10 minutes\./);
   assert.match(merged, /- These times are from Bud's arrival and departure at Desk; iOS reported the visit from [^\n]+ to [^\n]+\./);
 
+  // Phase 12: away from saved places, the candidates and earlier visits nearby (within approved history).
+  const nameWith = async (key: string, place: string | null, nearby: Array<Record<string, unknown>> | null = null) => {
+    const values = { address: null, place: place ? { name: place } : null, nearby, namedAt: new Date(), receivedAt: new Date(), source: "geoapify",
+      rawEventId: null };
+    await db.insert(s.locationVisitNameTable).values({ id: randomUUID(), visitKey: key, createdByUserId: owner, ...values })
+      .onConflictDoUpdate({ target: [s.locationVisitNameTable.createdByUserId, s.locationVisitNameTable.visitKey], set: values });
+  };
+  const near = (metres: number) => 38.95 + metres / 111_195;
+  for (const [key, at, lat, place] of [["p1", 3000, near(0), "Finjan Qahwa"], ["p2", 2000, near(20), "Finjan Qahwa"],
+    ["p3", 1000, near(30), "Cappstone"], ["p4", 900, near(1000), "Elsewhere"]] as const) {
+    await upload([visit(key, ago(at), ago(at - 30), lat)], { names: false });
+    await nameWith(key, place);
+  }
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
+  const candidates = [{ name: "Finjan Qahwa", category_label: "café", distance_m: 19 }, { name: "Cappstone", category_label: "shop", distance_m: 25 }];
+  await upload([visit("u", ago(12), ago(4), near(5))], { names: false });
+  await nameWith("u", "Finjan Qahwa", candidates);
+  while (await matcher.matchNext(owner)) { /* drain */ }
+  while (await admission.admitNext(owner)) { /* drain */ }
+  const unknownRun = await invocationFor("ended-any", await visitId("u"));
+  assert.match(unknownRun.input.content, /- Nearby \(OpenStreetMap, within 100 m; candidates, not verified\): Finjan Qahwa \(café, 19 m\), Cappstone \(shop, 25 m\)\.\n/);
+  assert.match(unknownRun.input.content, /- Visited within 50 m 3 times before, since [A-Z][a-z]{2} \d+; usually near Finjan Qahwa\.\n/);
+  const unknownEvidence = JSON.parse((await db.transaction(tx => automationStartEvidence(tx, unknownRun.invocation)))!.split("\n").at(-1)!);
+  assert.deepEqual([unknownEvidence.visit.nearby_places.length, unknownEvidence.visit.match, unknownEvidence.visit.earlier_visits.count,
+    unknownEvidence.visit.earlier_visits.usual_place], [2, "several", 3, "Finjan Qahwa"], "19 m and 25 m are both within reach");
+  // The agent's visit list: candidates only for visits away from saved places.
+  const listedAgain = await new LocationQueries(db).visits(owner, { from: ago(200).toISOString(), to: ago(-1).toISOString() });
+  const byKeyAgain = new Map(listedAgain.items.map(item => [item.visit_key, item as typeof item & { nearby_places?: unknown[]; match?: string }]));
+  assert.deepEqual([byKeyAgain.get("u")?.match, byKeyAgain.get("u")?.nearby_places?.length], ["several", 2]);
+  assert.equal(byKeyAgain.get("a")?.nearby_places, undefined, "a visit at Home has no candidates");
+
   // Deleting the place after admission fails a later admission for it, and withdrawing location access stops runs at their policy check.
   await places.delete(owner, home.id);
   await db.update(s.automationDeliveryTable).set({ status: "pending", invocationId: null })

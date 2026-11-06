@@ -619,3 +619,12 @@ the phone's Apple lookups, labelled `apple`, for the approved replacement and
 deletion.
 
 Applied locally as exact SQL.
+
+### `0065_visit_name_nearby.sql`
+
+Phase 12. Generated and additive. `location_visit_name.nearby` (nullable jsonb):
+up to 5 named places near a visit or fix, nearest first, with category, label and
+distance. Candidates for a visit away from saved places. Existing names get null
+until they're named again.
+
+Applied locally as exact SQL.

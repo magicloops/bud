@@ -456,6 +456,13 @@
       "when": 1793945909726,
       "tag": "0064_geoapify_visit_names",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1793955134997,
+      "tag": "0065_visit_name_nearby",
+      "breakpoints": true
     }
   ]
 }

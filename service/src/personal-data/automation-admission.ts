@@ -17,6 +17,8 @@ import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, p
 import { describeLocalWindow } from "./automation-schedule.js";
 import { DEPARTURE_SETTLE_MS, presenceReading } from "./place-presence.js";
 import { placeOfVisit, placesForOwner, presenceStays } from "./places.js";
+import { earlierLine, earlierVisits, nearbyLine } from "./place-context.js";
+import { nearbyRadius } from "./geoapify.js";
 import { admissionText, duration, lateReport, localTime, phoneTimeZone, timeZoneLine, timelineAdmissionText } from "./automation-trigger-text.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -201,6 +203,18 @@ export class AutomationAdmission {
       throw error;
     }
     return { delivery, definition, trigger, modelResolution, grantVersion: grant?.version ?? 0 };
+  }
+
+  /** Away from saved places (Phase 12): the nearby candidates, and earlier visits within the
+   * approved history. */
+  private async unknownPlaceLines(tx: Transaction, owner: string,
+    row: { visit: typeof locationVisits.$inferSelect; name: typeof visitNames.$inferSelect | null }, zone: string | null, historyDays: number,
+    now: Date) {
+    const nearby = nearbyLine(row.name?.nearby, nearbyRadius(row.visit.horizontalAccuracyM));
+    const since = new Date(now.getTime() - historyDays * 86400_000);
+    const earlier = await earlierVisits(tx, owner, { lat: row.visit.latitude, lon: row.visit.longitude }, row.visit.startedAt, since);
+    const day = (at: Date) => at.toLocaleDateString("en-US", { timeZone: zone ?? "UTC", month: "short", day: "numeric" });
+    return [nearby, earlierLine(earlier, day)].filter((line): line is string => line !== null);
   }
 
   /** The stay presence recorded at a place that overlaps a visit most, if it differs from the visit's
@@ -440,6 +454,7 @@ export class AutomationAdmission {
         event: `A visit at ${where} ended ${localTime(endedAt, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
         reference: [timeZoneLine(zone), ...late(row.visit.departureAt!, row.publishedAt), ...iosTimes,
           ...(saved?.address ? savedAddress(saved) : saved && address ? [`${saved.name}'s nearest street address (OpenStreetMap) is ${address}.`] : []),
+          ...(saved ? [] : await this.unknownPlaceLines(tx, owner, row, zone, Math.min(grantHistoryDays, definition.data_access.history_days), now)),
           `Visit ID: ${row.visit.id}.`,
           "iOS reports visits several minutes after they happen, then uploads, so this may arrive late.",
           "Places are the user's saved labels; addresses and likely places are from OpenStreetMap via Geoapify, and a likely place is not verified."],

@@ -6,6 +6,7 @@ import { locationObservationTable as locations, contactTable as contacts, locati
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
 import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents, visitPlaces } from "./places.js";
+import { earlierVisits, placeContext } from "./place-context.js";
 
 /** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits.
  * Fixes are one-off positions the phone takes when Bud opens; their `fix_key` is stored as the
@@ -121,7 +122,11 @@ export class LocationQueries {
       .orderBy(asc(locations.occurredAt), asc(locations.id)).limit(limit + 1);
     const page = rows.slice(0, limit);
     const last = page.at(-1);
-    return { items: page.map(row => presentLocation(row.location, row.name)),
+    const owned = await placesForOwner(this.database, owner);
+    // Away from saved places, a visit or fix carries its nearby candidates (Phase 12).
+    return { items: page.map(row => ({ ...presentLocation(row.location, row.name),
+      ...(row.location.kind !== "significant_change" && matchingPlaces(owned, row.location).length === 0
+        ? placeContext(row.name, row.location.horizontalAccuracyM) : {}) })),
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ binding, time: last.location.occurredAt.toISOString(), id: last.location.id })).toString("base64url") : null,
       coverage: { from: from.toISOString(), to: to.toISOString(), continuous: false, time_basis: "source_observation" } };
   }
@@ -155,7 +160,11 @@ export class LocationQueries {
     const owned = await placesForOwner(this.database, owner);
     const page = rows.slice(0, limit), last = page.at(-1);
     const items = [];
-    for (const row of page) items.push({ ...presentVisit(row.visit, row.name, now), places: await visitPlaces(this.database, owner, owned, row.visit) });
+    for (const row of page) {
+      const places = await visitPlaces(this.database, owner, owned, row.visit);
+      items.push({ ...presentVisit(row.visit, row.name, now), places,
+        ...(places.length === 0 ? placeContext(row.name, row.visit.horizontalAccuracyM) : {}) });
+    }
     return { items,
       next_cursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ binding, time: last.visit.startedAt.toISOString(), id: last.visit.id })).toString("base64url") : null,
       coverage: { from: from.toISOString(), to: to.toISOString(), continuous: false,
@@ -181,7 +190,13 @@ export class LocationQueries {
     const point = pointRow?.location;
     const now = Date.now();
     const owned = await placesForOwner(this.database, owner);
-    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: await visitPlaces(this.database, owner, owned, visitRow.visit) } : null;
+    const visitLabels = visitRow ? await visitPlaces(this.database, owner, owned, visitRow.visit) : [];
+    // Away from saved places: the candidates, and earlier visits within approved history (Phase 12).
+    const unknown = async (coordinate: { lat: number; lon: number }, accuracy: number, name: typeof names.$inferSelect | null, at: Date) =>
+      ({ ...placeContext(name, accuracy), earlier_visits: await earlierVisits(this.database, owner, coordinate, at, limits.notBefore ?? null) });
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: visitLabels,
+      ...(visitLabels.length === 0 ? await unknown({ lat: visitRow.visit.latitude, lon: visitRow.visit.longitude },
+        visitRow.visit.horizontalAccuracyM, visitRow.name, visitRow.visit.startedAt) : {}) } : null;
     // Age is always the time since the phone observed this location; an unfinished visit is not
     // "now". The newest observation wins (a fix, a coarse point or a visit report); a newer fix or
     // point within accuracy of an in-progress visit says so, since iOS can miss departures.
@@ -201,6 +216,8 @@ export class LocationQueries {
         occurred_at: point!.occurredAt, received_at: point!.receivedAt,
         address: pointRow!.name?.address ?? null, place: pointRow!.name?.place ?? null,
         places: matchingPlaces(owned, point!),
+        ...(point!.kind === "fix" && matchingPlaces(owned, point!).length === 0 ? await unknown({ lat: point!.latitude, lon: point!.longitude },
+          point!.horizontalAccuracyM, pointRow!.name, point!.occurredAt) : {}),
         ...(withinVisit ? { within_visit: { id: visitRow!.visit.id, arrival_at: visitRow!.visit.arrivalAt,
           note: "iOS reported arriving here then and no departure since; it can miss departures." } } : {}) },
       as_of: new Date(at), age_seconds: Math.round(age / 1000), stale: age > RECENT_LIMIT_MS,

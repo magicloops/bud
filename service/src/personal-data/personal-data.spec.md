@@ -495,6 +495,17 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   (`geoapify`, or `apple` for older phone lookups, migration 0064) and a nullable
   `raw_event_id` (service names have none). `db:geoapify-visit-names` replaces
   Apple-sourced names, then deletes the rest; each environment needs approval.
+- **Unknown places (Phase 12, `place-context.ts`):** a name also keeps `nearby`
+  (migration 0065): up to 5 named places within the visit's accuracy (100–200 m,
+  `nearbyRadius`), nearest first, with Geoapify's category and a readable
+  `category_label`; and `address.area` (the neighbourhood). For a visit or fix not at
+  a saved place, the agent gets `nearby_places`, `match` (`clear`: the nearest within
+  the accuracy, at least 30 m, and twice as near as the next; `several`; `none_close`)
+  with `match_note`, and on single visits (`recent`, visit-ended evidence)
+  `earlier_visits`: completed visits within 50 m inside the approved history, with the
+  place most often named among them when it's at least half. Visit-ended text adds a
+  "Nearby …" and a "Visited within 50 m … before" reference line. Rounded app keys get
+  none of these.
 - v2 visits require `visit_key`, which is stored on `location_observation`.
 - `LocationQueries.list` and `contactContext` join names and present
   `visit_key`, `address` and `place`.

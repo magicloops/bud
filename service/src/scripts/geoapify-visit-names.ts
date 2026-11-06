@@ -8,14 +8,15 @@
  */
 import { sql } from "drizzle-orm";
 import { db, pool } from "../db/client.js";
-import { Geoapify } from "../personal-data/geoapify.js";
+import { Geoapify, nearbyRadius } from "../personal-data/geoapify.js";
 
 const rename = process.argv.includes("--rename"), deleteApple = process.argv.includes("--delete-apple");
 const limit = Number(process.argv.find(arg => arg.startsWith("--limit="))?.slice(8) ?? 1000);
 
 /** Apple-sourced names with the coordinate of their visit, or of their fix. */
-const appleNames = async (count: number) => (await db.execute<{ id: string; latitude: number; longitude: number }>(sql`
-  select n.id, coalesce(v.latitude, o.latitude) as latitude, coalesce(v.longitude, o.longitude) as longitude
+const appleNames = async (count: number) => (await db.execute<{ id: string; latitude: number; longitude: number; accuracy: number }>(sql`
+  select n.id, coalesce(v.latitude, o.latitude) as latitude, coalesce(v.longitude, o.longitude) as longitude,
+    coalesce(v.horizontal_accuracy_m, o.horizontal_accuracy_m) as accuracy
   from location_visit_name n
   left join location_visit v on v.created_by_user_id = n.created_by_user_id and v.visit_key = n.visit_key
   left join location_observation o on o.created_by_user_id = n.created_by_user_id and o.visit_key = n.visit_key and o.kind = 'fix'
@@ -37,9 +38,11 @@ try {
     let renamed = 0, failed = 0;
     for (const row of await appleNames(limit)) {
       const address = await geoapify.reverse(Number(row.latitude), Number(row.longitude));
-      const place = await geoapify.nearbyPlace(Number(row.latitude), Number(row.longitude));
-      if ((!address && !place) || place === undefined) { failed++; continue; }
+      const nearby = await geoapify.nearbyPlaces(Number(row.latitude), Number(row.longitude), nearbyRadius(Number(row.accuracy)));
+      const place = nearby?.[0] ?? null;
+      if ((!address && !place) || nearby === undefined) { failed++; continue; }
       await db.execute(sql`update location_visit_name set address = ${address ? JSON.stringify(address) : null}::jsonb, place = ${place ? JSON.stringify(place) : null}::jsonb,
+        nearby = ${JSON.stringify(nearby)}::jsonb,
         source = 'geoapify', raw_event_id = null, named_at = clock_timestamp(), received_at = clock_timestamp() where id = ${row.id}`);
       renamed++;
     }
