@@ -47,6 +47,7 @@ order, because each builds on the one before.
 | 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
 | 9 | [Place pins](phase-9-place-pins.md) | See and move a place's pin on a map; agents ask the user to place a pin from an address (a `place` question), so only user-confirmed coordinates are saved | Service, web, iOS |
 | 10 | [Place addresses](phase-10-place-addresses.md) | The address the user gave or picked is saved with the place and preferred over reverse geocoding in messages, evidence and results | Service, web, iOS |
+| 11 | [Geoapify place lookup](phase-11-geoapify-place-lookup.md) | Visit names, addresses and place search from Geoapify (storable under its terms) through the service; Apple only draws maps; Apple-derived names replaced, then deleted | Service, web, iOS |
 
 **Why this order:**
 - Everything depends on reliable capture (6.1).
