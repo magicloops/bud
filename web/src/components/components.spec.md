@@ -274,7 +274,9 @@ Owner view at `/data/location`:
   the OpenStreetMap embed when maps are unavailable), with "Save as place" when
   the visit isn't at a saved place; the last-known fix or visit has it too;
 - a Places section listing saved places (address under the name, radius,
-  "saved by an agent") with "View on map / Move" and delete.
+  "saved by an agent") with "View on map / Move" and delete;
+- the Geoapify / OpenStreetMap attribution (`PlaceDataAttribution`), since
+  visit names and addresses come from the service's Geoapify lookups.
 
 "Save as place" and "View on map / Move" open the pin editor
 (`place-pin-editor.tsx`): create is a `POST`, edit a `PUT` with only the changed
@@ -289,9 +291,11 @@ questions (`workbench/question-request-card.tsx`):
 - `PlacePinEditor`: MapKit JS map with a fixed pin at the visual centre (the
   user moves the map under it), the radius as a circle that follows the centre,
   an optional dashed accuracy circle for the starting reading, a search box
-  (`mapkit.Search`; results stay in the browser, only the saved pin is sent), a
+  (Phase 11: `GET /api/places/search` near the map centre, on Enter or the
+  button; results show the linked Geoapify / OpenStreetMap attribution, and a
+  429 or 503 shows a message while the map and pin keep working), a
   name field, an optional address field and a 50–2000 m radius slider (step 25).
-  The address (Phase 10) is filled by a picked result's formatted address,
+  The address (Phase 10) is filled by a picked result's `address`,
   seeded from a question's `query` or a saved place's address, and editable;
   when the pin moves more than `ADDRESS_DROP_M` (50 m) from where it was set,
   the field clears with "Keep it" to restore it (anchor rules in
@@ -305,7 +309,12 @@ questions (`workbench/question-request-card.tsx`):
   so its form never nests in the question form.
 - `VisitMap`: a read-only MapKit map with a marker and accuracy circle, or the
   OpenStreetMap embed when maps are unavailable.
+- `PlaceDataAttribution`: "Powered by Geoapify · © OpenStreetMap contributors",
+  linked.
 
-MapKit loading lives in `lib/mapkit.ts`; seeding, changed fields and answers in
+MapKit loading lives in `lib/mapkit.ts`; search helpers in
+`lib/place-search.ts`; seeding, changed fields and answers in
 `lib/place-pin.ts`. `place-pin-editor.test.tsx` mounts the editor with maps
-unavailable.
+unavailable; `place-pin-search.test.tsx` mounts it on a fake MapKit to cover
+the seed search, filling the address from a pick, the `near` bias, and the
+rate-limited and unavailable messages.

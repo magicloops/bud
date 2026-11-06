@@ -3,6 +3,14 @@
 Status: in progress (2026-11-05), on the Phase 9 and 10 branches (`feat/place-pins`,
 `feature/place-pins`), so they never ship Apple-filled addresses. Everything merges together once
 Geoapify proves good enough for us (the replay below, and use).
+- Service done: `geoapify.ts` (client and daily credits), `visit-naming.ts` (the naming worker),
+  `GET /api/places/search`, phone names `unsupported`, OpenStreetMap wording, migration 0064, and
+  `db:geoapify-visit-names` (dry run by default).
+- Web and iOS done: both pin editors search through `/api/places/search` and show the attribution;
+  MapKit JS loads only the map; the phone no longer names visits (TimelineCore `VisitNaming.swift`
+  removed, and its stored queue deleted on open).
+- Still to do: add `GEOAPIFY_API_KEY` and try it; the replay comparison; then, with approval,
+  `--rename` and `--delete-apple` (local, then bud.dev).
 
 ## Why
 
@@ -103,8 +111,9 @@ service ignores them.
 
 ## Costs and limits
 
-- Free plan: 3,000 credits a day, at up to 5 requests a second. A visit costs about 3 credits
-  (an arrival and a completion reverse geocode, plus one points-of-interest lookup). A search
+- Free plan: 3,000 credits a day, at up to 5 requests a second. A visit name costs 3 credits (a
+  reverse geocode and two points-of-interest requests); a visit is named on arrival and again on
+  completion, so about 6. A search
   costs about 1 per query typed: debounce autocomplete.
 - Free-plan production use is allowed "with some limitations": confirm with Geoapify, or move to a
   paid plan (from $59 a month for 10,000 credits a day), before launch.
@@ -131,3 +140,27 @@ service ignores them.
   agents. Confirm when moving past the free plan.
 - **Attribution in pushes and agent messages:** show it in the apps where addresses appear, and in
   the agent's reference text. Confirm with Geoapify that pushes don't need it.
+
+## First comparison (November 5, 12 recent visits and fixes, read-only)
+
+Geoapify's key works. Compared with the stored Apple names:
+- **Addresses:** the same street every time; house numbers often differ by a few, as either
+  would at ±10–80 m (Apple "3384 26th St", Geoapify "3363 26th Street").
+- **Likely places:** found for every lookup once two problems were fixed (below). Usually a
+  different neighbour than Apple's ("The Fold" against "Fort Help Mission"); parks are named
+  ("Precita Park", "Juri Commons").
+- **Fixed on the way:**
+  - `short` came from the first address line, which can be a business or an intersection; it's
+    built from the house number and street now, with "3328;3330" shown as "3328–3330".
+  - The full category list returned nothing within 100 m. Geoapify silently drops broad categories
+    such as `catering` and `commercial` from a list that also has `tourism`, `accommodation`,
+    `airport` or most `sport.*` ones (`catering,tourism` returns exactly the tourism-only results,
+    at any limit, with or without bias, by GET or POST); each group mixes within itself. Narrow
+    subcategories (`catering.cafe`) do mix with the others. The nearby-place lookup now makes **two
+    requests**, one per group
+    (`PLACE_CATEGORY_GROUPS`), with `conditions=named`, merged by distance and de-duplicated by
+    `place_id`. A failed request leaves the place unknown, and the name is retried. A visit name
+    is 3 credits.
+  - Bus stops named by their intersection are skipped.
+- **After the two-group change:** the same place as Apple's at 7 of the 12 (Cricket Wireless,
+  PeopleReady, Fort Help Mission), and a nearby one at the rest.

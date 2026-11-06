@@ -13,7 +13,7 @@ import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents, visitPla
 export const LOCATION_TYPES = ["location.visit.v1", "location.visit.v2", "location.significant_change.v1", "location.fix.v1"];
 /** Coarse significant-change points and precise fixes, as opposed to visits. */
 export const POINT_KINDS = ["significant_change", "fix"];
-/** Address and likely place for a v2 visit, looked up on the phone after it completes. */
+/** The phone's visit names (MapKit lookups): no longer stored, as Apple's terms don't allow it (Phase 11). */
 export const VISIT_NAME_TYPE = "location.visit_named.v1";
 function timestamp(value: unknown): Date | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
@@ -40,31 +40,6 @@ export function parseLocationPayload(type: string, value: unknown) {
 }
 
 const text = (value: unknown, limit: number) => typeof value === "string" && value.length > 0 && value.length <= limit ? value : null;
-const ADDRESS_FIELDS = ["full", "short", "city", "city_with_context", "region", "region_code"] as const;
-
-/** Validates a `location.visit_named.v1` payload; any part may be absent. */
-export function parseVisitName(value: unknown) {
-  if (!isRecord(value)) return null;
-  const visitKey = text(value.visit_key, 128), namedAt = timestamp(value.named_at);
-  if (!visitKey || !namedAt || value.source !== "apple") return null;
-  let address: Record<string, string | null> | null = null;
-  if (value.address != null) {
-    if (!isRecord(value.address)) return null;
-    const source = value.address;
-    address = Object.fromEntries(ADDRESS_FIELDS.map(key => [key, text(source[key], 500)]));
-  }
-  let place: Record<string, unknown> | null = null;
-  if (value.place != null) {
-    const raw = value.place;
-    if (!isRecord(raw) || !isRecord(raw.coordinate)) return null;
-    const name = text(raw.name, 300), lat = raw.coordinate.lat, lon = raw.coordinate.lon, distance = raw.distance_m;
-    if (!name || typeof lat !== "number" || typeof lon !== "number" || Math.abs(lat) > 90 || Math.abs(lon) > 180
-      || typeof distance !== "number" || !Number.isFinite(distance) || distance < 0) return null;
-    place = { name, category: text(raw.category, 100), coordinate: { lat, lon }, distance_m: distance };
-  }
-  return { visitKey, address, place, namedAt };
-}
-
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type ParsedLocation = NonNullable<ReturnType<typeof parseLocationPayload>>;
 

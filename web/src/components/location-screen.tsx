@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { SettingsNavigation } from './settings-layout'
-import { PlacePinDialog, VisitMap } from './place-pin-editor'
+import { PlaceDataAttribution, PlacePinDialog, VisitMap } from './place-pin-editor'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { useRequireAuthenticatedUser } from '@/lib/route-auth'
 import { apiFetch, apiFetchJson, isApiError } from '@/lib/transport'
@@ -49,7 +49,7 @@ function LocationView() {
     <div className="mx-auto max-w-5xl space-y-6">
       <SettingsNavigation />
       <header className="space-y-2"><h1 className="text-2xl font-bold">Location</h1>
-        <p className="text-muted-foreground">Places your phone noticed you staying, with addresses and likely places from Apple Maps. Time between visits isn't tracked.</p>
+        <p className="text-muted-foreground">Places your phone noticed you staying, with addresses and likely places from OpenStreetMap. Time between visits isn't tracked.</p>
       </header>
       <nav aria-label="Data types" className="flex flex-wrap gap-3 text-sm"><Link to="/data/contacts">Contacts</Link><Link to="/data/health">Health</Link><span aria-current="page" className="font-semibold">Location</span></nav>
       {recent?.location && <div className="space-y-2 rounded border p-3 text-sm"><p>Last known: {recent.location.kind === 'visit' ? visitTitle(recent.location) : recent.location.kind === 'fix'
@@ -83,6 +83,8 @@ function LocationView() {
         </section>}
       </div>
       <PlacesSection places={places} onChanged={placesChanged} />
+      {/* Visit addresses and names, and searched addresses, are OpenStreetMap data via Geoapify. */}
+      <PlaceDataAttribution />
     </div>
   </main>
 }

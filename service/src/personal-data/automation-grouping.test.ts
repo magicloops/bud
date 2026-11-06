@@ -42,19 +42,24 @@ test("location triggers for one conversation combine into one timeline run, one 
   const visit = (key: string, arrival: Date, departure: Date | null, lat: number) => ["location.visit.v2", { visit_key: key,
     phase: departure ? "completed" : "arrived", arrival_at: arrival.toISOString(), departure_at: departure?.toISOString() ?? null,
     coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: 20 }] as [string, unknown];
-  const upload = async (sent: Array<[string, unknown]>, options: { names?: boolean } = {}) => {
+  // The service names a visit (Phase 11's naming worker, which calls Geoapify); admission waits for
+  // a name from after the visit ended. Tests write the name the worker would.
+  const nameVisit = async (key: string, short: string | null = null, at = new Date()) => {
+    const values = { address: short ? { full: short, short, city: null, city_with_context: null, region: null, region_code: null } : null,
+      place: null, namedAt: at, receivedAt: at, source: "geoapify", rawEventId: null };
+    await db.insert(s.locationVisitNameTable).values({ id: randomUUID(), visitKey: key, createdByUserId: owner, ...values })
+      .onConflictDoUpdate({ target: [s.locationVisitNameTable.createdByUserId, s.locationVisitNameTable.visitKey], set: values });
+  };
+  const upload = async (values: Array<[string, unknown]>, options: { names?: boolean } = {}) => {
     const context = { userId: owner, installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
-    // The phone names a completed visit at its final coordinate, and admission waits for that name.
-    const names = options.names === false ? [] : sent.flatMap(([type, payload]) => {
-      const visit = payload as { phase?: string; visit_key?: string };
-      return type === "location.visit.v2" && visit.phase === "completed" ? [["location.visit_named.v1", { visit_key: visit.visit_key,
-        source: "apple", named_at: ago(0).toISOString(), address: null, place: null }] as [string, unknown]] : [];
-    });
-    const values = [...sent, ...names];
     const lines = values.map(([type, payload]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
       occurred_at: ago(0).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" }, payload }));
     await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
     while (await processor.processNext()) { /* drain */ }
+    if (options.names !== false) for (const [type, payload] of values) {
+      const visit = payload as { phase?: string; visit_key?: string };
+      if (type === "location.visit.v2" && visit.phase === "completed") await nameVisit(visit.visit_key!);
+    }
   };
 
   const home = await places.create(owner, { name: "Home", latitude: 37.70, longitude: -122.4 }, "user");

@@ -48,6 +48,7 @@ order, because each builds on the one before.
 | 9 | [Place pins](phase-9-place-pins.md) | See and move a place's pin on a map; agents ask the user to place a pin from an address (a `place` question), so only user-confirmed coordinates are saved | Service, web, iOS |
 | 10 | [Place addresses](phase-10-place-addresses.md) | The address the user gave or picked is saved with the place and preferred over reverse geocoding in messages, evidence and results | Service, web, iOS |
 | 11 | [Geoapify place lookup](phase-11-geoapify-place-lookup.md) | Visit names, addresses and place search from Geoapify (storable under its terms) through the service; Apple only draws maps; Apple-derived names replaced, then deleted | Service, web, iOS |
+| 12 | [Unknown places](phase-12-unknown-places.md) | For visits not at a saved place: address and area, up to 5 nearby candidates with categories and distances, how clear the match is, and earlier visits nearby | Service |
 
 **Why this order:**
 - Everything depends on reliable capture (6.1).

@@ -44,19 +44,24 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   const visit = (key: string, arrival: Date | null, departure: Date | null, lat: number, accuracy = 20) =>
     ["location.visit.v2", { visit_key: key, phase: departure ? "completed" : "arrived", arrival_at: arrival?.toISOString() ?? null,
       departure_at: departure?.toISOString() ?? null, coordinate: { lat, lon: -122.4 }, horizontal_accuracy_m: accuracy }] as [string, unknown];
-  const upload = async (sent: Array<[string, unknown]>, options: { names?: boolean } = {}) => {
+  // The service names a visit (Phase 11's naming worker, which calls Geoapify); admission waits for
+  // a name from after the visit ended. Tests write the name the worker would.
+  const nameVisit = async (key: string, short: string | null = null, at = new Date()) => {
+    const values = { address: short ? { full: short, short, city: null, city_with_context: null, region: null, region_code: null } : null,
+      place: null, namedAt: at, receivedAt: at, source: "geoapify", rawEventId: null };
+    await db.insert(s.locationVisitNameTable).values({ id: randomUUID(), visitKey: key, createdByUserId: owner, ...values })
+      .onConflictDoUpdate({ target: [s.locationVisitNameTable.createdByUserId, s.locationVisitNameTable.visitKey], set: values });
+  };
+  const upload = async (values: Array<[string, unknown]>, options: { names?: boolean } = {}) => {
     const context = { userId: owner, installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
-    // The phone names a completed visit at its final coordinate, and admission waits for that name.
-    const names = options.names === false ? [] : sent.flatMap(([type, payload]) => {
-      const visit = payload as { phase?: string; visit_key?: string };
-      return type === "location.visit.v2" && visit.phase === "completed" ? [["location.visit_named.v1", { visit_key: visit.visit_key,
-        source: "apple", named_at: ago(0).toISOString(), address: null, place: null }] as [string, unknown]] : [];
-    });
-    const values = [...sent, ...names];
     const lines = values.map(([type, payload]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
       occurred_at: ago(0).toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" }, payload }));
     await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
     while (await processor.processNext()) { /* drain */ }
+    if (options.names !== false) for (const [type, payload] of values) {
+      const visit = payload as { phase?: string; visit_key?: string };
+      if (type === "location.visit.v2" && visit.phase === "completed") await nameVisit(visit.visit_key!);
+    }
   };
   const visitId = async (key: string) => (await db.select().from(s.locationVisitTable).where(eq(s.locationVisitTable.visitKey, key)))[0].id;
   // Place events reach their visit through the presence change; visit.ended names it directly.
@@ -85,8 +90,8 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   // Visit c: a place saved during the visit is its baseline and never fires for it.
   await places.create(owner, { name: "Office", latitude: 37.90, longitude: -122.4 }, "user");
   // Its Apple name: the Office has no saved address, so messages fall back to it, labelled as Apple's.
-  await upload([visit("c", ago(20), ago(2), 37.90), ["location.visit_named.v1", { visit_key: "c", source: "apple",
-    named_at: ago(0).toISOString(), address: { short: "3384 26th St" }, place: null }]], { names: false });
+  await upload([visit("c", ago(20), ago(2), 37.90)], { names: false });
+  await nameVisit("c", "3384 26th St");
   // Visit d: far from everything.
   await upload([visit("d", ago(15), ago(1), 38.5)]);
   events = await published();
@@ -177,7 +182,7 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   // Phase 10: the place's saved address, the user's, wins over reverse geocoding; without one, the
   // visit's address is Apple's nearest match.
   assert.match(endedRun, /Home is at 3327 26th St, San Francisco \(the user's saved address\)\./);
-  assert.match(endedRun, /Office's nearest address from Apple Maps is 3384 26th St\./);
+  assert.match(endedRun, /Office's nearest street address \(OpenStreetMap\) is 3384 26th St\./);
   assert.match(arrived.input.content, /\n- Home is at 3327 26th St, San Francisco \(the user's saved address\)\.\n/);
   assert.equal(await checkAutomationPolicy(arrived.invocation, true, db), "ready");
 
@@ -191,21 +196,21 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   // A visit end waits (up to a minute) for the name of its final coordinate, which can be
   // processed after the completion (November 4: the message and its evidence named two addresses).
   await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
-  const named = (key: string, short: string, at = ago(0)) => ["location.visit_named.v1", { visit_key: key, source: "apple",
-    named_at: at.toISOString(), address: { short }, place: null }] as [string, unknown];
-  await upload([visit("e", ago(40), null, 38.6), named("e", "300 Bartlett St", ago(39))]);
+  await upload([visit("e", ago(40), null, 38.6)]);
+  await nameVisit("e", "300 Bartlett St", ago(39));
   await upload([visit("e", ago(40), ago(3), 38.6)], { names: false });
   while (await matcher.matchNext(owner)) { /* drain */ }
   while (await admission.admitNext(owner)) { /* drain */ }
   const e = await visitId("e");
   assert.deepEqual([(await admitted("ended-any", e)).status, (await admitted("ended-any", e)).outcomeCode], ["pending", "visit_naming_pending"]);
-  await upload([named("e", "1245 Valencia St")]);
+  await nameVisit("e", "1245 Valencia St");
   await db.update(s.automationDeliveryTable).set({ nextAttemptAt: ago(1) }).where(eq(s.automationDeliveryTable.id, (await admitted("ended-any", e)).id));
   while (await admission.admitNext(owner)) { /* drain */ }
   assert.match((await invocationFor("ended-any", e)).input.content, /^A visit at 1245 Valencia St ended /);
   // Without a newer name a minute after publication, it goes ahead with the one it has.
   await db.update(s.agentInvocationTable).set({ status: "succeeded" }).where(eq(s.agentInvocationTable.createdByUserId, owner));
-  await upload([visit("f", ago(30), null, 38.7), named("f", "Old St", ago(29))]);
+  await upload([visit("f", ago(30), null, 38.7)]);
+  await nameVisit("f", "Old St", ago(29));
   await upload([visit("f", ago(30), ago(2), 38.7)], { names: false });
   const f = await visitId("f");
   await db.update(s.dataDomainEventTable).set({ publishedAt: ago(1.5) }).where(eq(s.dataDomainEventTable.visitId, f));

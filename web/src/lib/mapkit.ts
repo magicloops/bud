@@ -4,7 +4,7 @@ import { apiFetchJson, isApiError } from '@/lib/transport'
 /**
  * MapKit JS (Phase 9), loaded from Apple's CDN only when a map is shown. Tokens come from
  * `/api/maps/token` for this page's origin; MapKit asks again through `authorizationCallback`
- * when one expires. Search results reached through it stay in the browser.
+ * when one expires. MapKit only draws maps: search goes through the service (`lib/place-search.ts`).
  */
 
 const MAPKIT_SRC = 'https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.core.js'
@@ -20,10 +20,6 @@ export type MapKitMap = {
   destroy(): void
 }
 export type MapKitCircle = { coordinate: MapKitCoordinate; radius: number }
-export type MapKitPlace = { name: string; formattedAddress?: string; coordinate: MapKitCoordinate }
-export type MapKitSearch = {
-  search(query: string, callback: (error: Error | null, data: { places?: MapKitPlace[] }) => void, options?: object): number
-}
 export type MapKit = {
   init(options: { authorizationCallback: (done: (token: string) => void) => void }): void
   Coordinate: new (latitude: number, longitude: number) => MapKitCoordinate
@@ -33,7 +29,6 @@ export type MapKit = {
   CircleOverlay: new (coordinate: MapKitCoordinate, radius: number, options?: object) => MapKitCircle
   Style: new (options: object) => unknown
   MarkerAnnotation: new (coordinate: MapKitCoordinate, options?: object) => unknown
-  Search: new (options?: object) => MapKitSearch
 }
 
 /** `ready` with MapKit, `unavailable` when the server has no Maps key (503), `error` otherwise. */
@@ -58,7 +53,7 @@ export function loadMapKit(): Promise<MapKit | null> {
       script.src = MAPKIT_SRC
       script.crossOrigin = 'anonymous'
       // The pin editor's circles need overlays, and the visit map's marker annotations.
-      script.dataset.libraries = 'map,annotations,overlays,services'
+      script.dataset.libraries = 'map,annotations,overlays'
       script.dataset.callback = callback
       script.onerror = () => { script.remove(); reject(new Error('MapKit JS failed to load')) }
       document.head.append(script)

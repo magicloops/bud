@@ -485,10 +485,20 @@ Tested in `location-format.test.ts`.
 MapKit JS for the pin editor and visit map (Phase 9). `loadMapKit()` first
 requests `/api/maps/token?origin=<page origin>`; a 503 resolves null ("maps
 aren't set up on this server", cached for the page), otherwise it loads
-`mapkit.core.js` (`map`, `services`) from Apple's CDN once and initialises it
+`mapkit.core.js` (`map`, `annotations`, `overlays`; MapKit only draws maps,
+search is `place-search.ts`) from Apple's CDN once and initialises it
 with an `authorizationCallback` that fetches a fresh token when MapKit asks.
 `useMapKit()` exposes `loading | ready | unavailable | error`. Declares the small
 part of the MapKit API used (no published types installed).
+
+### `place-search.ts`
+
+Pin-editor search through the service (Phase 11, Geoapify, whose results may
+be stored): `PlaceSearchResult` / `PlaceSearchResponse` for
+`GET /api/places/search`, `placeSearchPath` (2–200 characters, `near` = map
+centre), `placeSearchLabel` (a named place over its address, or the address
+alone) and `placeSearchErrorMessage` (429 rate limit, 503 unavailable or
+failed, 400 short query). Tested in `place-search.test.ts`.
 
 ### `place-pin.ts`
 

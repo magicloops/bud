@@ -1641,10 +1641,12 @@ export const locationObservationTable = pgTable("location_observation", {
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
 }));
 
-// Names for a visit (address and likely place), looked up on the phone. One row per
-// owner and visit key; a later lookup (by named_at) replaces an earlier one.
+// Names for a visit or fix (address and likely place). One row per owner and visit key; a later
+// lookup (by named_at) replaces an earlier one. `source`: `geoapify`, looked up by the service
+// (Phase 11, no raw event), or `apple`, the phone's older MapKit lookups, to be replaced and deleted.
 export const locationVisitNameTable = pgTable("location_visit_name", {
-  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id").notNull(),
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id"),
+  source: text("source").notNull().default("apple"),
   address: jsonb("address").$type<Record<string, string | null> | null>(),
   place: jsonb("place").$type<Record<string, unknown> | null>(),
   namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
@@ -1653,6 +1655,7 @@ export const locationVisitNameTable = pgTable("location_visit_name", {
 }, t => ({
   visitKey: unique("location_visit_name_visit_key").on(t.createdByUserId, t.visitKey),
   eventFk: foreignKey({ name: "location_visit_name_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  sourceCheck: check("location_visit_name_source_check", sql`${t.source} in ('apple', 'geoapify')`),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.

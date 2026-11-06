@@ -475,16 +475,27 @@ keeps the key for the 6.3 visit projection. `repository.ts` status adds
 `location-status.test.ts` (isolated PostgreSQL) covers v2 projection and owner
 isolation. Plan: [location for agents](../../../plan/location-agent-data/README.md).
 
-## Visit names (phase 6.2)
+## Visit names (phase 6.2; named by the service since Phase 11)
 
-- `location.ts`:
-  - `parseVisitName` validates `location.visit_named.v1`: the key, the `apple`
-    source, `named_at`, address strings (`full`, `short`, `city`,
-    `city_with_context`, `region`, `region_code`) and an optional place (name,
-    category, coordinate, distance).
-  - v2 visits require `visit_key`, which is stored on `location_observation`.
-- The processor upserts `location_visit_name` per owner and key; a later
-  `named_at` wins and older lookups never overwrite.
+- **Source:** the service names visits with Geoapify (`visit-naming.ts`,
+  `geoapify.ts`), because Apple's terms don't allow keeping Apple Maps data.
+  The phone's `location.visit_named.v1` (MapKit lookups) is `unsupported` and not
+  stored.
+  - `VisitNaming` names visits started in the last 2 days with no name, or whose
+    Geoapify name is older than their latest report (by `received_at`, the
+    service clock), and foreground fixes once. It calls Geoapify outside any
+    transaction, then upserts the name. A lookup that finds nothing waits 10
+    minutes before retrying.
+  - It runs every 2 seconds when `GEOAPIFY_API_KEY` is set; without one, visits
+    stay unnamed. `DailyCredits` caps calls per UTC day (`GEOAPIFY_DAILY_CREDITS`).
+  - A name holds Geoapify's address in the same keys (`full`, `short`, `city`,
+    `city_with_context`, `region`, `region_code`) and the nearest named point of
+    interest within 100 m (name, category, coordinate, distance).
+- **`location_visit_name`** has one row per owner and key, with `source`
+  (`geoapify`, or `apple` for older phone lookups, migration 0064) and a nullable
+  `raw_event_id` (service names have none). `db:geoapify-visit-names` replaces
+  Apple-sourced names, then deletes the rest; each environment needs approval.
+- v2 visits require `visit_key`, which is stored on `location_observation`.
 - `LocationQueries.list` and `contactContext` join names and present
   `visit_key`, `address` and `place`.
 - `app-queries.ts` reduces names for `rounded_2_decimals` keys to
@@ -652,8 +663,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **`location.fix.v1`:** a one-off precise position the phone takes when Bud
   comes to the foreground. It's stored in `location_observation` as kind `fix`.
 - **Naming:** its `fix_key` (`fix:<uuid>`) goes in the `visit_key` column. That
-  column holds the naming key for both visits and fixes, so a
-  `location.visit_named.v1` for the key names the fix through the same join.
+  column holds the naming key for both visits and fixes, so the service's name
+  for the key names the fix through the same join.
 - **`recent`:** considers fixes alongside points, and reports `kind: fix` with
   its address and saved `places`.
   - `age_seconds` and `stale` always measure time since the phone observed the
@@ -699,6 +710,11 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   `saved_places_at_visit` and the `places` on visits and `recent`. Without one, a
   visit end at a saved place says "Home's nearest address from Apple Maps is …". A failed save (deleted place, limit)
   refuses the answer with 409 and the prompt stays.
+- **Place search (Phase 11):** `GET /api/places/search?q=&near=lat,lon` searches
+  Geoapify (autocomplete, which includes businesses) for the pin editors, 60 a
+  minute per owner, and answers `{ results, attribution }`. 503
+  `place_lookup_unavailable` without a key. Results can be kept, so a chosen
+  result's address can fill a place's Address field.
 - **Maps:** `GET /api/maps/token?origin=` (`maps.ts`) issues a 30-minute MapKit
   JS token (ES256 JWT from the team's Apple Maps key, `APPLE_MAPS_KEY_ID`,
   `APPLE_MAPS_TEAM_ID` or `APNS_TEAM_ID`, `APPLE_MAPS_KEY_FILE` or

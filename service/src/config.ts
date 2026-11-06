@@ -340,6 +340,9 @@ export const config = {
     process.env.APNS_PRIVATE_KEY,
     Boolean(apnsKeyId && apnsTeamId),
   ),
+  // Place lookup (Phase 11): visit names, addresses and search, from Geoapify.
+  geoapifyApiKey: toNullable(process.env.GEOAPIFY_API_KEY),
+  geoapifyDailyCredits: toNumber(process.env.GEOAPIFY_DAILY_CREDITS, 2500),
   appleMapsKeyId,
   appleMapsTeamId,
   appleMapsPrivateKey: resolveApnsPrivateKey(

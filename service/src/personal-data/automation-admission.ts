@@ -439,10 +439,10 @@ export class AutomationAdmission {
         at: row.visit.departureAt!,
         event: `A visit at ${where} ended ${localTime(endedAt, zone, now)}${stayed ? `, after ${stayed}` : ""}.`,
         reference: [timeZoneLine(zone), ...late(row.visit.departureAt!, row.publishedAt), ...iosTimes,
-          ...(saved?.address ? savedAddress(saved) : saved && address ? [`${saved.name}'s nearest address from Apple Maps is ${address}.`] : []),
+          ...(saved?.address ? savedAddress(saved) : saved && address ? [`${saved.name}'s nearest street address (OpenStreetMap) is ${address}.`] : []),
           `Visit ID: ${row.visit.id}.`,
           "iOS reports visits several minutes after they happen, then uploads, so this may arrive late.",
-          "Places are the user's saved labels; a likely place from Apple Maps is not verified."],
+          "Places are the user's saved labels; addresses and likely places are from OpenStreetMap via Geoapify, and a likely place is not verified."],
         metadata: { domain_event_id: delivery.domainEventId, visit_id: row.visit.id },
       };
     }

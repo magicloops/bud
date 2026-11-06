@@ -9,6 +9,8 @@ import { ContactProcessor } from "./contact-processor.js";
 import { PostgresIngestRepository } from "./repository.js";
 import { parseBatch } from "./parser.js";
 import { LocationQueries } from "./location.js";
+import { DailyCredits, Geoapify } from "./geoapify.js";
+import { VisitNaming } from "./visit-naming.js";
 
 test("visit reports merge into one visit, and recent picks the latest visit or point", {
   skip: process.env.BUD_DATA_DB_TEST !== "1",
@@ -108,12 +110,18 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   assert.equal(near.location?.kind, "fix");
   assert.equal((near.location as { within_visit?: { id: string } }).within_visit?.id, byKey.get("c")!.id);
   // A later fix away from it means iOS hasn't reported the departure yet: the fix wins, with its name.
-  await upload("owner", [fix("fix:away", ago(2), 37.75), ["location.visit_named.v1", ago(1), { visit_key: "fix:away", source: "apple",
-    named_at: ago(1).toISOString(), address: { short: "Market St", city: "San Francisco" }, place: null }]]);
+  // A fix taken when Bud opens is named by the service (Phase 11's naming worker, Geoapify).
+  await upload("owner", [fix("fix:away", ago(2), 37.75)]);
+  const geoapify = new Geoapify("key", new DailyCredits(100), async url => ({ ok: true, status: 200, json: async () =>
+    new URL(url).pathname === "/v1/geocode/reverse" ? { results: [{ address_line1: "Market St", city: "San Francisco" }] } : { features: [] } }));
+  const naming = new VisitNaming(db, geoapify);
+  while (await naming.nameNext(5, "owner")) { /* drain */ }
+  assert.equal((await db.select().from(s.locationVisitNameTable)).find(row => row.visitKey === "fix:near")?.source, "geoapify",
+    "foreground fixes are named too");
   const away = await queries.recent("owner");
   assert.equal((away.location as { within_visit?: unknown }).within_visit, undefined, "away from the visit, no since");
   assert.deepEqual([away.location?.kind, away.location?.address?.short, away.stale],
-    ["fix", "Market St", false]);
+    ["fix", "Market St, San Francisco", false]);
   assert.ok(away.age_seconds! >= 100 && away.age_seconds! < 200);
   // Without a fix key, a fix is invalid and stored as nothing.
   await upload("owner", [["location.fix.v1", ago(1), { coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 10 }]]);
@@ -121,5 +129,5 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   const points = await queries.list("owner", { ...window, kind: "points" });
   assert.deepEqual([...new Set(points.items.map(item => item.kind))].sort(), ["fix", "significant_change"]);
   assert.equal(points.items.filter(item => item.kind === "fix").length, 2);
-  assert.equal(points.items.find(item => item.visit_key === "fix:away")?.address?.short, "Market St");
+  assert.equal(points.items.find(item => item.visit_key === "fix:away")?.address?.short, "Market St, San Francisco");
 });

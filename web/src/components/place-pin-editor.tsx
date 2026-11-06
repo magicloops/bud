@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MapPin } from 'lucide-react'
-import { useMapKit, type MapKit, type MapKitCircle, type MapKitPlace } from '@/lib/mapkit'
+import { useMapKit, type MapKit, type MapKitCircle } from '@/lib/mapkit'
+import { apiFetchJson, isApiError } from '@/lib/transport'
+import { placeSearchErrorMessage, placeSearchLabel, placeSearchPath, type PlaceSearchResponse, type PlaceSearchResult } from '@/lib/place-search'
 import {
   ADDRESS_DROP_M, PLACE_ADDRESS_MAX, PLACE_NAME_MAX, PLACE_RADIUS, addressAtPin, addressAtResult, keepAddress, pinCenter, regionSpan,
   restartsPresence, startAddress, typeAddress,
@@ -117,8 +119,10 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
   const [target, setTarget] = useState(start.center)
   const [query, setQuery] = useState(start.query ?? '')
   const [address, setAddress] = useState(() => startAddress(start))
-  const [results, setResults] = useState<MapKitPlace[] | null>(null)
+  const [results, setResults] = useState<PlaceSearchResult[] | null>(null)
+  const [searchError, setSearchError] = useState('')
   const [searching, setSearching] = useState(false)
+  const searchSeq = useRef(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const seeded = useRef(false)
@@ -129,21 +133,28 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
   // Each pin move checks the address against where it was set (`ADDRESS_DROP_M`); a seed search anchors it first.
   const moveTo = (point: Coordinate) => { setCenter(point); if (!seeding) setAddress(state => addressAtPin(state, point)) }
   /** `fill`: the user picked this result, so its address replaces the field; the seed search only anchors it. */
-  const choose = (place: MapKitPlace, fill: boolean) => {
-    const point = { lat: place.coordinate.latitude, lon: place.coordinate.longitude }
-    setAddress(state => addressAtResult(state, point, fill ? place.formattedAddress ?? place.name : null))
+  const choose = (result: PlaceSearchResult, fill: boolean) => {
+    const point = result.coordinate
+    setAddress(state => addressAtResult(state, point, fill ? result.address ?? '' : null))
     setTarget(point); setCenter(point)
   }
-  // Results stay in the browser; only the pin the user saves reaches the server.
+  // Through the service, near the map centre; the newest search wins.
   const search = (text: string, seed: boolean) => {
-    if (!mapkit || !text.trim()) return
-    setSearching(true)
-    new mapkit.Search().search(text.trim(), (failure, data) => {
-      setSearching(false)
-      const places = failure ? [] : data.places ?? []
-      setResults(places)
-      if (places[0]) choose(places[0], !seed)
-    })
+    const path = placeSearchPath(text, center)
+    if (!path) { setSearchError(placeSearchErrorMessage('invalid_query')); return }
+    const seq = ++searchSeq.current
+    setSearching(true); setSearchError('')
+    apiFetchJson<PlaceSearchResponse>(path).then(
+      response => {
+        if (seq !== searchSeq.current) return
+        setResults(response.results)
+        if (response.results[0]) choose(response.results[0], !seed)
+      },
+      failure => {
+        if (seq !== searchSeq.current) return
+        setResults([]); setSearchError(placeSearchErrorMessage(isApiError(failure) ? failure.message : ''))
+      },
+    ).finally(() => { if (seq === searchSeq.current) setSearching(false) })
   }
   // A question that starts from an address centres on its first result.
   useEffect(() => {
@@ -170,11 +181,15 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
           onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(query, false) } }} />
         <button type="button" className={button} disabled={searching || !query.trim()} onClick={() => search(query, false)}>{searching ? 'Searching…' : 'Search'}</button>
       </div>
-      {results && (results.length ? <ul aria-label="Search results" className="max-h-32 space-y-1 overflow-y-auto">
-        {results.map((place, index) => <li key={index}><button type="button" className="w-full rounded px-2 py-1 text-left hover:bg-muted" onClick={() => choose(place, true)}>
-          <span className="font-medium">{place.name}</span>{place.formattedAddress && <span className="block text-xs text-muted-foreground">{place.formattedAddress}</span>}
-        </button></li>)}
-      </ul> : <p>No results. Try another search, or move the map to the spot.</p>)}
+      {searchError ? <p role="status">{searchError}</p> : results && (results.length ? <div className="space-y-1">
+        <ul aria-label="Search results" className="max-h-32 space-y-1 overflow-y-auto">
+          {results.map((result, index) => { const label = placeSearchLabel(result); return <li key={index}>
+            <button type="button" className="w-full rounded px-2 py-1 text-left hover:bg-muted" onClick={() => choose(result, true)}>
+              <span className="font-medium">{label.title}</span>{label.detail && <span className="block text-xs text-muted-foreground">{label.detail}</span>}
+            </button></li> })}
+        </ul>
+        <PlaceDataAttribution />
+      </div> : <p>No results. Try another search, or move the map to the spot.</p>)}
       <PlaceMap mapkit={mapkit} target={target} radius={radius} accuracy={accuracy} onCenterChange={moveTo} label={`Map for ${name || 'the place'}`} />
       <p className="text-xs text-muted-foreground">Move the map to put the pin on the spot.{accuracy ? ' The dashed circle is the reading\'s accuracy.' : ''}</p>
     </> : maps.status === 'loading' ? <p>Loading the map…</p> : <p role="status" className="rounded border border-dashed p-3">
@@ -205,6 +220,14 @@ export function PlacePinEditor({ title, start, accuracy, existing = false, saveL
       <button type="button" className={button} onClick={onCancel}>Cancel</button>
     </div>
   </form>
+}
+
+/** Geoapify's required attribution for search results and the addresses and names it supplies. */
+export function PlaceDataAttribution({ className = 'text-xs text-muted-foreground' }: { className?: string }) {
+  return <p className={className}>
+    <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer" className="underline">Powered by Geoapify</a>
+    {' · '}<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">© OpenStreetMap contributors</a>
+  </p>
 }
 
 /** The editor in a native modal (focus trap, Escape), portalled so it never nests in another form. */
