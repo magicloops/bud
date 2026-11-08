@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { categoryLabel, DailyCredits, Geoapify, namedAddress, nearbyRadius, PLACE_CATEGORY_GROUPS } from "./geoapify.js";
+import { categoryGroup, categoryLabel, DailyCredits, Geoapify, mostSpecificCategory, namedAddress, nearbyRadius, PLACE_CATEGORY_GROUPS } from "./geoapify.js";
 
 /** Responses recorded in Geoapify's documented shapes (no live calls in tests). */
 const reverse = { results: [{ name: "26th Street", formatted: "3327 26th Street, San Francisco, CA 94110, United States of America",
@@ -103,4 +103,57 @@ test("Phase 12: up to 5 candidates within the visit's accuracy (100–200 m), wi
     "nearest first, within 150 m, at most 5, labelled from the most specific category we know");
   assert.equal(new URL(urls[0]).searchParams.get("filter"), "circle:-122.4165,37.749,150");
   assert.deepEqual([categoryLabel(["sport", "sport.fitness"]), categoryLabel(["man_made.tower"]), categoryLabel([])], ["gym", "tower", null]);
+});
+
+test("Phase 13: the agent's nearby search groups its categories, filters by name, and keeps hours and cuisine", async () => {
+  assert.deepEqual(["catering.restaurant", "commercial", "tourism.sights", "accommodation", "airport", "sport.stadium", "sport.fitness.gym"]
+    .map(categoryGroup), [0, 0, 1, 1, 1, 1, 0]);
+  assert.equal(mostSpecificCategory(["catering", "catering.restaurant", "catering.restaurant.mexican", "building.catering"]),
+    "catering.restaurant.mexican", "the deepest kind, not a building or condition");
+  const taqueria = { properties: { name: "Taquería El Farolito", place_id: "t1", categories: ["catering", "catering.restaurant",
+    "catering.restaurant.mexican"], catering: { cuisine: "mexican" }, opening_hours: "Mo-Su 10:00-02:00", lat: 37.7526, lon: -122.4184, distance: 9 } };
+  const tacos = { properties: { name: "Tacos Cancún", place_id: "t2", categories: ["catering.fast_food"], lat: 37.7527, lon: -122.4185, distance: 14 } };
+  const hotel = { properties: { name: "Hotel Mission", place_id: "h1", categories: ["accommodation.hotel"], lat: 37.7526, lon: -122.4184, distance: 5 } };
+  const far = { properties: { name: "Far Taco", place_id: "t3", categories: ["catering.restaurant"], lat: 37.76, lon: -122.42, distance: 400 } };
+
+  // One group: one request, with the name filter.
+  const one = client({ "/v2/places": { features: [tacos, taqueria, far, taqueria] } });
+  const found = await one.geoapify.searchNearby({ lat: 37.7526, lon: -122.4184, radiusM: 30, categories: ["catering.restaurant", "catering.fast_food"], text: "taco" });
+  assert.deepEqual(found?.map(place => [place.name, place.distance_m]), [["Taquería El Farolito", 9], ["Tacos Cancún", 14]],
+    "nearest first, within the radius, without duplicates");
+  assert.deepEqual([found?.[0].category, found?.[0].cuisine, found?.[0].opening_hours, found?.[0].place_id],
+    ["catering.restaurant.mexican", "mexican", "Mo-Su 10:00-02:00", "t1"]);
+  assert.equal(one.urls.length, 1);
+  const url = new URL(one.urls[0]);
+  assert.deepEqual([url.searchParams.get("categories"), url.searchParams.get("name"), url.searchParams.get("filter"), url.searchParams.get("conditions")],
+    ["catering.restaurant,catering.fast_food", "taco", "circle:-122.4184,37.7526,30", "named"]);
+
+  // Both groups: two requests, merged; none given: the default groups.
+  const both = client({ "/v2/places?catering.restaurant": { features: [taqueria] }, "/v2/places?accommodation": { features: [hotel] } });
+  assert.deepEqual((await both.geoapify.searchNearby({ lat: 37.7526, lon: -122.4184, radiusM: 30,
+    categories: ["catering.restaurant", "accommodation"] }))?.map(place => place.name), ["Hotel Mission", "Taquería El Farolito"]);
+  assert.deepEqual(both.urls.map(u => new URL(u).searchParams.get("categories")), ["catering.restaurant", "accommodation"]);
+  const all = client({ "/v2/places": { features: [] } });
+  assert.deepEqual(await all.geoapify.searchNearby({ lat: 1, lon: 2, radiusM: 50, limit: 3 }), []);
+  assert.deepEqual(all.urls.map(u => new URL(u).searchParams.get("categories")), PLACE_CATEGORY_GROUPS.map(group => group.join(",")));
+  assert.deepEqual((await client({ "/v2/places": { features: Array.from({ length: 15 }, (_, i) =>
+    ({ properties: { ...tacos.properties, place_id: `p${i}`, distance: i } })) } }).geoapify.searchNearby({ lat: 1, lon: 2, radiusM: 50,
+    categories: ["catering"] }))?.length, 10, "at most 10");
+  assert.equal(await client({}).geoapify.searchNearby({ lat: 1, lon: 2, radiusM: 50 }), null, "a failure isn't 'nothing here'");
+});
+
+test("Phase 13: place details", async () => {
+  const details = { features: [{ properties: { feature_type: "details", name: "Taquería El Farolito", place_id: "t1",
+    formatted: "Taquería El Farolito, 2779 Mission Street, San Francisco, CA 94110, United States of America",
+    categories: ["catering", "catering.restaurant", "catering.restaurant.mexican"], catering: { cuisine: "mexican" },
+    opening_hours: "Mo-Su 10:00-02:00", website: "https://elfarolitoinc.com", contact: { phone: "+1 415-824-7877" },
+    facilities: { takeaway: true, delivery: false }, timezone: { name: "America/Los_Angeles" }, lat: 37.7526, lon: -122.4184 } }] };
+  const { geoapify, urls } = client({ "/v2/place-details": details });
+  assert.deepEqual(await geoapify.placeDetails("t1"), { place_id: "t1", name: "Taquería El Farolito",
+    address: "Taquería El Farolito, 2779 Mission Street, San Francisco, CA 94110, United States of America",
+    coordinate: { lat: 37.7526, lon: -122.4184 }, categories: ["catering", "catering.restaurant", "catering.restaurant.mexican"],
+    category: "catering.restaurant.mexican", category_label: "restaurant", cuisine: "mexican", opening_hours: "Mo-Su 10:00-02:00",
+    website: "https://elfarolitoinc.com", phone: "+1 415-824-7877", brand: null, takeaway: true, delivery: false, time_zone: "America/Los_Angeles" });
+  assert.deepEqual([new URL(urls[0]).searchParams.get("id"), new URL(urls[0]).searchParams.get("features")], ["t1", "details"]);
+  assert.equal(await client({}).geoapify.placeDetails("t1"), null);
 });

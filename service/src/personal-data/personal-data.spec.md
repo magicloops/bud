@@ -497,10 +497,11 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   Apple-sourced names, then deletes the rest; each environment needs approval.
 - **Unknown places (Phase 12, `place-context.ts`):** a name also keeps `nearby`
   (migration 0065): up to 5 named places within the visit's accuracy (100–200 m,
-  `nearbyRadius`), nearest first, with Geoapify's category and a readable
-  `category_label`; and `address.area` (the neighbourhood). For a visit or fix not at
+  `nearbyRadius`), nearest first, with the most specific Geoapify category, a readable
+  `category_label`, and `place_id` and `cuisine` when known (Phase 13); and `address.area` (the neighbourhood). For a visit or fix not at
   a saved place, the agent gets `nearby_places`, `match` (`clear`: the nearest within
-  the accuracy, at least 30 m, and twice as near as the next; `several`; `none_close`)
+  the accuracy, at least 30 m, and the next further by at least the accuracy, at least
+  10 m; `several`; `none_close`)
   with `match_note`, and on single visits (`recent`, visit-ended evidence)
   `earlier_visits`: completed visits within 50 m inside the approved history, with the
   place most often named among them when it's at least half. Visit-ended text adds a
@@ -532,6 +533,39 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - app operations and routes with shared precision rules (`restrict` in
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
+
+## Agent place tools (Phase 13)
+
+- **`location_recent` freshness:** `recent_readings`, newest first: the newest
+  observation, fixes (±100 m or better) and points (±65 m or better) from the 15
+  minutes before it (`RECENT_WINDOW_MS`), with `speed_mps` from the raw payload
+  when known, and the visit when it's the latest or the newest reading is within
+  it. From them (`freshness`): `since` (the open visit's arrival, else the earliest
+  of an unbroken run of readings within the combined accuracy of the newest),
+  `moving` (a speed over 1 m/s or two readings further apart than their accuracy;
+  null with one reading and no speed) and `now_note`. Rounded app keys get no
+  `recent_readings`.
+- **`places_nearby`** (`location.read`): around the latest location (the most
+  precise recent reading, with `recent` reporting them all), a `visit_id` within
+  approved history, or `latitude`/`longitude`. `categories` are Geoapify
+  categories, `text` a name filter. `radius_m` 30–1000, defaulting to the
+  accuracy (at least 30 m; 50 m around a coordinate). `Geoapify.searchNearby`
+  splits categories into the two groups that mix (`categoryGroup`; both default
+  groups without categories), with `conditions=named`, no bus stops, merged by
+  distance, up to 10. Each place has `open_now` and `next_change` in the phone's
+  time zone (`phoneTimeZone`).
+- **`place_details`** (`location.read`): Geoapify Place Details for a `place_id`:
+  address, categories, cuisine, hours with `open_now` in the place's time zone
+  (else the phone's), website, phone, brand, takeaway, delivery.
+- **Hours** (`opening-hours.ts`): `openNow` evaluates OpenStreetMap
+  `opening_hours` with the `opening_hours` package (LGPL-3.0, unmodified
+  dependency) at the place's wall-clock time; null when unknown or unparseable.
+- Lookup failures are `place_lookup_failed` (503), or `place_lookup_unavailable`
+  without a key. One credit per Places group or details call; nothing is cached.
+- Guidance: the tool descriptions and the system prompt's PERSONAL LOCATION
+  section: infer the place, state the assumption, ask only when it matters.
+- Tests: `geoapify.test.ts`, `opening-hours.test.ts`, `location-freshness.test.ts`,
+  `agent-queries.test.ts`, `location-visits.test.ts`, `app-queries.test.ts`.
 
 ## Place presence (phase 7)
 

@@ -13,8 +13,14 @@ export const GEOAPIFY_ATTRIBUTION = "Powered by Geoapify · © OpenStreetMap con
 /** `area` is the neighbourhood or district (Phase 12). */
 export type NamedAddress = { full: string | null; short: string | null; area?: string | null; city: string | null; city_with_context: string | null;
   region: string | null; region_code: string | null };
-export type NearbyPlace = { name: string; category: string | null; category_label?: string | null; coordinate: { lat: number; lon: number };
-  distance_m: number };
+export type NearbyPlace = { name: string; place_id?: string | null; category: string | null; category_label?: string | null; cuisine?: string | null;
+  coordinate: { lat: number; lon: number }; distance_m: number };
+/** A place found for the agent (Phase 13): a nearby place plus what the Places API knows. */
+export type FoundPlace = Omit<NearbyPlace, "place_id"> & { place_id: string | null; categories: string[]; opening_hours: string | null };
+export type PlaceDetails = { place_id: string; name: string | null; address: string | null; coordinate: { lat: number; lon: number } | null;
+  categories: string[]; category: string | null; category_label: string | null; cuisine: string | null; opening_hours: string | null;
+  website: string | null; phone: string | null; brand: string | null; takeaway: boolean | null; delivery: boolean | null;
+  time_zone: string | null };
 export type SearchResult = { name: string | null; address: string | null; coordinate: { lat: number; lon: number }; category: string | null };
 
 const BASE = "https://api.geoapify.com";
@@ -41,6 +47,22 @@ const CATEGORY_LABELS: Array<[string, string]> = [
   ["office", "office"], ["service", "service"], ["entertainment", "entertainment"], ["childcare", "childcare"],
   ["rental", "rental"], ["pet", "pet services"], ["activity", "activity"], ["airport", "airport"],
 ];
+
+/** Categories Geoapify uses as conditions rather than kinds of place. */
+const CONDITION_CATEGORIES = ["building", "wheelchair", "internet_access", "vegetarian", "vegan", "access", "access_limited", "fee",
+  "no_fee", "dogs", "no_dogs", "named", "halal", "kosher", "organic", "gluten_free", "sugar_free", "egg_free", "soy_free"];
+
+/** A place's most specific kind (`catering.restaurant.mexican` over `catering`), ignoring conditions. */
+export function mostSpecificCategory(categories: readonly string[]): string | null {
+  const kinds = categories.filter(category => !CONDITION_CATEGORIES.some(condition => category === condition || category.startsWith(condition + ".")));
+  return [...kinds].sort((a, b) => b.split(".").length - a.split(".").length)[0] ?? categories[0] ?? null;
+}
+
+/** Which request a category belongs in: Geoapify drops broad categories from a list that mixes the
+ * two groups (`PLACE_CATEGORY_GROUPS`). */
+export function categoryGroup(category: string): 0 | 1 {
+  return /^(tourism|accommodation|airport)(\.|$)/.test(category) || (/^sport(\.|$)/.test(category) && !category.startsWith("sport.fitness")) ? 1 : 0;
+}
 
 /** A place's category for display: its most specific one we label (the first array item isn't
  * necessarily the relevant one), else the first, as words. */
@@ -109,6 +131,15 @@ export function namedAddress(row: Record<string, unknown>): NamedAddress | null 
     region_code: string(row.country_code)?.toUpperCase() ?? null, area: string(row.suburb) ?? string(row.district) ?? string(row.quarter) };
 }
 
+/** A Places API row as a place, or null without a name and position. */
+function foundPlace(row: Record<string, unknown>): FoundPlace | null {
+  const name = string(row.name), lat = number(row.lat), lon = number(row.lon), distance = number(row.distance);
+  if (!name || lat === null || lon === null || distance === null) return null;
+  const categories = Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [];
+  return { name, place_id: string(row.place_id), categories, category: mostSpecificCategory(categories), category_label: categoryLabel(categories),
+    cuisine: string(record(row.catering)?.cuisine), opening_hours: string(row.opening_hours), coordinate: { lat, lon }, distance_m: distance };
+}
+
 export class Geoapify {
   constructor(private readonly key: string | null = config.geoapifyApiKey,
     private readonly credits = new DailyCredits(config.geoapifyDailyCredits),
@@ -152,12 +183,52 @@ export class Geoapify {
     return bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.includes("public_transport.bus")))
       .filter(row => { const id = string(row.place_id); if (!id) return true; if (seen.has(id)) return false; seen.add(id); return true; })
       .flatMap(row => {
-        const name = string(row.name), lat = number(row.lat), lon = number(row.lon), distance = number(row.distance);
-        if (!name || lat === null || lon === null || distance === null || distance > radiusM) return [];
-        const categories = Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [];
-        return [{ name, category: categories[0] ?? null, category_label: categoryLabel(categories), coordinate: { lat, lon }, distance_m: distance }];
+        const place = foundPlace(row);
+        if (!place || place.distance_m > radiusM) return [];
+        // Stored with the visit's name (Phase 12): the place_id lets the agent look up details.
+        const { name, place_id, category, category_label, cuisine, coordinate, distance_m } = place;
+        return [{ name, ...(place_id ? { place_id } : {}), category, category_label, ...(cuisine ? { cuisine } : {}), coordinate, distance_m }];
       })
       .sort((a, b) => a.distance_m - b.distance_m).slice(0, NEARBY_PLACES_KEPT);
+  }
+
+  /**
+   * Places around a point for the agent (Phase 13), nearest first, up to `limit`. Given categories
+   * are split by `categoryGroup` into one request per group present; none means both default groups.
+   * `text` filters by name. Null when a request failed or there's no key.
+   */
+  async searchNearby(query: { lat: number; lon: number; radiusM: number; categories?: string[]; text?: string; limit?: number }): Promise<FoundPlace[] | null> {
+    const groups = query.categories?.length
+      ? [0, 1].map(group => query.categories!.filter(category => categoryGroup(category) === group)).filter(list => list.length)
+      : PLACE_CATEGORY_GROUPS.map(group => [...group]);
+    const bodies = [];
+    for (const categories of groups) {
+      const body = await this.get("/v2/places", { categories: categories.join(","), filter: `circle:${query.lon},${query.lat},${query.radiusM}`,
+        bias: `proximity:${query.lon},${query.lat}`, conditions: "named", limit: "20", lang: "en", ...(query.text ? { name: query.text } : {}) });
+      if (body === null) return null;
+      bodies.push(body);
+    }
+    const seen = new Set<string>();
+    return bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.includes("public_transport.bus")))
+      .map(foundPlace).filter((place): place is FoundPlace => place !== null && place.distance_m <= query.radiusM)
+      .filter(place => !place.place_id || (!seen.has(place.place_id) && Boolean(seen.add(place.place_id))))
+      .sort((a, b) => a.distance_m - b.distance_m).slice(0, query.limit ?? 10);
+  }
+
+  /** One place's details (one credit). Null when it failed or there's no key. */
+  async placeDetails(placeId: string): Promise<PlaceDetails | null> {
+    const body = await this.get("/v2/place-details", { id: placeId, features: "details", lang: "en" });
+    const [row] = items(body);
+    if (!row) return null;
+    const categories = Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [];
+    const lat = number(row.lat), lon = number(row.lon);
+    const flag = (value: unknown) => typeof value === "boolean" ? value : value === "yes" ? true : value === "no" ? false : null;
+    return { place_id: placeId, name: string(row.name), address: string(row.formatted), coordinate: lat !== null && lon !== null ? { lat, lon } : null,
+      categories, category: mostSpecificCategory(categories), category_label: categoryLabel(categories), cuisine: string(record(row.catering)?.cuisine),
+      opening_hours: string(row.opening_hours), website: string(row.website), phone: string(record(row.contact)?.phone),
+      brand: string(row.brand), takeaway: flag(record(row.facilities)?.takeaway ?? row.takeaway),
+      delivery: flag(record(row.facilities)?.delivery ?? row.delivery),
+      time_zone: string(record(row.timezone)?.name) };
   }
 
   /** The nearest of `nearbyPlaces`: null when there's none, undefined when unknown. */

@@ -109,6 +109,11 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   const near = await queries.recent("owner");
   assert.equal(near.location?.kind, "fix");
   assert.equal((near.location as { within_visit?: { id: string } }).within_visit?.id, byKey.get("c")!.id);
+  // Phase 13 freshness: the fix and the open visit it's at, newest first; here since the visit's arrival, not moving.
+  assert.deepEqual(near.recent_readings?.map(reading => [reading.kind, reading.speed_mps, reading.visit_id]),
+    [["fix", 1, undefined], ["visit", undefined, byKey.get("c")!.id]]);
+  assert.deepEqual([near.since?.getTime(), near.moving], [ago(30).getTime(), false]);
+  assert.match(near.now_note!, /^Probably still here: a visit open for 30 minutes and the latest reading 5 minutes ago\.$/);
   // A later fix away from it means iOS hasn't reported the departure yet: the fix wins, with its name.
   // A fix taken when Bud opens is named by the service (Phase 11's naming worker, Geoapify).
   await upload("owner", [fix("fix:away", ago(2), 37.75)]);
@@ -123,6 +128,9 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   assert.deepEqual([away.location?.kind, away.location?.address?.short, away.stale],
     ["fix", "Market St, San Francisco", false]);
   assert.ok(away.age_seconds! >= 100 && away.age_seconds! < 200);
+  // Two fixes a kilometre apart within 15 minutes: moving, here only since the newest.
+  assert.deepEqual([away.recent_readings?.length, away.moving, away.since?.getTime()], [2, true, ago(2).getTime()]);
+  assert.match(away.now_note!, /^Moving as of 2 minutes ago/);
   // Without a fix key, a fix is invalid and stored as nothing.
   await upload("owner", [["location.fix.v1", ago(1), { coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 10 }]]);
   // Timeline kind filter: points include fixes.

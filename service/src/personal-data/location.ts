@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
-import { locationObservationTable as locations, contactTable as contacts, locationVisitNameTable as names,
+import { locationObservationTable as locations, contactTable as contacts, dataEventTable as rawEvents, locationVisitNameTable as names,
   locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
 import { distanceM, matchingPlaces, placesForOwner, publishVisitEvents, visitPlaces } from "./places.js";
 import { earlierVisits, placeContext } from "./place-context.js";
+import { FIX_MAX_ACCURACY_M, POINT_MAX_ACCURACY_M } from "./place-presence.js";
 
 /** v2 visits add `visit_key` and `phase` (arrived/completed) for merging; both versions project as visits.
  * Fixes are one-off positions the phone takes when Bud opens; their `fix_key` is stored as the
@@ -84,6 +85,44 @@ const IN_PROGRESS_LIMIT_MS = 86_400_000;
 const WITHIN_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
 const RECENT_LIMIT_MS = 2 * 3600_000;
+/** Readings this close in time to the newest one describe the same "now" (Phase 13). */
+export const RECENT_WINDOW_MS = 15 * 60_000;
+/** Faster than this is moving: a brisk walk is about 1.4 m/s. */
+export const MOVING_MPS = 1;
+
+/** A recent reading: a fix, a coarse point, or the visit the phone is at. */
+export type RecentReading = { kind: "visit" | "fix" | "point"; coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number;
+  at: Date; speed_mps?: number; visit_id?: string };
+
+/**
+ * What the recent readings say about now (Phase 13): `since`, when the owner got here (the open
+ * visit's arrival, else the earliest reading in an unbroken run, back from the newest, within the
+ * combined accuracy of it); `moving`, when a reading's speed is over `MOVING_MPS` or two readings
+ * are further apart than their accuracy (null with nothing to compare); and a one-line note.
+ * `readings` are newest first.
+ */
+export function freshness(readings: RecentReading[], openVisit: { arrival_at: Date | null; started_at: Date } | null, now: Date) {
+  const [newest] = readings;
+  const apart = (a: RecentReading, b: RecentReading) => distanceM(a.coordinate.lat, a.coordinate.lon, b.coordinate.lat, b.coordinate.lon)
+    > a.horizontal_accuracy_m + b.horizontal_accuracy_m;
+  const speeds = readings.flatMap(reading => reading.speed_mps === undefined ? [] : [reading.speed_mps]);
+  const moving = speeds.some(speed => speed > MOVING_MPS) || readings.some((a, i) => readings.slice(i + 1).some(b => apart(a, b))) ? true
+    : speeds.length || readings.length > 1 ? false : null;
+  let since: Date | null = openVisit ? openVisit.arrival_at ?? openVisit.started_at : null;
+  if (!since && newest) {
+    since = newest.at;
+    for (const reading of readings.slice(1)) { if (apart(reading, newest)) break; since = reading.at; }
+  }
+  const minutes = (ms: number) => { const m = Math.round(ms / 60_000); return m < 1 ? "under a minute" : m === 1 ? "1 minute" : m < 120 ? `${m} minutes` : `${Math.round(m / 60)} hours`; };
+  const age = newest ? now.getTime() - newest.at.getTime() : Infinity;
+  const now_note = !newest ? null
+    : age > RECENT_LIMIT_MS ? `Last seen ${minutes(age)} ago; may have moved since.`
+    : moving ? `Moving as of ${minutes(age)} ago; the location may already be out of date.`
+    : openVisit ? `Probably still here: a visit open for ${minutes(now.getTime() - since!.getTime())} and the latest reading ${minutes(age)} ago.`
+    : `Latest reading ${minutes(age)} ago${since && since < newest.at ? `, in about the same spot for ${minutes(now.getTime() - since.getTime())}` : ""}; `
+      + "no visit open, so the owner may have left.";
+  return { since, moving, now_note };
+}
 
 export type LocationQuery = { from: string; to: string; kind?: string; limit?: number; cursor?: string };
 export type VisitQuery = { from: string; to: string; order?: string; limit?: number; cursor?: string };
@@ -210,6 +249,25 @@ export class LocationQueries {
     const at = useVisit ? visitAt : pointAt;
     if (at === -Infinity || at < notBefore) return { location: null, note: "No location within approved history." };
     const age = Math.max(0, now - at);
+    // The readings from the window before the newest one (Phase 13): the newest always, others
+    // when they're accurate enough to place someone, and the visit when it's the one they're at.
+    const windowStart = new Date(Math.max(at - RECENT_WINDOW_MS, notBefore));
+    const speed = sql<string | null>`${rawEvents.rawEnvelope}->'payload'->>'speed_mps'`;
+    const pointRows = await this.database.select({ location: locations, speed }).from(locations)
+      .innerJoin(rawEvents, and(eq(rawEvents.id, locations.rawEventId), eq(rawEvents.createdByUserId, locations.createdByUserId)))
+      .where(and(eq(locations.createdByUserId, owner), inArray(locations.kind, POINT_KINDS), gte(locations.occurredAt, windowStart),
+        lte(locations.occurredAt, new Date(at)), or(and(eq(locations.kind, "fix"), lte(locations.horizontalAccuracyM, FIX_MAX_ACCURACY_M)),
+          and(ne(locations.kind, "fix"), lte(locations.horizontalAccuracyM, POINT_MAX_ACCURACY_M)), point ? eq(locations.id, point.id) : undefined)))
+      .orderBy(desc(locations.occurredAt), desc(locations.id)).limit(50);
+    const readings: RecentReading[] = pointRows.map(({ location: row, speed: value }) => ({ kind: row.kind === "fix" ? "fix" as const : "point" as const,
+      coordinate: { lat: row.latitude, lon: row.longitude }, horizontal_accuracy_m: row.horizontalAccuracyM, at: row.occurredAt,
+      ...(value !== null && Number(value) >= 0 && Number.isFinite(Number(value)) ? { speed_mps: Number(value) } : {}) }));
+    const atVisit = visitRow && (useVisit || withinVisit);
+    if (atVisit) readings.push({ kind: "visit", coordinate: { lat: visitRow.visit.latitude, lon: visitRow.visit.longitude },
+      horizontal_accuracy_m: visitRow.visit.horizontalAccuracyM, at: new Date(visitAt), visit_id: visitRow.visit.id });
+    readings.sort((a, b) => b.at.getTime() - a.at.getTime());
+    const openVisit = atVisit && visit!.state === "in_progress" ? { arrival_at: visitRow.visit.arrivalAt, started_at: visitRow.visit.startedAt } : null;
+    const fresh = freshness(readings, openVisit, new Date(now));
     return {
       location: useVisit ? { kind: "visit", ...visit! } : { kind: point!.kind === "fix" ? "fix" : "point",
         coordinate: { lat: point!.latitude, lon: point!.longitude }, horizontal_accuracy_m: point!.horizontalAccuracyM,
@@ -221,9 +279,11 @@ export class LocationQueries {
         ...(withinVisit ? { within_visit: { id: visitRow!.visit.id, arrival_at: visitRow!.visit.arrivalAt,
           note: "iOS reported arriving here then and no departure since; it can miss departures." } } : {}) },
       as_of: new Date(at), age_seconds: Math.round(age / 1000), stale: age > RECENT_LIMIT_MS,
+      recent_readings: readings, since: fresh.since, moving: fresh.moving, now_note: fresh.now_note,
       note: "Last known location from the phone, not a live position. age_seconds is the time since the phone observed it: for "
         + "a visit, its arrival (or departure); an in_progress visit only means no departure was reported. A fix is a precise "
-        + "position taken when Bud was opened; points are coarse (often hundreds of metres).",
+        + "position taken when Bud was opened; points are coarse (often hundreds of metres). recent_readings are the readings from "
+        + "the 15 minutes before the newest, newest first; since and moving are inferred from them.",
     };
   }
 

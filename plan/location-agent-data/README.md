@@ -49,6 +49,7 @@ order, because each builds on the one before.
 | 10 | [Place addresses](phase-10-place-addresses.md) | The address the user gave or picked is saved with the place and preferred over reverse geocoding in messages, evidence and results | Service, web, iOS |
 | 11 | [Geoapify place lookup](phase-11-geoapify-place-lookup.md) | Visit names, addresses and place search from Geoapify (storable under its terms) through the service; Apple only draws maps; Apple-derived names replaced, then deleted | Service, web, iOS |
 | 12 | [Unknown places](phase-12-unknown-places.md) | For visits not at a saved place: address and area, up to 5 nearby candidates with categories and distances, how clear the match is, and earlier visits nearby | Service |
+| 13 | [Agent place tools](phase-13-agent-place-tools.md) | The agent infers the likely place at question time: `places_nearby` (by category or name, with open now), `place_details`, and how fresh the latest location is | Service |
 
 **Why this order:**
 - Everything depends on reliable capture (6.1).

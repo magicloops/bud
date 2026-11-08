@@ -183,7 +183,81 @@ test("place tools need location access, and agents save places at coordinates or
   assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
   await f2.adapter.execute("alice", "places_create", { name: "Home", visit_id: "v-new" });
   assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Home", latitude: 37.7, longitude: -122.4 });
+  // The address the user stated (Phase 10) reaches the place.
+  await f2.adapter.execute("alice", "places_create", { name: "Office", latitude: 1, longitude: 2, address: "3327 26th Street, San Francisco" });
+  assert.deepEqual(f2.calls.at(-1)!.args[1], { name: "Office", latitude: 1, longitude: 2, address: "3327 26th Street, San Francisco" });
   await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "Old", visit_id: "v-old" }), { code: "visit_not_found" });
   await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "X", visit_id: "missing" }), { code: "visit_not_found" });
   await assert.rejects(f2.adapter.execute("alice", "places_create", { name: "X", owner: "bob" }), { code: "invalid_query" });
+});
+
+test("Phase 13: places_nearby searches around the latest location, a visit or a coordinate, and place_details reads hours", async () => {
+  type Dependencies = ConstructorParameters<typeof AgentDataQueries>;
+  const now = new Date("2026-11-07T03:10:00Z"); // 7:10 PM in San Francisco
+  let scopes: DataScope[] = ["location.read"];
+  const grants = { require: async (_owner: string, required: DataScope[]) => {
+    if (!required.every(s => scopes.includes(s))) throw new DataRequestError(403, "data_permission_required", "Permission required");
+    return { scopes: [...scopes], version: 1, history_days: 30, updated_at: null, consumer: "your_agents", fields: [], location_precision: "as_collected", health_types: [] };
+  } };
+  const readings = [
+    { kind: "fix", coordinate: { lat: 37.7526, lon: -122.4184 }, horizontal_accuracy_m: 6, at: new Date("2026-11-07T03:02:00Z") },
+    { kind: "visit", coordinate: { lat: 37.7527, lon: -122.4183 }, horizontal_accuracy_m: 25, at: new Date("2026-11-07T02:58:00Z"), visit_id: "v-open" }];
+  let recent: unknown = { location: { kind: "fix" }, stale: false, recent_readings: readings, since: new Date("2026-11-07T02:58:00Z"), moving: false, now_note: "Probably still here" };
+  const locations = { recent: async () => recent,
+    visitById: async (_owner: string, id: string) => id === "v-new" ? { id: "v-new", latitude: 37.76, longitude: -122.42, horizontalAccuracyM: 96,
+      arrivalAt: new Date("2026-11-05T19:00:00Z"), startedAt: new Date("2026-11-05T19:00:00Z") }
+      : id === "v-old" ? { id: "v-old", latitude: 1, longitude: 1, horizontalAccuracyM: 50, arrivalAt: null, startedAt: new Date("2026-09-01T00:00:00Z") } : null } as unknown as Dependencies[1];
+  const searches: unknown[] = [];
+  let available = true, failing = false;
+  const geoapify = { get available() { return available; },
+    searchNearby: async (query: unknown) => { searches.push(query); return failing ? null : [
+      { name: "Taquería El Farolito", place_id: "t1", categories: ["catering.restaurant.mexican"], category: "catering.restaurant.mexican",
+        category_label: "restaurant", cuisine: "mexican", opening_hours: "Mo-Su 10:00-02:00", coordinate: { lat: 37.7526, lon: -122.4184 }, distance_m: 9 },
+      { name: "Tacos Cancún", place_id: "t2", categories: ["catering.fast_food"], category: "catering.fast_food", category_label: "fast food",
+        cuisine: null, opening_hours: null, coordinate: { lat: 37.7527, lon: -122.4185 }, distance_m: 14 }]; },
+    placeDetails: async (id: string) => id === "t1" ? { place_id: "t1", name: "Taquería El Farolito", opening_hours: "Mo-Fr 09:00-17:00",
+      time_zone: "America/Los_Angeles" } : null } as unknown as Dependencies[6];
+  const adapter = new AgentDataQueries(undefined, locations, grants, () => now, undefined, undefined, geoapify, async () => "America/Los_Angeles");
+
+  // Latest: from the most precise recent reading, with all of them reported; radius from its accuracy (at least 30 m).
+  const latest = (await adapter.execute("alice", "places_nearby", { categories: ["catering.restaurant", "catering.fast_food"], text: null, radius_m: null })).data as {
+    from: { source: string; horizontal_accuracy_m: number; age_seconds: number }; recent: { readings: unknown[]; now_note: string }; radius_m: number;
+    places: { name: string; open_now: boolean | null; next_change: string | null }[]; attribution: string };
+  assert.deepEqual([latest.from.source, latest.from.horizontal_accuracy_m, latest.from.age_seconds, latest.radius_m], ["fix", 6, 480, 30]);
+  assert.equal(latest.recent.readings.length, 2);
+  assert.deepEqual(searches.at(-1), { lat: 37.7526, lon: -122.4184, radiusM: 30, categories: ["catering.restaurant", "catering.fast_food"], text: undefined });
+  assert.deepEqual(latest.places.map(place => [place.name, place.open_now, place.next_change]),
+    [["Taquería El Farolito", true, "2026-11-07T10:00:00.000Z"], ["Tacos Cancún", null, null]], "open now in the phone's time zone; unknown without hours");
+  assert.match(latest.attribution, /OpenStreetMap/);
+
+  // A visit within approved history, its accuracy as the radius; a coordinate defaults to 50 m.
+  await adapter.execute("alice", "places_nearby", { visit_id: "v-new", text: "taco" });
+  assert.deepEqual(searches.at(-1), { lat: 37.76, lon: -122.42, radiusM: 96, categories: undefined, text: "taco" });
+  await adapter.execute("alice", "places_nearby", { latitude: 37.8, longitude: -122.3, radius_m: 400 });
+  assert.equal((searches.at(-1) as { radiusM: number }).radiusM, 400);
+  await adapter.execute("alice", "places_nearby", { latitude: 37.8, longitude: -122.3 });
+  assert.equal((searches.at(-1) as { radiusM: number }).radiusM, 50);
+  const searched = searches.length;
+  await assert.rejects(adapter.execute("alice", "places_nearby", { visit_id: "v-old" }), { code: "visit_not_found" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", { visit_id: "missing" }), { code: "visit_not_found" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", { latitude: 1 }), { code: "invalid_query" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", { radius_m: 5000 }), { code: "invalid_query" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", { categories: ["Tacos!"] }), { code: "invalid_query" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", { owner: "bob" }), { code: "invalid_query" });
+  recent = { location: null, note: "No location within approved history." };
+  await assert.rejects(adapter.execute("alice", "places_nearby", {}), { code: "no_recent_location" });
+  assert.equal(searches.length, searched, "nothing is looked up for a rejected call");
+
+  failing = true;
+  await assert.rejects(adapter.execute("alice", "places_nearby", { latitude: 1, longitude: 2 }), { code: "place_lookup_failed" });
+  available = false;
+  await assert.rejects(adapter.execute("alice", "places_nearby", { latitude: 1, longitude: 2 }), { code: "place_lookup_unavailable" });
+
+  // Details: hours in the place's own time zone.
+  const details = (await adapter.execute("alice", "place_details", { place_id: "t1" })).data as { open_now: boolean | null; hours_time_zone: string };
+  assert.deepEqual([details.open_now, details.hours_time_zone], [false, "America/Los_Angeles"], "an office, closed at 7 PM");
+  await assert.rejects(adapter.execute("alice", "place_details", { place_id: "nope" }), { code: "place_lookup_unavailable" });
+  scopes = [];
+  await assert.rejects(adapter.execute("alice", "place_details", { place_id: "t1" }), { code: "data_permission_required" });
+  await assert.rejects(adapter.execute("alice", "places_nearby", {}), { code: "data_permission_required" });
 });
