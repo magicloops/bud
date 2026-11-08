@@ -20,6 +20,7 @@ import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
 import { AUTOMATION_EVENT_TYPES, automationCreateSchema, automationActivateBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
 import { parseBatch } from "./parser.js";
+import { DailyDiagnosticsBudget, DeviceDiagnostics, DIAGNOSTICS_LIMITS, parseDiagnostics } from "./diagnostics.js";
 import { PostgresIngestRepository, type IngestRepository } from "./repository.js";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
 import { AutomationProposals } from "./automation-proposals.js";
@@ -54,6 +55,9 @@ type Dependencies = {
   mapsKey?: MapKitKey;
   /** Place search (default Geoapify from config); injectable for route tests. */
   placeSearch?: Pick<Geoapify, "search">;
+  /** Device diagnostics storage and the daily budget; injectable for route tests. */
+  deviceDiagnostics?: Pick<DeviceDiagnostics, "store" | "delete">;
+  diagnosticsBudget?: DailyDiagnosticsBudget;
 };
 
 export async function registerPersonalDataRoutes(server: FastifyInstance, dependencies: Dependencies = {}) {
@@ -330,6 +334,43 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
           rejected_count: result.rejected.length, retry_after_s: 0, ...(followUps ? { follow_ups: followUps } : {}) });
       };
       uploads.post("/v1/events/batches", { bodyLimit: INGEST_LIMITS.compressed_bytes }, handler);
+
+      /**
+       * Device diagnostics (bud-mobile `design/diagnostics-upload.md`): the phone's journal, sent
+       * on its own direct uploads when its sharing setting is on. Always accepted from a
+       * signed-in installation. `acked_through_seq` covers every entry line in the request (stored,
+       * already stored, or rejected), so the phone advances past them.
+       */
+      const diagnostics = dependencies.deviceDiagnostics ?? new DeviceDiagnostics();
+      const diagnosticsBudget = dependencies.diagnosticsBudget ?? new DailyDiagnosticsBudget();
+      const diagnosticsUploading = new Set<string>();
+      uploads.post("/v1/diagnostics/batches", { bodyLimit: DIAGNOSTICS_LIMITS.compressed_bytes }, async (request, reply) => {
+        const owner = viewers.get(request)!.userId;
+        const installationId = request.headers["x-installation-id"];
+        if (!validIdentifier(installationId)) throw new DataRequestError(400, "invalid_headers", "A valid installation identifier is required");
+        if (!Buffer.isBuffer(request.body)) throw new DataRequestError(400, "invalid_body", "NDJSON body is required");
+        if (diagnosticsUploading.has(owner))
+          return reply.code(429).header("Retry-After", "5").send({ error: "upload_busy", retryable: true, retry_after_s: 5 });
+        diagnosticsUploading.add(owner);
+        try {
+          const batch = await parseDiagnostics(request.body, String(request.headers["content-encoding"] ?? "").toLowerCase());
+          if (!diagnosticsBudget.take(`${owner}:${installationId}`, batch.entries.length)) {
+            const midnight = new Date(); midnight.setUTCHours(24, 0, 0, 0);
+            const wait = Math.max(60, Math.ceil((midnight.getTime() - Date.now()) / 1000));
+            return reply.code(429).header("Retry-After", String(wait)).send({ error: "daily_limit", retryable: true, retry_after_s: wait });
+          }
+          const accepted = await diagnostics.store(owner, installationId, batch);
+          return reply.code(200).send({ request_id: request.id, acked_through_seq: batch.maxSeq, accepted,
+            duplicates: batch.entries.length - accepted, rejected: batch.rejected, retry_after_s: 0 });
+        } finally {
+          diagnosticsUploading.delete(owner);
+        }
+      });
+      uploads.delete("/v1/diagnostics", async request => {
+        const installationId = request.headers["x-installation-id"];
+        if (!validIdentifier(installationId)) throw new DataRequestError(400, "invalid_headers", "A valid installation identifier is required");
+        return { deleted: await diagnostics.delete(viewers.get(request)!.userId, installationId) };
+      });
     });
   });
   const appKeys = await registerAppKeyRoutes(server, {

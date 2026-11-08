@@ -800,3 +800,36 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     coordinate, accuracy, address, likely place, the trigger place, saved
     places at the visit, and delay.
 - Test: `automation-places.test.ts` (isolated PostgreSQL).
+
+## Device diagnostics (bud-mobile Phase 3)
+
+Design: bud-mobile `design/diagnostics-upload.md`; plan: bud-mobile
+`plan/diagnostics-logging/phase-3-diagnostics-upload.md`. The phone's diagnostics journal
+(content-free log entries), sent when the phone's sharing setting is on: local builds and
+verified `@magicloops.dev` accounts by default, everyone else opts in. The service always
+accepts.
+
+- **`POST /v1/diagnostics/batches`** (`routes.ts`): ingest auth and `X-Installation-Id`;
+  gzip JSON Lines (`diagnostics.ts`, `parseDiagnostics`): a `bud.diagnostics.v1` header with
+  the journal's ID, then `launch` and `entry` lines (`seq`, `at`, `uptime`, `launch`, `state`,
+  `area`, `level`, `event`, `fields`). Answers `{ acked_through_seq, accepted, duplicates,
+  rejected, retry_after_s }`; `acked_through_seq` covers every entry line (stored, duplicate or
+  rejected). One upload per owner at a time (`429 upload_busy`); 100,000 entries per
+  installation per UTC day (`429 daily_limit`). Limits: 256 KB compressed, 4 MB decoded, 1,000
+  entries, 40 fields, 128-character strings, 30 days back, a day ahead.
+- **Validation:** `area`, `event`, `state` and field keys are tokens; field strings must be
+  tokens, Bud-generated IDs, route templates, timestamps or ID lists (the phone's `LogField`
+  rules), else stored as `"invalid"`; nested values are `"invalid"`. Bad lines are counted, not
+  stored.
+- **`DELETE /v1/diagnostics`:** deletes this installation's entries and launches.
+- **Tables** (migration 0066): `device_diagnostic_entry` (unique owner, installation, journal,
+  seq; indexes on owner/at, owner/area/at, and GIN `jsonb_path_ops` on `fields`) and
+  `device_diagnostic_launch` (owner, installation, launch ID; an `unknown` reason is filled in
+  by a later upload). Owner foreign keys cascade.
+- **Retention:** indefinite for now (TODO.md: set a limit before public launch).
+- **Access:** not exposed to agents, app keys or the web. Read with SQL or
+  `pnpm db:diagnostics` (`scripts/diagnostics.ts`, `diagnostics-report.ts`): timeline, errors,
+  summary, and a batch's phone entries with the service's `data_event` rows for it.
+- Tests: `diagnostics.test.ts` (parser, the phone's fixture `fixtures/diagnostics-upload-v1.jsonl`,
+  budget, routes, storage, report).
+

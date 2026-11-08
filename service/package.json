@@ -20,6 +20,7 @@
     "db:backfill:compaction-messages": "tsx src/scripts/backfill-compaction-messages.ts",
     "db:inspect:message-client-ids": "tsx src/scripts/inspect-message-client-ids.ts",
     "db:geoapify-visit-names": "tsx src/scripts/geoapify-visit-names.ts",
+    "db:diagnostics": "tsx src/scripts/diagnostics.ts",
     "db:studio": "drizzle-kit studio",
     "db:studio:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit studio",
     "db:seed": "tsx src/scripts/seed.ts",

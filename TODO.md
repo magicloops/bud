@@ -6,6 +6,13 @@
 > local mode) were resolved or obsoleted by the stem migration, the grid
 > renderer, and the managed-daemon-lifecycle work. History is in git.
 
+## Device diagnostics — before public launch
+
+Shared device diagnostics (`device_diagnostic_entry`, bud-mobile `design/diagnostics-upload.md`)
+are kept indefinitely while we dogfood. Before public launch: set a retention limit and add a
+pruning job, and revisit who shares by default (local builds and verified `@magicloops.dev`
+accounts today; everyone else opts in on the phone).
+
 ## Personal data and automations — remaining acceptance
 
 Updated September 8, 2026: the main functionality and phases 15–16 UI changes are implemented. The latest approval-button layout was installed on the iPhone and accepted for development. See [current progress](plan/personal-data-ingestion-and-agent-triggers/progress-checklist.md). Remaining work is validation against the [detailed scenario matrix](plan/personal-data-ingestion-and-agent-triggers/validation-checklist.md) and [phase-8 rollout gate](plan/personal-data-ingestion-and-agent-triggers/phase-8-validation-and-rollout.md); a successful happy path does not complete the failure/recovery cases.
