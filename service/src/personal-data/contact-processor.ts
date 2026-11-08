@@ -52,11 +52,20 @@ export class ContactProcessor {
       // All publication/rule/bootstrap work uses this same owner lock first.
       await tx.select().from(owners).where(eq(owners.createdByUserId, candidate.owner)).for("update");
       // In the order things happened on the phone, not of receipt: presence decisions depend on
-      // order, and a batch's job IDs share a millisecond, so their order within it is random.
+      // order, and a batch's job IDs share a millisecond, so their order within it is random. A
+      // completed visit counts at its departure, the latest moment it describes: its
+      // `occurred_at` is the arrival, and processed there it would apply its departure before the
+      // readings from during the visit (November 6: a backlog's 11:58–13:31 visit departed the
+      // Office before the 12:19 reading at Home, merging two stays).
+      // `pg_input_is_valid` (PostgreSQL 16+): a malformed departure falls back instead of failing
+      // the query, which would stall the owner's whole queue.
+      const happenedAt = sql`coalesce(case when ${events.eventType} like 'location.visit.%'
+        and pg_input_is_valid(${events.rawEnvelope}->'payload'->>'departure_at', 'timestamptz')
+        then (${events.rawEnvelope}->'payload'->>'departure_at')::timestamptz end, ${events.occurredAt})`;
       const [due] = await tx.select({ job: jobs }).from(jobs)
         .innerJoin(events, and(eq(events.id, jobs.eventId), eq(events.createdByUserId, jobs.createdByUserId)))
         .where(and(eq(jobs.createdByUserId, candidate.owner), eq(jobs.status, "pending"), lte(jobs.nextAttemptAt, new Date())))
-        .orderBy(events.occurredAt, events.recordedAt, jobs.id).limit(1).for("update", { of: jobs });
+        .orderBy(happenedAt, events.occurredAt, events.recordedAt, jobs.id).limit(1).for("update", { of: jobs });
       if (!due) return false;
       const job = due.job;
       failedJob = job.id;

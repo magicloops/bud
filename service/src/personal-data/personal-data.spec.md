@@ -672,7 +672,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     happened (`occurred_at`, then `recorded_at`), not of receipt. A batch's job
     IDs share a millisecond, so their order within it was random, and presence
     decisions depend on order. The phone uploads its oldest pending events
-    first.
+    first. A completed visit counts at its departure (`departure_at`, when valid:
+    `pg_input_is_valid`), the latest moment it describes; at its arrival, a
+    backlog's long visit applied its departure before the readings from during it
+    and merged two stays (November 6, `debug/2026-11-06-walk-presence.md`).
 - **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
   region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
   `follow_up: { id, place_id, geometry_revision, transition }`) gets
@@ -684,7 +687,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     the ACK goes without `follow_ups` and the work continues in the background.
   - **After an entry:** open while an arrival waits for its second reading;
     settled once inside with no departure pending, or once
-    the owner is confirmed at another place within 1 km since the report.
+    the owner is confirmed at another place within 1 km since the report, unless
+    this follow-up's newest reading with a speed shows the owner moving
+    (`STOPPED_MPS` or more): walking between two nearby places, a reading still
+    inside the one being left mustn't stop the follow-up for the other.
     Open while a departure is pending (the previous stay doesn't confirm the
     return), while the place is approaching, or until this
     follow-up's own geofence report (matched by `follow_up_id`) has been
