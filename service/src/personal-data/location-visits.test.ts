@@ -167,6 +167,16 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   const walkerNow = await queries.recent("walker");
   assert.deepEqual([walkerNow.location?.kind, (walkerNow.location as { state?: string }).state], ["visit", "in_progress"]);
 
+  // Two unfinished visits at the same spot (iOS can split one stay), then one elsewhere: the
+  // first isn't held open by the second, which counts as a sighting there.
+  await upload("splitter", [visit("a1", ago(90), null, 37.80, 20), visit("a2", ago(70), null, 37.80, 20),
+    visit("b", ago(40), null, 37.85, 20)]);
+  const split = new Map((await queries.visits("splitter", window)).items.map(item => [item.visit_key, item]));
+  assert.deepEqual([split.get("a1")!.state, split.get("a1")!.left?.evidence, split.get("a1")!.left?.by.getTime(),
+    split.get("a1")!.left?.last_seen_at?.getTime()], ["left", "later_visit", ago(40).getTime(), ago(70).getTime()]);
+  assert.deepEqual([split.get("a2")!.state, split.get("a2")!.left?.by.getTime()], ["left", ago(40).getTime()]);
+  assert.equal(split.get("b")!.state, "in_progress");
+
   // Timeline kind filter: points include fixes.
   const points = await queries.list("owner", { ...window, kind: "points" });
   assert.deepEqual([...new Set(points.items.map(item => item.kind))].sort(), ["fix", "significant_change"]);

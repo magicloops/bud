@@ -531,8 +531,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   evidence, last_seen_at, max_duration_s, note }`:
   - `by` is the first accurate reading away from it (`reading_elsewhere`: a
     fix within 100 m or a point within 65 m accuracy, further than the
-    combined accuracy and at least 100 m), else the next visit's arrival when
-    that visit is elsewhere (`later_visit`);
+    combined accuracy and at least 100 m), else the arrival of the next visit
+    elsewhere (`later_visit`). Later visits at the same spot (iOS can split a
+    stay) don't end it: they count as sightings and the search continues past
+    them (up to 50 later visits);
   - a reading away only counts after a reading at the visit or once the phone
     recorded the arrival, since iOS can report an arrival minutes early;
   - `last_seen_at` is the latest reading at the visit before `by`.

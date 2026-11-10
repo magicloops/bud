@@ -82,6 +82,8 @@ const preferIncoming = sql.raw(`((excluded.departure_at is not null and location
 /** A visit with no departure is in progress for a day after arrival, unless later data shows the
  * owner left (`inferVisitEnd`); after that its end is unknown. */
 const IN_PROGRESS_LIMIT_MS = 86_400_000;
+/** Later visits `inferVisitEnd` looks through for one elsewhere (past visits at the same spot). */
+const LATER_VISIT_LIMIT = 50;
 /** A fix or point within this (or the combined accuracy) of an in-progress visit is still at it. */
 const WITHIN_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
@@ -309,34 +311,44 @@ export type VisitLeft = { by: Date; evidence: "later_visit" | "reading_elsewhere
 
 /**
  * When a visit with no departure ended, from later data (iOS can miss departures): the first
- * accurate reading away from it, else the next visit's arrival when that's elsewhere. A reading
- * away only counts once the owner was at the visit (a reading there, or after the phone recorded
- * the arrival): iOS can report an arrival minutes before the owner gets there. `last_seen_at` is
- * the latest reading still at the visit before then.
+ * accurate reading away from it, else the arrival of the next visit elsewhere. Later visits at the
+ * same spot (iOS can report one stay as several) don't end it: they count as sightings, and the
+ * search carries on past them. A reading away only counts once the owner was at the visit (a
+ * reading or a same-spot visit there, or after the phone recorded the arrival): iOS can report
+ * an arrival minutes before the owner gets there. `last_seen_at` is the latest sighting before then.
  */
 export async function inferVisitEnd(database: Database, owner: string, visit: typeof visits.$inferSelect): Promise<VisitLeft | null> {
   if (visit.departureAt) return null;
   const away = (lat: number, lon: number, accuracy: number) => distanceM(lat, lon, visit.latitude, visit.longitude)
     > Math.max(accuracy + visit.horizontalAccuracyM, WITHIN_VISIT_DISTANCE_M);
-  const [[next], [reported]] = await Promise.all([
+  const [later, [reported]] = await Promise.all([
     database.select().from(visits).where(and(eq(visits.createdByUserId, owner),
-      sql`(${visits.startedAt}, ${visits.id}) > (${visit.startedAt}, ${visit.id})`)).orderBy(asc(visits.startedAt), asc(visits.id)).limit(1),
+      sql`(${visits.startedAt}, ${visits.id}) > (${visit.startedAt}, ${visit.id})`))
+      .orderBy(asc(visits.startedAt), asc(visits.id)).limit(LATER_VISIT_LIMIT),
     database.select({ recordedAt: rawEvents.recordedAt }).from(rawEvents)
       .where(and(eq(rawEvents.createdByUserId, owner), eq(rawEvents.id, visit.firstEventId))).limit(1)]);
+  const elsewhereIndex = later.findIndex(row => away(row.latitude, row.longitude, row.horizontalAccuracyM));
+  const elsewhere = elsewhereIndex >= 0 ? later[elsewhereIndex] : null;
+  const sameSpot = elsewhereIndex >= 0 ? later.slice(0, elsewhereIndex) : later;
   const readings = await database.select({ at: locations.occurredAt, lat: locations.latitude, lon: locations.longitude,
     accuracy: locations.horizontalAccuracyM }).from(locations)
     .where(and(eq(locations.createdByUserId, owner), inArray(locations.kind, POINT_KINDS), sql`${locations.occurredAt} > ${visit.startedAt}`,
-      next ? lte(locations.occurredAt, next.startedAt) : undefined,
+      elsewhere ? lte(locations.occurredAt, elsewhere.startedAt) : undefined,
       or(and(eq(locations.kind, "fix"), lte(locations.horizontalAccuracyM, FIX_MAX_ACCURACY_M)),
         and(ne(locations.kind, "fix"), lte(locations.horizontalAccuracyM, POINT_MAX_ACCURACY_M)))))
     .orderBy(asc(locations.occurredAt), asc(locations.id)).limit(500);
+  // Readings, plus each same-spot visit's arrival and departure as sightings there, in time order.
+  const observations = [
+    ...readings.map(reading => ({ at: reading.at, away: away(reading.lat, reading.lon, reading.accuracy) })),
+    ...sameSpot.flatMap(row => [row.arrivalAt ?? row.startedAt, row.departureAt].flatMap(at => at ? [{ at, away: false }] : [])),
+  ].filter(observation => !elsewhere || observation.at <= elsewhere.startedAt).sort((a, b) => a.at.getTime() - b.at.getTime());
   let lastSeen: Date | null = null;
-  for (const reading of readings) {
-    if (!away(reading.lat, reading.lon, reading.accuracy)) { lastSeen = reading.at; continue; }
-    if (lastSeen || (reported && reading.at >= reported.recordedAt)) return { by: reading.at, evidence: "reading_elsewhere", last_seen_at: lastSeen };
+  for (const observation of observations) {
+    if (!observation.away) { if (!lastSeen || observation.at > lastSeen) lastSeen = observation.at; continue; }
+    if (lastSeen || (reported && observation.at >= reported.recordedAt))
+      return { by: observation.at, evidence: "reading_elsewhere", last_seen_at: lastSeen };
   }
-  if (next && away(next.latitude, next.longitude, next.horizontalAccuracyM))
-    return { by: next.arrivalAt ?? next.startedAt, evidence: "later_visit", last_seen_at: lastSeen };
+  if (elsewhere) return { by: elsewhere.arrivalAt ?? elsewhere.startedAt, evidence: "later_visit", last_seen_at: lastSeen };
   return null;
 }
 
