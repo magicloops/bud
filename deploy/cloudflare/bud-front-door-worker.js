@@ -1,5 +1,5 @@
 const SERVICE_PREFIXES = ["/api/", "/.well-known/", "/v1/events/"];
-const SERVICE_PREFIX_LIKE_PATHS = ["/ws", "/readyz", "/healthz"];
+const SERVICE_PREFIX_LIKE_PATHS = ["/ws", "/readyz", "/healthz", "/v1/diagnostics"];
 const DEFAULT_PROXY_BASE_DOMAIN = "bud.show";
 
 function isServicePath(pathname) {

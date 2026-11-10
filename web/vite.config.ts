@@ -60,6 +60,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           xfwd: true
         },
+        '/v1/diagnostics': {
+          target: proxyTarget,
+          changeOrigin: true,
+          xfwd: true
+        },
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
