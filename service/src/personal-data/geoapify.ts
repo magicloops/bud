@@ -80,6 +80,13 @@ export function categoryLabel(categories: readonly string[]): string | null {
  * the Phase 11 plan. `sport` itself found nothing nearby where `sport.fitness` did, so the
  * sport subcategories are listed.
  */
+/**
+ * Not places someone stays, so never a visit's candidates (the agent's own searches still find
+ * them): bus stops are named by their intersection ("26th Street & Mission Street"), and bike-share
+ * docks crowded a cafe out of the five nearest on November 10.
+ */
+const NOT_A_STAY: readonly unknown[] = ["public_transport.bus", "rental.bicycle"];
+
 export const PLACE_CATEGORY_GROUPS = [
   ["catering", "commercial", "education", "entertainment", "healthcare", "office", "service", "religion", "public_transport",
     "activity", "leisure", "childcare", "rental", "pet", "sport.fitness"],
@@ -179,8 +186,7 @@ export class Geoapify {
       bodies.push(body);
     }
     const seen = new Set<string>();
-    // Bus stops are named by their intersection ("26th Street & Mission Street"), not a place to be.
-    return bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.includes("public_transport.bus")))
+    return bodies.flatMap(items).filter(row => !(Array.isArray(row.categories) && row.categories.some(c => NOT_A_STAY.includes(c))))
       .filter(row => { const id = string(row.place_id); if (!id) return true; if (seen.has(id)) return false; seen.add(id); return true; })
       .flatMap(row => {
         const place = foundPlace(row);

@@ -67,6 +67,12 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
     "the completed report keeps its coordinate when a later arrival report is less accurate");
   assert.deepEqual([b.state, b.coordinate.lat, new Date(b.arrival_at!).getTime()], ["completed", 37.73, ago(200).getTime()],
     "the completed report replaces the arrival's coordinate");
+  // November 10: the arrival report was ±22 m and the completed one ±94 m, 34 m off. The completed
+  // report still completes the visit, but the more accurate coordinate stays.
+  await upload("cafe", [visit("brazil", ago(120), null, 37.75257, 22)]);
+  await upload("cafe", [visit("brazil", ago(120), ago(107), 37.75249, 94)]);
+  const [cafe] = (await queries.visits("cafe", window)).items;
+  assert.deepEqual([cafe.state, cafe.coordinate.lat, cafe.horizontal_accuracy_m, cafe.duration_s], ["completed", 37.75257, 22, 13 * 60]);
   assert.equal(byKey.get("c")!.state, "in_progress");
   assert.deepEqual([byKey.get("d")!.state, byKey.get("d")!.left?.evidence, byKey.get("d")!.left?.by.getTime()],
     ["left", "later_visit", ago(400).getTime()], "a later visit elsewhere ends a two-day-old arrival");

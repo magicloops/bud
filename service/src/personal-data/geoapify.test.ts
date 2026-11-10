@@ -12,7 +12,8 @@ const places = { type: "FeatureCollection", features: [
   { properties: { name: "Far Café", categories: ["catering.cafe", "catering"], lat: 37.7495, lon: -122.417, distance: 64 } },
   { properties: { name: "Blue Bottle Coffee", categories: ["catering.cafe", "catering"], lat: 37.7491, lon: -122.4166, distance: 12 } },
   { properties: { categories: ["building"], lat: 37.749, lon: -122.4165, distance: 2 } },
-  { properties: { name: "26th Street & Mission Street", categories: ["public_transport", "public_transport.bus"], lat: 37.749, lon: -122.4165, distance: 4 } }] };
+  { properties: { name: "26th Street & Mission Street", categories: ["public_transport", "public_transport.bus"], lat: 37.749, lon: -122.4165, distance: 4 } },
+  { properties: { name: "Bay Wheels", categories: ["rental", "rental.bicycle"], lat: 37.749, lon: -122.4165, distance: 6 } }] };
 const autocomplete = { results: [
   { name: "Blue Bottle Coffee", formatted: "Blue Bottle Coffee, 66 Mint Street, San Francisco, CA 94103, United States of America",
     address_line1: "Blue Bottle Coffee", lat: 37.7824, lon: -122.4078, result_type: "amenity", category: "catering.cafe" },
@@ -47,7 +48,8 @@ test("Geoapify names a coordinate in the stored address shape, and finds its nea
     street: "26th Street", city: "San Francisco" })?.full], ["3328–3330 26th Street, San Francisco", "3328–3330 26th Street, San Francisco, CA"]);
   const { geoapify, urls } = client({ "/v1/geocode/reverse": reverse, "/v2/places": places });
   assert.equal((await geoapify.reverse(37.749, -122.4165))?.short, "3327 26th Street, San Francisco");
-  // The nearest named one, not the first returned; an unnamed building or a bus stop doesn't count.
+  // The nearest named one, not the first returned; an unnamed building, a bus stop or a bike-share
+  // dock (November 10: one crowded a cafe out of the five kept) doesn't count.
   assert.deepEqual(await geoapify.nearbyPlace(37.749, -122.4165),
     { name: "Blue Bottle Coffee", category: "catering.cafe", category_label: "café", coordinate: { lat: 37.7491, lon: -122.4166 }, distance_m: 12 });
   const [reverseUrl, ...placesUrls] = urls.map(url => new URL(url));

@@ -497,7 +497,7 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   Apple-sourced names, then deletes the rest; each environment needs approval.
 - **Unknown places (Phase 12, `place-context.ts`):** a name also keeps `nearby`
   (migration 0065): up to 5 named places within the visit's accuracy (100–200 m,
-  `nearbyRadius`), nearest first, with the most specific Geoapify category, a readable
+  `nearbyRadius`), nearest first, never bus stops or bike-share docks (`NOT_A_STAY`), with the most specific Geoapify category, a readable
   `category_label`, and `place_id` and `cuisine` when known (Phase 13); and `address.area` (the neighbourhood). For a visit or fix not at
   a saved place, the agent gets `nearby_places`, `match` (`clear`: the nearest within
   the accuracy, at least 30 m, and the next further by at least the accuracy, at least
@@ -519,8 +519,9 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 
 - **`location_visit`** (migration 0055, backfilled) holds one row per owner and
   visit key. `projectVisit` merges reports during processing: earliest arrival,
-  latest departure, and the coordinate from a completed report, then the most
-  accurate one.
+  latest departure, and the coordinate from the most accurate report (a
+  completed one on a tie). Until November 10 a completed report won outright,
+  so a ±94 m completion replaced a ±22 m arrival.
 - **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
   (default desc), cursors bound to the window, order and policy. Visits are
   joined to names. A visit's `state` is `completed`, `in_progress` (no
