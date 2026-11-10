@@ -1,7 +1,7 @@
 /** A visit as returned by `/api/data/location/visits`. */
 export type LocationVisit = {
   id: string
-  state: 'completed' | 'in_progress' | 'end_unknown'
+  state: 'completed' | 'in_progress' | 'left' | 'end_unknown'
   arrival_at: string | null
   departure_at: string | null
   duration_s: number | null
@@ -11,6 +11,8 @@ export type LocationVisit = {
   place: { name: string; distance_m: number } | null
   /** Saved places the visit is within (radius plus accuracy). */
   places?: Array<{ id: string; name: string; address?: string | null }>
+  /** No departure reported, but later data shows the owner left by `by`. */
+  left?: { by: string; last_seen_at: string | null; max_duration_s: number }
 }
 
 /**
@@ -47,6 +49,7 @@ export function visitNearby(visit: LocationVisit) {
 
 export function visitDuration(visit: LocationVisit) {
   if (visit.state === 'in_progress') return 'Here now'
+  if (visit.state === 'left' && visit.left) return `Under ${Math.max(1, Math.round(visit.left.max_duration_s / 60))} min`
   if (visit.state === 'end_unknown' || visit.duration_s === null) return 'End unknown'
   const minutes = Math.round(visit.duration_s / 60)
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`

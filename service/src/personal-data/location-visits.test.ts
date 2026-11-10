@@ -68,7 +68,8 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   assert.deepEqual([b.state, b.coordinate.lat, new Date(b.arrival_at!).getTime()], ["completed", 37.73, ago(200).getTime()],
     "the completed report replaces the arrival's coordinate");
   assert.equal(byKey.get("c")!.state, "in_progress");
-  assert.equal(byKey.get("d")!.state, "end_unknown");
+  assert.deepEqual([byKey.get("d")!.state, byKey.get("d")!.left?.evidence, byKey.get("d")!.left?.by.getTime()],
+    ["left", "later_visit", ago(400).getTime()], "a later visit elsewhere ends a two-day-old arrival");
   assert.ok([...byKey.keys()].some(key => key.startsWith("v1:")));
   assert.equal(all.items[0].visit_key, "c", "newest first by default");
   const first = await queries.visits("owner", { ...window, limit: 2 });
@@ -133,6 +134,39 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
   assert.match(away.now_note!, /^Moving as of 2 minutes ago/);
   // Without a fix key, a fix is invalid and stored as nothing.
   await upload("owner", [["location.fix.v1", ago(1), { coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 10 }]]);
+  // The fix 1 km away ends the open visit, with the nearby fix as the last sighting there.
+  const c = (await queries.visits("owner", window)).items.find(item => item.visit_key === "c")!;
+  assert.deepEqual([c.state, c.left?.evidence, c.left?.by.getTime(), c.left?.last_seen_at?.getTime(), c.left?.max_duration_s],
+    ["left", "reading_elsewhere", ago(2).getTime(), ago(5).getTime(), 28 * 60]);
+
+  // November 9 (Precita Park): iOS reports the arrival early, and the phone records it four minutes
+  // later. A reading on the way there, after the reported arrival but before it was recorded,
+  // doesn't end it; a reading there does count as a sighting; the next visit elsewhere ends it.
+  const park = { lat: 37.74712, lon: -122.41282 }, home = { lat: 37.74909, lon: -122.41594 };
+  const at = (lat: number, lon: number) => ({ coordinate: { lat, lon }, horizontal_accuracy_m: 19, speed_mps: -1, course_deg: -1, altitude_m: 0 });
+  const report = (key: string, arrival: Date, recorded: Date, where: { lat: number; lon: number }, accuracy: number) => ({
+    schema_version: 1, event_id: randomUUID(), event_type: "location.visit.v2", occurred_at: arrival.toISOString(),
+    recorded_at: recorded.toISOString(), actor: { user_id: "walker", installation_id: "phone" },
+    payload: { visit_key: key, phase: "arrived", arrival_at: arrival.toISOString(), departure_at: null,
+      coordinate: where, horizontal_accuracy_m: accuracy } });
+  const context = { userId: "walker", installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
+  await repository.persist(context, await parseBatch(Buffer.from(JSON.stringify(report("park", ago(60), ago(56), park, 40))), "", context));
+  while (await processor.processNext()) { /* drain */ }
+  const onTheWay = ["location.fix.v1", new Date(ago(60).getTime() + 3000), { fix_key: "fix:way", reason: "follow_up",
+    ...at(37.74901, -122.41452) }] as [string, Date, object];
+  await upload("walker", [onTheWay, ["location.significant_change.v1", ago(52), at(37.74725, -122.41300)]]);
+  const parkOpen = (await queries.visits("walker", window)).items[0];
+  assert.deepEqual([parkOpen.state, parkOpen.left], ["in_progress", undefined], "the reading on the way there doesn't end it");
+  await repository.persist({ ...context, batchId: randomUUID() },
+    await parseBatch(Buffer.from(JSON.stringify(report("home", ago(37), ago(32), home, 3))), "", { ...context, batchId: randomUUID() }));
+  while (await processor.processNext()) { /* drain */ }
+  const [homeVisit, parkVisit] = (await queries.visits("walker", window)).items;
+  assert.deepEqual([parkVisit.state, parkVisit.left?.evidence, parkVisit.left?.by.getTime(), parkVisit.left?.last_seen_at?.getTime(),
+    parkVisit.left?.max_duration_s], ["left", "later_visit", ago(37).getTime(), ago(52).getTime(), 23 * 60]);
+  assert.equal(homeVisit.state, "in_progress");
+  const walkerNow = await queries.recent("walker");
+  assert.deepEqual([walkerNow.location?.kind, (walkerNow.location as { state?: string }).state], ["visit", "in_progress"]);
+
   // Timeline kind filter: points include fixes.
   const points = await queries.list("owner", { ...window, kind: "points" });
   assert.deepEqual([...new Set(points.items.map(item => item.kind))].sort(), ["fix", "significant_change"]);

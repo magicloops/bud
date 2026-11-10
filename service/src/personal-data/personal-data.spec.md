@@ -523,7 +523,20 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   accurate one.
 - **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
   (default desc), cursors bound to the window, order and policy. Visits are
-  joined to names.
+  joined to names. A visit's `state` is `completed`, `in_progress` (no
+  departure, under a day old), `left` or `end_unknown`.
+- **Inferred ends (`inferVisitEnd`):** iOS can miss departures (November 9: a
+  park visit, then one at Home, neither completed). A visit with no departure
+  is `left` when later data shows the owner elsewhere, with `left { by,
+  evidence, last_seen_at, max_duration_s, note }`:
+  - `by` is the first accurate reading away from it (`reading_elsewhere`: a
+    fix within 100 m or a point within 65 m accuracy, further than the
+    combined accuracy and at least 100 m), else the next visit's arrival when
+    that visit is elsewhere (`later_visit`);
+  - a reading away only counts after a reading at the visit or once the phone
+    recorded the arrival, since iOS can report an arrival minutes early;
+  - `last_seen_at` is the latest reading at the visit before `by`.
+  `recent` treats a `left` visit as closed, like a completed one.
 - **`LocationQueries.recent`:** the latest in-progress visit, visit end or
   point, with age, `stale` after 2 hours, and a `notBefore` history limit.
 - **`list`** accepts `kind: visits | points | all`.
