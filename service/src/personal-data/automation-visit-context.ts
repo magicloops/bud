@@ -7,7 +7,7 @@ import { agentDataGrantTable as grants, automationDeliveryTable as deliveries, a
 import { automationDefinitionSchema, parseAutomationInput, withinHistory } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 import { placesForOwner, visitPlaces } from "./places.js";
-import { earlierVisits, placeContext } from "./place-context.js";
+import { clearPlace, earlierVisits, placeContext } from "./place-context.js";
 import { presenceReading } from "./place-presence.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -50,7 +50,9 @@ export async function automationVisitContext(tx: Transaction, invocation: Invoca
     const visit = row?.visit;
     const atSaved = visit ? await visitPlaces(tx, owner, owned, visit) : [];
     // Away from saved places: the nearby candidates and earlier visits, within approved history (Phase 12).
-    const unknown = visit && atSaved.length === 0 ? { ...placeContext(row!.name, visit.horizontalAccuracyM),
+    // Its `place` override is for the tools' visit shape; here the stored place is `likely_place`.
+    const { place: _withheld, ...context } = visit && atSaved.length === 0 ? placeContext(row!.name, visit.horizontalAccuracyM) : {};
+    const unknown = visit && atSaved.length === 0 ? { ...context,
       earlier_visits: await earlierVisits(tx, owner, { lat: visit.latitude, lon: visit.longitude }, visit.startedAt,
         new Date(clock.now.getTime() - historyDays * 86400_000)) } : {};
     entries.push({ at: happenedAt, evidence: {
@@ -60,7 +62,8 @@ export async function automationVisitContext(tx: Transaction, invocation: Invoca
       visit: visit ? { visit_id: visit.id, arrival_at: visit.arrivalAt, departure_at: visit.departureAt,
         duration_s: visit.arrivalAt && visit.departureAt ? Math.round((visit.departureAt.getTime() - visit.arrivalAt.getTime()) / 1000) : null,
         coordinate: { lat: visit.latitude, lon: visit.longitude }, horizontal_accuracy_m: visit.horizontalAccuracyM,
-        address: row!.name?.address ?? null, likely_place: row!.name?.place ?? null, ...unknown } : null,
+        address: row!.name?.address ?? null, likely_place: atSaved.length ? row!.name?.place ?? null : clearPlace(row!.name, visit.horizontalAccuracyM),
+        ...unknown } : null,
       place: trigger ? { id: trigger.id, name: trigger.name, note: trigger.note, address: trigger.address,
         coordinate: { lat: trigger.latitude, lon: trigger.longitude }, radius_m: trigger.radiusM } : null,
       saved_places_at_visit: atSaved,

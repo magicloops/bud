@@ -39,12 +39,30 @@ export function nearbyMatch(nearby: readonly Candidate[], accuracyM: number): Ma
   return distances.length === 1 || distances[1] - distances[0] >= Math.max(accuracyM, MATCH_GAP_FLOOR_M) ? "clear" : "several";
 }
 
-/** The candidates and how clear the match is, for a visit or fix with no saved place. Nothing when
- * there's no stored list (an older or Apple-sourced name). */
-export function placeContext(name: { nearby: Array<Record<string, unknown>> | null } | null, accuracyM: number) {
+/** What to do when the stored candidates don't settle it: search with intent. */
+export const SEARCH_STEP = "No single nearby place is a clear match, so none is named. Before naming one, search with places_nearby "
+  + "(this visit_id) for categories that fit the question, the time of day and how long the stay was (for example catering "
+  + "for a short morning stop); nearby_places are only the nearest named places, which in a busy block crowd out the likely one.";
+
+/**
+ * The candidates and how clear the match is, for a visit or fix with no saved place. Nothing when
+ * there's no stored list (an older or Apple-sourced name). Unless the match is `clear`, the single
+ * stored `place` is withheld (`place: null`, overriding the caller's) with a `next_step`: the
+ * nearest named place is often wrong in a dense block (November 10: a school, not the cafe 30 m
+ * away), and the agent can search with the question's intent.
+ */
+export type PlaceContext = { nearby_places?: Array<Record<string, unknown>>; match?: Match; match_note?: string; place?: null; next_step?: string };
+export function placeContext(name: { nearby: Array<Record<string, unknown>> | null } | null, accuracyM: number): PlaceContext {
   if (!name?.nearby) return {};
   const match = nearbyMatch(name.nearby as Candidate[], accuracyM);
-  return { nearby_places: name.nearby, match, match_note: MATCH_NOTES[match] };
+  return { nearby_places: name.nearby, match, match_note: MATCH_NOTES[match],
+    ...(match === "clear" ? {} : { place: null, next_step: SEARCH_STEP }) };
+}
+
+/** The stored likely place, only when it's a clear match (or there's no candidate list to judge by). */
+export function clearPlace(name: { place: unknown; nearby: Array<Record<string, unknown>> | null } | null, accuracyM: number) {
+  if (!name?.place) return null;
+  return !name.nearby || nearbyMatch(name.nearby as Candidate[], accuracyM) === "clear" ? name.place : null;
 }
 
 /** One line for trigger text: "Nearby (OpenStreetMap, within 100 m): Finjan Qahwa (café, 19 m), …". */

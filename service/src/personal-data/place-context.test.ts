@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { earlierLine, nearbyLine, nearbyMatch, placeContext } from "./place-context.js";
+import { clearPlace, earlierLine, nearbyLine, nearbyMatch, placeContext, SEARCH_STEP } from "./place-context.js";
 
 const at = (...distances: number[]) => distances.map((distance, i) => ({ name: `Place ${i}`, distance_m: distance, category_label: "café" }));
 
@@ -17,6 +17,14 @@ test("how clear a visit's nearest candidate is: clear only when the next is furt
   // An older or Apple-sourced name has no stored list: nothing to add.
   assert.deepEqual(placeContext({ nearby: null }, 20), {});
   assert.deepEqual(Object.keys(placeContext({ nearby: at(10) }, 20)), ["nearby_places", "match", "match_note"]);
+  // November 10: a school at 0 m and a bike dock at 18 m within ±94 m: several, so no single place, and a search step.
+  const unclear = placeContext({ nearby: at(0, 18, 29) }, 94);
+  assert.deepEqual([unclear.match, unclear.place, unclear.next_step], ["several", null, SEARCH_STEP]);
+  assert.equal(placeContext({ nearby: at(60) }, 20).place, null, "none close: no place either");
+  const school = { name: "Buena Vista Horace Mann" };
+  assert.equal(clearPlace({ place: school, nearby: at(0, 18) }, 94), null);
+  assert.equal(clearPlace({ place: school, nearby: at(0, 120) }, 20), school, "a clear match keeps its name");
+  assert.equal(clearPlace({ place: school, nearby: null }, 94), school, "no list to judge by: kept");
 });
 
 test("trigger lines for a visit away from saved places", () => {

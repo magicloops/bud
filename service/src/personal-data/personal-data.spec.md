@@ -497,7 +497,7 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   Apple-sourced names, then deletes the rest; each environment needs approval.
 - **Unknown places (Phase 12, `place-context.ts`):** a name also keeps `nearby`
   (migration 0065): up to 5 named places within the visit's accuracy (100–200 m,
-  `nearbyRadius`), nearest first, with the most specific Geoapify category, a readable
+  `nearbyRadius`), nearest first, never bus stops or bike-share docks (`NOT_A_STAY`), with the most specific Geoapify category, a readable
   `category_label`, and `place_id` and `cuisine` when known (Phase 13); and `address.area` (the neighbourhood). For a visit or fix not at
   a saved place, the agent gets `nearby_places`, `match` (`clear`: the nearest within
   the accuracy, at least 30 m, and the next further by at least the accuracy, at least
@@ -507,6 +507,15 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   place most often named among them when it's at least half. Visit-ended text adds a
   "Nearby …" and a "Visited within 50 m … before" reference line. Rounded app keys get
   none of these.
+- **Search, don't guess (November 10):** the stored list is the nearest named places,
+  which in a busy block crowd out the likely one (a school at 0 m; the cafe 30 m away
+  wasn't listed). Unless `match` is `clear`, the single stored place is withheld:
+  `place: null` (`likely_place: null` in visit-ended evidence) with a `next_step`
+  (`SEARCH_STEP`) to call `places_nearby` with the `visit_id` and categories that fit
+  the question, the time and the duration. Visit-ended text adds "None of these is a
+  clear match: …". The web and phone title such a visit by its street address with
+  "Near A, B or C" under it. Stored names still serve the visit lists, trigger text and
+  `earlier_visits`, which can't query.
 - v2 visits require `visit_key`, which is stored on `location_observation`.
 - `LocationQueries.list` and `contactContext` join names and present
   `visit_key`, `address` and `place`.
@@ -520,10 +529,33 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **`location_visit`** (migration 0055, backfilled) holds one row per owner and
   visit key. `projectVisit` merges reports during processing: earliest arrival,
   latest departure, and the coordinate from a completed report, then the most
-  accurate one.
+  accurate one. An arrival's coordinate is usually a fix on the way in: of 64
+  visits at saved places (to November 10) the completed point was nearer the stay
+  in 45, the arrival in 10, in every accuracy band.
 - **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
   (default desc), cursors bound to the window, order and policy. Visits are
-  joined to names.
+  joined to names. A visit's `state` is `completed`, `in_progress` (no
+  departure, under a day old), `left` or `end_unknown`.
+- **Inferred ends (`inferVisitEnd`):** iOS can miss departures (November 9: a
+  park visit, then one at Home, neither completed). A visit with no departure
+  is `left` when later data shows the owner elsewhere, with `left { by,
+  evidence, last_seen_at, max_duration_s, note }`:
+  - `by` is the first accurate reading away from it (`reading_elsewhere`: a
+    fix within 100 m or a point within 65 m accuracy, further than the
+    combined accuracy and at least 100 m), else the arrival of the next visit
+    elsewhere (`later_visit`). Later visits at the same spot (iOS can split a
+    stay) don't end it: they count as sightings and the search continues past
+    them (up to 50 later visits);
+  - a reading away only counts after a reading at the visit or once the phone
+    recorded the arrival, since iOS can report an arrival minutes early;
+  - `last_seen_at` is the latest reading at the visit before `by`.
+  `recent` treats a `left` visit as closed, like a completed one.
+- **Labels for uncompleted visits (`visitPlaces`):** until iOS completes a visit its
+  coordinate is usually a fix from the way in, so one that fits no saved place is
+  labelled with a place presence recorded an arrival at from 2 minutes before to 5
+  minutes after the visit's arrival, when it's within 100 m beyond that place's
+  radius (November 10: 66 m short of Home, presence arrived 94 s later; it had read
+  as a clear match for a cafe). Labels only; presence is unchanged.
 - **`LocationQueries.recent`:** the latest in-progress visit, visit end or
   point, with age, `stale` after 2 hours, and a `notBefore` history limit.
 - **`list`** accepts `kind: visits | points | all`.

@@ -186,8 +186,34 @@ export function matchingPlaces(owned: Place[], point: { latitude: number; longit
 
 /** The saved place a visit was at (`placeOfVisit`), as a list for query results and evidence. */
 export async function visitPlaces(tx: Pick<Database, "select">, owner: string, owned: Place[], visit: VisitSpan) {
-  const place = await placeOfVisit(tx, owner, owned, visit);
+  const place = await placeOfVisit(tx, owner, owned, visit) ?? (visit.departureAt ? null : await placeArrivedAt(tx, owner, owned, visit));
   return place ? [{ id: place.id, name: place.name, address: place.address }] : [];
+}
+
+/** How far around an uncompleted visit's arrival a presence arrival at a nearby place counts. */
+export const ARRIVAL_ATTRIBUTION_MS = { before: 2 * 60_000, after: 5 * 60_000 } as const;
+/** How far beyond a place's radius such a visit can be. */
+export const ARRIVAL_ATTRIBUTION_M = 100;
+
+/**
+ * For labels only: the saved place an uncompleted visit is really at, when its coordinate isn't.
+ * Until iOS completes a visit, its coordinate is usually a fix from the way in (arrival points sat
+ * 62–86 m from the stay on average, to November 10). On November 10, a visit 66 m short of Home
+ * (±3 m) looked like a clear match for a cafe, while presence had the owner arrive home 94 s
+ * later. So: presence recorded an arrival at a place within `ARRIVAL_ATTRIBUTION_M` beyond its
+ * radius, from 2 minutes before to 5 minutes after the visit's arrival. Presence itself is unchanged.
+ */
+async function placeArrivedAt(tx: Pick<Database, "select">, owner: string, owned: Place[], visit: VisitSpan) {
+  const near = owned.filter(place => distanceM(visit.latitude, visit.longitude, place.latitude, place.longitude)
+    <= place.radiusM + ARRIVAL_ATTRIBUTION_M);
+  if (near.length === 0) return null;
+  const at = (visit.arrivalAt ?? visit.startedAt).getTime();
+  const [arrival] = await tx.select({ placeId: presenceEvents.placeId }).from(presenceEvents)
+    .where(and(eq(presenceEvents.createdByUserId, owner), inArray(presenceEvents.placeId, near.map(place => place.id)),
+      eq(presenceEvents.transition, "arrived"), gte(presenceEvents.occurredAt, new Date(at - ARRIVAL_ATTRIBUTION_MS.before)),
+      lt(presenceEvents.occurredAt, new Date(at + ARRIVAL_ATTRIBUTION_MS.after))))
+    .orderBy(sql`abs(extract(epoch from ${presenceEvents.occurredAt}) - ${at / 1000})`).limit(1);
+  return near.find(place => place.id === arrival?.placeId) ?? null;
 }
 
 type VisitRow = typeof visits.$inferSelect;
