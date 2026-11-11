@@ -13,6 +13,22 @@ are kept indefinitely while we dogfood. Before public launch: set a retention li
 pruning job, and revisit who shares by default (local builds and verified `@magicloops.dev`
 accounts today; everyone else opts in on the phone).
 
+## Apple place names — cleanup after the Geoapify backfill
+
+Apple's terms don't allow keeping Map Data, so Phase 11 moved visit names and search to Geoapify
+(bud #176). Once every environment has run `pnpm db:geoapify-visit-names` (dry run, `--rename`,
+then `--delete-apple`, each with approval):
+
+- [ ] Migration: drop `'apple'` from `location_visit_name.source` (its default, which would label a
+      name inserted without a source as Apple's, and its check). The migration fails while any
+      Apple row remains, so it waits for every environment.
+- [ ] Delete `service/src/scripts/geoapify-visit-names.ts` and its `db:geoapify-visit-names` script.
+- [ ] Once phone builds from before bud-mobile #82 are gone, remove the `location.visit_named.v1`
+      handling (accepted as `unsupported` today).
+
+MapKit stays for drawing maps (the phone's map views, web MapKit JS, `/api/maps/token`): Apple
+allows displaying maps.
+
 ## Personal data and automations — remaining acceptance
 
 Updated September 8, 2026: the main functionality and phases 15–16 UI changes are implemented. The latest approval-button layout was installed on the iPhone and accepted for development. See [current progress](plan/personal-data-ingestion-and-agent-triggers/progress-checklist.md). Remaining work is validation against the [detailed scenario matrix](plan/personal-data-ingestion-and-agent-triggers/validation-checklist.md) and [phase-8 rollout gate](plan/personal-data-ingestion-and-agent-triggers/phase-8-validation-and-rollout.md); a successful happy path does not complete the failure/recovery cases.
