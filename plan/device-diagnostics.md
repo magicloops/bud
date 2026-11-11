@@ -12,14 +12,14 @@ design: bud-mobile `design/diagnostics-upload.md`.
 
 ## Deployment
 
-Deploy this before the bud-mobile build that uploads (an older service answers 404 and the phone
-stops trying until its next launch). Render applies migration 0066 on deploy
+Deploy this before the bud-mobile build that uploads (an older service answers 404; from bud-mobile #85
+the phone keeps retrying with backoff, up to every 10 minutes, and earlier builds stop until their next launch). Render applies migration 0066 on deploy
 (`preDeployCommand: pnpm db:migrate`). Locally it was applied with psql (2026-11-08); the local
 database doesn't track migrations in drizzle's table.
 
 **Deploy checklist (each environment: staging, then production).** The Cloudflare steps are
-manual and not part of the Render deploy; without them uploads 404 at the front door and the phone
-stops trying until its next launch.
+manual and not part of the Render deploy; without them uploads 404 at the front door (the phone
+keeps retrying, but nothing arrives).
 
 1. Deploy the service (Render runs migration 0066).
 2. Redeploy the front-door Worker from `deploy/cloudflare/bud-front-door-worker.js` (it now

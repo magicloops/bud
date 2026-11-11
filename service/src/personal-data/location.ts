@@ -47,7 +47,7 @@ type ParsedLocation = NonNullable<ReturnType<typeof parseLocationPayload>>;
 
 /** Merges a visit report into its single `location_visit` row (caller holds the owner lock).
  * Arrival takes the earliest known time and departure the latest. The coordinate comes from
- * the most accurate report (a completed one on a tie). v1 visits have no key and stand alone. */
+ * a completed report, then the most accurate one. v1 visits have no key and stand alone. */
 export async function projectVisit(tx: Transaction, owner: string, rawEventId: string, receivedAt: Date, location: ParsedLocation) {
   const key = location.visitKey ?? `v1:${rawEventId}`;
   const startedAt = location.arrivalAt ?? location.departureAt ?? receivedAt;
@@ -74,12 +74,15 @@ export async function projectVisit(tx: Transaction, owner: string, rawEventId: s
     completed: (!before || before.departureAt === null) && after.departureAt !== null,
   });
 }
-// The more accurate report's coordinate; a completed report wins a tie. (A completed report used
-// to win outright: on November 10 its ±94 m point replaced the arrival's ±22 m one, 34 m off, and
-// the visit was named after the school next door instead of the cafe.)
-const preferIncoming = sql.raw(`(excluded.horizontal_accuracy_m < location_visit.horizontal_accuracy_m
-  or (excluded.horizontal_accuracy_m = location_visit.horizontal_accuracy_m
-    and excluded.departure_at is not null and location_visit.departure_at is null))`);
+// Prefer a completed report over an arrival, then the more accurate of two of the same kind. An
+// arrival's coordinate is usually a precise fix taken on the way in, and a completed one describes
+// the stay: of 64 visits at Home or the Office (to November 10), the completed point was nearer the
+// stay in 45 and the arrival in 10, in every accuracy band up to ±100 m, though the arrival was the
+// more accurate report in most. (Briefly the more accurate report won, after a cafe whose ±94 m
+// completion replaced a ±22 m arrival; searching with intent covers that case instead.)
+const preferIncoming = sql.raw(`((excluded.departure_at is not null and location_visit.departure_at is null)
+  or ((excluded.departure_at is null) = (location_visit.departure_at is null)
+    and excluded.horizontal_accuracy_m < location_visit.horizontal_accuracy_m))`);
 
 /** A visit with no departure is in progress for a day after arrival, unless later data shows the
  * owner left (`inferVisitEnd`); after that its end is unknown. */

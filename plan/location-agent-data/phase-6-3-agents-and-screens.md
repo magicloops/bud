@@ -87,8 +87,7 @@ On branches `feat/location-visits` (service, web) and mobile
 - **`projectVisit`** merges each new visit report under the processor's owner
   lock:
   - arrival takes the earliest time and departure the latest;
-  - the coordinate comes from a completed report, then the most accurate one
-    (later: the most accurate report, a completed one on a tie).
+  - the coordinate comes from a completed report, then the most accurate one.
 - **`LocationQueries`:**
   - `visits` covers windows up to 31 days, newest first by default. Each visit
     has a state: `completed`, `in_progress` (no departure, under a day old) or

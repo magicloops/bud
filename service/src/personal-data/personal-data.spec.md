@@ -528,9 +528,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 
 - **`location_visit`** (migration 0055, backfilled) holds one row per owner and
   visit key. `projectVisit` merges reports during processing: earliest arrival,
-  latest departure, and the coordinate from the most accurate report (a
-  completed one on a tie). Until November 10 a completed report won outright,
-  so a ±94 m completion replaced a ±22 m arrival.
+  latest departure, and the coordinate from a completed report, then the most
+  accurate one. An arrival's coordinate is usually a fix on the way in: of 64
+  visits at saved places (to November 10) the completed point was nearer the stay
+  in 45, the arrival in 10, in every accuracy band.
 - **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
   (default desc), cursors bound to the window, order and policy. Visits are
   joined to names. A visit's `state` is `completed`, `in_progress` (no
@@ -549,6 +550,12 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     recorded the arrival, since iOS can report an arrival minutes early;
   - `last_seen_at` is the latest reading at the visit before `by`.
   `recent` treats a `left` visit as closed, like a completed one.
+- **Labels for uncompleted visits (`visitPlaces`):** until iOS completes a visit its
+  coordinate is usually a fix from the way in, so one that fits no saved place is
+  labelled with a place presence recorded an arrival at from 2 minutes before to 5
+  minutes after the visit's arrival, when it's within 100 m beyond that place's
+  radius (November 10: 66 m short of Home, presence arrived 94 s later; it had read
+  as a clear match for a cafe). Labels only; presence is unchanged.
 - **`LocationQueries.recent`:** the latest in-progress visit, visit end or
   point, with age, `stale` after 2 hours, and a `notBefore` history limit.
 - **`list`** accepts `kind: visits | points | all`.

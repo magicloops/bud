@@ -67,12 +67,13 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
     "the completed report keeps its coordinate when a later arrival report is less accurate");
   assert.deepEqual([b.state, b.coordinate.lat, new Date(b.arrival_at!).getTime()], ["completed", 37.73, ago(200).getTime()],
     "the completed report replaces the arrival's coordinate");
-  // November 10: the arrival report was ±22 m and the completed one ±94 m, 34 m off. The completed
-  // report still completes the visit, but the more accurate coordinate stays.
+  // A completed report's coordinate wins even when less accurate: an arrival's is usually a fix on the
+  // way in (64 visits at saved places to November 10: the completed point nearer the stay in 45, the
+  // arrival in 10). On November 10 a cafe's ±94 m completion replaced a ±22 m arrival.
   await upload("cafe", [visit("brazil", ago(120), null, 37.75257, 22)]);
   await upload("cafe", [visit("brazil", ago(120), ago(107), 37.75249, 94)]);
   const [cafe] = (await queries.visits("cafe", window)).items;
-  assert.deepEqual([cafe.state, cafe.coordinate.lat, cafe.horizontal_accuracy_m, cafe.duration_s], ["completed", 37.75257, 22, 13 * 60]);
+  assert.deepEqual([cafe.state, cafe.coordinate.lat, cafe.horizontal_accuracy_m, cafe.duration_s], ["completed", 37.75249, 94, 13 * 60]);
   assert.equal(byKey.get("c")!.state, "in_progress");
   assert.deepEqual([byKey.get("d")!.state, byKey.get("d")!.left?.evidence, byKey.get("d")!.left?.by.getTime()],
     ["left", "later_visit", ago(400).getTime()], "a later visit elsewhere ends a two-day-old arrival");
@@ -182,6 +183,30 @@ test("visit reports merge into one visit, and recent picks the latest visit or p
     split.get("a1")!.left?.last_seen_at?.getTime()], ["left", "later_visit", ago(40).getTime(), ago(70).getTime()]);
   assert.deepEqual([split.get("a2")!.state, split.get("a2")!.left?.by.getTime()], ["left", ago(40).getTime()]);
   assert.equal(split.get("b")!.state, "in_progress");
+
+  // November 10: an uncompleted visit placed 66 m short of Home (±3 m, the walk in), while presence
+  // had the owner arrive home 94 s later: labelled Home. Not when the arrival is 10 minutes later,
+  // nor for a completed visit (its coordinate describes the stay).
+  const savedHome = { id: "home-place", name: "Home", latitude: 37.74896, longitude: -122.41648, radiusM: 50, createdBy: "user",
+    createdByUserId: "walkin" };
+  await db.insert(s.placeTable).values(savedHome);
+  const walkIn = 37.74906, walkInLon = -122.41722;
+  const arrivedHome = async (at: Date) => db.insert(s.placePresenceEventTable).values({ id: randomUUID(), placeId: savedHome.id,
+    transition: "arrived", occurredAt: at, source: "reading", createdByUserId: "walkin" });
+  const walkInVisit = (key: string, arrival: Date, departure: Date | null) => ["location.visit.v2", arrival, { visit_key: key,
+    phase: departure ? "completed" : "arrived", arrival_at: arrival.toISOString(), departure_at: departure?.toISOString() ?? null,
+    coordinate: { lat: walkIn, lon: walkInLon }, horizontal_accuracy_m: 3 }] as [string, Date, object];
+  await upload("walkin", [walkInVisit("fold", ago(180), null)]);
+  await arrivedHome(new Date(ago(180).getTime() + 94_000));
+  await upload("walkin", [walkInVisit("later", ago(120), null)]);
+  await arrivedHome(new Date(ago(120).getTime() + 10 * 60_000));
+  await upload("walkin", [walkInVisit("done", ago(60), ago(40))]);
+  await arrivedHome(new Date(ago(60).getTime() + 60_000));
+  const walkins = new Map((await queries.visits("walkin", window)).items.map(item => [item.visit_key, item]));
+  assert.deepEqual(walkins.get("fold")!.places.map(place => place.name), ["Home"], "presence arrived 94 s after: Home");
+  assert.equal((walkins.get("fold") as { next_step?: string }).next_step, undefined, "a saved place: no candidates or search step");
+  assert.deepEqual(walkins.get("later")!.places, [], "10 minutes later is a different arrival");
+  assert.deepEqual(walkins.get("done")!.places, [], "a completed visit keeps its own coordinate's verdict");
 
   // Timeline kind filter: points include fixes.
   const points = await queries.list("owner", { ...window, kind: "points" });
