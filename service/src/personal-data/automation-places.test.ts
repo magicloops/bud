@@ -256,14 +256,19 @@ test("visits at saved places publish arrival, departure and visit end once, matc
   while (await admission.admitNext(owner)) { /* drain */ }
   const unknownRun = await invocationFor("ended-any", await visitId("u"));
   assert.match(unknownRun.input.content, /- Nearby \(OpenStreetMap, within 100 m; candidates, not verified\): Finjan Qahwa \(café, 19 m\), Cappstone \(shop, 25 m\)\.\n/);
+  // November 10: no clear match, so the text says to search rather than naming the nearest.
+  assert.match(unknownRun.input.content, /- None of these is a clear match: before naming the place, search with places_nearby \(this visit ID\)/);
   assert.match(unknownRun.input.content, /- Visited within 50 m 3 times before, since [A-Z][a-z]{2} \d+; usually near Finjan Qahwa\.\n/);
   const unknownEvidence = JSON.parse((await db.transaction(tx => automationStartEvidence(tx, unknownRun.invocation)))!.split("\n").at(-1)!);
   assert.deepEqual([unknownEvidence.visit.nearby_places.length, unknownEvidence.visit.match, unknownEvidence.visit.earlier_visits.count,
     unknownEvidence.visit.earlier_visits.usual_place], [2, "several", 3, "Finjan Qahwa"], "19 m and 25 m are both within reach");
+  assert.deepEqual([unknownEvidence.visit.likely_place, unknownEvidence.visit.next_step !== undefined, "place" in unknownEvidence.visit],
+    [null, true, false], "no single likely place without a clear match; the visit evidence has no tool-shaped place key");
   // The agent's visit list: candidates only for visits away from saved places.
   const listedAgain = await new LocationQueries(db).visits(owner, { from: ago(200).toISOString(), to: ago(-1).toISOString() });
   const byKeyAgain = new Map(listedAgain.items.map(item => [item.visit_key, item as typeof item & { nearby_places?: unknown[]; match?: string }]));
-  assert.deepEqual([byKeyAgain.get("u")?.match, byKeyAgain.get("u")?.nearby_places?.length], ["several", 2]);
+  assert.deepEqual([byKeyAgain.get("u")?.match, byKeyAgain.get("u")?.nearby_places?.length, byKeyAgain.get("u")?.place,
+    typeof (byKeyAgain.get("u") as { next_step?: string })?.next_step], ["several", 2, null, "string"], "the stored place is withheld; search instead");
   assert.equal(byKeyAgain.get("a")?.nearby_places, undefined, "a visit at Home has no candidates");
 
   // Deleting the place after admission fails a later admission for it, and withdrawing location access stops runs at their policy check.

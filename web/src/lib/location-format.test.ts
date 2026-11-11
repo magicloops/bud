@@ -25,6 +25,18 @@ test('visit durations describe in-progress and unknown ends', () => {
   assert.equal(visitDuration(visit({ state: 'left', duration_s: null, left: { by: '2026-10-15T09:23:00Z', last_seen_at: null, max_duration_s: 1380 } })), 'Under 23 min')
 })
 
+test('without a clear match, the street address titles a visit and the nearest candidates go under it', () => {
+  const unclear = visit({ place: null, match: 'several', nearby_places: [{ name: 'Buena Vista Horace Mann', distance_m: 0 },
+    { name: 'Valencia Farmers Market', distance_m: 29 }, { name: 'Big Bite Burgers & Beers', distance_m: 30 }, { name: 'Ezzo Rotisserie', distance_m: 32 }] })
+  assert.equal(visitTitle(unclear), '1 Mint Plaza')
+  assert.equal(visitNearby(unclear), 'Near Buena Vista Horace Mann, Valencia Farmers Market or Big Bite Burgers & Beers')
+  assert.equal(visitNearby(visit({ place: null, match: 'none_close', nearby_places: [{ name: 'Far Cafe', distance_m: 180 }] })), 'Near Far Cafe')
+  assert.equal(visitNearby(visit({ place: null })), null, 'no candidates: nothing')
+  const bank = visit({ place: null, match: 'several', nearby_places: [{ name: "Reem's California - Mission", distance_m: 13 },
+    { name: 'Chase', distance_m: 14 }, { name: 'Chase', distance_m: 18 }, { name: 'Red Cafe', distance_m: 26 }] })
+  assert.equal(visitNearby(bank), "Near Reem's California - Mission, Chase or Red Cafe", 'a name listed twice appears once')
+})
+
 test('saved places title a visit before Apple Maps names', () => {
   assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Home' }] })), 'Home')
   assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Office' }, { id: 'p2', name: 'Campus' }] })), 'Office · Campus')

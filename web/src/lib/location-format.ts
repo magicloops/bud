@@ -11,6 +11,10 @@ export type LocationVisit = {
   place: { name: string; distance_m: number } | null
   /** Saved places the visit is within (radius plus accuracy). */
   places?: Array<{ id: string; name: string; address?: string | null }>
+  /** Away from saved places: the nearest named places, and whether one is a clear match. Without
+   * one, `place` is null and the title is the street address. */
+  nearby_places?: Array<{ name: string; distance_m: number }>
+  match?: 'clear' | 'several' | 'none_close'
   /** No departure reported, but later data shows the owner left by `by`. */
   left?: { by: string; last_seen_at: string | null; max_duration_s: number }
 }
@@ -34,16 +38,27 @@ export function savedAddress(places: LocationVisit['places']) {
 }
 
 /**
- * The address under a visit's title. At a saved place it's the place's own, or none: Apple's reverse
- * geocode names the nearest address, which can be a neighbour's. Elsewhere it's Apple's.
+ * The address under a visit's title. At a saved place it's the place's own, or none: reverse
+ * geocoding names the nearest address, which can be a neighbour's. Elsewhere it's the nearest
+ * street address (OpenStreetMap via Geoapify).
  */
 export function visitAddress(visit: LocationVisit) {
   return visit.places?.length ? savedAddress(visit.places) : visit.address?.full ?? null
 }
 
-/** "Near Blue Bottle Coffee" when the place is farther than the accuracy, else null. */
+/**
+ * "Near Blue Bottle Coffee" when the place is farther than the accuracy. Without a clear match
+ * (no place), the nearest few candidates: "Near The Fold, Arizmendi Bakery or Eye Thrift". Else null.
+ */
 export function visitNearby(visit: LocationVisit) {
-  if (!visit.place || visit.place.distance_m <= Math.max(visit.horizontal_accuracy_m, 50)) return null
+  if (!visit.place) {
+    // Distinct names: one business can be listed twice (November 10: a Chase branch and its ATM).
+    const names = visit.match && visit.match !== 'clear' && !visit.places?.length
+      ? [...new Set((visit.nearby_places ?? []).map(place => place.name))].slice(0, 3) : []
+    if (names.length === 0) return null
+    return `Near ${names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names.at(-1)}`}`
+  }
+  if (visit.place.distance_m <= Math.max(visit.horizontal_accuracy_m, 50)) return null
   return `Near ${visit.place.name} (${Math.round(visit.place.distance_m)} m)`
 }
 

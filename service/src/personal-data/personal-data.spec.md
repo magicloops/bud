@@ -507,6 +507,15 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   place most often named among them when it's at least half. Visit-ended text adds a
   "Nearby …" and a "Visited within 50 m … before" reference line. Rounded app keys get
   none of these.
+- **Search, don't guess (November 10):** the stored list is the nearest named places,
+  which in a busy block crowd out the likely one (a school at 0 m; the cafe 30 m away
+  wasn't listed). Unless `match` is `clear`, the single stored place is withheld:
+  `place: null` (`likely_place: null` in visit-ended evidence) with a `next_step`
+  (`SEARCH_STEP`) to call `places_nearby` with the `visit_id` and categories that fit
+  the question, the time and the duration. Visit-ended text adds "None of these is a
+  clear match: …". The web and phone title such a visit by its street address with
+  "Near A, B or C" under it. Stored names still serve the visit lists, trigger text and
+  `earlier_visits`, which can't query.
 - v2 visits require `visit_key`, which is stored on `location_observation`.
 - `LocationQueries.list` and `contactContext` join names and present
   `visit_key`, `address` and `place`.
