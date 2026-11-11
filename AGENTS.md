@@ -220,6 +220,24 @@ required. For example: `Code changes: +165 / -2 lines (net +163).`
 
 ---
 
+### 3.9) Investigating what a phone did: device diagnostics
+
+Phones that share diagnostics upload their diagnostics journal to `device_diagnostic_entry`
+(launches in `device_diagnostic_launch`). For anything that happened on a device (uploads,
+geofences, background wakes, sync stalls), start with:
+
+```bash
+pnpm --dir service db:diagnostics --owner <email or user id> --summary --since 12:00
+pnpm --dir service db:diagnostics --owner <…> --since "2026-11-06 12:00" --until 14:40 [--area upload]
+pnpm --dir service db:diagnostics --owner <…> --errors
+pnpm --dir service db:diagnostics --owner <…> --batch <batch id>   # phone entries + what the service stored
+```
+
+Entries join `data_event` by `batch_id` and event IDs (`fields @> '{"batch": "…"}'`). Event
+names, areas and fields are documented in bud-mobile's `LOGGING.md`; the contract is in
+[`service/src/personal-data/personal-data.spec.md`](./service/src/personal-data/personal-data.spec.md)
+("Device diagnostics").
+
 ## 4) Core Contracts (Do Not Break)
 
 ### 4.1) Wire Protocol (WebSocket)

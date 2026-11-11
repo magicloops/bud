@@ -64,7 +64,7 @@ test("v2 visits project as visits and status reports location receipt and recenc
   const bodies: Record<string, unknown> = {
     "/v1/geocode/reverse": { results: [{ formatted: "1 Main Street, San Francisco, CA 94105, United States of America",
       address_line1: "1 Main Street", city: "San Francisco", state_code: "CA", country: "United States", country_code: "us" }] },
-    "/v2/places": { features: [{ properties: { name: "Blue Bottle Coffee", categories: ["catering.cafe"], lat: 37.7701, lon: -122.4201, distance: 15 } }] } };
+    "/v2/places": { features: [{ properties: { name: "Blue Bottle Coffee", place_id: "bb1", categories: ["catering.cafe"], lat: 37.7701, lon: -122.4201, distance: 15 } }] } };
   const geoapify = new Geoapify("key", new DailyCredits(10), async url => ({ ok: true, status: 200, json: async () => bodies[new URL(url).pathname] }));
   const naming = new VisitNaming(db, geoapify, () => new Date(visitAt.getTime() + 3600_000));
   assert.equal(await naming.nameNext(), true);

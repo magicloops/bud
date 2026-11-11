@@ -74,13 +74,21 @@ export async function projectVisit(tx: Transaction, owner: string, rawEventId: s
     completed: (!before || before.departureAt === null) && after.departureAt !== null,
   });
 }
-// Prefer a completed report over an arrival, then the more accurate of two of the same kind.
+// Prefer a completed report over an arrival, then the more accurate of two of the same kind. An
+// arrival's coordinate is usually a precise fix taken on the way in, and a completed one describes
+// the stay: of 64 visits at Home or the Office (to November 10), the completed point was nearer the
+// stay in 45 and the arrival in 10, in every accuracy band up to ±100 m, though the arrival was the
+// more accurate report in most. (Briefly the more accurate report won, after a cafe whose ±94 m
+// completion replaced a ±22 m arrival; searching with intent covers that case instead.)
 const preferIncoming = sql.raw(`((excluded.departure_at is not null and location_visit.departure_at is null)
   or ((excluded.departure_at is null) = (location_visit.departure_at is null)
     and excluded.horizontal_accuracy_m < location_visit.horizontal_accuracy_m))`);
 
-/** A visit with no departure is in progress for a day after arrival; after that its end is unknown. */
+/** A visit with no departure is in progress for a day after arrival, unless later data shows the
+ * owner left (`inferVisitEnd`); after that its end is unknown. */
 const IN_PROGRESS_LIMIT_MS = 86_400_000;
+/** Later visits `inferVisitEnd` looks through for one elsewhere (past visits at the same spot). */
+const LATER_VISIT_LIMIT = 50;
 /** A fix or point within this (or the combined accuracy) of an in-progress visit is still at it. */
 const WITHIN_VISIT_DISTANCE_M = 100;
 /** The latest location counts as recent for two hours. */
@@ -201,7 +209,7 @@ export class LocationQueries {
     const items = [];
     for (const row of page) {
       const places = await visitPlaces(this.database, owner, owned, row.visit);
-      items.push({ ...presentVisit(row.visit, row.name, now), places,
+      items.push({ ...presentVisit(row.visit, row.name, now, await inferVisitEnd(this.database, owner, row.visit)), places,
         ...(places.length === 0 ? placeContext(row.name, row.visit.horizontalAccuracyM) : {}) });
     }
     return { items,
@@ -233,7 +241,7 @@ export class LocationQueries {
     // Away from saved places: the candidates, and earlier visits within approved history (Phase 12).
     const unknown = async (coordinate: { lat: number; lon: number }, accuracy: number, name: typeof names.$inferSelect | null, at: Date) =>
       ({ ...placeContext(name, accuracy), earlier_visits: await earlierVisits(this.database, owner, coordinate, at, limits.notBefore ?? null) });
-    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now), places: visitLabels,
+    const visit = visitRow ? { ...presentVisit(visitRow.visit, visitRow.name, now, await inferVisitEnd(this.database, owner, visitRow.visit)), places: visitLabels,
       ...(visitLabels.length === 0 ? await unknown({ lat: visitRow.visit.latitude, lon: visitRow.visit.longitude },
         visitRow.visit.horizontalAccuracyM, visitRow.name, visitRow.visit.startedAt) : {}) } : null;
     // Age is always the time since the phone observed this location; an unfinished visit is not
@@ -303,10 +311,63 @@ export class LocationQueries {
   }
 }
 
-function presentVisit(row: typeof visits.$inferSelect, name: typeof names.$inferSelect | null, now: number) {
-  const state = row.departureAt ? "completed" : now - row.startedAt.getTime() < IN_PROGRESS_LIMIT_MS ? "in_progress" : "end_unknown";
+/** Later data shows the owner elsewhere, though iOS reported no departure: they left by `by`. */
+export type VisitLeft = { by: Date; evidence: "later_visit" | "reading_elsewhere"; last_seen_at: Date | null };
+
+/**
+ * When a visit with no departure ended, from later data (iOS can miss departures): the first
+ * accurate reading away from it, else the arrival of the next visit elsewhere. Later visits at the
+ * same spot (iOS can report one stay as several) don't end it: they count as sightings, and the
+ * search carries on past them. A reading away only counts once the owner was at the visit (a
+ * reading or a same-spot visit there, or after the phone recorded the arrival): iOS can report
+ * an arrival minutes before the owner gets there. `last_seen_at` is the latest sighting before then.
+ */
+export async function inferVisitEnd(database: Database, owner: string, visit: typeof visits.$inferSelect): Promise<VisitLeft | null> {
+  if (visit.departureAt) return null;
+  const away = (lat: number, lon: number, accuracy: number) => distanceM(lat, lon, visit.latitude, visit.longitude)
+    > Math.max(accuracy + visit.horizontalAccuracyM, WITHIN_VISIT_DISTANCE_M);
+  const [later, [reported]] = await Promise.all([
+    database.select().from(visits).where(and(eq(visits.createdByUserId, owner),
+      sql`(${visits.startedAt}, ${visits.id}) > (${visit.startedAt}, ${visit.id})`))
+      .orderBy(asc(visits.startedAt), asc(visits.id)).limit(LATER_VISIT_LIMIT),
+    database.select({ recordedAt: rawEvents.recordedAt }).from(rawEvents)
+      .where(and(eq(rawEvents.createdByUserId, owner), eq(rawEvents.id, visit.firstEventId))).limit(1)]);
+  const elsewhereIndex = later.findIndex(row => away(row.latitude, row.longitude, row.horizontalAccuracyM));
+  const elsewhere = elsewhereIndex >= 0 ? later[elsewhereIndex] : null;
+  const sameSpot = elsewhereIndex >= 0 ? later.slice(0, elsewhereIndex) : later;
+  const readings = await database.select({ at: locations.occurredAt, lat: locations.latitude, lon: locations.longitude,
+    accuracy: locations.horizontalAccuracyM }).from(locations)
+    .where(and(eq(locations.createdByUserId, owner), inArray(locations.kind, POINT_KINDS), sql`${locations.occurredAt} > ${visit.startedAt}`,
+      elsewhere ? lte(locations.occurredAt, elsewhere.startedAt) : undefined,
+      or(and(eq(locations.kind, "fix"), lte(locations.horizontalAccuracyM, FIX_MAX_ACCURACY_M)),
+        and(ne(locations.kind, "fix"), lte(locations.horizontalAccuracyM, POINT_MAX_ACCURACY_M)))))
+    .orderBy(asc(locations.occurredAt), asc(locations.id)).limit(500);
+  // Readings, plus each same-spot visit's arrival and departure as sightings there, in time order.
+  const observations = [
+    ...readings.map(reading => ({ at: reading.at, away: away(reading.lat, reading.lon, reading.accuracy) })),
+    ...sameSpot.flatMap(row => [row.arrivalAt ?? row.startedAt, row.departureAt].flatMap(at => at ? [{ at, away: false }] : [])),
+  ].filter(observation => !elsewhere || observation.at <= elsewhere.startedAt).sort((a, b) => a.at.getTime() - b.at.getTime());
+  let lastSeen: Date | null = null;
+  for (const observation of observations) {
+    if (!observation.away) { if (!lastSeen || observation.at > lastSeen) lastSeen = observation.at; continue; }
+    if (lastSeen || (reported && observation.at >= reported.recordedAt))
+      return { by: observation.at, evidence: "reading_elsewhere", last_seen_at: lastSeen };
+  }
+  if (elsewhere) return { by: elsewhere.arrivalAt ?? elsewhere.startedAt, evidence: "later_visit", last_seen_at: lastSeen };
+  return null;
+}
+
+function presentVisit(row: typeof visits.$inferSelect, name: typeof names.$inferSelect | null, now: number, left: VisitLeft | null = null) {
+  const state = row.departureAt ? "completed" : left ? "left"
+    : now - row.startedAt.getTime() < IN_PROGRESS_LIMIT_MS ? "in_progress" : "end_unknown";
+  const arrived = row.arrivalAt ?? row.startedAt;
   return { id: row.id, visit_key: row.visitKey, state, arrival_at: row.arrivalAt, departure_at: row.departureAt,
     duration_s: row.arrivalAt && row.departureAt ? Math.round((row.departureAt.getTime() - row.arrivalAt.getTime()) / 1000) : null,
+    ...(left ? { left: { by: left.by, evidence: left.evidence, last_seen_at: left.last_seen_at,
+      max_duration_s: Math.max(0, Math.round((left.by.getTime() - arrived.getTime()) / 1000)),
+      note: `iOS reported no departure, but ${left.evidence === "later_visit" ? "a later visit elsewhere" : "a later reading elsewhere"} `
+        + `shows the owner had left by then${left.last_seen_at ? "; still here at last_seen_at" : ""}. The departure was between `
+        + `${left.last_seen_at ? "last_seen_at" : "arrival"} and by.` } } : {}),
     coordinate: { lat: row.latitude, lon: row.longitude }, horizontal_accuracy_m: row.horizontalAccuracyM,
     address: name?.address ?? null, place: name?.place ?? null, received_at: row.receivedAt };
 }

@@ -463,6 +463,13 @@
       "when": 1793955134997,
       "tag": "0065_visit_name_nearby",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794130804347,
+      "tag": "0066_device_diagnostics",
+      "breakpoints": true
     }
   ]
 }

@@ -17,7 +17,7 @@ import { automationDefinitionSchema, AUTOMATION_LIMITS, grantCoversDefinition, p
 import { describeLocalWindow } from "./automation-schedule.js";
 import { DEPARTURE_SETTLE_MS, presenceReading } from "./place-presence.js";
 import { placeOfVisit, placesForOwner, presenceStays } from "./places.js";
-import { earlierLine, earlierVisits, nearbyLine } from "./place-context.js";
+import { earlierLine, earlierVisits, nearbyLine, nearbyMatch } from "./place-context.js";
 import { nearbyRadius } from "./geoapify.js";
 import { admissionText, duration, lateReport, localTime, phoneTimeZone, timeZoneLine, timelineAdmissionText } from "./automation-trigger-text.js";
 
@@ -211,10 +211,13 @@ export class AutomationAdmission {
     row: { visit: typeof locationVisits.$inferSelect; name: typeof visitNames.$inferSelect | null }, zone: string | null, historyDays: number,
     now: Date) {
     const nearby = nearbyLine(row.name?.nearby, nearbyRadius(row.visit.horizontalAccuracyM));
+    // November 10: the nearest named place was a school, the cafe 30 m away wasn't listed.
+    const unclear = row.name?.nearby?.length && nearbyMatch(row.name.nearby, row.visit.horizontalAccuracyM) !== "clear"
+      ? "None of these is a clear match: before naming the place, search with places_nearby (this visit ID) for what fits the time and how long the visit was." : null;
     const since = new Date(now.getTime() - historyDays * 86400_000);
     const earlier = await earlierVisits(tx, owner, { lat: row.visit.latitude, lon: row.visit.longitude }, row.visit.startedAt, since);
     const day = (at: Date) => at.toLocaleDateString("en-US", { timeZone: zone ?? "UTC", month: "short", day: "numeric" });
-    return [nearby, earlierLine(earlier, day)].filter((line): line is string => line !== null);
+    return [nearby, unclear, earlierLine(earlier, day)].filter((line): line is string => line !== null);
   }
 
   /** The stay presence recorded at a place that overlaps a visit most, if it differs from the visit's
