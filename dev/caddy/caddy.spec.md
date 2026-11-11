@@ -15,7 +15,7 @@ development continues to use direct HTTP ports without Caddy or mkcert.
 Local HTTPS reverse-proxy profile for:
 
 - `https://localhost:3443` app routes -> Vite at `localhost:5173`
-- `https://localhost:3443/api/*`, `/v1/events/*`, `/.well-known/*`, `/ws`, and `/ws/*` -> Fastify at
+- `https://localhost:3443/api/*`, `/v1/events/*`, `/v1/diagnostics(/*)`, `/.well-known/*`, `/ws`, and `/ws/*` -> Fastify at
   `127.0.0.1:3000`
 - `/ws/browser-media` uses that service route for the dedicated Bud browser image
   connection; forwarding only the exact `/ws` path sends media upgrades to Vite

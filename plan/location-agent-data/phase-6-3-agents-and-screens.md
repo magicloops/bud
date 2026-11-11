@@ -91,7 +91,8 @@ On branches `feat/location-visits` (service, web) and mobile
 - **`LocationQueries`:**
   - `visits` covers windows up to 31 days, newest first by default. Each visit
     has a state: `completed`, `in_progress` (no departure, under a day old) or
-    `end_unknown`.
+    `end_unknown`. (Later: `left`, when later data shows the owner elsewhere;
+    see `personal-data.spec.md`, "Inferred ends".)
   - `recent` returns the in-progress visit, else the newest visit end or point,
     with `age_seconds` and `stale` after 2 hours, limited by approved history.
   - `timeline_query` gains `kind`.

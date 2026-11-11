@@ -1,9 +1,9 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
 import { dataEventTable as rawEvents, dataProcessingJobTable as jobs, placePresenceTable as presence,
   placeTable as places } from "../db/schema.js";
 import { isRecord, type ValidEvent } from "./contracts.js";
-import { geometryRevision, NEARBY_PLACE_M, REGION_TRANSITION_TYPE } from "./place-presence.js";
+import { geometryRevision, NEARBY_PLACE_M, REGION_TRANSITION_TYPE, speedOf, STOPPED_MPS } from "./place-presence.js";
 import { distanceM } from "./places.js";
 
 /** How long an upload waits for its location events to be processed before answering. */
@@ -50,7 +50,9 @@ export function followUpRequests(events: ValidEvent[]) {
  *   with no departure pending (a pending one belongs to the
  *   previous stay, so the return isn't confirmed yet), or once the owner is confirmed at another
  *   place within `NEARBY_PLACE_M` since this follow-up's report (arrived there, or a definitely-inside
- *   reading there: the geofence fired on the way, or overlaps); otherwise open while
+ *   reading there: the geofence fired on the way, or overlaps), unless this follow-up's newest
+ *   reading shows the owner moving (November 6: walking from the Office to Home 120 m away, a
+ *   reading still inside the Office stopped the Home follow-up after a second); otherwise open while
  *   approaching, or until the report has been processed (its first reading can arrive before
  *   the report, which waits for its wake reading), then settled (walked past).
  * A walker who turns back after an exit stays open until the phone's window ends.
@@ -79,10 +81,24 @@ export async function settleFollowUps(owner: string, requests: Map<string, Follo
       const arrivedElsewhere = reportAt !== null && [...rows.values()].some(other => other.placeId !== request.placeId
         && near(other.placeId, request.placeId) && other.state === "inside" && other.leavingAt === null
         && Math.max(other.since.getTime(), other.lastEnteredAt?.getTime() ?? 0) >= reportAt.getTime());
-      decisions[id] = row?.arrivingAt ? "open" : arrivedElsewhere || (reportAt !== null && !row?.approachingAt) ? "settled" : "open";
+      const settledElsewhere = arrivedElsewhere && !(await newestReadingMoving(database, owner, id));
+      decisions[id] = row?.arrivingAt ? "open" : settledElsewhere || (reportAt !== null && !row?.approachingAt) ? "settled" : "open";
     }
   }
   return decisions;
+}
+
+/** Whether this follow-up's newest reading with a speed shows the owner moving (at least
+ * `STOPPED_MPS`). False without one. */
+async function newestReadingMoving(database: Pick<Database, "select">, owner: string, followUpId: string) {
+  const [row] = await database.select({ payload: rawEvents.rawEnvelope }).from(rawEvents)
+    .where(and(eq(rawEvents.createdByUserId, owner), eq(rawEvents.eventType, "location.fix.v1"),
+      sql`${rawEvents.rawEnvelope}->'payload'->'follow_up'->>'id' = ${followUpId}`,
+      sql`(${rawEvents.rawEnvelope}->'payload'->>'speed_mps')::text ~ '^[0-9.]+$'`))
+    .orderBy(desc(rawEvents.occurredAt)).limit(1);
+  const payload = isRecord(row?.payload) && isRecord(row.payload.payload) ? row.payload.payload : null;
+  const speed = payload ? speedOf(payload) : null;
+  return speed !== null && speed >= STOPPED_MPS;
 }
 
 /** When the geofence report that started this follow-up happened, once it has been processed

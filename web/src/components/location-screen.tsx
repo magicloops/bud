@@ -71,7 +71,7 @@ function LocationView() {
             : visits.map(visit => <button key={visit.id} onClick={() => setSelected(visit.id)} aria-pressed={shown?.id === visit.id}
               className="block w-full border-b py-3 text-left hover:bg-muted">
               <span className="block font-semibold">{visitTitle(visit)}</span>
-              <span className="block text-sm">{time(visit.arrival_at)} – {visit.state === 'completed' ? time(visit.departure_at) : '…'} · {visitDuration(visit)}</span>
+              <span className="block text-sm">{time(visit.arrival_at)} – {visit.state === 'completed' ? time(visit.departure_at) : visit.left ? `left by ${time(visit.left.by)}` : '…'} · {visitDuration(visit)}</span>
               {visitNearby(visit) && <span className="block text-xs text-muted-foreground">{visitNearby(visit)}</span>}
               {visitAddress(visit) && <span className="block text-xs text-muted-foreground">{visitAddress(visit)}</span>}
             </button>)}
