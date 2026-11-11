@@ -601,3 +601,30 @@ Three `place_presence` columns:
   they settle as before.
 
 Applied locally as exact SQL.
+
+### `0063_place_address.sql`
+
+Phase 10. Generated and additive. `place.address` (nullable text): the address the
+user gave or picked for the place, a label preferred over reverse geocoding. A
+check keeps it null or 1–300 characters. Existing places get null.
+
+Applied locally as exact SQL.
+
+### `0064_geoapify_visit_names.sql`
+
+Phase 11. Generated and additive. `location_visit_name.source` (`apple` by
+default, or `geoapify`, checked) and a nullable `raw_event_id`: the service now
+names visits with Geoapify, with no raw event behind them. Existing names are
+the phone's Apple lookups, labelled `apple`, for the approved replacement and
+deletion.
+
+Applied locally as exact SQL.
+
+### `0065_visit_name_nearby.sql`
+
+Phase 12. Generated and additive. `location_visit_name.nearby` (nullable jsonb):
+up to 5 named places near a visit or fix, nearest first, with category, label and
+distance. Candidates for a visit away from saved places. Existing names get null
+until they're named again.
+
+Applied locally as exact SQL.

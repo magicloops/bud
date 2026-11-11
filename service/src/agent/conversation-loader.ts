@@ -450,6 +450,8 @@ export class AgentConversationLoader {
         case "location_visits":
         case "places_list":
         case "places_create":
+        case "places_nearby":
+        case "place_details":
           return { type: "tool_call", tool: payload.tool, callId,
             args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args) ? payload.args : {} };
         case "terminal.run":

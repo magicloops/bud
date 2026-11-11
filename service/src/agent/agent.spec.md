@@ -181,10 +181,11 @@ Shared validation and normalization for the `ask_user_questions` tool.
 - validate client responses against the stored request, not client-supplied labels
 - build the single structured tool result that repeats each question before each answer
 - build a markdown Q/A summary used by restart fallback user messages
+- `place` questions (Phase 9): the question carries `place` (`name`, optional `query`, `place_id` to update a saved place, and `radius_m`, 100 by default for a new place); the answer is the user's pin (`name`, `latitude`, `longitude`, `radius_m`). Clients can't set `place_id` or `operation`; the repository adds them once it has saved the pin
 
 ### `user-question-contracts.test.ts`
 
-Standalone tests for mixed request normalization, duplicate-id rejection, invalid answer rejection, skipped answers, and self-contained tool-result summaries.
+Standalone tests for mixed request normalization, duplicate-id rejection, invalid answer rejection, skipped answers, and self-contained tool-result summaries, plus place question defaults, limits and display answers.
 
 ### `user-question-registry.ts`
 
@@ -1663,7 +1664,17 @@ and `location_visits` (merged visits in a window of up to 31 days, newest first)
 ## Places and location triggers (phase 6.4)
 
 `places_list` (no arguments) and `places_create` (name, plus `latitude` and
-`longitude` or a `visit_id`; optional `radius_m` and note) use `location.read`.
+`longitude` or a `visit_id`; optional `radius_m`, note and address) use `location.read`.
+
+## Place tools (phase 13)
+
+`places_nearby` (optional `visit_id`, or `latitude` and `longitude`, `categories`,
+`text`, `radius_m`; the latest location by default) and `place_details`
+(`place_id`) use `location.read`; provider-strict nulls are dropped.
+`location_recent` adds `recent_readings`, `since`, `moving` and `now_note`. The
+default system prompt's PERSONAL LOCATION section tells the agent to infer the
+place, state its assumption, and ask only when the answer depends on it. See
+`personal-data.spec.md`.
 The automation definition accepts `place.arrived` and `place.departed` with
 `place_trigger.place_ids`, and `visit.ended` with `visit_filter`. Agent defaults
 are a 1-hour maximum age for arrive/leave and 6 hours for visit-ended, with

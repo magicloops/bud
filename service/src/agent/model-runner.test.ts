@@ -311,7 +311,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.equal(questionsSchema.maxItems, undefined);
   assert.deepEqual(
     (questionsSchema.items?.properties?.kind as { enum?: unknown }).enum,
-    ["boolean", "single_choice", "multi_choice", "text", "number"],
+    ["boolean", "single_choice", "multi_choice", "text", "number", "place"],
   );
 });
 
@@ -357,7 +357,7 @@ test("offline environment tool catalog removes Bud-specific tools only", async (
   );
 
   assert.deepEqual(capturedTools.map((tool) => tool.name), [
-    "contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query", "location_recent", "location_visits", "places_list", "places_create", "health_workouts", "health_sleep", "ask_user_questions",
+    "contacts_get", "contacts_search", "contacts_history", "location_context", "timeline_query", "location_recent", "location_visits", "places_list", "places_create", "places_nearby", "place_details", "health_workouts", "health_sleep", "ask_user_questions",
   ]);
 });
 

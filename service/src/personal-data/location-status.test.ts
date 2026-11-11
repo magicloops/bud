@@ -9,6 +9,8 @@ import { ContactProcessor } from "./contact-processor.js";
 import { PostgresIngestRepository } from "./repository.js";
 import { parseBatch } from "./parser.js";
 import { LocationQueries } from "./location.js";
+import { DailyCredits, Geoapify } from "./geoapify.js";
+import { VisitNaming } from "./visit-naming.js";
 
 test("v2 visits project as visits and status reports location receipt and recency per owner", {
   skip: process.env.BUD_DATA_DB_TEST !== "1",
@@ -27,7 +29,8 @@ test("v2 visits project as visits and status reports location receipt and recenc
   // Isolated copies keep fixture jobs away from the running development processor.
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
     "location_observation", "health_workout", "health_sleep_segment", "health_sample_deletion", "data_domain_event",
-    "contact_source", "contact_scan", "contact_scan_record", "location_visit_name", "location_visit", "place"])
+    "contact_source", "contact_scan", "contact_scan_record", "location_visit_name", "location_visit", "place", "place_presence",
+    "place_presence_event"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   const repository = new PostgresIngestRepository(db), processor = new ContactProcessor(db);
   const upload = async (owner: string, values: Array<[string, Date, object]>) => {
@@ -53,17 +56,30 @@ test("v2 visits project as visits and status reports location receipt and recenc
   const other = (await repository.status("other")) as typeof status;
   assert.deepEqual(other.location, { last_received_at: null, latest_visit_at: null, latest_point_at: null });
 
-  // Names join to visits by key; a later lookup replaces an earlier one, an older one arriving late does not.
-  const name = (namedAt: string, city: string) => ["location.visit_named.v1", new Date(namedAt), { visit_key: "key", source: "apple", named_at: namedAt,
-    address: { full: `1 Main St, ${city}`, short: "1 Main St", city, city_with_context: city, region: "United States", region_code: "US" },
-    place: { name: "Blue Bottle Coffee", category: "MKPOICategoryCafe", coordinate, distance_m: 15 } }] as [string, Date, object];
-  await upload("owner", [name("2026-10-14T09:00:00.000Z", "Oakland")]);
-  await upload("owner", [name("2026-10-14T10:00:00.000Z", "San Francisco")]);
-  await upload("owner", [name("2026-10-14T09:30:00.000Z", "Berkeley")]);
+  // Phase 11: the phone's names (Apple MapKit lookups) aren't stored; the service names the visit
+  // with Geoapify, and the name joins to it by key.
+  await upload("owner", [["location.visit_named.v1", new Date("2026-10-14T09:00:00.000Z"), { visit_key: "key", source: "apple",
+    named_at: "2026-10-14T09:00:00.000Z", address: { full: "1 Main St, Oakland", short: "1 Main St", city: "Oakland" }, place: null }]]);
+  assert.equal((await db.select().from(s.locationVisitNameTable)).length, 0, "the phone's name isn't kept");
+  const bodies: Record<string, unknown> = {
+    "/v1/geocode/reverse": { results: [{ formatted: "1 Main Street, San Francisco, CA 94105, United States of America",
+      address_line1: "1 Main Street", city: "San Francisco", state_code: "CA", country: "United States", country_code: "us" }] },
+    "/v2/places": { features: [{ properties: { name: "Blue Bottle Coffee", place_id: "bb1", categories: ["catering.cafe"], lat: 37.7701, lon: -122.4201, distance: 15 } }] } };
+  const geoapify = new Geoapify("key", new DailyCredits(10), async url => ({ ok: true, status: 200, json: async () => bodies[new URL(url).pathname] }));
+  const naming = new VisitNaming(db, geoapify, () => new Date(visitAt.getTime() + 3600_000));
+  assert.equal(await naming.nameNext(), true);
+  assert.equal(await naming.nameNext(), false, "named once, until a later report");
+  const [stored] = await db.select().from(s.locationVisitNameTable);
+  assert.deepEqual([stored.source, stored.rawEventId], ["geoapify", null]);
+  // Its completion is a later report (with the final coordinate): named again.
+  await upload("owner", [["location.visit.v2", visitAt, { visit_key: "key", phase: "completed", arrival_at: visitAt.toISOString(),
+    departure_at: new Date(visitAt.getTime() + 1800_000).toISOString(), coordinate, horizontal_accuracy_m: 20 }]]);
+  assert.equal(await naming.nameNext(), true);
+  assert.equal(await naming.nameNext(), false);
   const timeline = await new LocationQueries(db).list("owner", { from: "2026-10-14T00:00:00Z", to: "2026-10-15T00:00:00Z" });
   const visit = timeline.items.find(item => item.kind === "visit")!;
   assert.equal(visit.visit_key, "key");
-  assert.equal(visit.address?.city, "San Francisco");
+  assert.equal(visit.address?.short, "1 Main Street, San Francisco");
   assert.equal((visit.place as { name: string }).name, "Blue Bottle Coffee");
   assert.equal(timeline.items.find(item => item.kind === "significant_change")!.place, null);
   assert.equal((await new LocationQueries(db).list("other", { from: "2026-10-14T00:00:00Z", to: "2026-10-15T00:00:00Z" })).items.length, 0);

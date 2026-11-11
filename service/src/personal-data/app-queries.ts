@@ -60,8 +60,11 @@ export class AppDataQueries {
       occurred_at: row.occurred_at, received_at: row.received_at, arrival_at: row.arrival_at, departure_at: row.departure_at });
     const visit = (row: Awaited<ReturnType<LocationQueries["visits"]>>["items"][number]) => {
       const { coordinate: _c, horizontal_accuracy_m: _a, address: _d, place: _p, visit_key: _k, places, ...rest } = row;
-      // Saved place names are as specific as an address, so rounded keys don't get them.
-      return { ...rest, ...restrict(row), places: rounded ? [] : places };
+      // Saved place names, nearby places and earlier visits there (Phase 12) are as specific as an
+      // address, so rounded keys don't get them.
+      const { nearby_places: _n, match: _m, match_note: _mn, earlier_visits: _e, ...general } = rest as typeof rest
+        & { nearby_places?: unknown; match?: unknown; match_note?: unknown; earlier_visits?: unknown };
+      return { ...(rounded ? general : rest), ...restrict(row), places: rounded ? [] : places };
     };
     let data: unknown;
     if (operation === "contacts_search") {
@@ -74,7 +77,9 @@ export class AppDataQueries {
     } else if (operation === "location_recent") {
       const result = await this.locations.recent(authority.owner, { notBefore: since });
       const latest = result.location;
-      data = { ...result, location: !latest ? null : latest.kind === "visit"
+      // The recent readings are precise coordinates (Phase 13): rounded keys get only what they imply.
+      const { recent_readings: readings, ...general } = result as typeof result & { recent_readings?: unknown };
+      data = { ...(rounded ? general : { ...general, ...(readings ? { recent_readings: readings } : {}) }), location: !latest ? null : latest.kind === "visit"
         ? { kind: "visit", ...visit(latest as Parameters<typeof visit>[0]) }
         : { kind: latest.kind, ...restrict(latest as Parameters<typeof restrict>[0]),
             occurred_at: (latest as { occurred_at: Date }).occurred_at, received_at: (latest as { received_at: Date }).received_at } };

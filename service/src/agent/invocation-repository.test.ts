@@ -29,7 +29,11 @@ test("durable admission: atomic inputs, concurrency, stale fences and ambiguous 
   const buds = owners.map(() => "bud-test-" + randomUUID());
   const threads = owners.map(() => randomUUID());
   t.after(async () => {
-    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    try {
+      await pool.query(`drop schema if exists "${isolated}" cascade`);
+      // Users live in the shared auth schema, outside the isolated one.
+      await pool.query(`delete from auth."user" where id = any($1)`, [owners]);
+    }
     finally { await pool.end(); await servicePool.end(); }
   });
   await pool.query(`create schema "${isolated}"`);

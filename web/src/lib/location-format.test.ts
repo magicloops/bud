@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { visitDuration, visitNearby, visitTitle, type LocationVisit } from './location-format.ts'
+import { savedAddress, visitAddress, visitDuration, visitNearby, visitTitle, type LocationVisit } from './location-format.ts'
 
 const visit = (overrides: Partial<LocationVisit> = {}): LocationVisit => ({ id: 'v', state: 'completed',
   arrival_at: '2026-10-15T09:00:00Z', departure_at: '2026-10-15T10:30:00Z', duration_s: 5400,
@@ -22,10 +22,33 @@ test('visit durations describe in-progress and unknown ends', () => {
   assert.equal(visitDuration(visit({ duration_s: 1500 })), '25 min')
   assert.equal(visitDuration(visit({ state: 'in_progress', duration_s: null })), 'Here now')
   assert.equal(visitDuration(visit({ state: 'end_unknown', duration_s: null })), 'End unknown')
+  assert.equal(visitDuration(visit({ state: 'left', duration_s: null, left: { by: '2026-10-15T09:23:00Z', last_seen_at: null, max_duration_s: 1380 } })), 'Under 23 min')
+})
+
+test('without a clear match, the street address titles a visit and the nearest candidates go under it', () => {
+  const unclear = visit({ place: null, match: 'several', nearby_places: [{ name: 'Buena Vista Horace Mann', distance_m: 0 },
+    { name: 'Valencia Farmers Market', distance_m: 29 }, { name: 'Big Bite Burgers & Beers', distance_m: 30 }, { name: 'Ezzo Rotisserie', distance_m: 32 }] })
+  assert.equal(visitTitle(unclear), '1 Mint Plaza')
+  assert.equal(visitNearby(unclear), 'Near Buena Vista Horace Mann, Valencia Farmers Market or Big Bite Burgers & Beers')
+  assert.equal(visitNearby(visit({ place: null, match: 'none_close', nearby_places: [{ name: 'Far Cafe', distance_m: 180 }] })), 'Near Far Cafe')
+  assert.equal(visitNearby(visit({ place: null })), null, 'no candidates: nothing')
+  const bank = visit({ place: null, match: 'several', nearby_places: [{ name: "Reem's California - Mission", distance_m: 13 },
+    { name: 'Chase', distance_m: 14 }, { name: 'Chase', distance_m: 18 }, { name: 'Red Cafe', distance_m: 26 }] })
+  assert.equal(visitNearby(bank), "Near Reem's California - Mission, Chase or Red Cafe", 'a name listed twice appears once')
 })
 
 test('saved places title a visit before Apple Maps names', () => {
   assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Home' }] })), 'Home')
   assert.equal(visitTitle(visit({ places: [{ id: 'p1', name: 'Office' }, { id: 'p2', name: 'Campus' }] })), 'Office · Campus')
   assert.equal(visitTitle(visit({ places: [] })), 'Blue Bottle Coffee')
+})
+
+test('a visit at a saved place shows the place\'s own address, never Apple\'s', () => {
+  const apple = { full: '3384 26th St, San Francisco, CA', short: '3384 26th St', city: 'San Francisco' }
+  const at = (places: LocationVisit['places']) => visit({ address: apple, places })
+  assert.equal(visitAddress(at([{ id: 'h', name: 'Home', address: '3327 26th St, San Francisco' }])), '3327 26th St, San Francisco')
+  assert.equal(visitAddress(at([{ id: 'h', name: 'Home', address: null }])), null, 'a saved place without one shows none')
+  assert.equal(visitAddress(at([])), '3384 26th St, San Francisco, CA')
+  assert.equal(savedAddress([{ id: 'o', name: 'Office' }, { id: 'h', name: 'Home', address: '3327 26th St' }]), '3327 26th St')
+  assert.equal(savedAddress(undefined), null)
 })

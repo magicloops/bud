@@ -442,6 +442,34 @@
       "when": 1793751504751,
       "tag": "0062_arrival_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793872154265,
+      "tag": "0063_place_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1793945909726,
+      "tag": "0064_geoapify_visit_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1793955134997,
+      "tag": "0065_visit_name_nearby",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794130804347,
+      "tag": "0066_device_diagnostics",
+      "breakpoints": true
     }
   ]
 }

@@ -113,7 +113,7 @@ changes, with rollback of the surrounding decision transaction.
   - **The input:** a time-ordered "Since the last update:" timeline, each rule's instruction once (`For "<rule>": …`), and the reference section with shared lines once and per-event lines labelled.
   - **Metadata** adds `automation_names`, `automation_ids`, `delivery_ids` and `domain_event_ids`. `automation_name` joins the names, so existing clients label "Triggered by A, B and C".
   - **Policy and evidence:** the policy check covers every delivery in a run (any paused rule holds it), and first-start evidence lists every event under `events`.
-  - **Stragglers:** a location delivery for an existing conversation whose event happened before the newest location event already admitted there never starts a run.
+  - **Stragglers:** a location delivery for an existing conversation whose event happened more than 5 minutes (`STRAGGLER_GRACE_MS`, the departure settle wait plus 2 minutes) before the newest location event already admitted there never starts a run. Closer than that it's treated as new: a departure publishes after its settle wait, so it can be seconds older than a visit end already told.
     - If a compatible location run in that conversation hasn't started (pending, retry_wait or leased; the owner lock keeps it from starting meanwhile), the straggler joins it and the run's input is rewritten as the timeline.
     - Otherwise it becomes a quiet entry: a system message "Earlier: …" (origin automation, `timeline_entry`), with no run and no push. The delivery is `folded`, with `timeline_message_id` set. The agent sees the entry in the conversation history, in order, on its next run. No model calls; remains unscheduled until dispatch policy checks are connected. Contact processor fixtures cover concurrent admission, no duplicate thread, pause, expiry, limits and revoked grants.
 
@@ -475,16 +475,48 @@ keeps the key for the 6.3 visit projection. `repository.ts` status adds
 `location-status.test.ts` (isolated PostgreSQL) covers v2 projection and owner
 isolation. Plan: [location for agents](../../../plan/location-agent-data/README.md).
 
-## Visit names (phase 6.2)
+## Visit names (phase 6.2; named by the service since Phase 11)
 
-- `location.ts`:
-  - `parseVisitName` validates `location.visit_named.v1`: the key, the `apple`
-    source, `named_at`, address strings (`full`, `short`, `city`,
-    `city_with_context`, `region`, `region_code`) and an optional place (name,
-    category, coordinate, distance).
-  - v2 visits require `visit_key`, which is stored on `location_observation`.
-- The processor upserts `location_visit_name` per owner and key; a later
-  `named_at` wins and older lookups never overwrite.
+- **Source:** the service names visits with Geoapify (`visit-naming.ts`,
+  `geoapify.ts`), because Apple's terms don't allow keeping Apple Maps data.
+  The phone's `location.visit_named.v1` (MapKit lookups) is `unsupported` and not
+  stored.
+  - `VisitNaming` names visits started in the last 2 days with no name, or whose
+    Geoapify name is older than their latest report (by `received_at`, the
+    service clock), and foreground fixes once. It calls Geoapify outside any
+    transaction, then upserts the name. A lookup that finds nothing waits 10
+    minutes before retrying.
+  - It runs every 2 seconds when `GEOAPIFY_API_KEY` is set; without one, visits
+    stay unnamed. `DailyCredits` caps calls per UTC day (`GEOAPIFY_DAILY_CREDITS`).
+  - A name holds Geoapify's address in the same keys (`full`, `short`, `city`,
+    `city_with_context`, `region`, `region_code`) and the nearest named point of
+    interest within 100 m (name, category, coordinate, distance).
+- **`location_visit_name`** has one row per owner and key, with `source`
+  (`geoapify`, or `apple` for older phone lookups, migration 0064) and a nullable
+  `raw_event_id` (service names have none). `db:geoapify-visit-names` replaces
+  Apple-sourced names, then deletes the rest; each environment needs approval.
+- **Unknown places (Phase 12, `place-context.ts`):** a name also keeps `nearby`
+  (migration 0065): up to 5 named places within the visit's accuracy (100–200 m,
+  `nearbyRadius`), nearest first, never bus stops or bike-share docks (`NOT_A_STAY`), with the most specific Geoapify category, a readable
+  `category_label`, and `place_id` and `cuisine` when known (Phase 13); and `address.area` (the neighbourhood). For a visit or fix not at
+  a saved place, the agent gets `nearby_places`, `match` (`clear`: the nearest within
+  the accuracy, at least 30 m, and the next further by at least the accuracy, at least
+  10 m; `several`; `none_close`)
+  with `match_note`, and on single visits (`recent`, visit-ended evidence)
+  `earlier_visits`: completed visits within 50 m inside the approved history, with the
+  place most often named among them when it's at least half. Visit-ended text adds a
+  "Nearby …" and a "Visited within 50 m … before" reference line. Rounded app keys get
+  none of these.
+- **Search, don't guess (November 10):** the stored list is the nearest named places,
+  which in a busy block crowd out the likely one (a school at 0 m; the cafe 30 m away
+  wasn't listed). Unless `match` is `clear`, the single stored place is withheld:
+  `place: null` (`likely_place: null` in visit-ended evidence) with a `next_step`
+  (`SEARCH_STEP`) to call `places_nearby` with the `visit_id` and categories that fit
+  the question, the time and the duration. Visit-ended text adds "None of these is a
+  clear match: …". The web and phone title such a visit by its street address with
+  "Near A, B or C" under it. Stored names still serve the visit lists, trigger text and
+  `earlier_visits`, which can't query.
+- v2 visits require `visit_key`, which is stored on `location_observation`.
 - `LocationQueries.list` and `contactContext` join names and present
   `visit_key`, `address` and `place`.
 - `app-queries.ts` reduces names for `rounded_2_decimals` keys to
@@ -497,10 +529,33 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **`location_visit`** (migration 0055, backfilled) holds one row per owner and
   visit key. `projectVisit` merges reports during processing: earliest arrival,
   latest departure, and the coordinate from a completed report, then the most
-  accurate one.
+  accurate one. An arrival's coordinate is usually a fix on the way in: of 64
+  visits at saved places (to November 10) the completed point was nearer the stay
+  in 45, the arrival in 10, in every accuracy band.
 - **`LocationQueries.visits`:** windows of up to 31 days, `order` asc or desc
   (default desc), cursors bound to the window, order and policy. Visits are
-  joined to names.
+  joined to names. A visit's `state` is `completed`, `in_progress` (no
+  departure, under a day old), `left` or `end_unknown`.
+- **Inferred ends (`inferVisitEnd`):** iOS can miss departures (November 9: a
+  park visit, then one at Home, neither completed). A visit with no departure
+  is `left` when later data shows the owner elsewhere, with `left { by,
+  evidence, last_seen_at, max_duration_s, note }`:
+  - `by` is the first accurate reading away from it (`reading_elsewhere`: a
+    fix within 100 m or a point within 65 m accuracy, further than the
+    combined accuracy and at least 100 m), else the arrival of the next visit
+    elsewhere (`later_visit`). Later visits at the same spot (iOS can split a
+    stay) don't end it: they count as sightings and the search continues past
+    them (up to 50 later visits);
+  - a reading away only counts after a reading at the visit or once the phone
+    recorded the arrival, since iOS can report an arrival minutes early;
+  - `last_seen_at` is the latest reading at the visit before `by`.
+  `recent` treats a `left` visit as closed, like a completed one.
+- **Labels for uncompleted visits (`visitPlaces`):** until iOS completes a visit its
+  coordinate is usually a fix from the way in, so one that fits no saved place is
+  labelled with a place presence recorded an arrival at from 2 minutes before to 5
+  minutes after the visit's arrival, when it's within 100 m beyond that place's
+  radius (November 10: 66 m short of Home, presence arrived 94 s later; it had read
+  as a clear match for a cafe). Labels only; presence is unchanged.
 - **`LocationQueries.recent`:** the latest in-progress visit, visit end or
   point, with age, `stale` after 2 hours, and a `notBefore` history limit.
 - **`list`** accepts `kind: visits | points | all`.
@@ -510,6 +565,39 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   - app operations and routes with shared precision rules (`restrict` in
     `app-queries.ts`).
 - Test: `location-visits.test.ts`.
+
+## Agent place tools (Phase 13)
+
+- **`location_recent` freshness:** `recent_readings`, newest first: the newest
+  observation, fixes (±100 m or better) and points (±65 m or better) from the 15
+  minutes before it (`RECENT_WINDOW_MS`), with `speed_mps` from the raw payload
+  when known, and the visit when it's the latest or the newest reading is within
+  it. From them (`freshness`): `since` (the open visit's arrival, else the earliest
+  of an unbroken run of readings within the combined accuracy of the newest),
+  `moving` (a speed over 1 m/s or two readings further apart than their accuracy;
+  null with one reading and no speed) and `now_note`. Rounded app keys get no
+  `recent_readings`.
+- **`places_nearby`** (`location.read`): around the latest location (the most
+  precise recent reading, with `recent` reporting them all), a `visit_id` within
+  approved history, or `latitude`/`longitude`. `categories` are Geoapify
+  categories, `text` a name filter. `radius_m` 30–1000, defaulting to the
+  accuracy (at least 30 m; 50 m around a coordinate). `Geoapify.searchNearby`
+  splits categories into the two groups that mix (`categoryGroup`; both default
+  groups without categories), with `conditions=named`, no bus stops, merged by
+  distance, up to 10. Each place has `open_now` and `next_change` in the phone's
+  time zone (`phoneTimeZone`).
+- **`place_details`** (`location.read`): Geoapify Place Details for a `place_id`:
+  address, categories, cuisine, hours with `open_now` in the place's time zone
+  (else the phone's), website, phone, brand, takeaway, delivery.
+- **Hours** (`opening-hours.ts`): `openNow` evaluates OpenStreetMap
+  `opening_hours` with the `opening_hours` package (LGPL-3.0, unmodified
+  dependency) at the place's wall-clock time; null when unknown or unparseable.
+- Lookup failures are `place_lookup_failed` (503), or `place_lookup_unavailable`
+  without a key. One credit per Places group or details call; nothing is cached.
+- Guidance: the tool descriptions and the system prompt's PERSONAL LOCATION
+  section: infer the place, state the assumption, ask only when it matters.
+- Tests: `geoapify.test.ts`, `opening-hours.test.ts`, `location-freshness.test.ts`,
+  `agent-queries.test.ts`, `location-visits.test.ts`, `app-queries.test.ts`.
 
 ## Place presence (phase 7)
 
@@ -616,7 +704,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     happened (`occurred_at`, then `recorded_at`), not of receipt. A batch's job
     IDs share a millisecond, so their order within it was random, and presence
     decisions depend on order. The phone uploads its oldest pending events
-    first.
+    first. A completed visit counts at its departure (`departure_at`, when valid:
+    `pg_input_is_valid`), the latest moment it describes; at its arrival, a
+    backlog's long visit applied its departure before the readings from during it
+    and merged two stays (November 6, `debug/2026-11-06-walk-presence.md`).
 - **Follow-up answers (`follow-ups.ts`, phase 7.2):** a batch with a tagged
   region report (`follow_up_id`) or follow-up readings (`location.fix.v1` with
   `follow_up: { id, place_id, geometry_revision, transition }`) gets
@@ -628,7 +719,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     the ACK goes without `follow_ups` and the work continues in the background.
   - **After an entry:** open while an arrival waits for its second reading;
     settled once inside with no departure pending, or once
-    the owner is confirmed at another place within 1 km since the report.
+    the owner is confirmed at another place within 1 km since the report, unless
+    this follow-up's newest reading with a speed shows the owner moving
+    (`STOPPED_MPS` or more): walking between two nearby places, a reading still
+    inside the one being left mustn't stop the follow-up for the other.
     Open while a departure is pending (the previous stay doesn't confirm the
     return), while the place is approaching, or until this
     follow-up's own geofence report (matched by `follow_up_id`) has been
@@ -652,8 +746,8 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 - **`location.fix.v1`:** a one-off precise position the phone takes when Bud
   comes to the foreground. It's stored in `location_observation` as kind `fix`.
 - **Naming:** its `fix_key` (`fix:<uuid>`) goes in the `visit_key` column. That
-  column holds the naming key for both visits and fixes, so a
-  `location.visit_named.v1` for the key names the fix through the same join.
+  column holds the naming key for both visits and fixes, so the service's name
+  for the key names the fix through the same join.
 - **`recent`:** considers fixes alongside points, and reports `kind: fix` with
   its address and saved `places`.
   - `age_seconds` and `stale` always measure time since the phone observed the
@@ -670,7 +764,10 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
 
 - **`place`** (migration 0056): owner, name, centre, radius 50–2,000 m, note,
   `created_by` (`user` or `agent`), `geometry_changed_at` and a soft
-  `deleted_at`. `places.ts` holds `Places` (list, create with a 200-per-owner
+  `deleted_at`. `address` (0063, Phase 10): the address the user gave or picked,
+  up to 300 characters; blank clears it. Changing only the name, note or address
+  keeps presence. Moving more than 50 m (`ADDRESS_DROP_M`) without an `address`
+  clears it; the editors drop it themselves and send what the user kept. `places.ts` holds `Places` (list, create with a 200-per-owner
   limit under the owner lock, update, delete) and the matching helpers.
 - **Matching:** a visit is at a place when its coordinate is within the radius
   plus the visit's accuracy, capped at 200 m. Places can overlap.
@@ -680,9 +777,37 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
   agent tools `places_list` and `places_create` (`location.read`). Agents may
   save places at a coordinate or at a `visit_id` within approved history;
   places are labels, not permissions.
+- **Place questions (Phase 9):** for an address, a business or a move, agents
+  ask an `ask_user_questions` `place` question instead. The user places the pin
+  on a map (search stays on the device or in the browser), and accepting the
+  answer saves it in the same transaction (`savePlaceAnswers` in
+  `user-question-repository.ts`): a new place saved by the user, or the asked-about
+  place updated with only what changed. The answer's `address`, the one the user
+  accepted, is saved with it.
+- **Visit-ended times:** at a saved place, the message uses Bud's own stay there that overlaps the
+  visit most, when it differs from the visit by more than 2 minutes (iOS can merge stays at nearby
+  places into one visit), and gives iOS's times in the reference. Stays a visit started don't count.
+- **Addresses in messages (Phase 10):** a saved place's address is the user's and
+  wins over reverse geocoding: "Home is at … (the user's saved address)." on
+  arrivals, departures and visit ends, and `address` on the evidence's `place`,
+  `saved_places_at_visit` and the `places` on visits and `recent`. Without one, a
+  visit end at a saved place says "Home's nearest address from Apple Maps is …". A failed save (deleted place, limit)
+  refuses the answer with 409 and the prompt stays.
+- **Place search (Phase 11):** `GET /api/places/search?q=&near=lat,lon` searches
+  Geoapify (autocomplete, which includes businesses) for the pin editors, 60 a
+  minute per owner, and answers `{ results, attribution }`. 503
+  `place_lookup_unavailable` without a key. Results can be kept, so a chosen
+  result's address can fill a place's Address field.
+- **Maps:** `GET /api/maps/token?origin=` (`maps.ts`) issues a 30-minute MapKit
+  JS token (ES256 JWT from the team's Apple Maps key, `APPLE_MAPS_KEY_ID`,
+  `APPLE_MAPS_TEAM_ID` or `APNS_TEAM_ID`, `APPLE_MAPS_KEY_FILE` or
+  `APPLE_MAPS_PRIVATE_KEY`) for a trusted web origin. 503 `maps_unavailable`
+  without a key; 400 `invalid_origin` otherwise.
 - **Publication:** `projectVisit` calls `publishVisitEvents` for v2 visits
   under the processor's owner lock. When a visit first appears with an arrival
-  it publishes `place.arrived` per matching place. When it first completes it
+  it publishes `place.arrived` per matching place, unless a precise reading in
+  the visit's first 5 minutes, within 1 km of the place, puts the owner
+  definitely outside it (walking past; `outsideDuringVisit`). When it first completes it
   publishes `place.departed` per matching place, then `visit.ended`.
   - Only places whose `geometry_changed_at` is at or before the visit's start
     count, so saving, moving or resizing a place never acts on a visit already
@@ -713,3 +838,36 @@ isolation. Plan: [location for agents](../../../plan/location-agent-data/README.
     coordinate, accuracy, address, likely place, the trigger place, saved
     places at the visit, and delay.
 - Test: `automation-places.test.ts` (isolated PostgreSQL).
+
+## Device diagnostics (bud-mobile Phase 3)
+
+Design: bud-mobile `design/diagnostics-upload.md`; plan: bud-mobile
+`plan/diagnostics-logging/phase-3-diagnostics-upload.md`. The phone's diagnostics journal
+(content-free log entries), sent when the phone's sharing setting is on: local builds and
+verified `@magicloops.dev` accounts by default, everyone else opts in. The service always
+accepts.
+
+- **`POST /v1/diagnostics/batches`** (`routes.ts`): ingest auth and `X-Installation-Id`;
+  gzip JSON Lines (`diagnostics.ts`, `parseDiagnostics`): a `bud.diagnostics.v1` header with
+  the journal's ID, then `launch` and `entry` lines (`seq`, `at`, `uptime`, `launch`, `state`,
+  `area`, `level`, `event`, `fields`). Answers `{ acked_through_seq, accepted, duplicates,
+  rejected, retry_after_s }`; `acked_through_seq` covers every entry line (stored, duplicate or
+  rejected). One upload per owner at a time (`429 upload_busy`); 100,000 entries per
+  installation per UTC day (`429 daily_limit`). Limits: 256 KB compressed, 4 MB decoded, 1,000
+  entries, 40 fields, 128-character strings, 30 days back, a day ahead.
+- **Validation:** `area`, `event`, `state` and field keys are tokens; field strings must be
+  tokens, Bud-generated IDs, route templates, timestamps or ID lists (the phone's `LogField`
+  rules), else stored as `"invalid"`; nested values are `"invalid"`. Bad lines are counted, not
+  stored.
+- **`DELETE /v1/diagnostics`:** deletes this installation's entries and launches.
+- **Tables** (migration 0066): `device_diagnostic_entry` (unique owner, installation, journal,
+  seq; indexes on owner/at, owner/area/at, and GIN `jsonb_path_ops` on `fields`) and
+  `device_diagnostic_launch` (owner, installation, launch ID; an `unknown` reason is filled in
+  by a later upload). Owner foreign keys cascade.
+- **Retention:** indefinite for now (TODO.md: set a limit before public launch).
+- **Access:** not exposed to agents, app keys or the web. Read with SQL or
+  `pnpm db:diagnostics` (`scripts/diagnostics.ts`, `diagnostics-report.ts`): timeline, errors,
+  summary, and a batch's phone entries with the service's `data_event` rows for it.
+- Tests: `diagnostics.test.ts` (parser, the phone's fixture `fixtures/diagnostics-upload-v1.jsonl`,
+  budget, routes, storage, report).
+

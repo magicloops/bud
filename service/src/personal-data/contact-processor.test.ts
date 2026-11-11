@@ -34,7 +34,11 @@ test("Postgres contact scans publish complete generations once, suppress baselin
   const db = drizzle(pool, { schema: s });
   const owner = "contacts-test-" + randomUUID();
   t.after(async () => {
-    try { await pool.query(`drop schema if exists "${isolated}" cascade`); }
+    try {
+      await pool.query(`drop schema if exists "${isolated}" cascade`);
+      // Users live in the shared auth schema, outside the isolated one.
+      await pool.query(`delete from auth."user" where id = any($1)`, [[owner]]);
+    }
     finally { await pool.end(); }
   });
   await pool.query(`create schema "${isolated}"`);

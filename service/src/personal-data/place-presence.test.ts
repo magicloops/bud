@@ -486,6 +486,16 @@ test("geofences and visits share one presence state: one arrival, settled depart
   await upload([fix(39.10, second(ago(2), 30), 5, 0)]);
   await upload([fix(39.10, ago(2), 5, 0)]);
   assert.deepEqual(await changesOf(dock.id), [["arrived", ago(2).getTime()]]);
+  // November 5, 12:50 PM: iOS dated a visit 44 m from Home (±3) 3 minutes early, while follow-up
+  // readings had the owner 60–106 m away, walking past. The visit doesn't arrive.
+  const gate = await places.create(owner, { name: "Gate", latitude: 39.20, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) }).where(eq(s.placeTable.id, gate.id));
+  const fromGate = (metres: number) => 39.20 + metres / 111_195;
+  await upload([fix(fromGate(106), second(ago(3), 110), 4, 1.1), fix(fromGate(86), second(ago(3), 140), 2, 1.3),
+    fix(fromGate(60), second(ago(3), 160), 2, 1.1)]);
+  await upload([["location.visit.v2", { visit_key: "walk-past", phase: "arrived", arrival_at: ago(3).toISOString(), departure_at: null,
+    coordinate: { lat: fromGate(44), lon: -122.4 }, horizontal_accuracy_m: 3 }]]);
+  assert.deepEqual([await changesOf(gate.id), (await state(gate.id))?.state ?? null], [[], null], "walked past: no arrival");
 
   // A geofence approach creates a new presence row without blocking earlier readings. Separate
   // uploads deliver the inside readings newest first; they still confirm at the earlier time.
@@ -559,4 +569,81 @@ test("geofences and visits share one presence state: one arrival, settled depart
   const [leaveInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, leaveRun.invocationId!));
   const [leaveInput] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, leaveInvocation.inputMessageId));
   assert.match(leaveInput.content, /^Left Shop (?:yesterday )?at \d+:\d+ [AP]M, after 6 minutes there\.\n/);
+});
+
+test("November 6: a moving reading doesn't settle an entry follow-up, and a backlog's long visit doesn't merge two stays", {
+  skip: process.env.BUD_DATA_DB_TEST !== "1",
+}, async t => {
+  assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(config.databaseUrl).hostname));
+  const namespace = `presence_nov6_${randomUUID().replaceAll("-", "")}`;
+  const admin = new Pool({ connectionString: config.databaseUrl });
+  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}` });
+  const db = drizzle(pool, { schema: s });
+  t.after(async () => {
+    await pool.end();
+    try { await admin.query(`drop schema if exists "${namespace}" cascade`); } finally { await admin.end(); }
+  });
+  await admin.query(`create schema "${namespace}"`);
+  for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
+    "location_observation", "location_visit", "location_visit_name", "place", "place_presence", "place_presence_event",
+    "data_domain_event", "automation", "automation_revision", "automation_delivery"])
+    await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
+  const owner = "nov6-owner";
+  const repository = new PostgresIngestRepository(db), processor = new ContactProcessor(db), places = new Places(db);
+  const now = Date.now(), ago = (minutes: number) => new Date(now - minutes * 60_000);
+  const upload = async (values: Array<[string, unknown, Date]>) => {
+    const context = { userId: owner, installationId: "phone", collectionEpoch: "legacy", batchId: randomUUID() };
+    const lines = values.map(([type, payload, at]) => JSON.stringify({ schema_version: 1, event_id: randomUUID(), event_type: type,
+      occurred_at: at.toISOString(), recorded_at: ago(0).toISOString(), actor: { user_id: owner, installation_id: "phone" }, payload }));
+    await db.update(s.dataOwnerStateTable).set({ requestCount: 0 });
+    await repository.persist(context, await parseBatch(Buffer.from(lines.join("\n")), "", context));
+    while (await processor.processNext()) { /* drain */ }
+  };
+  // The walk-test layout: Home and Office 117 m apart, 50 m each.
+  const homeLat = 38.40, officeLat = 38.40 - 117 / 111_195;
+  const home = await places.create(owner, { name: "Home", latitude: homeLat, longitude: -122.4, radius_m: 50 }, "user");
+  const office = await places.create(owner, { name: "Office", latitude: officeLat, longitude: -122.4, radius_m: 50 }, "user");
+  await db.update(s.placeTable).set({ geometryChangedAt: ago(1000) });
+  const revisions = new Map((await db.select().from(s.placeTable)).map(row => [row.id, geometryRevision(row)]));
+  const fix = (lat: number, at: Date, accuracy: number, speed: number, followUp?: { id: string; placeId: string; transition: string }) =>
+    ["location.fix.v1", { fix_key: `fix:${randomUUID()}`, reason: followUp ? "follow_up" : "foreground", coordinate: { lat, lon: -122.4 },
+      horizontal_accuracy_m: accuracy, speed_mps: speed, ...(followUp ? { follow_up: { id: followUp.id, place_id: followUp.placeId,
+        geometry_revision: revisions.get(followUp.placeId), transition: followUp.transition } } : {}) }, at] as [string, unknown, Date];
+  const state = async (placeId: string) => (await db.select().from(s.placePresenceTable).where(eq(s.placePresenceTable.placeId, placeId)))[0];
+  const changes = async (placeId: string) => (await db.select().from(s.placePresenceEventTable).where(eq(s.placePresenceEventTable.placeId, placeId))
+    .orderBy(asc(s.placePresenceEventTable.occurredAt))).map(row => [row.transition, row.source, Math.round((now - row.occurredAt.getTime()) / 60_000)]);
+  const ask = async (followUpId: string) =>
+    (await settleFollowUps(owner, new Map([[followUpId, { placeId: home.id, revision: revisions.get(home.id)!, transition: "entered" as const }]]), db))[followUpId];
+
+  // At the Office (two stopped readings 30 s apart).
+  await upload([fix(officeLat + 2 / 111_195, ago(300), 5, 0), fix(officeLat + 3 / 111_195, ago(299.5), 5, 0)]);
+  assert.equal((await state(office.id)).state, "inside");
+  // 12:18: the Home geofence fires 83 m short of Home; the follow-up's reading is walking
+  // (1.2 m/s), 40 m from the Office's centre, inside its radius.
+  const between = officeLat + 40 / 111_195;
+  await upload([["location.region_transition.v1", { place_id: home.id, transition: "entered", occurred_at: ago(290).toISOString(),
+    initial: false, geometry_revision: revisions.get(home.id), follow_up_id: "walk-home",
+    fix: { latitude: between, longitude: -122.4, horizontal_accuracy_m: 3, occurred_at: ago(290).toISOString() } }, ago(290)],
+    fix(between, ago(289.98), 3, 1.2, { id: "walk-home", placeId: home.id, transition: "entered" })]);
+  assert.equal(await ask("walk-home"), "open", "walking towards Home: keep sampling");
+  // Standing still inside the Office instead (the geofence overlap case): settled, as before.
+  await upload([["location.region_transition.v1", { place_id: home.id, transition: "entered", occurred_at: ago(289).toISOString(),
+    initial: false, geometry_revision: revisions.get(home.id), follow_up_id: "at-office" }, ago(289)],
+    fix(officeLat + 4 / 111_195, ago(288.9), 4, 0.1, { id: "at-office", placeId: home.id, transition: "entered" })]);
+  assert.equal(await ask("at-office"), "settled", "stopped at a nearby place: settled");
+
+  // The backlog: one batch with iOS's long visit (at the Office, 120 min ago to 30 min ago),
+  // a reading at Home 100 minutes ago, and the return to the Office 45 minutes ago.
+  await upload([fix(homeLat + 3 / 111_195, ago(200), 5, 0), fix(homeLat + 3 / 111_195, ago(199.5), 5, 0)]);
+  await upload([fix(officeLat + 2 / 111_195, ago(150), 5, 0), fix(officeLat + 3 / 111_195, ago(149.5), 5, 0)]);
+  assert.equal((await state(office.id)).state, "inside");
+  const visitEnd = ago(30);
+  await upload([
+    ["location.visit.v2", { visit_key: "long", phase: "completed", arrival_at: ago(120).toISOString(), departure_at: visitEnd.toISOString(),
+      coordinate: { lat: officeLat + 10 / 111_195, lon: -122.4 }, horizontal_accuracy_m: 40 }, ago(120)],
+    fix(homeLat + 2 / 111_195, ago(100), 5, 0), fix(homeLat + 2 / 111_195, ago(99.5), 5, 0),
+    fix(officeLat + 2 / 111_195, ago(45), 5, 0), fix(officeLat + 3 / 111_195, ago(44.5), 5, 0)]);
+  const office6 = (await changes(office.id)).filter(([, , minutes]) => (minutes as number) <= 150);
+  assert.deepEqual(office6, [["arrived", "reading", 150], ["departed", "reading", 100], ["arrived", "reading", 45], ["departed", "visit", 30]],
+    "two Office stays, not one from 150 to 30 minutes ago");
 });

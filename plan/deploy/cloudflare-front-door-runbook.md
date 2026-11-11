@@ -45,6 +45,7 @@ The public hostname must route:
 
 - `/api/*` -> `bud-service`
 - `/v1/events/*` -> `bud-service` (mobile personal-data batches)
+- `/v1/diagnostics` and `/v1/diagnostics/*` -> `bud-service` (mobile diagnostics journal uploads and deletes)
 - `/.well-known/*` -> `bud-service`
 - `/ws` -> `bud-service`
 - `/readyz` -> `bud-service`
@@ -168,6 +169,7 @@ Add the Worker to these Cloudflare route patterns:
 
 - `staging.bud.dev/api/*`
 - `staging.bud.dev/v1/events/*`
+- `staging.bud.dev/v1/diagnostics*`
 - `staging.bud.dev/.well-known/*`
 - `staging.bud.dev/ws*`
 - `staging.bud.dev/readyz*`
@@ -177,7 +179,7 @@ Use the exact public hostname for the environment.
 
 Notes:
 
-- The wildcard on `/ws*`, `/readyz*`, and `/healthz*` is intentional because Cloudflare route matching includes query strings.
+- The wildcard on `/v1/diagnostics*`, `/ws*`, `/readyz*`, and `/healthz*` is intentional because Cloudflare route matching includes query strings.
 - Do not attach the Worker to `staging.bud.dev/*` unless you intentionally want all app traffic to pay the Worker hop.
 - With the route-scoped approach, ordinary page loads and static assets continue to go directly from Cloudflare to `bud-web`.
 

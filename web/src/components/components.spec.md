@@ -270,10 +270,51 @@ Owner view at `/data/location`:
   <address>", a point is marked approximate);
 - a day picker and the day's visits (`/api/data/location/visits`, local-day
   window, oldest first);
-- an OpenStreetMap embed of the selected visit, with "Save as place" (name and
-  radius) when the visit isn't at a saved place;
-- a Places section listing saved places (radius, "saved by an agent") with
-  inline edit and delete.
+- a MapKit JS map of the selected visit (`VisitMap`, with its accuracy circle;
+  the OpenStreetMap embed when maps are unavailable), with "Save as place" when
+  the visit isn't at a saved place; the last-known fix or visit has it too;
+- a Places section listing saved places (address under the name, radius,
+  "saved by an agent") with "View on map / Move" and delete;
+- the Geoapify / OpenStreetMap attribution (`PlaceDataAttribution`), since
+  visit names and addresses come from the service's Geoapify lookups.
 
-Labels come from `lib/location-format.ts`; places load through
+"Save as place" and "View on map / Move" open the pin editor
+(`place-pin-editor.tsx`): create is a `POST`, edit a `PUT` with only the changed
+fields (`placeUpdateBody`), since moving or resizing restarts the place's
+presence. Labels come from `lib/location-format.ts`; places load through
 `lib/places.ts`.
+
+### `place-pin-editor.tsx`
+
+The place pin editor (Phase 9), used by the location screen and by place
+questions (`workbench/question-request-card.tsx`):
+- `PlacePinEditor`: MapKit JS map with a fixed pin at the visual centre (the
+  user moves the map under it), the radius as a circle that follows the centre,
+  an optional dashed accuracy circle for the starting reading, a search box
+  (Phase 11: `GET /api/places/search` near the map centre, on Enter or the
+  button; results show the linked Geoapify / OpenStreetMap attribution, and a
+  429 or 503 shows a message while the map and pin keep working), a
+  name field, an optional address field and a 50–2000 m radius slider (step 25).
+  The address (Phase 10) is filled by a picked result's `address`,
+  seeded from a question's `query` or a saved place's address, and editable;
+  when the pin moves more than `ADDRESS_DROP_M` (50 m) from where it was set,
+  the field clears with "Keep it" to restore it (anchor rules in
+  `lib/place-pin.ts`). A start with `query` and no
+  centre searches and centres on the first result, listing the others. Editing a
+  saved place says that moving or resizing restarts its arrivals and departures.
+  When maps are unavailable (`/api/maps/token` 503, or MapKit fails to load) it
+  says so and still saves the starting coordinate with the chosen name and
+  radius; with no starting coordinate there's nothing to save.
+- `PlacePinDialog`: the editor in a native modal, portalled to `document.body`
+  so its form never nests in the question form.
+- `VisitMap`: a read-only MapKit map with a marker and accuracy circle, or the
+  OpenStreetMap embed when maps are unavailable.
+- `PlaceDataAttribution`: "Powered by Geoapify · © OpenStreetMap contributors",
+  linked.
+
+MapKit loading lives in `lib/mapkit.ts`; search helpers in
+`lib/place-search.ts`; seeding, changed fields and answers in
+`lib/place-pin.ts`. `place-pin-editor.test.tsx` mounts the editor with maps
+unavailable; `place-pin-search.test.tsx` mounts it on a fake MapKit to cover
+the seed search, filling the address from a pick, the `near` bias, and the
+rate-limited and unavailable messages.

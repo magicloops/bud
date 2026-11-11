@@ -45,6 +45,11 @@ order, because each builds on the one before.
 | 7.2 | [The phone collects, the service decides](phase-7-2-service-decides.md) | Every precise reading decides presence on the service (arrive only when definitely inside); follow-ups run until the service settles them | Service, iOS |
 | 7.3 | [One timeline per conversation](phase-7-3-combined-triggers.md) | Location triggers for a conversation combine into one run (everything since the last run); older events join the timeline instead of notifying; no lateness talk | Service, web, iOS |
 | 8 | [On-demand location](phase-8-on-demand-location.md) | `location_current` for agents (under `location.read`): 8.1 silent push, then 8.2 location push extension once Apple approves the entitlement | Service, iOS |
+| 9 | [Place pins](phase-9-place-pins.md) | See and move a place's pin on a map; agents ask the user to place a pin from an address (a `place` question), so only user-confirmed coordinates are saved | Service, web, iOS |
+| 10 | [Place addresses](phase-10-place-addresses.md) | The address the user gave or picked is saved with the place and preferred over reverse geocoding in messages, evidence and results | Service, web, iOS |
+| 11 | [Geoapify place lookup](phase-11-geoapify-place-lookup.md) | Visit names, addresses and place search from Geoapify (storable under its terms) through the service; Apple only draws maps; Apple-derived names replaced, then deleted | Service, web, iOS |
+| 12 | [Unknown places](phase-12-unknown-places.md) | For visits not at a saved place: address and area, up to 5 nearby candidates with categories and distances, how clear the match is, and earlier visits nearby | Service |
+| 13 | [Agent place tools](phase-13-agent-place-tools.md) | The agent infers the likely place at question time: `places_nearby` (by category or name, with open now), `place_details`, and how fresh the latest location is | Service |
 
 **Why this order:**
 - Everything depends on reliable capture (6.1).

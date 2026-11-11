@@ -28,12 +28,15 @@ function fixture() {
   } as unknown as Dependencies[1];
   const namedVisit = { id: "visit", visit_key: "key", state: "completed", arrival_at: new Date("2026-09-03T10:00:00Z"),
     departure_at: new Date("2026-09-03T11:00:00Z"), duration_s: 3600, coordinate: { lat: 37.774929, lon: -122.419416 },
-    horizontal_accuracy_m: 20, address: evidence.address, place: evidence.place, received_at: new Date("2026-09-03T11:05:00Z") };
+    horizontal_accuracy_m: 20, address: evidence.address, place: evidence.place, received_at: new Date("2026-09-03T11:05:00Z"),
+    // Phase 12, for a visit away from saved places.
+    nearby_places: [{ name: "Blue Bottle Coffee", distance_m: 12 }], match: "clear", match_note: "…", earlier_visits: { count: 2 } };
   const locations = {
     visits: async (...args: unknown[]) => { observe("visits", args); return { items: [namedVisit], next_cursor: null, coverage: {} }; },
     recent: async (...args: unknown[]) => { observe("recent", args); return { location: latestFix ? { kind: "fix", coordinate: evidence.coordinate,
       horizontal_accuracy_m: 8, occurred_at: evidence.occurred_at, received_at: evidence.received_at, address: evidence.address, place: evidence.place }
-      : { kind: "visit", ...namedVisit }, as_of: new Date(), age_seconds: 60, stale: false }; },
+      : { kind: "visit", ...namedVisit }, as_of: new Date(), age_seconds: 60, stale: false,
+      recent_readings: [{ kind: "fix", coordinate: evidence.coordinate, horizontal_accuracy_m: 8, at: evidence.occurred_at }], moving: false, now_note: "…" }; },
     list: async (...args: unknown[]) => { observe("locations", args); return { items: [evidence], next_cursor: null, coverage: { continuous: false } }; },
     contactContext: async (...args: unknown[]) => { observe("context", args); return { contact_id: "contact", evidence,
       uncertainty: "Not a verified meeting or creation location", continuous_coverage: false }; },
@@ -130,12 +133,17 @@ test("app visit and recent results follow the key's location precision", async (
   const [visit] = (visits.data as { items: Array<Record<string, unknown>> }).items;
   assert.deepEqual(visit.coordinate, { lat: 37.77, lon: -122.42 });
   assert.equal(visit.place, null);
+  for (const field of ["nearby_places", "match", "match_note", "earlier_visits"])
+    assert.equal(Object.hasOwn(visit, field), false, `rounded keys get no ${field}`);
   assert.equal((visit.address as Record<string, unknown>).full, undefined);
   assert.equal(Object.hasOwn(visit, "visit_key"), false);
   assert.equal(visit.duration_s, 3600);
   const recent = await f.query.execute("key", "location_recent", {});
   const latest = (recent.data as { location: Record<string, unknown> }).location;
   assert.deepEqual([latest.kind, latest.place], ["visit", null]);
+  // The recent readings are precise coordinates (Phase 13); what they imply stays.
+  assert.equal(Object.hasOwn(recent.data as object, "recent_readings"), false);
+  assert.equal((recent.data as { moving: unknown }).moving, false);
   assert.deepEqual(f.calls.at(-1), { method: "recent", args: ["owner-a", { notBefore: new Date("2026-08-05T12:00:00Z") }] });
   f.useFix();
   const fix = (await f.query.execute("key", "location_recent", {})).data as { location: Record<string, unknown> };

@@ -63,6 +63,14 @@ test('displayAskUserQuestionsResponse formats answered and skipped rows', () => 
     }),
     'Yes',
   )
+  assert.equal(
+    displayAskUserQuestionsResponse({
+      status: 'answered',
+      answer: { kind: 'place', name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50, place_id: 'p1', operation: 'created' },
+      display_answer: 'Saved Home at 37.749003, -122.416487 with a 50 m radius',
+    }),
+    'Saved Home at 37.749003, -122.416487 with a 50 m radius',
+  )
 })
 
 test('formatAskUserQuestionsAnswer covers fallback answer formatting', () => {
@@ -71,5 +79,14 @@ test('formatAskUserQuestionsAnswer covers fallback answer formatting', () => {
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'multi_choice', choice_ids: ['unit', 'e2e'] }), 'unit, e2e')
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'text', value: 'ship it' }), 'ship it')
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'number', value: 3 }), '3')
+  assert.equal(
+    formatAskUserQuestionsAnswer({ kind: 'place', name: 'Home', latitude: 37.749003, longitude: -122.416487, radius_m: 50 }),
+    'Home at 37.749003, -122.416487 with a 50 m radius',
+  )
+  assert.equal(
+    formatAskUserQuestionsAnswer({ kind: 'place', name: 'Café', address: '500 Valencia St', latitude: 37.76, longitude: -122.42, radius_m: 50 }),
+    'Café, 500 Valencia St, at 37.760000, -122.420000 with a 50 m radius',
+  )
+  assert.equal(formatAskUserQuestionsAnswer({ kind: 'place', name: 'Home' }), '(answered)')
   assert.equal(formatAskUserQuestionsAnswer({ kind: 'unknown' }), '(answered)')
 })

@@ -15,7 +15,8 @@ import {
   foreignKey,
   customType,
   check,
-  doublePrecision
+  doublePrecision,
+  smallint
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -1532,6 +1533,8 @@ export const placeTable = pgTable("place", {
   id: text("id").primaryKey(), name: text("name").notNull(), note: text("note"),
   latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
   radiusM: doublePrecision("radius_m").notNull(),
+  // The address the user gave or picked (Phase 10): a label, preferred over reverse geocoding.
+  address: text("address"),
   createdBy: text("created_by").notNull(),
   geometryChangedAt: timestamp("geometry_changed_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -1542,6 +1545,7 @@ export const placeTable = pgTable("place", {
   ownerKey: unique("place_owner_key").on(t.id, t.createdByUserId),
   ownerIdx: index("place_owner_idx").on(t.createdByUserId, t.id),
   radiusCheck: check("place_radius_check", sql`${t.radiusM} between 50 and 2000`),
+  addressCheck: check("place_address_check", sql`${t.address} is null or char_length(${t.address}) between 1 and 300`),
   createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
 }));
 
@@ -1638,18 +1642,23 @@ export const locationObservationTable = pgTable("location_observation", {
   epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
 }));
 
-// Names for a visit (address and likely place), looked up on the phone. One row per
-// owner and visit key; a later lookup (by named_at) replaces an earlier one.
+// Names for a visit or fix (address and likely place). One row per owner and visit key; a later
+// lookup (by named_at) replaces an earlier one. `source`: `geoapify`, looked up by the service
+// (Phase 11, no raw event), or `apple`, the phone's older MapKit lookups, to be replaced and deleted.
 export const locationVisitNameTable = pgTable("location_visit_name", {
-  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id").notNull(),
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id"),
+  source: text("source").notNull().default("apple"),
   address: jsonb("address").$type<Record<string, string | null> | null>(),
   place: jsonb("place").$type<Record<string, unknown> | null>(),
+  // Up to 5 named places nearby, nearest first (Phase 12): candidates for a visit not at a saved place.
+  nearby: jsonb("nearby").$type<Array<Record<string, unknown>> | null>(),
   namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
 }, t => ({
   visitKey: unique("location_visit_name_visit_key").on(t.createdByUserId, t.visitKey),
   eventFk: foreignKey({ name: "location_visit_name_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  sourceCheck: check("location_visit_name_source_check", sql`${t.source} in ('apple', 'geoapify')`),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.
@@ -2150,3 +2159,48 @@ export const browserViewerVisitTable = pgTable("browser_viewer_visit", {
   sessionFk: foreignKey({name:"browser_viewer_visit_session_fk",columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
     foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
 }));
+
+// Device diagnostics (bud-mobile `design/diagnostics-upload.md`): the phone's diagnostics journal,
+// uploaded when sharing is on. Content-free by construction (typed fields, validated again on
+// ingest). Not personal data for agents or app keys; read with SQL or `pnpm db:diagnostics`.
+// Kept indefinitely for now (TODO.md: set a limit before public launch).
+export const deviceDiagnosticLaunchTable = pgTable("device_diagnostic_launch", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
+  installationId: text("installation_id").notNull(),
+  id: text("id").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  reason: text("reason").notNull(),
+  appVersion: text("app_version"), build: text("build"), os: text("os"), device: text("device"),
+  bundleId: text("bundle_id"), environment: text("environment"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "device_diagnostic_launch_pk", columns: [t.createdByUserId, t.installationId, t.id] }),
+  ownerAt: index("device_diagnostic_launch_owner_at_idx").on(t.createdByUserId, t.at),
+}));
+
+export const deviceDiagnosticEntryTable = pgTable("device_diagnostic_entry", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
+  installationId: text("installation_id").notNull(),
+  // The phone journal's ID and sequence: a sequence is never reused within a journal (a reinstall
+  // starts a new journal), so (owner, installation, journal, seq) makes retries idempotent.
+  journalId: text("journal_id").notNull(),
+  seq: bigint("seq", { mode: "number" }).notNull(),
+  launchId: text("launch_id").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  uptime: doublePrecision("uptime"),
+  appState: text("app_state").notNull(),
+  area: text("area").notNull(),
+  // 0 debug, 1 info, 2 notice, 3 error, 4 fault.
+  level: smallint("level").notNull(),
+  event: text("event").notNull(),
+  fields: jsonb("fields").$type<Record<string, string | number | boolean>>().notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  seqKey: unique("device_diagnostic_entry_seq_key").on(t.createdByUserId, t.installationId, t.journalId, t.seq),
+  ownerAt: index("device_diagnostic_entry_owner_at_idx").on(t.createdByUserId, t.at),
+  ownerAreaAt: index("device_diagnostic_entry_owner_area_at_idx").on(t.createdByUserId, t.area, t.at),
+  fieldsIdx: index("device_diagnostic_entry_fields_idx").using("gin", t.fields.op("jsonb_path_ops")),
+  levelCheck: check("device_diagnostic_entry_level_check", sql`${t.level} between 0 and 4`),
+}));
+

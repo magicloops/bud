@@ -1,8 +1,8 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
-import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations, locationVisitNameTable as visitNames } from "../db/schema.js";
-import { parseLocationPayload, parseVisitName, projectVisit, LOCATION_TYPES, VISIT_NAME_TYPE } from "./location.js";
+import { dataOwnerStateTable as owners, dataEventTable as events, dataProcessingJobTable as jobs, contactSourceTable as sources, contactScanTable as scans, contactScanRecordTable as records, contactTable as contacts, contactRevisionTable as revisions, dataDomainEventTable as domains, locationObservationTable as locations } from "../db/schema.js";
+import { parseLocationPayload, projectVisit, LOCATION_TYPES } from "./location.js";
 import { applyReading, POINT_MAX_ACCURACY_M, processRegionTransition, REGION_TRANSITION_TYPE, speedOf } from "./place-presence.js";
 import { HEALTH_TYPES, processHealthEvent } from "./health.js";
 import { canonicalJson } from "./contracts.js";
@@ -25,7 +25,7 @@ export class ContactProcessor {
    * retained for the lifecycle interface; recovery also includes source repair. */
   async requeueSupportedLocations(ownerFilter?: string): Promise<boolean> {
     const supported = and(eq(jobs.status, "unsupported"), eq(events.schemaVersion, 1),
-      inArray(events.eventType, [...LOCATION_TYPES, VISIT_NAME_TYPE, REGION_TRANSITION_TYPE, ...CONTACT_TYPES, ...HEALTH_TYPES]), ownerFilter ? eq(jobs.createdByUserId, ownerFilter) : undefined);
+      inArray(events.eventType, [...LOCATION_TYPES, REGION_TRANSITION_TYPE, ...CONTACT_TYPES, ...HEALTH_TYPES]), ownerFilter ? eq(jobs.createdByUserId, ownerFilter) : undefined);
     const [candidate] = await this.database.select({ owner: jobs.createdByUserId }).from(jobs)
       .innerJoin(events, and(eq(events.id, jobs.eventId), eq(events.createdByUserId, jobs.createdByUserId)))
       .where(supported).orderBy(jobs.id).limit(1);
@@ -52,11 +52,20 @@ export class ContactProcessor {
       // All publication/rule/bootstrap work uses this same owner lock first.
       await tx.select().from(owners).where(eq(owners.createdByUserId, candidate.owner)).for("update");
       // In the order things happened on the phone, not of receipt: presence decisions depend on
-      // order, and a batch's job IDs share a millisecond, so their order within it is random.
+      // order, and a batch's job IDs share a millisecond, so their order within it is random. A
+      // completed visit counts at its departure, the latest moment it describes: its
+      // `occurred_at` is the arrival, and processed there it would apply its departure before the
+      // readings from during the visit (November 6: a backlog's 11:58–13:31 visit departed the
+      // Office before the 12:19 reading at Home, merging two stays).
+      // `pg_input_is_valid` (PostgreSQL 16+): a malformed departure falls back instead of failing
+      // the query, which would stall the owner's whole queue.
+      const happenedAt = sql`coalesce(case when ${events.eventType} like 'location.visit.%'
+        and pg_input_is_valid(${events.rawEnvelope}->'payload'->>'departure_at', 'timestamptz')
+        then (${events.rawEnvelope}->'payload'->>'departure_at')::timestamptz end, ${events.occurredAt})`;
       const [due] = await tx.select({ job: jobs }).from(jobs)
         .innerJoin(events, and(eq(events.id, jobs.eventId), eq(events.createdByUserId, jobs.createdByUserId)))
         .where(and(eq(jobs.createdByUserId, candidate.owner), eq(jobs.status, "pending"), lte(jobs.nextAttemptAt, new Date())))
-        .orderBy(events.occurredAt, events.recordedAt, jobs.id).limit(1).for("update", { of: jobs });
+        .orderBy(happenedAt, events.occurredAt, events.recordedAt, jobs.id).limit(1).for("update", { of: jobs });
       if (!due) return false;
       const job = due.job;
       failedJob = job.id;
@@ -88,18 +97,8 @@ export class ContactProcessor {
         await tx.update(jobs).set({ status: valid ? "processed" : "invalid", errorCode: valid ? null : "invalid_region_transition", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
         return true;
       }
-      if (event.schemaVersion === 1 && event.eventType === VISIT_NAME_TYPE) {
-        const name = parseVisitName(event.rawEnvelope.payload);
-        if (name) {
-          const values = { address: name.address, place: name.place, namedAt: name.namedAt, rawEventId: event.id, receivedAt: event.receivedAt };
-          // A later lookup replaces an earlier one; an older one arriving late does not.
-          await tx.insert(visitNames).values({ id: ulid(), visitKey: name.visitKey, ...values, createdByUserId: candidate.owner })
-            .onConflictDoUpdate({ target: [visitNames.createdByUserId, visitNames.visitKey], set: values,
-              setWhere: sql`${visitNames.namedAt} < ${name.namedAt}` });
-        }
-        await tx.update(jobs).set({ status: name ? "processed" : "invalid", errorCode: name ? null : "invalid_visit_name", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));
-        return true;
-      }
+      // The phone's visit names (MapKit lookups) aren't stored any more: Apple's terms don't allow
+      // keeping them. The service names visits itself (Phase 11, `VisitNaming`); these are unsupported.
       if (event.schemaVersion === 1 && HEALTH_TYPES.includes(event.eventType)) {
         const valid = await processHealthEvent(tx, candidate.owner, event);
         await tx.update(jobs).set({ status: valid ? "processed" : "invalid", errorCode: valid ? null : "invalid_health_payload", attemptCount: job.attemptCount + 1 }).where(eq(jobs.id, job.id));

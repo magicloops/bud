@@ -87,7 +87,7 @@ Pure parser/formatter helpers for completed `ask_user_questions` tool rows.
 
 **Responsibilities**:
 - accept direct or nested `{ result }` `ask_user_questions_tool_result_v1` payloads
-- format answered and skipped rows for every v1 answer kind
+- format answered and skipped rows for every v1 answer kind; place answers show the service's `display_answer` ("Saved Home at … with a 50 m radius"), with a pin-and-radius fallback
 - return `null` for malformed or non-v1 payloads so the renderer can fall back to JSON
 
 ### `ask-user-questions-format.test.ts`
