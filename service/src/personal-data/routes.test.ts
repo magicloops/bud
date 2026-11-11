@@ -281,3 +281,31 @@ test("place search: signed in, 2–200 characters, Geoapify's attribution, and a
   const limited = await search("q=cafe");
   assert.deepEqual([limited.statusCode, limited.json().error], [429, "place_search_rate_limited"]);
 });
+
+test("data sources: the owner's document, a switch per source, and a phone's state report", async (t) => {
+  const app = Fastify();
+  t.after(() => app.close());
+  const calls: unknown[] = [];
+  await registerPersonalDataRoutes(app, {
+    repository: { persist: async () => { throw new Error("unused"); }, status: async () => ({}) },
+    authenticate: async request => request.headers.authorization === "Bearer phone" ? { userId: "owner-a" }
+      : request.headers.cookie === "session=web" ? { userId: "owner-a" } : null,
+    sources: {
+      enabled: async () => new Set(),
+      document: async owner => { calls.push(["document", owner]); return { sources: [] }; },
+      set: async (owner, source, body, changedBy) => { calls.push(["set", owner, source, body, changedBy]); return { id: source } as never; },
+      report: async (owner, installation, body) => { calls.push(["report", owner, installation, body]); return { reported: 1, enabled: {} }; },
+    },
+  });
+  assert.equal((await app.inject({ method: "GET", url: "/api/data/sources" })).statusCode, 401);
+  const document = await app.inject({ method: "GET", url: "/api/data/sources", headers: { authorization: "Bearer phone" } });
+  assert.deepEqual([document.statusCode, document.headers["cache-control"], document.json()], [200, "no-store", { sources: [] }]);
+  // The client that changed a switch is recorded: a bearer is a phone, a cookie is the web.
+  await app.inject({ method: "PUT", url: "/api/data/sources/location", headers: { authorization: "Bearer phone" }, payload: { enabled: false } });
+  await app.inject({ method: "PUT", url: "/api/data/sources/health", headers: { cookie: "session=web" }, payload: { enabled: true } });
+  const state = { reported_at: "2026-11-11T18:04:00Z", sources: { location: { permission: "denied" } } };
+  const reported = await app.inject({ method: "PUT", url: "/api/data/installations/phone-a/source-state", headers: { authorization: "Bearer phone" }, payload: state });
+  assert.equal(reported.statusCode, 200);
+  assert.deepEqual(calls, [["document", "owner-a"], ["set", "owner-a", "location", { enabled: false }, "ios"],
+    ["set", "owner-a", "health", { enabled: true }, "web"], ["report", "owner-a", "phone-a", state]]);
+});

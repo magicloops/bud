@@ -1672,6 +1672,49 @@ export const agentDataGrantTable = pgTable("agent_data_grant", {
   updatedByUserId: text("updated_by_user_id").notNull().references(() => authUserTable.id),
 });
 
+// Data sources (bud-mobile `plan/data-sources-ux`). The account-level switch per source: off stops
+// collection on the owner's phones, rejects that source's events at ingest and blocks agent and
+// app reads; what was already stored is kept. No row means off.
+export const dataSourceSettingTable = pgTable("data_source_setting", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  source: text("source").notNull(), enabled: boolean("enabled").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  // Which client changed it: `ios`, `web`, or `migration`.
+  changedBy: text("changed_by").notNull(),
+}, t => ({
+  pk: primaryKey({ name: "data_source_setting_pk", columns: [t.createdByUserId, t.source] }),
+  sourceCheck: check("data_source_setting_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+}));
+
+// Every change to a switch, appended.
+export const dataSourceSettingHistoryTable = pgTable("data_source_setting_history", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  source: text("source").notNull(), enabled: boolean("enabled").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  changedBy: text("changed_by").notNull(),
+}, t => ({
+  ownerIdx: index("data_source_setting_history_owner_idx").on(t.createdByUserId, t.source, t.changedAt),
+}));
+
+// What each phone last reported about a source: its iOS permission, never content. Keyed by the
+// phone's own installation ID, which may not have uploaded anything yet (a denied source sends
+// nothing, which is why the phone reports this).
+export const dataInstallationSourceStateTable = pgTable("data_installation_source_state", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  installationId: text("installation_id").notNull(), source: text("source").notNull(),
+  permission: text("permission").notNull(), level: text("level"),
+  caveats: jsonb("caveats").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  askedAt: timestamp("asked_at", { withTimezone: true }),
+  reportedAt: timestamp("reported_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "data_installation_source_state_pk", columns: [t.createdByUserId, t.installationId, t.source] }),
+  sourceCheck: check("data_installation_source_state_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+  permissionCheck: check("data_installation_source_state_permission_check",
+    sql`${t.permission} in ('not_asked', 'granted', 'denied', 'restricted', 'unknowable')`),
+}));
+
 export const agentInvocationStatusValues = [
   "pending", "retry_wait", "leased", "waiting_for_bud", "waiting_for_model",
   "running", "waiting_for_user", "succeeded", "failed", "canceled", "expired", "needs_review",

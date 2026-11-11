@@ -8,6 +8,7 @@ import { Geoapify, GEOAPIFY_ATTRIBUTION } from "./geoapify.js";
 import { openNow } from "./opening-hours.js";
 import { phoneTimeZone } from "./automation-trigger-text.js";
 import { db } from "../db/client.js";
+import { DataSources } from "./sources.js";
 
 import type { PersonalDataTool } from "./tool-names.js";
 /** `places_nearby` radius bounds, and the default around a coordinate (which has no accuracy). */
@@ -26,6 +27,7 @@ export class AgentDataQueries {
     private readonly places: Pick<Places, "list" | "create"> = new Places(),
     private readonly geoapify: Pick<Geoapify, "available" | "searchNearby" | "placeDetails"> = new Geoapify(),
     private readonly timeZone: (owner: string, at: Date) => Promise<string | null> = (owner, at) => phoneTimeZone(db, owner, at),
+    private readonly sources: Pick<DataSources, "requireOn"> = new DataSources(),
   ) {}
 
   async execute(owner: string, tool: PersonalDataTool, input: unknown, ceiling?: AgentDataCeiling) {
@@ -51,6 +53,8 @@ export class AgentDataQueries {
     const scopes: DataScope[] = tool === "location_context" ? ["contacts.read", "location.read"]
       : tool === "timeline_query" || tool === "location_recent" || tool === "location_visits" || tool.startsWith("places_") || tool === "place_details" ? ["location.read"]
       : tool.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+    // A source that is off can't be read, whatever the grant says (and the grant is left as it was).
+    await this.sources.requireOn(owner, scopes);
     const grant = await this.grants.require(owner, scopes);
     const healthType = tool === "health_workouts" ? "workouts" : tool === "health_sleep" ? "sleep" : null;
     if (healthType && !grant.health_types.includes(healthType))
@@ -125,6 +129,7 @@ export class AgentDataQueries {
       } else if (tool === "location_visits") data = await this.locations.visits(owner, { ...query, ...page, order: string("order") });
       else data = await this.locations.list(owner, { ...query, ...page, kind: string("kind") });
     }
+    await this.sources.requireOn(owner, scopes);
     const current = await this.grants.require(owner, scopes);
     if (current.version !== grant.version) throw new DataRequestError(409, "grant_changed", "Data permissions changed; retry with current permissions");
     return { data, permission: { version: grant.version, contact_fields: contactFields, health_types: grant.health_types, history_days: historyDays, observed_since: observedSince.toISOString() },

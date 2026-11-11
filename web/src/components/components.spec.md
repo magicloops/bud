@@ -137,7 +137,17 @@ retain their own surface background.
 Owner-remounted source/access management and the separate Contacts browser.
 Management loads status without fetching contact inventory; browsing uses existing
 owner-scoped search/detail/history/location APIs. Agent grants retain immediate
-versioned saves. Future data types are explicitly unavailable.
+versioned saves. Future data types are explicitly unavailable. The per-source
+sections are `data-sources.tsx`; this file keeps the Contacts import status and
+troubleshooting.
+
+### `data-sources.tsx`
+
+One card per data source from `GET /api/data/sources` (bud-mobile
+`plan/data-sources-ux`): the account's switch (`PUT /api/data/sources/:source`, kept at
+the last confirmed value on failure), what is stored, each phone's iOS permission as it
+last reported (read-only: permission is changed on the phone), who can read, and a browse
+link. Text comes from `lib/data-sources.ts`.
 
 ### `app-data-permissions.tsx`
 

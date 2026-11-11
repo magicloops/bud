@@ -663,3 +663,12 @@ unique key, radius check 50–2,000) and `location_visit_owner_key`. It also add
 `data_domain_event.visit_id` and `place_id` with owner-composite FKs. The subject
 check becomes exactly one of revision, workout or visit. Partial unique indexes
 publish each (visit, type, place) and each `visit.ended` once.
+
+Migration `0067_fast_ikaris.sql` (data sources, bud-mobile `plan/data-sources-ux` Phase 1)
+adds `data_source_setting` (primary key owner + source; `enabled`, `changed_at`,
+`changed_by`; no row means the source is off), `data_source_setting_history` (one row per
+change) and `data_installation_source_state` (primary key owner + phone installation ID +
+source; the phone's reported iOS `permission`, `level`, `caveats`, `asked_at`, `reported_at`;
+no foreign key to `data_installation`, because a phone that was denied has uploaded nothing).
+Source and permission values are constrained by checks. The migration also turns a source on
+for every owner who already has stored data for it.

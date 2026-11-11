@@ -39,8 +39,10 @@ export class PersonalDataToolExecutor {
       errorCode = error instanceof DataRequestError ? error.code : "data_query_failed";
       retryable = error instanceof DataRequestError ? error.retryable || error.statusCode === 409 : true;
       summary = error instanceof DataRequestError ? error.message : "Personal data is temporarily unavailable";
+      // `reason` says who can fix it (bud-mobile `plan/data-sources-ux`): the user, never the agent.
       response = { error: errorCode, message: summary, retryable,
-        ...(errorCode === "data_permission_required" ? { permission_settings_path: "/data", approval_required: true } : {}) };
+        ...(errorCode === "data_permission_required" ? { reason: "agent_not_allowed", permission_settings_path: "/data", approval_required: true } : {}),
+        ...(errorCode === "source_off" ? { reason: "source_off", ...(error as DataRequestError).details, permission_settings_path: "/data" } : {}) };
     }
     return { directive, args: directive.args, summary, outputTruncationReason: null,
       result: { kind: "personal_data", ok: !errorCode, error: errorCode, retryable },

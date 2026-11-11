@@ -62,7 +62,7 @@ test("app data approval, encrypted recovery, scoped proof and revocation are dur
   const app = Fastify();
   t.after(() => app.close());
   await registerAppKeyRoutes(app, { keys: repo, issuanceEnabled: true,
-    queries: new AppDataQueries(repo, new ContactQueries(database), new LocationQueries(database)),
+    queries: new AppDataQueries(repo, new ContactQueries(database), new LocationQueries(database), undefined, undefined, { requireOn: async () => {} }),
     authenticate: async request => request.headers.authorization === "Bearer user-a" ? { userId: owners[0] }
       : request.headers.authorization === "Bearer user-b" ? { userId: owners[1] } : null,
   });

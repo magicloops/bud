@@ -49,6 +49,14 @@ test("personal-data execution rechecks thread ownership and reports permission e
   const result = await denied.execute("owned", directive, "alice");
   assert.equal(result.payload.permission_settings_path, "/data");
   assert.equal(result.payload.approval_required, true);
+  assert.equal(result.payload.reason, "agent_not_allowed");
+  // A source the user turned off: the agent learns which one, and that it can't fix it.
+  const off = new PersonalDataToolExecutor({ execute: async () => {
+    throw new DataRequestError(403, "source_off", "Location is turned off in Data sources.", false, 0, { source: "location" }); } }, async () => true);
+  const refused = await off.execute("owned", directive, "alice");
+  assert.deepEqual([refused.result.ok, refused.result.retryable, refused.payload.error, refused.payload.reason, refused.payload.source],
+    [false, false, "source_off", "source_off", "location"]);
+  assert.equal(refused.payload.approval_required, undefined);
   const failed = new PersonalDataToolExecutor({ execute: async () => { throw new Error("secret SQL parameters"); } }, async () => true);
   assert.doesNotMatch(JSON.stringify(await failed.execute("owned", directive, "alice")), /secret SQL/);
   const controller = new AbortController(); controller.abort();

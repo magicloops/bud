@@ -57,7 +57,7 @@ test("app permission parking and same-turn replay survive approval, expiry and c
   const app = Fastify();
   const root = await mkdtemp(join(tmpdir(), "bud-permission-flow-"));
   t.after(async () => { await app.close(); await rm(root, { recursive: true, force: true }); });
-  await registerAppKeyRoutes(app, { keys, queries: new AppDataQueries(keys), issuanceEnabled: true,
+  await registerAppKeyRoutes(app, { keys, queries: new AppDataQueries(keys, undefined, undefined, undefined, undefined, { requireOn: async () => {} }), issuanceEnabled: true,
     authenticate: async request => request.headers.authorization === "Bearer fixture-human" ? { userId: owner } : null });
   const origin = await app.listen({ host: "127.0.0.1", port: 0 });
   const helperOptions = { appId: "contacts", apiOrigin: origin, stateRoot: root };

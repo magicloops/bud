@@ -471,6 +471,12 @@ IDs). Types live in `api-types.ts` (`ApiAutomationSchedule`,
 `usePlaces(enabled, refresh)` loads `/api/data/places` and returns the places
 and an ID-to-name map.
 
+### `data-sources.ts`
+
+Types for `GET /api/data/sources` and the text for a source card: stored counts in a fixed
+order, a phone's reported iOS permission and whether it needs attention, who can read, and
+the off note. Tested in `data-sources.test.ts`.
+
 ### `location-format.ts`
 
 Visit labels shared by the location screen:

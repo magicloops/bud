@@ -4,6 +4,8 @@ import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, locationWindow } from "./location.js";
 import { HealthQueries, healthWindow } from "./health.js";
 import { DataRequestError } from "./contracts.js";
+import { DataSources } from "./sources.js";
+import type { DataScope } from "./grants.js";
 
 const page = { limit: z.number().int().min(1).max(100).optional(), cursor: z.string().max(600).optional() };
 const contactId = z.string().min(1).max(128);
@@ -28,7 +30,8 @@ export class AppDataQueries {
     private readonly contacts: Pick<ContactQueries, "list" | "get" | "history"> = new ContactQueries(),
     private readonly locations: Pick<LocationQueries, "list" | "contactContext" | "visits" | "recent"> = new LocationQueries(),
     private readonly now = () => new Date(),
-    private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries()) {}
+    private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries(),
+    private readonly sources: Pick<DataSources, "requireOn"> = new DataSources()) {}
 
   async execute(credential: unknown, operation: Query, input: unknown) {
     const authority = await this.keys.authenticate(credential);
@@ -40,6 +43,8 @@ export class AppDataQueries {
     if (!required.every(scope => (authority.policy.scopes as string[]).includes(scope))
       || (healthType && !authority.policy.health_types.includes(healthType)))
       throw new DataRequestError(403, "app_data_scope_required", "This app was not granted the requested data scope");
+    // A source that is off can't be read by apps either; the key is left as it was.
+    await this.sources.requireOn(authority.owner, required as DataScope[]);
     const since = new Date(this.now().getTime() - authority.policy.history_days * 86400_000);
     const policy = { observedSince: since, cursorBinding: `app:${authority.keyId}:${authority.version}`,
       contactFields: authority.policy.contact_fields };
@@ -107,6 +112,7 @@ export class AppDataQueries {
         data = { ...result, evidence: result.evidence ? location(result.evidence) : null };
       }
     }
+    await this.sources.requireOn(authority.owner, required as DataScope[]);
     await this.keys.confirmCurrent(authority);
     return { data, permission: { key_id: authority.keyId, version: authority.version,
       ...authority.policy, observed_since: since.toISOString() },

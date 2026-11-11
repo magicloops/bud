@@ -41,12 +41,17 @@ function fixture() {
     contactContext: async (...args: unknown[]) => { observe("context", args); return { contact_id: "contact", evidence,
       uncertainty: "Not a verified meeting or creation location", continuous_coverage: false }; },
   } as unknown as Dependencies[2];
+  let off: string | undefined;
+  const sources = { requireOn: async (_owner: string, scopes: readonly string[]) => {
+    if (off && scopes.includes(`${off}.read`)) throw new DataRequestError(403, "source_off", "Off", false, 0, { source: off });
+  } };
   const health = {
     workouts: async (...args: unknown[]) => { observe("workouts", args); return { items: [], next_cursor: null }; },
     sleep: async (...args: unknown[]) => { observe("sleep", args); return { items: [] }; },
   } as unknown as Dependencies[4];
   return { authority, calls, revokeDuringRead: () => { revokeAfterRead = true; }, useFix: () => { latestFix = true; },
-    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health) };
+    turnOff: (source: string) => { off = source; },
+    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health, sources) };
 }
 
 test("app queries enforce scope, field/history SQL policy and key-bound pagination", async () => {
@@ -152,4 +157,15 @@ test("app visit and recent results follow the key's location precision", async (
   assert.equal((fix.location.address as Record<string, unknown>).short, undefined);
   f.authority.policy = { ...f.authority.policy, scopes: ["contacts.read"], location_precision: "none" };
   await assert.rejects(f.query.execute("key", "location_recent", {}), { code: "app_data_scope_required" });
+});
+
+test("an app can't read a source that is off, and its key is untouched", async () => {
+  const f = fixture();
+  f.turnOff("location");
+  await assert.rejects(f.query.execute("credential", "location_recent", {}), (error: unknown) => {
+    assert.ok(error instanceof DataRequestError);
+    assert.equal(error.code, "source_off");
+    return true;
+  });
+  assert.equal(f.calls.length, 0);
 });
