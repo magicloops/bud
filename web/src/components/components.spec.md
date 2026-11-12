@@ -149,6 +149,12 @@ the last confirmed value on failure), what is stored, each phone's iOS permissio
 last reported (read-only: permission is changed on the phone), who can read, and a browse
 link. Text comes from `lib/data-sources.ts`.
 
+`workbench/question-request-card.tsx` renders `source_access` questions
+(`SourceAccessControl`): the agent's permission and the source's switch are changed in
+place, one click each; when no phone has reported that it can collect, it says to continue
+on the iPhone and shows each phone's reported state. Once nothing is left that the web can
+see, the answer is `granted`; the service checks it on submit.
+
 ### `app-data-permissions.tsx`
 
 Owner-keyed callers use one exact-request or paged inventory loader and shared

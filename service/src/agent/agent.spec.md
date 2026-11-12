@@ -1680,3 +1680,38 @@ The automation definition accepts `place.arrived` and `place.departed` with
 are a 1-hour maximum age for arrive/leave and 6 hours for visit-ended, with
 Location access. Provider-strict nulls for `place_trigger` and `visit_filter`
 are dropped.
+
+## Source access questions (bud-mobile `plan/data-sources-ux`, Phase 2)
+
+`ask_user_questions` has a question kind `source_access` with `source: { id, level? }`
+(`location` | `health` | `contacts`; `level: "always"` for location only). It is how the agent
+asks for a data source it can't use; there is no separate tool, so parking, resumption,
+supersede and durability are the question machinery's. The phone renders it as a card that walks
+what is missing, each a tap by the user; the web handles the agent's permission and the switch
+and hands iOS permission to the phone.
+
+- `user-question-contracts.ts`: the kind, `normalizeSource` (a source is required; no default
+  answer; `level` only for location) and the client answer `{ kind, outcome, reading_event_id? }`
+  (`outcome`: `granted` | `declined` | `unavailable`). Extra fields from a client are dropped.
+- `user-question-repository.ts`: `settleSourceAnswers` runs in the answer's transaction after
+  `savePlaceAnswers` and adds what the service holds: `enabled`, `agent_allowed`, `usable`
+  (both true), the phone's reported `permission`, `level` and `caveats`, and `reading`
+  (`received` | `not_received`) when the answer names a reading. `awaitReadings` waits up to 5 s
+  before the transaction for that reading to be stored and projected, so the agent's next
+  `location_recent` sees it. The `display_answer` tells the agent what to do next (query now;
+  still not readable and why; declined, don't ask again).
+- `tool-definitions.ts` and `default-system-prompt.md` (PERSONAL DATA ACCESS): when to ask,
+  once, and not after a decline.
+- **A decline stops the agent asking again in that turn.** A source question the user skips is
+  recorded as answered `declined` (`declineSkippedSources`; only for an answer the user sent, so
+  a question superseded by a follow-up message stays skipped and is not a decline).
+  `sourceDeclines(threadId)` reads the thread's answered question rows oldest first; the latest
+  answer per source decides. `createAgentQuestionRequest` answers a request for the source made
+  in the same turn as the decline at once, with no card and no wait: the row is stored
+  `answered` with no `answered_by_user_id`, the source question as `declined` with
+  `asked: false`, and any other question in the request as skipped (`not_applicable`) to be
+  asked again without it. A turn is one input message, so once the user has written again the
+  agent may ask again; the prompt tells it to do so only when the user says they want to share
+  the source. A decline changes no access: reads are decided by the switch and the agent's
+  permission alone, so declining a fresh reading or an upgrade leaves existing access as it was.
+- No push is sent when a question opens.

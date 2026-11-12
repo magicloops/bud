@@ -109,4 +109,23 @@ test("switches default off, block reads and ingest, keep history, and phones rep
   await assert.rejects(sources.report("owner", "phone", { reported_at: "2026-11-11T18:05:00Z",
     sources: { location: { permission: "granted", coordinate: { lat: 1, lon: 1 } } } }), code("invalid_source_state"));
   await assert.rejects(sources.report("owner", "phone", { reported_at: "soon", sources: {} }), code("invalid_source_state"));
+
+  // Phase 2: what the latest-reporting phone says decides why a source may have nothing new.
+  const [where, health, contacts] = await sources.collection("owner", ["location", "health", "contacts"]);
+  assert.deepEqual([where.state, where.permission, where.phones], ["permission_denied", "denied", 2], "the 18:05 report, not the 18:04 one");
+  assert.deepEqual([health.state, health.permission], ["ok", "unknowable"], "asked is as much as Health can say");
+  assert.equal(contacts.state, "permission_not_asked");
+  assert.equal((await sources.collection("other", ["location"]))[0].state, "no_phone_reporting");
+  await sources.report("owner", "phone", { reported_at: "2026-11-11T18:06:00Z", sources: { location: { permission: "granted", level: "while_using" } } });
+  assert.equal((await sources.collection("owner", ["location"]))[0].state, "while_using_only");
+  await sources.report("owner", "phone", { reported_at: "2026-11-11T18:07:00Z",
+    sources: { location: { permission: "granted", level: "always", caveats: ["reduced_accuracy"] } } });
+  const notes = await sources.collectionNotes("owner", ["location.read", "health.read", "contacts.read"]);
+  assert.deepEqual(notes.map(note => [note.source, note.state, "next_step" in note]),
+    [["location", "reduced_accuracy", true], ["contacts", "permission_not_asked", true]], "health can collect: nothing to note");
+  // Settling an access request reads what the service holds, never what a client claims.
+  assert.deepEqual(await sources.access("owner", "location"),
+    { enabled: false, agent_allowed: true, permission: "granted", level: "always", caveats: ["reduced_accuracy"] });
+  assert.deepEqual(await sources.access("other", "location"), { enabled: false, agent_allowed: false, permission: null, level: null, caveats: [] });
+  assert.equal(await sources.readingArrived("owner", "never-uploaded"), false);
 });

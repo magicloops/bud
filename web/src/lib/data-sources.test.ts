@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { phoneNeedsAttention, phonePermission, readersSummary, storedSummary, type DataSource } from './data-sources.ts'
+import { phoneNeedsAttention, phonePermission, readersSummary, storedSummary, webAccessSteps, type DataSource } from './data-sources.ts'
 
 const phone = (overrides: Partial<DataSource['installations'][number]> = {}): DataSource['installations'][number] => ({
   installation_id: 'phone', permission: 'granted', level: null, caveats: [], asked_at: null,
@@ -32,4 +32,15 @@ test('readers are named, and kept while a source is off', () => {
   assert.equal(readersSummary({ enabled: true, agent: { allowed: false }, apps: [] }), 'Nothing is allowed to read this.')
   assert.equal(readersSummary({ enabled: true, agent: { allowed: true }, apps: [app] }), 'Your agent and 1 app can read this.')
   assert.equal(readersSummary({ enabled: false, agent: { allowed: true }, apps: [] }), 'Your agent can read this once it is turned back on.')
+})
+
+test('an access request on the web walks the agent and the switch, then hands iOS permission to the phone', () => {
+  const source = (overrides: Partial<Pick<DataSource, 'enabled' | 'agent' | 'installations'>> = {}) =>
+    ({ enabled: true, agent: { allowed: true }, installations: [phone({ level: 'always' })], ...overrides })
+  assert.deepEqual(webAccessSteps(source()), [])
+  assert.deepEqual(webAccessSteps(source({ enabled: false, agent: { allowed: false }, installations: [] })),
+    ['allow_agent', 'turn_on', 'continue_on_phone'])
+  assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' })] })), ['continue_on_phone'])
+  assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' }), phone({ permission: 'unknowable' })] })), [],
+    'one phone that can collect is enough')
 })

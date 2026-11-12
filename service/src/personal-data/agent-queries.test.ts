@@ -27,10 +27,12 @@ function fixture() {
   const health = { workouts: query("workouts"), sleep: query("sleep") } as unknown as Dependencies[4];
   const places = { list: query("places"), create: query("createPlace") } as unknown as Dependencies[5];
   let off: string | undefined;
+  let notes: { source: string; state: string; note: string }[] = [];
   const sources = { requireOn: async (_owner: string, required: readonly DataScope[]) => {
     if (off && required.includes(`${off}.read` as DataScope)) throw new DataRequestError(403, "source_off", "Off", false, 0, { source: off });
-  } };
+  }, collectionNotes: async (_owner: string, required: readonly DataScope[]) => notes.filter(note => required.includes(`${note.source}.read` as DataScope)) } as unknown as Dependencies[8];
   return { calls, turnOff: (source: string | undefined) => { off = source; },
+    phoneReports: (next: typeof notes) => { notes = next; },
     adapter: new AgentDataQueries(contacts, locations, grants, () => new Date("2026-09-04T12:00:00Z"), health, places, undefined, undefined, sources),
     grantHealth: () => { scopes = [...scopes, "health.read"]; }, setHealthTypes: (next: string[]) => { healthTypes = next; },
     revoke: () => { scopes = []; version++; }, contactsOnly: () => { scopes = ["contacts.read"]; },
@@ -222,7 +224,7 @@ test("Phase 13: places_nearby searches around the latest location, a visit or a 
         cuisine: null, opening_hours: null, coordinate: { lat: 37.7527, lon: -122.4185 }, distance_m: 14 }]; },
     placeDetails: async (id: string) => id === "t1" ? { place_id: "t1", name: "Taquería El Farolito", opening_hours: "Mo-Fr 09:00-17:00",
       time_zone: "America/Los_Angeles" } : null } as unknown as Dependencies[6];
-  const adapter = new AgentDataQueries(undefined, locations, grants, () => now, undefined, undefined, geoapify, async () => "America/Los_Angeles", { requireOn: async () => {} });
+  const adapter = new AgentDataQueries(undefined, locations, grants, () => now, undefined, undefined, geoapify, async () => "America/Los_Angeles", { requireOn: async () => {}, collectionNotes: async () => [] });
 
   // Latest: from the most precise recent reading, with all of them reported; radius from its accuracy (at least 30 m).
   const latest = (await adapter.execute("alice", "places_nearby", { categories: ["catering.restaurant", "catering.fast_food"], text: null, radius_m: null })).data as {
@@ -289,4 +291,16 @@ test("a source that is off can't be read, whatever the grant allows", async () =
   f.turnOff(undefined);
   const result = await f.adapter.execute("alice", "location_recent", {});
   assert.equal(result.permission.version, 1);
+});
+
+test("a result says when the phone can't collect, so empty isn't read as nothing happened", async () => {
+  const f = fixture();
+  const quiet = await f.adapter.execute("alice", "location_recent", {});
+  assert.equal("collection" in quiet, false, "nothing to say when collection can run");
+  f.phoneReports([{ source: "location", state: "permission_denied", note: "Denied in iOS." },
+    { source: "contacts", state: "permission_not_asked", note: "Not asked." }]);
+  const denied = await f.adapter.execute("alice", "location_recent", {});
+  assert.deepEqual(denied.collection, [{ source: "location", state: "permission_denied", note: "Denied in iOS." }], "only this tool's source");
+  const both = await f.adapter.execute("alice", "location_context", { contact_id: "contact", from: "2026-09-03T00:00:00Z", to: "2026-09-04T00:00:00Z" });
+  assert.equal(both.collection?.length, 2);
 });

@@ -475,7 +475,9 @@ and an ID-to-name map.
 
 Types for `GET /api/data/sources` and the text for a source card: stored counts in a fixed
 order, a phone's reported iOS permission and whether it needs attention, who can read, and
-the off note. Tested in `data-sources.test.ts`.
+the off note. `webAccessSteps` lists what is left for a `source_access` question as far as
+the web can tell (`allow_agent`, `turn_on`, `continue_on_phone`). Tested in
+`data-sources.test.ts`.
 
 ### `location-format.ts`
 

@@ -64,3 +64,17 @@ export function readersSummary(source: Pick<DataSource, 'enabled' | 'agent' | 'a
   if (!who) return 'Nothing is allowed to read this.'
   return source.enabled ? `${who} can read this.` : `${who} can read this once it is turned back on.`
 }
+
+/**
+ * What is left before an agent can use a source, as far as the web can tell (plan phase 2). The
+ * agent's permission and the switch can be changed here; iOS permission only on the phone, so
+ * `phone` says whether some phone has reported that it can collect.
+ */
+export type WebAccessStep = 'allow_agent' | 'turn_on' | 'continue_on_phone'
+export function webAccessSteps(source: Pick<DataSource, 'enabled' | 'agent' | 'installations'>): WebAccessStep[] {
+  const steps: WebAccessStep[] = []
+  if (!source.agent.allowed) steps.push('allow_agent')
+  if (!source.enabled) steps.push('turn_on')
+  if (!source.installations.some(phone => phone.permission === 'granted' || phone.permission === 'unknowable')) steps.push('continue_on_phone')
+  return steps
+}

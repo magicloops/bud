@@ -1,8 +1,8 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { db, type Database } from "../db/client.js";
-import { contactTable as contacts, dataAccessRequestTable as accessRequests, dataAppKeyTable as appKeys,
+import { contactTable as contacts, dataAccessRequestTable as accessRequests, dataAppKeyTable as appKeys, dataEventTable as events,
   dataInstallationSourceStateTable as states, dataInstallationTable as installations,
   dataSourceSettingHistoryTable as history, dataSourceSettingTable as settings, healthSleepSegmentTable as sleep,
   healthWorkoutTable as workouts, locationObservationTable as observations, locationVisitTable as visits } from "../db/schema.js";
@@ -46,6 +46,24 @@ const switchChange = z.object({ enabled: z.boolean() }).strict();
 
 type Reader = Pick<Database, "select">;
 
+/**
+ * Why a source may have nothing new, from what the owner's phones last reported (plan phase 2).
+ * `ok` means collection can run; anything else is something only the user can change.
+ */
+export type CollectionState = "ok" | "no_phone_reporting" | "permission_not_asked" | "permission_denied"
+  | "permission_restricted" | "reduced_accuracy" | "while_using_only";
+export type SourceCollection = { source: SourceId; state: CollectionState; permission: string | null; level: string | null;
+  caveats: string[]; reported_at: Date | null; phones: number };
+
+const COLLECTION_NOTES: Record<Exclude<CollectionState, "ok">, string> = {
+  no_phone_reporting: "No phone has reported for this source: Bud may not be installed or opened on the user's iPhone.",
+  permission_not_asked: "iOS hasn't been asked for this on the user's phone, so nothing is collected.",
+  permission_denied: "The user denied this in iOS, so nothing is collected. Only iOS Settings can change it.",
+  permission_restricted: "The phone restricts this (Screen Time or a device profile). It can't be changed in Bud; don't ask.",
+  reduced_accuracy: "Precise Location is off on the phone, so locations can be kilometres off.",
+  while_using_only: "Location is allowed only while Bud is open, so there are no background visits or arrivals.",
+};
+
 export class DataSources {
   constructor(private readonly database: Omit<Database, "$client"> = db,
     private readonly grants: Pick<DataGrants, "get"> = new DataGrants(database)) {}
@@ -62,6 +80,62 @@ export class DataSources {
     const on = await this.enabled(owner);
     const off = sourcesOfScopes(scopes).find(source => !on.has(source));
     if (off) throw sourceOff(off);
+  }
+
+  /**
+   * What the most recently reporting phone says about each source. Several phones can differ;
+   * the latest report is the one the user last had in hand.
+   */
+  async collection(owner: string, sources: readonly SourceId[], database: Reader = this.database): Promise<SourceCollection[]> {
+    if (!sources.length) return [];
+    const rows = await database.select().from(states)
+      .where(and(eq(states.createdByUserId, owner), inArray(states.source, [...sources]))).orderBy(desc(states.reportedAt)).limit(200);
+    return sources.map(source => {
+      const reports = rows.filter(row => row.source === source);
+      const latest = reports[0];
+      const state: CollectionState = !latest ? "no_phone_reporting"
+        : latest.permission === "not_asked" ? "permission_not_asked"
+        : latest.permission === "denied" ? "permission_denied"
+        : latest.permission === "restricted" ? "permission_restricted"
+        : latest.caveats.includes("reduced_accuracy") ? "reduced_accuracy"
+        : source === "location" && latest.level === "while_using" ? "while_using_only" : "ok";
+      return { source, state, permission: latest?.permission ?? null, level: latest?.level ?? null, caveats: latest?.caveats ?? [],
+        reported_at: latest?.reportedAt ?? null, phones: reports.length };
+    });
+  }
+
+  /** For a tool result: the sources that can't collect, or can only do it partly, and what would fix it. */
+  async collectionNotes(owner: string, scopes: readonly DataScope[]) {
+    return (await this.collection(owner, sourcesOfScopes(scopes))).filter(entry => entry.state !== "ok").map(entry => ({
+      source: entry.source, state: entry.state, note: COLLECTION_NOTES[entry.state as Exclude<CollectionState, "ok">],
+      ...(entry.state === "permission_restricted" ? {}
+        : { next_step: "If the task needs this, ask the user with an ask_user_questions source_access question for this source." }),
+    }));
+  }
+
+  /** What the service holds about one source, for settling an access request's answer. */
+  async access(owner: string, source: SourceId, database: Reader = this.database) {
+    const [on, grant, [collection]] = await Promise.all([this.enabled(owner, database),
+      new DataGrants(database as Database).get(owner), this.collection(owner, [source], database)]);
+    const scope = SOURCES.find(entry => entry.id === source)!.scope;
+    return { enabled: on.has(source), agent_allowed: grant.scopes.includes(scope), permission: collection.permission,
+      level: collection.level, caveats: collection.caveats };
+  }
+
+  /**
+   * Whether an uploaded location event has been stored and projected, waiting up to `waitMs` for
+   * it: the phone uploads a reading, then answers, and the agent's next query should see it.
+   */
+  async readingArrived(owner: string, eventId: string, waitMs = 0, database: Reader = this.database): Promise<boolean> {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const [row] = await database.select({ id: observations.id }).from(observations)
+        .innerJoin(events, and(eq(events.id, observations.rawEventId), eq(events.createdByUserId, owner)))
+        .where(and(eq(observations.createdByUserId, owner), eq(events.eventId, eventId))).limit(1);
+      if (row) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   }
 
   async set(owner: string, source: string, body: unknown, changedBy: string) {
