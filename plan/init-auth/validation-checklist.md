@@ -1,5 +1,34 @@
 # Auth Validation Checklist
 
+## Direct Google Calendar
+
+- [x] Isolated PostgreSQL + injected-viewer HTTP fixtures: owner-filtered inventory,
+  anonymous 401, foreign connection 404 and hostile Origin 403.
+- [x] OAuth fixture: owner/session binding, single-use state, expiry, PKCE,
+  fixed Google destinations, encrypted restart persistence and no cross-user tokens.
+- [x] Concurrent use/disconnect fixture: completed disconnect removes credentials
+  and cannot be undone by the earlier in-flight connection operation.
+- [x] Agent fixtures: no legacy/automated/foreign dispatch; ownership loss withholds
+  evidence; uncertain writes stop with unresolved action and no trailing calls.
+- [x] Local signed-in Settings renders the configured Google Calendar card and
+  Connect button; anonymous inventory requests return 401 through Vite.
+- [x] Chat-connect injected-route/isolated-DB fixtures reject foreign/deleted return
+  threads and hostile Origin, bind encrypted return context to validated state,
+  consume it once and reauthorize callback destinations. Arbitrary URLs are rejected.
+- [x] Mounted chat fixtures fence owner/thread/unmount races, require explicit
+  click for OAuth, and verify connection from inventory rather than URL status.
+- [x] User confirmed real Calendar listing with a different email from Bud login.
+- [ ] Real disconnected-account chat consent/denial/return, including two signed-in
+  accounts and thread deletion during consent; fixture auth does not prove this gate.
+- [ ] Real Google two-account consent, refresh/restart, revocation and account switch.
+- [ ] Real Calendar read/create/edit/delete against test data, including service
+  restart, consent denial and revoked Google permission. Gmail/Drive are later phases.
+
+Connections belong to the authenticated user, independent of device/thread.
+Routes resolve requireViewer before SQL; agent calls derive owner from the human
+invocation and recheck matching live thread/Bud ownership. Rows stamp owner and
+nullable tenant. OAuth tokens never enter browser inventory or model evidence.
+
 ## Production browser capture/takeover reliability — October 13
 
 - [x] Local media fences retire idle sockets even with silent peers and coalesced

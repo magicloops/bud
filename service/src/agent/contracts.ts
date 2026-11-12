@@ -1,3 +1,4 @@
+import type { GoogleToolName } from "../google/agent-tools.js";
 import { isBrowserToolName, type BrowserToolName } from "./browser-tools.js";
 import { isWebTool, type WebTool } from "../web-retrieval/contracts.js";
 import { isAutomationToolName, type AutomationToolName } from "../personal-data/automation-tool-contracts.js";
@@ -15,6 +16,7 @@ import {
 } from "./user-question-contracts.js";
 
 export type AgentToolCallDirective =
+  | { type: "tool_call"; tool: GoogleToolName; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: BrowserToolName; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: WebTool; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: AutomationToolName; args: Record<string, unknown>; callId: string }
@@ -287,7 +289,16 @@ export type ExecutedBrowserTool = {
 export function isBrowserToolDirective(directive: AgentToolCallDirective): directive is ExecutedBrowserTool["directive"] {
   return isBrowserToolName(directive.tool);
 }
+export type GoogleToolCallDirective = Extract<AgentToolCallDirective, { tool: GoogleToolName }>;
+export type ExecutedGoogleTool = {
+  directive: GoogleToolCallDirective; args: Record<string, unknown>; summary: string; outputTruncationReason: null;
+  result: { kind: "google"; ok: boolean; error?: string; retryable?: boolean }; payload: Record<string, unknown>;
+};
+export function isGoogleToolDirective(directive: AgentToolCallDirective): directive is GoogleToolCallDirective {
+  return directive.tool === "google_search_tools" || directive.tool === "google_call";
+}
 export type ExecutedAgentTool =
+  | ExecutedGoogleTool
   | ExecutedBrowserTool
   | ExecutedWebRetrievalTool
   | ExecutedAutomationTool
@@ -328,6 +339,7 @@ export function toolNameForConversation(
   | "web_view_open"
   | "web_view_close"
   | "web_view_list"
+  | GoogleToolName
   | BrowserToolName
   | PersonalDataTool
   | WebTool
@@ -346,6 +358,8 @@ export function toolNameForConversation(
     case "data_request_api_key":
     case "browser_exec":
     case "browser_request_handoff":
+    case "google_search_tools":
+    case "google_call":
     case "web_search":
     case "web_read":
     case "contacts_get":
@@ -437,6 +451,8 @@ export function buildToolArgs(
     case "data_request_api_key":
     case "browser_exec":
     case "browser_request_handoff":
+    case "google_search_tools":
+    case "google_call":
     case "web_search":
     case "web_read":
     case "contacts_get":

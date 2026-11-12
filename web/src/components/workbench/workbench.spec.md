@@ -77,6 +77,12 @@ parsed as tool JSON. Null/missing payloads retain plain-text rendering without
 resurrecting a tool from metadata. `tool-payload.test.ts` covers continuations,
 pending forms, null payloads and structured-payload precedence.
 
+Google Calendar `connect_request` results render a dedicated connected-apps card
+outside work disclosures. The card owns current connection reads and explicit
+OAuth navigation, keyed by viewer/thread; the normal tool payload is retained in
+history. Consent returns to the originating chat without automatically resuming
+Calendar work. Mounted coverage lives in connected-apps/calendar-connect-card.test.tsx.
+
 Message list with auto-scroll and full-height message rendering.
 
 **Type**: `ChatMessage` - Thread message data keyed by stable `client_id` identity

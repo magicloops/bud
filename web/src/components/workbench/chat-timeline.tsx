@@ -1,4 +1,6 @@
 import { BrowserHandoffContent } from '@/components/message-renderers/tools/browser-handoff'
+import { CalendarConnectCard } from '@/features/connected-apps/calendar-connect-card'
+import { calendarConnectRequest } from '@/features/connected-apps/calendar-connect-request'
 import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -527,6 +529,15 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     return <div className={TRANSCRIPT_COLUMN_CLASSES}>
       <div className="border-l-[3px] border-transparent px-4 py-2.5">
         <BrowserHandoffContent payload={payload} />
+      </div>
+    </div>
+  }
+
+  const calendarRequest = calendarConnectRequest(payload)
+  if (calendarRequest) {
+    return <div className={TRANSCRIPT_COLUMN_CLASSES}>
+      <div className="border-l-[3px] border-transparent px-4 py-2.5">
+        <CalendarConnectCard threadId={calendarRequest.thread_id} />
       </div>
     </div>
   }

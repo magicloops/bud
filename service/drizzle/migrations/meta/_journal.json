@@ -470,6 +470,13 @@
       "when": 1794130804347,
       "tag": "0066_device_diagnostics",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794521274030,
+      "tag": "0067_google_connections",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,8 @@ export type AgentTurnOutcome = {
 // Internal worker hooks. None of these callbacks or identities come from model
 // arguments or browser request bodies. Rejection must prevent the next dispatch.
 export interface AgentExecutionHooks {
+  /** Only the invocation executor grants GOOGLE access to human-origin turns. */
+  googleEnabled?: boolean;
   invocation?: { id: string; fence: number; workerId: string };
   checkpoint(): Promise<void>;
   beforeTool(directive: AgentToolCallDirective): Promise<void>;

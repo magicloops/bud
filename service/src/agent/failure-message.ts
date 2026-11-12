@@ -73,6 +73,9 @@ function extractRetryable(error: unknown, code: string): boolean {
 }
 
 function messageForCode(code: string): string {
+  if (code === "GOOGLE_OUTCOME_UNKNOWN") {
+    return "The connected app may have applied this action, but Bud could not confirm the result. Check the app before trying again; this run has been paused for review.";
+  }
   if (code === "DATA_PLANE_STREAM_LIMIT_EXCEEDED" || code === "BUD_BUSY") {
     return "The local model is already busy. Try again after the current run finishes.";
   }

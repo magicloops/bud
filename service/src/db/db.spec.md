@@ -1,5 +1,16 @@
 # db
 
+## Connected Google account
+
+`googleConnectionTable` / `google_connection` (0067) stores one direct Google
+OAuth connection per Bud user. Owner is required with cascading auth-user FK;
+tenant is nullable. AES-GCM credentials bind owner/row/OAuth client. Google subject,
+email and granted scopes describe the connected account. OAuth state/session are
+hashed and expire in 10 minutes; PKCE and tokens remain encrypted. Row locks
+serialize refresh, API use and disconnect. Inventory filters by owner in SQL.
+Generated migration replaces the unshipped MCP prototype; reviewed SQL applied
+locally while preserving file-upload tables. See debug/google-direct-oauth.md.
+
 ## Atomic opening-message receipt
 
 `thread_creation_receipt` reserves `(created_by_user_id, creation_key)` durably.

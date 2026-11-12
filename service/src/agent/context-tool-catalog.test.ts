@@ -23,6 +23,7 @@ test("browser catalog is available for durable execution and idle accounting wit
   );
   const environment = buildAgentEnvironmentSnapshot({ budId, online: true, lastSeenAt: null });
   const hooks: AgentExecutionHooks = {
+    googleEnabled: true,
     invocation: { id: "invocation", fence: 1, workerId: "worker" },
     async checkpoint() {}, async beforeTool() {}, async afterTool() {},
   };
