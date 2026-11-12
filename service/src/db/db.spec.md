@@ -672,3 +672,13 @@ source; the phone's reported iOS `permission`, `level`, `caveats`, `asked_at`, `
 no foreign key to `data_installation`, because a phone that was denied has uploaded nothing).
 Source and permission values are constrained by checks. The migration also turns a source on
 for every owner who already has stored data for it.
+
+Migration `0068_chief_starbolt.sql` (the access log, bud-mobile `plan/data-sources-ux` Phase 3)
+adds `data_access_log`: append-only, one row per read of a source (`actor_kind`: `agent`,
+`automation`, `app`, `processor`; `actor_ref`: the thread, automation, app key or processor
+name; optional `thread_id` and `turn_id`; `source`; `operation`; `window_from`/`window_to`;
+`record_count`; `policy_version`; `outcome`: `ok` or a refusal code). It holds no content and
+no foreign keys to threads or actors, because a row outlives what it refers to. Indexed by
+owner + source + time and owner + actor + time. It also adds `agent_data_grant_history`: one
+row per version of the agent's permission (unique on owner + version), seeded with each
+owner's current permission.

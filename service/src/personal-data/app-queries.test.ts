@@ -12,6 +12,11 @@ function fixture() {
   let latestFix = false;
   let read = false;
   const observe = (method: string, args: unknown[]) => { read = true; calls.push({ method, args }); };
+  // The access log, recorded here instead of written to a database.
+  type Logged = { actor: { kind: string; ref: string }; sources: readonly string[]; operation: string; outcome?: string;
+    recordCount?: number | null; policyVersion?: number | null; window?: { from?: Date | null; to?: Date | null } };
+  const logged: Logged[] = [];
+  const log = { record: async (entry: Logged) => { logged.push(entry); }, recordQuietly: async (entry: Logged) => { logged.push(entry); } };
   const evidence = { id: "observation", source_event_id: "raw-source", source_epoch_id: "raw-epoch", kind: "visit",
     coordinate: { lat: 37.774929, lon: -122.419416 }, horizontal_accuracy_m: 8,
     occurred_at: new Date("2026-09-03T12:00:00Z"), received_at: new Date("2026-09-03T12:00:01Z"), arrival_at: null, departure_at: null,
@@ -51,7 +56,7 @@ function fixture() {
   } as unknown as Dependencies[4];
   return { authority, calls, revokeDuringRead: () => { revokeAfterRead = true; }, useFix: () => { latestFix = true; },
     turnOff: (source: string) => { off = source; },
-    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health, sources) };
+    query: new AppDataQueries(keys, contacts, locations, () => new Date("2026-09-04T12:00:00Z"), health, sources, log), logged };
 }
 
 test("app queries enforce scope, field/history SQL policy and key-bound pagination", async () => {
@@ -71,6 +76,14 @@ test("app queries enforce scope, field/history SQL policy and key-bound paginati
   await assert.rejects(f.query.execute("key", "location_context", { contact_id: "contact", from: "2026-09-03T00:00:00Z", to: "2026-09-04T00:00:00Z" }),
     (error: unknown) => error instanceof DataRequestError && error.code === "app_data_scope_required");
   assert.equal(f.calls.length, 2);
+  // The access log: one entry per request by a valid key (per source), refused or not; an invalid
+  // query isn't a read. Counts, windows and the key's version only.
+  assert.deepEqual(f.logged.map(entry => [entry.actor.kind, entry.actor.ref, entry.operation, entry.sources.join("+"), entry.outcome ?? "ok",
+    entry.recordCount ?? null, entry.policyVersion]), [
+    ["app", "key-a", "contacts_search", "contacts", "ok", 0, 1], ["app", "key-a", "contacts_history", "contacts", "ok", 0, 1],
+    ["app", "key-a", "timeline_query", "location", "history_outside_grant", null, 1],
+    ["app", "key-a", "location_context", "location+contacts", "app_data_scope_required", null, 1]]);
+  assert.deepEqual(f.logged[2].window, { from: new Date("2026-08-01T00:00:00Z"), to: new Date("2026-08-02T00:00:00Z") });
 });
 
 test("coarse app evidence rounds every coordinate without misrepresenting source accuracy", async () => {

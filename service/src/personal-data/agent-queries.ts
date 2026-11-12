@@ -13,7 +13,16 @@ import { DataSources } from "./sources.js";
 import type { PersonalDataTool } from "./tool-names.js";
 /** `places_nearby` radius bounds, and the default around a coordinate (which has no accuracy). */
 export const NEARBY_MIN_RADIUS_M = 30, NEARBY_MAX_RADIUS_M = 1000, NEARBY_COORDINATE_RADIUS_M = 50;
-export type AgentDataCeiling = { scopes: DataScope[]; historyDays: number; grantVersion: number; binding: string };
+export type AgentDataCeiling = { scopes: DataScope[]; historyDays: number; grantVersion: number; binding: string;
+  /** The automation the run belongs to, for the access log. */
+  automationId?: string };
+
+/** The scopes a tool reads, and so the sources it touches. */
+export function scopesOfTool(tool: PersonalDataTool): DataScope[] {
+  return tool === "location_context" ? ["contacts.read", "location.read"]
+    : tool === "timeline_query" || tool === "location_recent" || tool === "location_visits" || tool.startsWith("places_") || tool === "place_details" ? ["location.read"]
+    : tool.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+}
 
 /** Owner comes from the authorized thread/invocation, never model arguments.
  * Permission changes during a query withhold the result before model delivery. */
@@ -50,9 +59,7 @@ export class AgentDataQueries {
     };
     if (!keys[tool] || Object.keys(input).some(key => !keys[tool].includes(key)))
       throw new DataRequestError(400, "invalid_query", "Unsupported query argument");
-    const scopes: DataScope[] = tool === "location_context" ? ["contacts.read", "location.read"]
-      : tool === "timeline_query" || tool === "location_recent" || tool === "location_visits" || tool.startsWith("places_") || tool === "place_details" ? ["location.read"]
-      : tool.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+    const scopes = scopesOfTool(tool);
     // A source that is off can't be read, whatever the grant says (and the grant is left as it was).
     await this.sources.requireOn(owner, scopes);
     const grant = await this.grants.require(owner, scopes);

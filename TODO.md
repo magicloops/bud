@@ -13,6 +13,13 @@ are kept indefinitely while we dogfood. Before public launch: set a retention li
 pruning job, and revisit who shares by default (local builds and verified `@magicloops.dev`
 accounts today; everyone else opts in on the phone).
 
+## Access log — before public launch
+
+The access log (`data_access_log`, bud-mobile `plan/data-sources-ux` Phase 3) is kept
+indefinitely while we dogfood; the plan's default is one year. Before public launch: add a
+pruning job with that limit (and decide whether the user can change it, with Phase 5's "keep
+for"), and include the log in the user's export.
+
 ## Apple place names — cleanup after the Geoapify backfill
 
 Apple's terms don't allow keeping Map Data, so Phase 11 moved visit names and search to Geoapify

@@ -69,7 +69,7 @@ test("geofences and visits share one presence state: one arrival, settled depart
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
     "location_observation", "location_visit", "location_visit_name", "place", "place_presence", "place_presence_event",
     "health_workout", "data_domain_event", "automation", "automation_revision", "automation_delivery", "automation_bootstrap",
-    "automation_bootstrap_member", "automation_bootstrap_group", "agent_invocation", "agent_invocation_action", "agent_data_grant",
+    "automation_bootstrap_member", "automation_bootstrap_group", "agent_invocation", "agent_invocation_action", "agent_data_grant", "agent_data_grant_history", "data_access_log",
     "bud", "thread", "message", "browser_handoff"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
 

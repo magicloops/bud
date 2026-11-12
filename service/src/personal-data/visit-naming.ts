@@ -1,3 +1,4 @@
+import { AccessLog, GEOAPIFY } from "./access-log.js";
 import { sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
@@ -20,7 +21,8 @@ type Candidate = { owner: string; key: string; latitude: number; longitude: numb
  */
 export class VisitNaming {
   private readonly retryAt = new Map<string, number>();
-  constructor(private readonly database: Database = db, private readonly geoapify = new Geoapify(), private readonly now = () => new Date()) {}
+  constructor(private readonly database: Database = db, private readonly geoapify = new Geoapify(), private readonly now = () => new Date(),
+    private readonly log: Pick<AccessLog, "recordQuietly"> = new AccessLog(database)) {}
 
   get available() { return this.geoapify.available; }
 
@@ -32,6 +34,9 @@ export class VisitNaming {
       const address = await this.geoapify.reverse(row.latitude, row.longitude);
       // Candidates within the visit's accuracy (100–200 m); the nearest is its likely place (Phase 12).
       const nearby = await this.geoapify.nearbyPlaces(row.latitude, row.longitude, nearbyRadius(row.accuracy));
+      // Both lookups send the visit's coordinate to Geoapify (access log, plan phase 3).
+      for (const operation of ["reverse_geocode", "nearby_search"])
+        await this.log.recordQuietly({ owner: row.owner, actor: { kind: "processor", ref: GEOAPIFY }, sources: ["location"], operation, recordCount: 1 });
       const place = nearby === undefined ? undefined : nearby[0] ?? null;
       // Nothing found, or a request failed (`nearby` undefined): try again later rather than keep half a name.
       if ((!address && !place) || nearby === undefined) { this.retryAt.set(`${row.owner}:${row.key}`, this.now().getTime() + RETRY_MS); continue; }

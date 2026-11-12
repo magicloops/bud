@@ -18,6 +18,15 @@ in the history. New accounts have no rows, so every source starts off. Metadata 
 and unedited. Executed in an isolated schema by `sources.test.ts` and applied locally in one
 transaction. Deploy via `db:migrate` before the phone build that reads the switches.
 
+### `0068_chief_starbolt.sql`
+
+The access log (bud-mobile `plan/data-sources-ux`, Phase 3): generated tables
+`data_access_log` and `agent_data_grant_history`, plus one hand-written statement at the end
+that copies each owner's current agent permission into the history as its first entry, so
+the next change has something to be compared with. Metadata is generated and unedited.
+Executed in isolated schemas by `access-log.test.ts` and applied locally in one transaction.
+Additive: deploy via `db:migrate` with the service release.
+
 SQL migration files generated or maintained for schema evolution.
 
 ## Purpose

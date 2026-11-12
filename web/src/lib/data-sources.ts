@@ -8,8 +8,20 @@ export type DataSource = {
   installations: { installation_id: string; permission: string; level: string | null; caveats: string[];
     asked_at: string | null; reported_at: string; last_received_at: string | null }[]
   agent: { allowed: boolean }
-  apps: { key_id: string; label: string | null; last_used_at: string | null }[]
+  apps: { key_id: string; label: string | null; last_used_at: string | null; reads_last_week?: number; last_read_at?: string | null }[]
+  /** Who read this source in the last week, most recent first (the access log, plan phase 3). */
+  recent_access?: AccessGroup[]
 }
+export type AccessActor = { kind: 'agent' | 'automation' | 'app' | 'processor' | (string & {}); ref: string; label: string | null; revoked?: boolean }
+export type AccessThread = { id: string; turn_id?: string | null; title: string | null; bud_id: string | null; exists: boolean }
+export type AccessGroup = { actor: AccessActor; thread: AccessThread | null; reads: number; refused: number; last_at: string }
+/** One read, from `GET /api/data/access`. Never content: an operation, a window, a count and an outcome. */
+export type AccessEntry = { id: string; at: string; source: string; operation: string; outcome: string; actor: AccessActor
+  thread: AccessThread | null; window: { from: string | null; to: string | null } | null; record_count: number | null }
+export type AccessPage = { items: AccessEntry[]; next_cursor: string | null }
+/** One change to who may read a source, from `GET /api/data/sources/:source/changes`. */
+export type SourceChange = { at: string; kind: 'switch' | 'agent' | 'agent_detail' | 'app' | (string & {}); enabled?: boolean; by?: string
+  allowed?: boolean; detail?: { history_days?: number; fields?: string[]; health_types?: string[] }; label?: string | null; action?: string }
 export type DataSourcesDocument = { sources: DataSource[] }
 
 const COUNTS: Record<string, [key: string, one: string, many: string][]> = {
@@ -77,4 +89,63 @@ export function webAccessSteps(source: Pick<DataSource, 'enabled' | 'agent' | 'i
   if (!source.enabled) steps.push('turn_on')
   if (!source.installations.some(phone => phone.permission === 'granted' || phone.permission === 'unknowable')) steps.push('continue_on_phone')
   return steps
+}
+
+const plural = (count: number, one: string, many: string) => `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`
+
+/** Who read: "Your agent", an automation or app by its name, or the outside service. */
+export function accessActorName(actor: AccessActor): string {
+  switch (actor.kind) {
+    case 'agent': return 'Your agent'
+    case 'automation': return actor.label ? `${actor.label} (automation)` : 'A deleted automation'
+    case 'app': return actor.label ? `${actor.label} (app${actor.revoked ? ', revoked' : ''})` : 'A removed app'
+    case 'processor': return `${actor.label ?? actor.ref} (outside service)`
+    default: return actor.label ?? actor.kind
+  }
+}
+
+/** "Your agent · 3 reads, 1 refused · Trip planning": one actor's week. A processor is sent data, so it has lookups. */
+export function accessGroupLine(group: AccessGroup): string {
+  const sent = group.actor.kind === 'processor'
+  const counts = [group.reads > 0 || group.refused === 0 ? plural(group.reads, sent ? 'lookup' : 'read', sent ? 'lookups' : 'reads') : null,
+    group.refused > 0 ? `${group.refused.toLocaleString('en-US')} refused` : null].filter(Boolean).join(', ')
+  const where = group.actor.kind === 'agent' ? group.thread?.title ?? (group.thread?.exists === false ? 'a deleted conversation' : 'a conversation') : null
+  return [accessActorName(group.actor), counts, where].filter(Boolean).join(' · ')
+}
+
+const OPERATIONS: Record<string, string> = {
+  location_recent: 'Latest location', location_visits: 'Visits', timeline_query: 'Location timeline', location_context: 'Location around a contact',
+  places_list: 'Saved places', places_create: 'Saved a place', places_nearby: 'Nearby places', place_details: 'Details of a place',
+  contacts_search: 'Contact search', contacts_get: 'One contact', contacts_history: 'A contact’s history',
+  health_workouts: 'Workouts', health_sleep: 'Sleep', trigger_evidence: 'What set off a run',
+  reverse_geocode: 'A visit’s coordinates, for its address', nearby_search: 'Coordinates, for nearby place names',
+  place_search: 'A search near a point on the map',
+}
+/** What was read, in the user's words; an operation this build doesn't know is shown as it is named. */
+export function accessOperation(operation: string): string {
+  return OPERATIONS[operation] ?? operation.replaceAll('_', ' ')
+}
+
+const REFUSALS: Record<string, string> = {
+  source_off: 'refused: the source was off', data_permission_required: 'refused: your agent wasn’t allowed',
+  app_data_scope_required: 'refused: not in the app’s permission', history_outside_grant: 'refused: older than the allowed history',
+  automation_data_scope: 'refused: not in the automation’s permission', grant_changed: 'withheld: permissions changed during the read',
+}
+/** "12 records", or why nothing was handed over. */
+export function accessOutcome(entry: Pick<AccessEntry, 'outcome' | 'record_count' | 'actor'>): string {
+  if (entry.outcome !== 'ok') return REFUSALS[entry.outcome] ?? `not completed (${entry.outcome.replaceAll('_', ' ')})`
+  if (entry.actor.kind === 'processor') return 'sent'
+  return entry.record_count === null ? 'read' : plural(entry.record_count, 'record', 'records')
+}
+
+/** One change to who may read a source, as a sentence. */
+export function sourceChangeLine(change: SourceChange): string {
+  switch (change.kind) {
+    case 'switch': return `Turned ${change.enabled ? 'on' : 'off'}${change.by === 'ios' ? ' on the phone' : change.by === 'web' ? ' on the web'
+      : change.by === 'migration' ? ' when switches were introduced' : ''}`
+    case 'agent': return change.allowed ? 'Your agent was allowed to read this' : 'Your agent’s access was removed'
+    case 'agent_detail': return `Your agent’s access changed${change.detail?.history_days ? `: ${plural(change.detail.history_days, 'day', 'days')} of history` : ''}`
+    case 'app': return `${change.label ?? 'An app'} was ${change.action === 'revoked' ? 'revoked' : 'approved'}`
+    default: return change.kind.replaceAll('_', ' ')
+  }
 }

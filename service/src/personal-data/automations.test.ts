@@ -22,7 +22,8 @@ test("automation drafts and activation preserve consent, ownership and immutable
   const budIds = users.map(() => "bud-" + randomUUID());
   t.after(async () => {
     try {
-      for (const table of [schema.automationRevisionTable, schema.automationTable, schema.agentDataGrantTable,
+      for (const table of [schema.automationRevisionTable, schema.automationTable, schema.dataAccessLogTable,
+        schema.agentDataGrantHistoryTable, schema.agentDataGrantTable,
         schema.dataOwnerStateTable, schema.threadTable, schema.budTable]) await db.delete(table).where(inArray(table.createdByUserId, users));
       await db.delete(schema.authUserTable).where(inArray(schema.authUserTable.id, users));
     } finally { await pool.end(); }

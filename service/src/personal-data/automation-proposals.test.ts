@@ -23,7 +23,7 @@ test("automation proposals freeze review, atomically activate once and reject st
     try {
       for (const table of [schema.automationProposalTable, schema.automationRevisionTable, schema.automationTable,
         schema.agentInvocationActionTable, schema.agentInvocationTable, schema.messageTable, schema.threadTable,
-        schema.agentDataGrantTable, schema.dataOwnerStateTable, schema.budTable])
+        schema.dataAccessLogTable, schema.agentDataGrantHistoryTable, schema.agentDataGrantTable, schema.dataOwnerStateTable, schema.budTable])
         await db.delete(table).where(inArray(table.createdByUserId, owners));
       await db.delete(schema.authUserTable).where(inArray(schema.authUserTable.id, owners));
     } finally { await pool.end(); await defaultPool.end(); }

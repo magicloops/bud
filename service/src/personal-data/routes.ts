@@ -23,6 +23,7 @@ import { parseBatch } from "./parser.js";
 import { DailyDiagnosticsBudget, DeviceDiagnostics, DIAGNOSTICS_LIMITS, parseDiagnostics } from "./diagnostics.js";
 import { PostgresIngestRepository, type IngestRepository } from "./repository.js";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
+import { AccessLog, GEOAPIFY } from "./access-log.js";
 import { DataSources } from "./sources.js";
 import { AutomationProposals } from "./automation-proposals.js";
 import { registerAutomationProposalRoutes } from "./automation-proposal-routes.js";
@@ -58,13 +59,15 @@ type Dependencies = {
   mapsKey?: MapKitKey;
   /** Place search (default Geoapify from config); injectable for route tests. */
   placeSearch?: Pick<Geoapify, "search">;
+  accessLog?: Pick<AccessLog, "list" | "changes" | "recordQuietly" | "recent" | "appReads">;
   /** Device diagnostics storage and the daily budget; injectable for route tests. */
   deviceDiagnostics?: Pick<DeviceDiagnostics, "store" | "delete">;
   diagnosticsBudget?: DailyDiagnosticsBudget;
 };
 
 export async function registerPersonalDataRoutes(server: FastifyInstance, dependencies: Dependencies = {}) {
-  const sources = dependencies.sources ?? new DataSources();
+  const accessLog = dependencies.accessLog ?? new AccessLog();
+  const sources = dependencies.sources ?? new DataSources(undefined, undefined, accessLog);
   const repository = dependencies.repository ?? new PostgresIngestRepository(undefined, undefined, sources);
   const queries = dependencies.queries ?? new ContactQueries();
   const locationQueries = dependencies.locationQueries ?? new LocationQueries();
@@ -261,7 +264,11 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       if (recent.length >= PLACE_SEARCHES_PER_MINUTE)
         throw new DataRequestError(429, "place_search_rate_limited", "Too many searches; try again shortly", true, 10);
       searches.set(owner, [...recent, now]);
-      return { results: await placeSearch.search(text, near), attribution: GEOAPIFY_ATTRIBUTION };
+      const results = await placeSearch.search(text, near);
+      // A search biased towards a coordinate sends that coordinate to Geoapify (access log, plan phase 3).
+      if (near) await accessLog.recordQuietly({ owner, actor: { kind: "processor", ref: GEOAPIFY }, sources: ["location"],
+        operation: "place_search", recordCount: 1 });
+      return { results, attribution: GEOAPIFY_ATTRIBUTION };
     });
     // The web map (MapKit JS); the page passes its own origin.
     app.get<{ Querystring: { origin?: string } }>("/api/maps/token", async request =>
@@ -285,6 +292,15 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       sources.set(viewers.get(request)!.userId, request.params.source, request.body, request.headers.authorization ? "ios" : "web"));
     app.put<{ Params: { installationId: string } }>("/api/data/installations/:installationId/source-state", { bodyLimit: 4096 }, async request =>
       sources.report(viewers.get(request)!.userId, request.params.installationId, request.body));
+    // The access log (plan phase 3): what read each source, and what changed about who may.
+    app.get<{ Querystring: Record<string, unknown> }>("/api/data/access", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return accessLog.list(viewers.get(request)!.userId, request.query);
+    });
+    app.get<{ Params: { source: string } }>("/api/data/sources/:source/changes", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return accessLog.changes(viewers.get(request)!.userId, request.params.source);
+    });
     app.get("/api/data/status", async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       return {

@@ -42,7 +42,7 @@ test("switches default off, block reads and ingest, keep history, and phones rep
   });
   await admin.query(`create schema "${namespace}"`);
   for (const table of ["data_source_setting", "data_source_setting_history", "data_installation_source_state", "data_owner_state",
-    "data_installation", "data_collection_epoch", "data_event", "data_processing_job", "agent_data_grant", "data_app_key",
+    "data_installation", "data_collection_epoch", "data_event", "data_processing_job", "agent_data_grant", "agent_data_grant_history", "data_access_log", "data_app_key",
     "data_access_request", "location_observation", "location_visit", "health_workout", "health_sleep_segment", "contact"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   const sources = new DataSources(db, new DataGrants(db));

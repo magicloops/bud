@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { phoneNeedsAttention, phonePermission, readersSummary, storedSummary, webAccessSteps, type DataSource } from './data-sources.ts'
+import { accessGroupLine, accessOperation, accessOutcome, phoneNeedsAttention, phonePermission, readersSummary, sourceChangeLine, storedSummary,
+  webAccessSteps, type AccessGroup, type DataSource } from './data-sources.ts'
 
 const phone = (overrides: Partial<DataSource['installations'][number]> = {}): DataSource['installations'][number] => ({
   installation_id: 'phone', permission: 'granted', level: null, caveats: [], asked_at: null,
@@ -43,4 +44,42 @@ test('an access request on the web walks the agent and the switch, then hands iO
   assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' })] })), ['continue_on_phone'])
   assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' }), phone({ permission: 'unknowable' })] })), [],
     'one phone that can collect is enough')
+})
+
+test('recent access names who read, how often, and for an agent, in which conversation', () => {
+  const group = (overrides: Partial<AccessGroup>): AccessGroup => ({ actor: { kind: 'agent', ref: 't', label: null }, thread: null,
+    reads: 1, refused: 0, last_at: '2026-11-12T10:00:00Z', ...overrides })
+  const thread = { id: 't', title: 'Trip planning', bud_id: 'bud', exists: true }
+  assert.equal(accessGroupLine(group({ reads: 3, refused: 1, thread })), 'Your agent · 3 reads, 1 refused · Trip planning')
+  assert.equal(accessGroupLine(group({ thread: { ...thread, title: null } })), 'Your agent · 1 read · a conversation')
+  assert.equal(accessGroupLine(group({ thread: { ...thread, title: null, exists: false } })), 'Your agent · 1 read · a deleted conversation')
+  assert.equal(accessGroupLine(group({ reads: 0, refused: 2, thread })), 'Your agent · 2 refused · Trip planning')
+  assert.equal(accessGroupLine(group({ actor: { kind: 'automation', ref: 'a', label: 'Evening summary' } })), 'Evening summary (automation) · 1 read')
+  assert.equal(accessGroupLine(group({ actor: { kind: 'automation', ref: 'a', label: null } })), 'A deleted automation · 1 read')
+  assert.equal(accessGroupLine(group({ actor: { kind: 'app', ref: 'k', label: 'Week in review', revoked: true }, reads: 12 })),
+    'Week in review (app, revoked) · 12 reads')
+  assert.equal(accessGroupLine(group({ actor: { kind: 'processor', ref: 'geoapify', label: 'Geoapify' }, reads: 4 })), 'Geoapify (outside service) · 4 lookups')
+})
+
+test('a read says what was read and what came of it, never content', () => {
+  assert.equal(accessOperation('location_recent'), 'Latest location')
+  assert.equal(accessOperation('reverse_geocode'), 'A visit’s coordinates, for its address')
+  assert.equal(accessOperation('something_new'), 'something new')
+  const agent = { kind: 'agent', ref: 't', label: null }
+  assert.equal(accessOutcome({ outcome: 'ok', record_count: 12, actor: agent }), '12 records')
+  assert.equal(accessOutcome({ outcome: 'ok', record_count: 1, actor: agent }), '1 record')
+  assert.equal(accessOutcome({ outcome: 'ok', record_count: null, actor: agent }), 'read')
+  assert.equal(accessOutcome({ outcome: 'ok', record_count: 1, actor: { kind: 'processor', ref: 'geoapify', label: 'Geoapify' } }), 'sent')
+  assert.equal(accessOutcome({ outcome: 'source_off', record_count: null, actor: agent }), 'refused: the source was off')
+  assert.equal(accessOutcome({ outcome: 'visit_not_found', record_count: null, actor: agent }), 'not completed (visit not found)')
+})
+
+test('changes to who may read a source read as sentences', () => {
+  const at = '2026-11-12T10:00:00Z'
+  assert.equal(sourceChangeLine({ at, kind: 'switch', enabled: false, by: 'web' }), 'Turned off on the web')
+  assert.equal(sourceChangeLine({ at, kind: 'switch', enabled: true, by: 'migration' }), 'Turned on when switches were introduced')
+  assert.equal(sourceChangeLine({ at, kind: 'agent', allowed: true }), 'Your agent was allowed to read this')
+  assert.equal(sourceChangeLine({ at, kind: 'agent', allowed: false }), 'Your agent’s access was removed')
+  assert.equal(sourceChangeLine({ at, kind: 'agent_detail', detail: { history_days: 30 } }), 'Your agent’s access changed: 30 days of history')
+  assert.equal(sourceChangeLine({ at, kind: 'app', label: 'Week in review', action: 'revoked' }), 'Week in review was revoked')
 })

@@ -8,6 +8,7 @@ import { contactTable as contacts, dataAccessRequestTable as accessRequests, dat
   healthWorkoutTable as workouts, locationObservationTable as observations, locationVisitTable as visits } from "../db/schema.js";
 import { DataRequestError, validIdentifier } from "./contracts.js";
 import { DataGrants, type DataScope } from "./grants.js";
+import type { AccessLog } from "./access-log.js";
 
 /**
  * A data source (bud-mobile `plan/data-sources-ux`): what a phone collects under one switch.
@@ -66,7 +67,9 @@ const COLLECTION_NOTES: Record<Exclude<CollectionState, "ok">, string> = {
 
 export class DataSources {
   constructor(private readonly database: Omit<Database, "$client"> = db,
-    private readonly grants: Pick<DataGrants, "get"> = new DataGrants(database)) {}
+    private readonly grants: Pick<DataGrants, "get"> = new DataGrants(database),
+    /** The access log, for "recent access" in the status document. Without it that list is empty. */
+    private readonly accessLog?: Pick<AccessLog, "recent" | "appReads">) {}
 
   /** The sources that are on. No row means off. */
   async enabled(owner: string, database: Reader = this.database): Promise<Set<SourceId>> {
@@ -185,7 +188,7 @@ export class DataSources {
 
   /** One entry per source: the switch, what is stored, each phone's state, and who can read it. */
   async document(owner: string) {
-    const [rows, phoneStates, phones, grant, keys, stored] = await Promise.all([
+    const [rows, phoneStates, phones, grant, keys, stored, recent, appReads] = await Promise.all([
       this.database.select().from(settings).where(eq(settings.createdByUserId, owner)),
       this.database.select().from(states).where(eq(states.createdByUserId, owner)).orderBy(states.installationId).limit(600),
       this.database.select({ installationId: installations.installationId, lastReceivedAt: installations.lastReceivedAt })
@@ -195,6 +198,7 @@ export class DataSources {
         .from(appKeys).innerJoin(accessRequests, and(eq(accessRequests.id, appKeys.requestId), eq(accessRequests.createdByUserId, owner)))
         .where(and(eq(appKeys.createdByUserId, owner), eq(appKeys.status, "installed"))).orderBy(appKeys.id).limit(200),
       this.stored(owner),
+      this.accessLog?.recent(owner), this.accessLog?.appReads(owner),
     ]);
     const lastReceived = new Map(phones.map(phone => [phone.installationId, phone.lastReceivedAt]));
     const detail = (source: SourceId) => source === "contacts" ? { history_days: grant.history_days, fields: grant.fields }
@@ -211,9 +215,10 @@ export class DataSources {
         agent: { allowed: grant.scopes.includes(source.scope), grant_version: grant.version, detail: detail(source.id) },
         apps: keys.filter(key => appScopes(key.definition).includes(source.scope)).map(key => ({
           key_id: key.id, label: typeof key.definition.app_label === "string" ? key.definition.app_label : null,
-          last_used_at: key.lastUsedAt })),
-        // The access log (plan phase 3) fills this in.
-        recent_access: [] as unknown[],
+          last_used_at: key.lastUsedAt, reads_last_week: appReads?.(source.id, key.id)?.reads ?? 0,
+          last_read_at: appReads?.(source.id, key.id)?.lastAt ?? null })),
+        // Who read this source in the last week, from the access log (plan phase 3).
+        recent_access: recent?.groups(source.id) ?? [],
       };
     }) };
   }
@@ -249,7 +254,7 @@ export class DataSources {
   }
 }
 
-function appScopes(definition: Record<string, unknown>): string[] {
+export function appScopes(definition: Record<string, unknown>): string[] {
   const access = definition.data_access;
   const scopes = access && typeof access === "object" ? (access as Record<string, unknown>).scopes : definition.scopes;
   return Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [];

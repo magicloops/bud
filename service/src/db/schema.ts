@@ -1697,6 +1697,46 @@ export const dataSourceSettingHistoryTable = pgTable("data_source_setting_histor
   ownerIdx: index("data_source_setting_history_owner_idx").on(t.createdByUserId, t.source, t.changedAt),
 }));
 
+// The access log (bud-mobile `plan/data-sources-ux`, Phase 3): one row per read of a source, kept
+// so the user can see what read their data, when, and on whose behalf. Append-only and
+// content-free: counts and time windows, never coordinates, names or field values. Thread and
+// actor references aren't foreign keys: the log outlives what it refers to.
+export const dataAccessLogTable = pgTable("data_access_log", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  // `agent`, `automation`, `app`, `processor` (a third party the service sends data to).
+  actorKind: text("actor_kind").notNull(),
+  // The thread for an agent, the automation, the app key, or the processor's name.
+  actorRef: text("actor_ref").notNull(),
+  // The conversation and turn the read happened in, when there is one (agent, automation runs,
+  // and lookups made for them).
+  threadId: text("thread_id"), turnId: text("turn_id"),
+  source: text("source").notNull(), operation: text("operation").notNull(),
+  windowFrom: timestamp("window_from", { withTimezone: true }), windowTo: timestamp("window_to", { withTimezone: true }),
+  recordCount: integer("record_count"), policyVersion: integer("policy_version"),
+  // `ok`, or the code the read was refused with.
+  outcome: text("outcome").notNull().default("ok"),
+}, t => ({
+  sourceIdx: index("data_access_log_source_idx").on(t.createdByUserId, t.source, t.at),
+  actorIdx: index("data_access_log_actor_idx").on(t.createdByUserId, t.actorKind, t.actorRef, t.at),
+  actorCheck: check("data_access_log_actor_check", sql`${t.actorKind} in ('agent', 'automation', 'app', 'processor')`),
+  sourceCheck: check("data_access_log_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+}));
+
+// Every version of the agent's data permission, appended when it changes.
+export const agentDataGrantHistoryTable = pgTable("agent_data_grant_history", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  version: integer("version").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().notNull(), contactFields: jsonb("contact_fields").$type<string[]>().notNull(),
+  healthTypes: jsonb("health_types").$type<string[]>().notNull(), historyDays: integer("history_days").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerIdx: index("agent_data_grant_history_owner_idx").on(t.createdByUserId, t.changedAt),
+  versionKey: unique("agent_data_grant_history_version_key").on(t.createdByUserId, t.version),
+}));
+
 // What each phone last reported about a source: its iOS permission, never content. Keyed by the
 // phone's own installation ID, which may not have uploaded anything yet (a denied source sends
 // nothing, which is why the phone reports this).

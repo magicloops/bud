@@ -32,7 +32,7 @@ test("new workouts publish once, match workout rules by filter, age and deletion
   for (const table of ["data_owner_state", "data_installation", "data_collection_epoch", "data_event", "data_processing_job",
     "health_workout", "health_sleep_segment", "health_sample_deletion", "data_domain_event", "location_observation",
     "automation", "automation_revision", "automation_delivery", "automation_bootstrap", "automation_bootstrap_member", "automation_bootstrap_group",
-    "agent_invocation", "agent_invocation_action", "agent_data_grant", "bud", "thread", "message", "browser_handoff"])
+    "agent_invocation", "agent_invocation_action", "agent_data_grant", "agent_data_grant_history", "data_access_log", "bud", "thread", "message", "browser_handoff"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
 
   const owner = "workout-owner", budId = "bud", originThread = randomUUID();
@@ -120,6 +120,13 @@ test("new workouts publish once, match workout rules by filter, age and deletion
   const [anyInvocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, anyRun.invocationId!));
   const withoutLocation = await db.transaction(tx => automationStartEvidence(tx, anyInvocation));
   assert.match(withoutLocation!, /does not have location access/);
+  // The access log: the workout for both rules; location only for the rule that gets it. Counts, not content.
+  const logRows = await db.select().from(s.dataAccessLogTable).where(eq(s.dataAccessLogTable.createdByUserId, invocation.createdByUserId));
+  assert.deepEqual(logRows.map(row => [row.actorKind, row.source, row.operation, row.recordCount, row.outcome, row.threadId === (row.actorRef === anyRun.automationId
+    ? anyInvocation : invocation).threadId]).sort(), [
+    ["automation", "health", "trigger_evidence", 1, "ok", true], ["automation", "health", "trigger_evidence", 1, "ok", true],
+    ["automation", "location", "trigger_evidence", 1, "ok", true]]);
+  assert.equal(new Set(logRows.map(row => row.actorRef)).size, 2);
 
   // A deletion after admission, before first start, stops the run at start (owner lock held by the caller).
   await upload([deletion("w1")]);
