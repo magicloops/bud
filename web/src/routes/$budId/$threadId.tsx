@@ -1216,6 +1216,11 @@ function ThreadViewContent() {
         <CommandComposer
           messageText={messageText}
           onMessageChange={setMessageText}
+          messageHistory={messages}
+          hasOlderMessages={messagePage.has_more_before}
+          isLoadingOlderMessages={isLoadingOlderMessages}
+          olderMessagesError={olderMessagesLoadFailed}
+          onLoadOlderMessages={loadOlderMessages}
           status={status}
           onSubmit={handleSubmit}
           onCancelAgentTurn={cancelAgentTurn}
