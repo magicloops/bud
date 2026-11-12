@@ -1,4 +1,4 @@
-import type { ApiAutomationDefinition, ApiAutomationSchedule } from '@/lib/api-types'
+import type { ApiAutomationDefinition, ApiAutomationSchedule, ApiPlaceTrigger, ApiVisitFilter, ApiWorkoutFilter } from '@/lib/api-types'
 
 export const WEEKDAYS = [
   { value: 1, short: 'Mon' }, { value: 2, short: 'Tue' }, { value: 3, short: 'Wed' }, { value: 4, short: 'Thu' },
@@ -26,6 +26,41 @@ export function describeSchedule(schedule: ApiAutomationSchedule) {
   return `${describeDays(schedule.weekdays)} at ${schedule.local_time} (${schedule.timezone})`
 }
 
-export function describeTrigger(definition: Pick<ApiAutomationDefinition, 'event_type'> & Partial<{ schedule: ApiAutomationSchedule }>) {
-  return definition.event_type === 'schedule' && definition.schedule ? describeSchedule(definition.schedule) : 'When a new contact is observed'
+/** Common workout types, matching the health `activity_type` values. */
+export const WORKOUT_ACTIVITIES = ['running', 'walking', 'cycling', 'swimming', 'hiking', 'yoga', 'traditional_strength_training',
+  'functional_strength_training', 'high_intensity_interval_training', 'elliptical', 'rowing', 'dance', 'pilates', 'other']
+
+export const activityLabel = (activity: string) => activity.replaceAll('_', ' ')
+
+/** e.g. "After each running or cycling workout of at least 20 minutes". */
+export function describeWorkoutFilter(filter: ApiWorkoutFilter) {
+  const kinds = filter.activity_types.length ? `${filter.activity_types.map(activityLabel).join(' or ')} workout` : 'workout'
+  return `After each ${kinds}${filter.min_duration_minutes ? ` of at least ${filter.min_duration_minutes} minutes` : ''}`
+}
+
+/** "Home or Office", falling back to "a saved place" for unknown or deleted IDs. */
+export function describePlaces(ids: string[], names: ReadonlyMap<string, string> = new Map()) {
+  const labels = ids.map(id => names.get(id) ?? 'a deleted place')
+  return labels.length ? labels.join(' or ') : 'anywhere'
+}
+
+/** e.g. "When you arrive at Home", "When a visit of at least 30 minutes ends at Gym". */
+export function describeLocationTrigger(definition: { event_type: string; place_trigger?: ApiPlaceTrigger; visit_filter?: ApiVisitFilter },
+  names?: ReadonlyMap<string, string>) {
+  if (definition.event_type === 'place.arrived' && definition.place_trigger) return `When you arrive at ${describePlaces(definition.place_trigger.place_ids, names)}`
+  if (definition.event_type === 'place.departed' && definition.place_trigger) return `When you leave ${describePlaces(definition.place_trigger.place_ids, names)}`
+  if (definition.event_type === 'visit.ended' && definition.visit_filter) {
+    const { place_ids: ids, min_duration_minutes: minutes } = definition.visit_filter
+    return `When a visit${minutes ? ` of at least ${minutes} minutes` : ''} ends${ids.length ? ` at ${describePlaces(ids, names)}` : ''}`
+  }
+  return null
+}
+
+export function describeTrigger(definition: Pick<ApiAutomationDefinition, 'event_type'> & Partial<{ schedule: ApiAutomationSchedule; workout_filter: ApiWorkoutFilter
+  place_trigger: ApiPlaceTrigger; visit_filter: ApiVisitFilter }>, placeNames?: ReadonlyMap<string, string>) {
+  if (definition.event_type === 'schedule' && definition.schedule) return describeSchedule(definition.schedule)
+  if (definition.event_type === 'workout.completed' && definition.workout_filter) return describeWorkoutFilter(definition.workout_filter)
+  const location = describeLocationTrigger(definition, placeNames)
+  if (location) return location
+  return 'When a new contact is observed'
 }

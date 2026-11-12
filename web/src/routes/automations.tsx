@@ -5,8 +5,9 @@ import { useAuthSession } from '@/contexts/auth-session-context'
 import { useRequireAuthenticatedUser } from '@/lib/route-auth'
 import { apiFetchJson, isApiError } from '@/lib/transport'
 import type { ModelInfo, ReasoningLevel } from '@/lib/models'
-import type { ApiAutomationProposal, ApiAutomationSchedule, ApiBootstrapProposal, ApiThreadListPage } from '@/lib/api-types'
-import { WEEKDAYS, defaultSchedule, describeTrigger } from '@/lib/automation-schedule'
+import type { ApiAutomationProposal, ApiAutomationSchedule, ApiBootstrapProposal, ApiPlace, ApiPlaceTrigger, ApiThreadListPage, ApiVisitFilter, ApiWorkoutFilter } from '@/lib/api-types'
+import { usePlaces } from '@/lib/places'
+import { WEEKDAYS, WORKOUT_ACTIVITIES, activityLabel, defaultSchedule, describeTrigger } from '@/lib/automation-schedule'
 import { AutomationProposalReview } from '@/components/automation-proposal-review'
 
 export const Route = createFileRoute('/automations')({
@@ -19,10 +20,14 @@ export const Route = createFileRoute('/automations')({
   }),
   component: AutomationsPage,
 })
-type TriggerType = 'contact.added' | 'schedule'
-// The server accepts exactly one of sources (new contact) or schedule (schedule).
+type TriggerType = 'contact.added' | 'schedule' | 'workout.completed' | 'place.arrived' | 'place.departed' | 'visit.ended'
+const LOCATION_TRIGGERS: TriggerType[] = ['place.arrived', 'place.departed', 'visit.ended']
+// The server accepts only the active trigger's fields: sources (new contact), schedule
+// (schedule), workout_filter (workout), place_trigger (arrive/leave) or visit_filter (visit
+// ended), with max_event_age_seconds for workout and location triggers.
 type Definition = {
   name: string; instruction: string; event_type: TriggerType; sources?: { source_ids: string[] }; schedule?: ApiAutomationSchedule
+  workout_filter?: ApiWorkoutFilter; place_trigger?: ApiPlaceTrigger; visit_filter?: ApiVisitFilter; max_event_age_seconds?: number
   bud_id: string; model_mode?: 'inherit' | 'explicit'; origin_thread_id?: string | null; model: string; reasoning_effort: ReasoningLevel
   target: { mode: 'new_thread' } | { mode: 'existing_thread'; thread_id: string }
   data_access: { scopes: string[]; history_days: number }; latest_start_seconds: number; max_invocations_per_day: number
@@ -43,9 +48,19 @@ const dataSummary = (access: Definition['data_access']) => access.scopes.length
 /** Switch trigger type, keeping shared settings and dropping the other type's fields. */
 function withTrigger(definition: Definition, type: TriggerType): Definition {
   const shared = { ...definition }
-  delete shared.sources; delete shared.schedule
+  delete shared.sources; delete shared.schedule; delete shared.workout_filter; delete shared.place_trigger; delete shared.visit_filter; delete shared.max_event_age_seconds
+  const location = { ...definition.data_access, scopes: ['location.read'] }
   return type === 'schedule'
     ? { ...shared, event_type: 'schedule', schedule: definition.schedule ?? defaultSchedule(), data_access: { ...definition.data_access, scopes: [] } }
+    : type === 'place.arrived' || type === 'place.departed'
+    ? { ...shared, event_type: type, place_trigger: definition.place_trigger ?? { place_ids: definition.visit_filter?.place_ids ?? [] },
+      max_event_age_seconds: 3600, data_access: location }
+    : type === 'visit.ended'
+    ? { ...shared, event_type: 'visit.ended', visit_filter: { place_ids: definition.place_trigger?.place_ids ?? [], min_duration_minutes: 0 },
+      max_event_age_seconds: 21600, data_access: location }
+    : type === 'workout.completed'
+    ? { ...shared, event_type: 'workout.completed', workout_filter: definition.workout_filter ?? { activity_types: [], min_duration_minutes: 0 },
+      max_event_age_seconds: definition.max_event_age_seconds ?? 21600, data_access: { ...definition.data_access, scopes: ['health.read'] } }
     : { ...shared, event_type: 'contact.added', sources: definition.sources ?? { source_ids: [] }, data_access: { ...definition.data_access, scopes: ['contacts.read'] } }
 }
 const empty = (): Definition => ({ name: '', instruction: '', event_type: 'contact.added', sources: { source_ids: [] },
@@ -85,6 +100,7 @@ function AutomationsPage() {
 
 function AutomationList() {
   const [rules, setRules] = useState<Rule[]>([])
+  const { names: placeNames } = usePlaces()
   const search = Route.useSearch()
   const { rule: selected, proposal, bud_id, thread_id, state } = search
   const [buds, setBuds] = useState<Bud[]>([])
@@ -132,7 +148,7 @@ function AutomationList() {
       : <AutomationReviews refresh={refresh} />}
     <div className="grid gap-6 md:grid-cols-[240px_1fr]"><nav aria-label="Automations">
       {loading ? <p>Loading…</p> : error ? <p>Inventory unavailable.</p> : rules.length === 0 ? <p>No automations yet.</p> : rules.map(rule => <button className="block w-full border-b py-3 text-left" key={rule.automation_id} onClick={() => setSelected(rule.automation_id)}>
-        <span className="block font-semibold">{rule.draft.name}</span><span className="text-sm text-muted-foreground">{rule.state} · Version {rule.version}</span><span className="block text-xs text-muted-foreground">{describeTrigger(rule.draft)}</span>{rule.next_run_at && <span className="block text-xs text-muted-foreground">Next run {new Date(rule.next_run_at).toLocaleString()}</span>}{rule.model_resolution && <span className="block text-xs text-muted-foreground">{rule.model_resolution.model}</span>}{rule.model_resolution?.warning && <span className="block text-xs text-amber-700">{rule.model_resolution.warning}</span>}
+        <span className="block font-semibold">{rule.draft.name}</span><span className="text-sm text-muted-foreground">{rule.state} · Version {rule.version}</span><span className="block text-xs text-muted-foreground">{describeTrigger(rule.draft, placeNames)}</span>{rule.next_run_at && <span className="block text-xs text-muted-foreground">Next run {new Date(rule.next_run_at).toLocaleString()}</span>}{rule.model_resolution && <span className="block text-xs text-muted-foreground">{rule.model_resolution.model}</span>}{rule.model_resolution?.warning && <span className="block text-xs text-amber-700">{rule.model_resolution.warning}</span>}
       </button>)}
     </nav>{selected && <AutomationEditor key={selected} id={selected} onSaved={rule => { if (rule.state === 'deleted') { void navigate({ to: '/automations', search: {} }) } else { setSelected(rule.automation_id) }; setRefresh(value => value + 1) }} />}</div>
   </div></main>
@@ -189,6 +205,7 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
   const [grantVersion, setGrantVersion] = useState(0)
   const [acknowledged, setAcknowledged] = useState(false)
   const [triggers, setTriggers] = useState<TriggerType[]>(['contact.added'])
+  const { places, names: placeNames } = usePlaces()
   const alive = useRef(true)
   const inFlight = useRef(false)
   const createKey = useRef(crypto.randomUUID())
@@ -255,9 +272,15 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       <label className="block">Trigger<select className={field} value={draft.event_type} onChange={event => setDraft(current => withTrigger(current, event.target.value as TriggerType))}>
         <option value="contact.added">When a new contact is observed</option>
         {(triggers.includes('schedule') || draft.event_type === 'schedule') && <option value="schedule">On a schedule</option>}
+        {(triggers.includes('workout.completed') || draft.event_type === 'workout.completed') && <option value="workout.completed">When a workout is recorded</option>}
+        {LOCATION_TRIGGERS.filter(type => triggers.includes(type) || draft.event_type === type).map(type => <option key={type} value={type}>
+          {type === 'place.arrived' ? 'When I arrive at a place' : type === 'place.departed' ? 'When I leave a place' : 'When a visit ends'}</option>)}
       </select></label>
-      {draft.event_type === 'schedule' && draft.schedule ? <ScheduleFields schedule={draft.schedule} onChange={schedule => patch({ schedule })} />
-        : <p className="text-sm text-muted-foreground">Only newly observed contacts trigger live work. First imports and relinking do not trigger every contact.</p>}
+      {LOCATION_TRIGGERS.includes(draft.event_type) && <LocationFields draft={draft} places={places} onChange={patch} />}
+      {draft.event_type === 'workout.completed' && draft.workout_filter ? <WorkoutFields filter={draft.workout_filter} maxAge={draft.max_event_age_seconds ?? 21600}
+        onChange={(workout_filter, max_event_age_seconds) => patch({ workout_filter, max_event_age_seconds })} />
+      : draft.event_type === 'schedule' && draft.schedule ? <ScheduleFields schedule={draft.schedule} onChange={schedule => patch({ schedule })} />
+        : LOCATION_TRIGGERS.includes(draft.event_type) ? null : <p className="text-sm text-muted-foreground">Only newly observed contacts trigger live work. First imports and relinking do not trigger every contact.</p>}
       <label className="block">Bud<select className={field} required value={draft.bud_id} onChange={event => patch({ bud_id: event.target.value, origin_thread_id: null, model_mode: 'inherit', model: '', reasoning_effort: 'none', target: { mode: 'new_thread' } })}><option value="">Choose a Bud</option>{buds.map(bud => <option key={bud.bud_id} value={bud.bud_id}>{bud.name}</option>)}</select></label>
       <label className="block">Model<select className={field} value={draft.model_mode === 'explicit' ? draft.model : ''} onChange={event => patch({ model_mode: event.target.value ? 'explicit' : 'inherit', model: event.target.value, reasoning_effort: models.find(model => model.id === event.target.value)?.reasoning.default_level ?? 'none' })}><option value="">{draft.target.mode === 'existing_thread' || draft.origin_thread_id ? 'Use conversation model' : 'Use default model'}</option>{draft.model && !selectedModel && <option value={draft.model}>{draft.model} (currently unavailable)</option>}{models.map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select></label>
       {draft.model_mode === 'explicit' && <label className="block">Reasoning<select className={field} value={draft.reasoning_effort} onChange={event => patch({ reasoning_effort: event.target.value as ReasoningLevel })}>{!selectedModel?.reasoning.levels.some(level => level.value === draft.reasoning_effort) && <option value={draft.reasoning_effort}>{draft.reasoning_effort}</option>}{selectedModel?.reasoning.levels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select></label>}
@@ -266,7 +289,11 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       {draft.target.mode === 'existing_thread' && options.controls}
       <details className="space-y-3 rounded border p-3"><summary className="cursor-pointer">Advanced settings</summary>
       {draft.event_type === 'contact.added' && draft.sources && <fieldset className="space-y-2"><legend>Contact sources</legend><p className="text-sm">Leave all unchecked to include every source.</p>{sources.map(source => <label className="flex gap-2" key={source.source_id}><input type="checkbox" disabled={source.revoked} checked={draft.sources!.source_ids.includes(source.source_id)} onChange={event => patch({ sources: { source_ids: event.target.checked ? [...draft.sources!.source_ids, source.source_id] : draft.sources!.source_ids.filter(id => id !== source.source_id) } })} />Device {source.installation_id.slice(0, 8)} · Collection {source.collection_epoch.slice(0, 8)}{source.revoked ? ' (revoked)' : ''}</label>)}{sourceLimit && <p>Only the first 200 sources are shown.</p>}</fieldset>}
-      <fieldset className="space-y-2"><legend>Requested data access</legend>{draft.event_type === 'schedule'
+      <fieldset className="space-y-2"><legend>Requested data access</legend>{LOCATION_TRIGGERS.includes(draft.event_type)
+        ? <p>Location: visits, addresses and saved places (required).</p>
+        : draft.event_type === 'workout.completed'
+        ? <><p>Health: the workouts you allow agents to read (required).</p><label className="flex gap-2"><input type="checkbox" checked={draft.data_access.scopes.includes('location.read')} onChange={event => patch({ data_access: { ...draft.data_access, scopes: event.target.checked ? ['health.read', 'location.read'] : ['health.read'] } })} />Include location samples recorded during the workout</label></>
+        : draft.event_type === 'schedule'
         ? <>{(['contacts.read', 'location.read', 'health.read'] as const).map(scope => <label key={scope} className="flex gap-2"><input type="checkbox" checked={draft.data_access.scopes.includes(scope)} onChange={event => patch({ data_access: { ...draft.data_access, scopes: event.target.checked ? [...draft.data_access.scopes, scope] : draft.data_access.scopes.filter(value => value !== scope) } })} />{scope === 'contacts.read' ? 'Contacts' : scope === 'health.read' ? 'Health (workouts and sleep you allow agents to read)' : 'Location at collected precision'}</label>)}<p className="text-sm">Leave all unchecked if the instructions need no personal data.</p></>
         : <><p>Contact names, organizations, phone numbers and emails.</p><label className="flex gap-2"><input type="checkbox" checked={draft.data_access.scopes.includes('location.read')} onChange={event => patch({ data_access: { ...draft.data_access, scopes: event.target.checked ? ['contacts.read', 'location.read'] : ['contacts.read'] } })} />Include location at collected precision</label></>}<label className="block">History (days)<input className={field} type="number" required min={1} max={3650} value={draft.data_access.history_days} onChange={event => patch({ data_access: { ...draft.data_access, history_days: Number(event.target.value) } })} /></label></fieldset>
       <label className="block">Expire unstarted work after (seconds)<input className={field} type="number" required min={60} max={86400} value={draft.latest_start_seconds} onChange={event => patch({ latest_start_seconds: Number(event.target.value) })} /></label>
@@ -280,11 +307,15 @@ function AutomationEditor({ id, onSaved }: { id: string; onSaved: (rule: Rule) =
       <p className="whitespace-pre-wrap">{detail.draft.instruction}</p>
       <p>Bud: {buds.find(bud => bud.bud_id === detail.draft.bud_id)?.name ?? detail.draft.bud_id} · Model: {detail.draft.model_mode === 'explicit' ? detail.draft.model : 'Inherited'} · Currently {detail.draft_model_resolution?.model ?? 'unavailable'}</p>
       <p>{detail.draft.target.mode === 'new_thread' ? 'New conversation per invocation' : `Existing conversation: ${threads.find(thread => thread.thread_id === (detail.draft.target as { thread_id: string }).thread_id)?.title ?? (detail.draft.target as { thread_id: string }).thread_id}`}</p>
-      <p>Trigger: {describeTrigger(detail.draft)}</p>
+      <p>Trigger: {describeTrigger(detail.draft, placeNames)}</p>
       {detail.draft.sources && <p>{detail.draft.sources.source_ids.length ? `Selected contact sources: ${detail.draft.sources.source_ids.length} (shown above)` : 'All contact sources'}</p>}
       <p>Data: {dataSummary(detail.draft.data_access)}</p>
       <p>Maximum {detail.draft.max_invocations_per_day} invocations per 24 hours · Expire unstarted work after {detail.draft.latest_start_seconds} seconds</p>
-      <p className="text-sm">{detail.draft.event_type === 'schedule' ? 'Scheduled times after activation only. Missed runs are not caught up; only the latest one runs if it is still within the expiry.' : 'New contact observations after activation only. Initial imports and existing contacts are not processed by this action.'}</p>
+      <p className="text-sm">{detail.draft.event_type === 'schedule' ? 'Scheduled times after activation only. Missed runs are not caught up; only the latest one runs if it is still within the expiry.'
+        : detail.draft.event_type === 'workout.completed' ? 'Workouts recorded after activation only, usually within an hour or two. The initial health import never triggers it.'
+        : detail.draft.event_type === 'visit.ended' ? 'Visits that end after activation. iOS reports visits a few minutes after they end, and the phone may upload later still.'
+        : LOCATION_TRIGGERS.includes(detail.draft.event_type) ? "Arrivals and departures after activation. With Allow all the time, Bud watches your 20 nearest places and usually reacts within a minute or two; departures wait 3 minutes in case you come straight back. Otherwise it relies on iOS visit reports, a few minutes late. Being at a place when it's saved doesn't trigger it."
+        : 'New contact observations after activation only. Initial imports and existing contacts are not processed by this action.'}</p>
       <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={saving} onChange={event => setAcknowledged(event.target.checked)} />Allow this Bud and selected model to run these saved instructions automatically with normal terminal access.</label>
       {JSON.stringify(draft) !== JSON.stringify(detail.draft) && <p>Save or reload your draft edits before activating.</p>}
       {!activationEnabled && <p>Activation is not available yet.</p>}
@@ -468,5 +499,40 @@ function ScheduleFields({ schedule, onChange }: { schedule: ApiAutomationSchedul
     {!schedule.weekdays.length && <p role="alert">Choose at least one day.</p>}
     <label className="block">Timezone<input className={field} required maxLength={64} value={schedule.timezone} onChange={event => onChange({ ...schedule, timezone: event.target.value })} /></label>
     <p className="text-sm text-muted-foreground">Runs at this local time. If a run is missed, only the latest one runs, and only within the expiry below.</p>
+  </fieldset>
+}
+
+function WorkoutFields({ filter, maxAge, onChange }: { filter: ApiWorkoutFilter; maxAge: number; onChange: (filter: ApiWorkoutFilter, maxAge: number) => void }) {
+  return <fieldset className="space-y-2"><legend>Workout</legend>
+    <p className="text-sm">Leave all types unchecked to run after any workout.</p>
+    <div className="flex flex-wrap gap-3" role="group" aria-label="Workout types">{WORKOUT_ACTIVITIES.map(activity => <label key={activity} className="flex gap-1"><input type="checkbox" checked={filter.activity_types.includes(activity)}
+      onChange={event => onChange({ ...filter, activity_types: event.target.checked ? [...filter.activity_types, activity] : filter.activity_types.filter(value => value !== activity) }, maxAge)} />{activityLabel(activity)}</label>)}</div>
+    <label className="block">Minimum duration (minutes)<input className={field} type="number" min={0} max={1440} value={filter.min_duration_minutes} onChange={event => onChange({ ...filter, min_duration_minutes: Number(event.target.value) }, maxAge)} /></label>
+    <label className="block">Skip workouts older than (hours)<input className={field} type="number" min={1} max={168} value={Math.round(maxAge / 3600)} onChange={event => onChange(filter, Math.max(300, Number(event.target.value) * 3600))} /></label>
+    <p className="text-sm text-muted-foreground">iOS delivers new workouts to Bud about hourly, so runs usually start within an hour or two of finishing.</p>
+  </fieldset>
+}
+
+/** Places and timing for arrive, leave and visit-ended triggers. */
+function LocationFields({ draft, places, onChange }: { draft: Definition; places: ApiPlace[] | null; onChange: (patch: Partial<Definition>) => void }) {
+  const ended = draft.event_type === 'visit.ended'
+  const ids = (ended ? draft.visit_filter?.place_ids : draft.place_trigger?.place_ids) ?? []
+  const maxAge = draft.max_event_age_seconds ?? (ended ? 21600 : 3600)
+  const setIds = (next: string[]) => onChange(ended ? { visit_filter: { min_duration_minutes: 0, ...draft.visit_filter, place_ids: next } } : { place_trigger: { place_ids: next } })
+  const known = new Set((places ?? []).map(place => place.id))
+  return <fieldset className="space-y-2"><legend>Places</legend>
+    <p className="text-sm">{ended ? 'Leave all unchecked to run after a visit anywhere.' : 'Choose at least one place.'} Manage places on the <Link to="/data/location">Location</Link> page.</p>
+    {!places ? <p>Loading places…</p> : !places.length && <p>No saved places yet. Save one from a visit on the Location page.</p>}
+    <div className="flex flex-wrap gap-3" role="group" aria-label="Places">
+      {(places ?? []).map(place => <label key={place.id} className="flex gap-1"><input type="checkbox" checked={ids.includes(place.id)}
+        onChange={event => setIds(event.target.checked ? [...ids, place.id] : ids.filter(id => id !== place.id))} />{place.name}</label>)}
+      {places && ids.filter(id => !known.has(id)).map(id => <label key={id} className="flex gap-1"><input type="checkbox" checked onChange={() => setIds(ids.filter(value => value !== id))} />Deleted place</label>)}
+    </div>
+    {!ended && !ids.length && <p role="alert">Choose at least one place.</p>}
+    {ended && draft.visit_filter && <label className="block">Minimum stay (minutes)<input className={field} type="number" min={0} max={1440} value={draft.visit_filter.min_duration_minutes}
+      onChange={event => onChange({ visit_filter: { ...draft.visit_filter!, min_duration_minutes: Number(event.target.value) } })} /></label>}
+    <label className="block">Skip events older than (minutes)<input className={field} type="number" min={5} max={10080} value={Math.round(maxAge / 60)}
+      onChange={event => onChange({ max_event_age_seconds: Math.max(300, Number(event.target.value) * 60) })} /></label>
+    <p className="text-sm text-muted-foreground">{ended ? 'iOS reports visits a few minutes after they end, and the phone may upload later still.' : "With Allow all the time, Bud watches your 20 nearest places and usually reacts within a minute or two; departures wait 3 minutes in case you come straight back. Otherwise it relies on iOS visit reports, a few minutes late. Being at a place when it's saved doesn't trigger it."}</p>
   </fieldset>
 }

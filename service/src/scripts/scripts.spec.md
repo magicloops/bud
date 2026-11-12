@@ -90,6 +90,14 @@ DOTENV_CONFIG_PATH=.env.staging pnpm db:backfill:message-client-ids
 - `MESSAGE_CLIENT_ID_BACKFILL_BATCH_SIZE` - Optional positive integer batch size override (default: `500`)
 - `DOTENV_CONFIG_PATH` - Optional dotenv path override when running the generic package script against a non-default env file (for example `.env.staging`)
 
+### `geoapify-visit-names.ts`
+
+`pnpm db:geoapify-visit-names` (Phase 11). Without flags, a dry run: counts the
+Apple-sourced visit names and the credits a rename would use. `--rename`
+replaces them with Geoapify names, newest first, within today's credits
+(`--limit=N`). `--delete-apple` deletes the Apple-sourced names still left. Each
+writing step needs approval per environment.
+
 ### `inspect-message-client-ids.ts`
 
 Diagnostic helper for verifying `message.client_id` rollout state in any environment.

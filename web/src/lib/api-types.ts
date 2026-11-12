@@ -164,6 +164,15 @@ export type ApiAskUserQuestionKind =
   | 'multi_choice'
   | 'text'
   | 'number'
+  | 'place'
+
+/** A place to choose on a map: start from `query` or the saved place `place_id`, with `radius_m` suggested. */
+export type ApiAskUserQuestionPlace = {
+  name: string
+  query?: string
+  place_id?: string
+  radius_m?: number
+}
 
 export type ApiAskUserQuestionChoice = {
   choice_id: string
@@ -177,6 +186,9 @@ export type ApiAskUserQuestionAnswer =
   | { kind: 'multi_choice'; choice_ids: string[] }
   | { kind: 'text'; value: string }
   | { kind: 'number'; value: number }
+  /** The user's pin. The service adds `place_id` and `operation` once it has saved the place. */
+  | { kind: 'place'; name: string; latitude: number; longitude: number; radius_m: number; address?: string
+    place_id?: string; operation?: 'created' | 'updated' }
 
 export type ApiAskUserQuestion = {
   question_id: string
@@ -186,6 +198,7 @@ export type ApiAskUserQuestion = {
   importance?: 'required' | 'important' | 'optional'
   skippable?: boolean
   choices?: ApiAskUserQuestionChoice[]
+  place?: ApiAskUserQuestionPlace
   default_answer?: ApiAskUserQuestionAnswer
   multiline?: boolean
   placeholder?: string
@@ -229,7 +242,7 @@ export type ApiAskUserQuestionsToolResult = {
   body?: string
   responses: Array<{
     question_id: string
-    question: Pick<ApiAskUserQuestion, 'question_id' | 'kind' | 'label' | 'help_text' | 'choices'>
+    question: Pick<ApiAskUserQuestion, 'question_id' | 'kind' | 'label' | 'help_text' | 'choices' | 'place'>
     status: 'answered' | 'skipped'
     answer?: ApiAskUserQuestionAnswer
     display_answer?: string
@@ -424,9 +437,28 @@ export type ApiPendingQuestion = {
 /** Local wall-clock time on ISO weekdays (1 = Monday … 7 = Sunday) in an IANA zone. */
 export type ApiAutomationSchedule = { local_time: string; weekdays: number[]; timezone: string }
 
+/** Empty activity_types means any workout. */
+export type ApiWorkoutFilter = { activity_types: string[]; min_duration_minutes: number }
+
+/** A saved place, from `/api/data/places`. */
+export type ApiPlace = { id: string; name: string; note: string | null; coordinate: { lat: number; lon: number }; radius_m: number
+  /** The address the user gave or picked for the place (≤300 characters). */
+  address: string | null
+  /** Changes when the place is moved or resized; phone geofences are installed per revision. */
+  geometry_revision: string
+  created_by: 'user' | 'agent'; created_at: string; updated_at: string }
+
+/** Saved place IDs (1–20). */
+export type ApiPlaceTrigger = { place_ids: string[] }
+/** Empty place_ids means a visit anywhere. */
+export type ApiVisitFilter = { place_ids: string[]; min_duration_minutes: number }
+
 export type ApiAutomationTrigger =
   | { event_type: 'contact.added'; sources: { source_ids: string[] } }
   | { event_type: 'schedule'; schedule: ApiAutomationSchedule }
+  | { event_type: 'workout.completed'; workout_filter: ApiWorkoutFilter; max_event_age_seconds: number }
+  | { event_type: 'place.arrived' | 'place.departed'; place_trigger: ApiPlaceTrigger; max_event_age_seconds: number }
+  | { event_type: 'visit.ended'; visit_filter: ApiVisitFilter; max_event_age_seconds: number }
 
 export type ApiAutomationDefinition = ApiAutomationTrigger & {
   name: string

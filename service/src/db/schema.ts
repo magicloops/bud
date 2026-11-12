@@ -15,7 +15,8 @@ import {
   foreignKey,
   customType,
   check,
-  doublePrecision
+  doublePrecision,
+  smallint
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -1460,36 +1461,6 @@ export const contactRevisionTable = pgTable("contact_revision", {
   scanFk: foreignKey({ name: "contact_revision_scan_fk", columns: [t.scanId, t.createdByUserId], foreignColumns: [contactScanTable.id, contactScanTable.createdByUserId] }),
 }));
 
-export const dataDomainEventTable = pgTable("data_domain_event", {
-  id: text("id").primaryKey(), revisionId: text("revision_id").notNull(),
-  eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
-  publicationSequence: bigint("publication_sequence", { mode: "number" }),
-  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
-  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
-}, (t) => ({
-  ownerKey: unique("data_domain_owner_key").on(t.id, t.createdByUserId),
-  sequenceKey: unique("data_domain_sequence_key").on(t.createdByUserId, t.publicationSequence),
-  revisionKey: unique("data_domain_revision_key").on(t.revisionId, t.eventType),
-  ownerIdx: index("data_domain_owner_idx").on(t.createdByUserId, t.status, t.id),
-  revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
-}));
-
-
-export const locationObservationTable = pgTable("location_observation", {
-  id: text("id").primaryKey(), rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
-  kind: text("kind").notNull(), latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
-  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
-  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
-  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
-  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
-}, t => ({
-  eventKey: unique("location_observation_event_key").on(t.rawEventId),
-  ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
-  eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
-  epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
-}));
-
 // HealthKit samples, one row per owner and HealthKit UUID across devices/epochs.
 // Re-imports update the row; deletions live in health_sample_deletion so arrival
 // order cannot resurrect a deleted sample.
@@ -1506,6 +1477,7 @@ export const healthWorkoutTable = pgTable("health_workout", {
   createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
 }, t => ({
   sampleKey: unique("health_workout_sample_key").on(t.createdByUserId, t.hkUuid),
+  ownerKey: unique("health_workout_owner_key").on(t.id, t.createdByUserId),
   ownerTimeIdx: index("health_workout_owner_time_idx").on(t.createdByUserId, t.startAt, t.id),
   eventFk: foreignKey({ name: "health_workout_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   epochFk: foreignKey({ name: "health_workout_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
@@ -1535,6 +1507,158 @@ export const healthSampleDeletionTable = pgTable("health_sample_deletion", {
   sampleKey: unique("health_sample_deletion_sample_key").on(t.createdByUserId, t.hkUuid),
   eventFk: foreignKey({ name: "health_sample_deletion_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
   kindCheck: check("health_sample_deletion_kind_check", sql`${t.sampleKind} in ('workout','sleep_segment')`),
+}));
+
+// One row per visit: iOS's arrival and completed reports merge by visit key (v2);
+// a v1 visit, which has no key, is its own visit keyed by its raw event.
+export const locationVisitTable = pgTable("location_visit", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  // Start time used for ordering and windows: arrival, else departure.
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  firstEventId: text("first_event_id").notNull(), lastEventId: text("last_event_id").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_visit_key").on(t.createdByUserId, t.visitKey),
+  ownerKey: unique("location_visit_owner_key").on(t.id, t.createdByUserId),
+  ownerStartIdx: index("location_visit_owner_start_idx").on(t.createdByUserId, t.startedAt, t.id),
+}));
+
+// A user's named place (a label, not a permission): centre and radius. `geometryChangedAt`
+// is the baseline for presence: visits that started before it never trigger for it.
+export const placeTable = pgTable("place", {
+  id: text("id").primaryKey(), name: text("name").notNull(), note: text("note"),
+  latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  radiusM: doublePrecision("radius_m").notNull(),
+  // The address the user gave or picked (Phase 10): a label, preferred over reverse geocoding.
+  address: text("address"),
+  createdBy: text("created_by").notNull(),
+  geometryChangedAt: timestamp("geometry_changed_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_owner_key").on(t.id, t.createdByUserId),
+  ownerIdx: index("place_owner_idx").on(t.createdByUserId, t.id),
+  radiusCheck: check("place_radius_check", sql`${t.radiusM} between 50 and 2000`),
+  addressCheck: check("place_address_check", sql`${t.address} is null or char_length(${t.address}) between 1 and 300`),
+  createdByCheck: check("place_created_by_check", sql`${t.createdBy} in ('user', 'agent')`),
+}));
+
+// Whether the owner is at each place, fed by geofence transitions and visits. A region exit
+// waits in `leaving_at` until the flap window passes; re-entry cancels it.
+export const placePresenceTable = pgTable("place_presence", {
+  placeId: text("place_id").notNull(), state: text("state").notNull(),
+  since: timestamp("since", { withTimezone: true }).notNull(),
+  leavingAt: timestamp("leaving_at", { withTimezone: true }),
+  // The newest evidence of being inside during this stay (an arrival, a re-entry or a
+  // definitely-inside reading), so an exit or reading processed out of order can tell whether
+  // newer evidence followed it.
+  lastEnteredAt: timestamp("last_entered_at", { withTimezone: true }),
+  // The visit that last confirmed the owner is inside, when one did.
+  visitId: text("visit_id"),
+  // The region exit waiting in `leaving_at`, so the settled departure keeps its evidence.
+  leavingEventId: text("leaving_event_id"),
+  // Whether the departure wait can settle: started by a geofence exit, or a second outside
+  // reading confirmed one started by a reading (`DEPARTURE_CONFIRM_MS`).
+  leavingConfirmed: boolean("leaving_confirmed").notNull().default(false),
+  // A geofence entry whose precise reading was still short of the place: the owner is near it
+  // but not yet there. Cleared by an arrival or a departure.
+  approachingAt: timestamp("approaching_at", { withTimezone: true }),
+  // The first definitely-inside reading of an arrival not yet confirmed (`ARRIVAL_CONFIRM_MS`),
+  // and its event: walking past a place can put one reading inside it.
+  arrivingAt: timestamp("arriving_at", { withTimezone: true }),
+  arrivingEventId: text("arriving_event_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "place_presence_pk", columns: [t.createdByUserId, t.placeId] }),
+  leavingIdx: index("place_presence_leaving_idx").on(t.leavingAt).where(sql`${t.leavingAt} is not null`),
+  placeFk: foreignKey({ name: "place_presence_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  stateCheck: check("place_presence_state_check", sql`${t.state} in ('inside', 'outside')`),
+}));
+
+// Each published arrival or departure, from a region transition or a visit.
+export const placePresenceEventTable = pgTable("place_presence_event", {
+  id: text("id").primaryKey(), placeId: text("place_id").notNull(), transition: text("transition").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  source: text("source").notNull(), visitId: text("visit_id"), rawEventId: text("raw_event_id"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerKey: unique("place_presence_event_owner_key").on(t.id, t.createdByUserId),
+  placeFk: foreignKey({ name: "place_presence_event_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  visitFk: foreignKey({ name: "place_presence_event_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  transitionCheck: check("place_presence_event_transition_check", sql`${t.transition} in ('arrived', 'departed')`),
+  sourceCheck: check("place_presence_event_source_check", sql`${t.source} in ('region', 'visit', 'reading')`),
+}));
+
+// Exactly one subject: a contact revision (contact.added), a workout (workout.completed), a
+// visit (visit.ended) or a presence change (place.arrived/place.departed, with their place).
+export const dataDomainEventTable = pgTable("data_domain_event", {
+  id: text("id").primaryKey(), revisionId: text("revision_id"), workoutId: text("workout_id"),
+  visitId: text("visit_id"), placeId: text("place_id"), presenceEventId: text("presence_event_id"),
+  eventType: text("event_type").notNull(), status: text("status").notNull().default("pending"),
+  publicationSequence: bigint("publication_sequence", { mode: "number" }),
+  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, (t) => ({
+  ownerKey: unique("data_domain_owner_key").on(t.id, t.createdByUserId),
+  sequenceKey: unique("data_domain_sequence_key").on(t.createdByUserId, t.publicationSequence),
+  revisionKey: unique("data_domain_revision_key").on(t.revisionId, t.eventType),
+  ownerIdx: index("data_domain_owner_idx").on(t.createdByUserId, t.status, t.id),
+  revisionFk: foreignKey({ name: "data_domain_revision_fk", columns: [t.revisionId, t.createdByUserId], foreignColumns: [contactRevisionTable.id, contactRevisionTable.createdByUserId] }),
+  workoutKey: unique("data_domain_workout_key").on(t.workoutId, t.eventType),
+  workoutFk: foreignKey({ name: "data_domain_workout_fk", columns: [t.workoutId, t.createdByUserId], foreignColumns: [healthWorkoutTable.id, healthWorkoutTable.createdByUserId] }),
+  subjectCheck: check("data_domain_subject_check", sql`num_nonnulls(${t.revisionId}, ${t.workoutId}, ${t.visitId}, ${t.presenceEventId}) = 1`),
+  visitFk: foreignKey({ name: "data_domain_visit_fk", columns: [t.visitId, t.createdByUserId], foreignColumns: [locationVisitTable.id, locationVisitTable.createdByUserId] }),
+  placeFk: foreignKey({ name: "data_domain_place_fk", columns: [t.placeId, t.createdByUserId], foreignColumns: [placeTable.id, placeTable.createdByUserId] }),
+  presenceFk: foreignKey({ name: "data_domain_presence_fk", columns: [t.presenceEventId, t.createdByUserId], foreignColumns: [placePresenceEventTable.id, placePresenceEventTable.createdByUserId] }),
+  // One event per presence change; one visit.ended per visit.
+  presenceKey: unique("data_domain_presence_key").on(t.presenceEventId, t.eventType),
+  visitEndedKey: uniqueIndex("data_domain_visit_ended_key").on(t.visitId, t.eventType).where(sql`${t.visitId} is not null`),
+}));
+
+
+export const locationObservationTable = pgTable("location_observation", {
+  id: text("id").primaryKey(), rawEventId: text("raw_event_id").notNull(), epochId: text("epoch_id").notNull(),
+  kind: text("kind").notNull(), latitude: doublePrecision("latitude").notNull(), longitude: doublePrecision("longitude").notNull(),
+  horizontalAccuracyM: doublePrecision("horizontal_accuracy_m").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  arrivalAt: timestamp("arrival_at", { withTimezone: true }), departureAt: timestamp("departure_at", { withTimezone: true }),
+  // v2 visits only: shared by iOS's arrival and completed reports of one visit.
+  visitKey: text("visit_key"),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  eventKey: unique("location_observation_event_key").on(t.rawEventId),
+  visitIdx: index("location_observation_visit_idx").on(t.createdByUserId, t.visitKey),
+  ownerTimeIdx: index("location_observation_owner_time_idx").on(t.createdByUserId, t.occurredAt, t.id),
+  eventFk: foreignKey({ name: "location_observation_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  epochFk: foreignKey({ name: "location_observation_epoch_fk", columns: [t.epochId, t.createdByUserId], foreignColumns: [dataCollectionEpochTable.id, dataCollectionEpochTable.createdByUserId] }),
+}));
+
+// Names for a visit or fix (address and likely place). One row per owner and visit key; a later
+// lookup (by named_at) replaces an earlier one. `source`: `geoapify`, looked up by the service
+// (Phase 11, no raw event), or `apple`, the phone's older MapKit lookups, to be replaced and deleted.
+export const locationVisitNameTable = pgTable("location_visit_name", {
+  id: text("id").primaryKey(), visitKey: text("visit_key").notNull(), rawEventId: text("raw_event_id"),
+  source: text("source").notNull().default("apple"),
+  address: jsonb("address").$type<Record<string, string | null> | null>(),
+  place: jsonb("place").$type<Record<string, unknown> | null>(),
+  // Up to 5 named places nearby, nearest first (Phase 12): candidates for a visit not at a saved place.
+  nearby: jsonb("nearby").$type<Array<Record<string, unknown>> | null>(),
+  namedAt: timestamp("named_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  createdByUserId: text("created_by_user_id").notNull(), tenantId: text("tenant_id"),
+}, t => ({
+  visitKey: unique("location_visit_name_visit_key").on(t.createdByUserId, t.visitKey),
+  eventFk: foreignKey({ name: "location_visit_name_event_fk", columns: [t.rawEventId, t.createdByUserId], foreignColumns: [dataEventTable.id, dataEventTable.createdByUserId] }),
+  sourceCheck: check("location_visit_name_source_check", sql`${t.source} in ('apple', 'geoapify')`),
 }));
 
 // One explicit owner-wide agent grant. App grants remain separate consumers.
@@ -1663,6 +1787,9 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Exactly one trigger reference: a published domain event or a schedule window.
   domainEventId: text("domain_event_id"), scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
   invocationId: text("invocation_id"),
+  // A straggler (an event older than one already told to its conversation) becomes a quiet
+  // timeline entry instead of a run: status `folded`, and this is that message (Phase 7.3).
+  timelineMessageId: uuid("timeline_message_id"),
   status: text("status").notNull().default("pending"), outcomeCode: text("outcome_code"),
   latestStartAt: timestamp("latest_start_at", { withTimezone: true }).notNull(),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1674,13 +1801,15 @@ export const automationDeliveryTable = pgTable("automation_delivery", {
   // Across revisions: editing a schedule never runs the same window twice.
   scheduleKey: unique("automation_delivery_schedule_key").on(t.automationId, t.scheduledFor),
   triggerCheck: check("automation_delivery_trigger_check", sql`(${t.domainEventId} is null) <> (${t.scheduledFor} is null)`),
-  invocationKey: unique("automation_delivery_invocation_key").on(t.invocationId),
+  // Several location deliveries for one conversation can share a run (Phase 7.3).
+  invocationIdx: index("automation_delivery_invocation_idx").on(t.invocationId),
   ownerIdx: index("automation_delivery_owner_idx").on(t.createdByUserId, t.createdAt, t.id),
   dueIdx: index("automation_delivery_due_idx").on(t.status, t.nextAttemptAt),
   revisionFk: foreignKey({ name: "automation_delivery_revision_fk", columns: [t.automationId, t.revision, t.createdByUserId], foreignColumns: [automationRevisionTable.automationId, automationRevisionTable.revision, automationRevisionTable.createdByUserId] }),
   eventFk: foreignKey({ name: "automation_delivery_event_fk", columns: [t.domainEventId, t.createdByUserId], foreignColumns: [dataDomainEventTable.id, dataDomainEventTable.createdByUserId] }),
   invocationFk: foreignKey({ name: "automation_delivery_invocation_fk", columns: [t.invocationId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.createdByUserId] }),
-  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed')`),
+  stateCheck: check("automation_delivery_state_check", sql`${t.status} in ('pending','admitted','suppressed','expired','canceled','failed','folded')`),
+  foldedCheck: check("automation_delivery_folded_check", sql`(${t.status} = 'folded') = (${t.timelineMessageId} is not null)`),
   admissionCheck: check("automation_delivery_admission_check", sql`(${t.status} = 'admitted') = (${t.invocationId} is not null)`),
 }));
 
@@ -2030,3 +2159,48 @@ export const browserViewerVisitTable = pgTable("browser_viewer_visit", {
   sessionFk: foreignKey({name:"browser_viewer_visit_session_fk",columns:[t.sessionId,t.threadId,t.budId,t.createdByUserId],
     foreignColumns:[browserSessionTable.id,browserSessionTable.threadId,browserSessionTable.budId,browserSessionTable.createdByUserId]}).onDelete("cascade"),
 }));
+
+// Device diagnostics (bud-mobile `design/diagnostics-upload.md`): the phone's diagnostics journal,
+// uploaded when sharing is on. Content-free by construction (typed fields, validated again on
+// ingest). Not personal data for agents or app keys; read with SQL or `pnpm db:diagnostics`.
+// Kept indefinitely for now (TODO.md: set a limit before public launch).
+export const deviceDiagnosticLaunchTable = pgTable("device_diagnostic_launch", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
+  installationId: text("installation_id").notNull(),
+  id: text("id").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  reason: text("reason").notNull(),
+  appVersion: text("app_version"), build: text("build"), os: text("os"), device: text("device"),
+  bundleId: text("bundle_id"), environment: text("environment"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "device_diagnostic_launch_pk", columns: [t.createdByUserId, t.installationId, t.id] }),
+  ownerAt: index("device_diagnostic_launch_owner_at_idx").on(t.createdByUserId, t.at),
+}));
+
+export const deviceDiagnosticEntryTable = pgTable("device_diagnostic_entry", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
+  installationId: text("installation_id").notNull(),
+  // The phone journal's ID and sequence: a sequence is never reused within a journal (a reinstall
+  // starts a new journal), so (owner, installation, journal, seq) makes retries idempotent.
+  journalId: text("journal_id").notNull(),
+  seq: bigint("seq", { mode: "number" }).notNull(),
+  launchId: text("launch_id").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  uptime: doublePrecision("uptime"),
+  appState: text("app_state").notNull(),
+  area: text("area").notNull(),
+  // 0 debug, 1 info, 2 notice, 3 error, 4 fault.
+  level: smallint("level").notNull(),
+  event: text("event").notNull(),
+  fields: jsonb("fields").$type<Record<string, string | number | boolean>>().notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  seqKey: unique("device_diagnostic_entry_seq_key").on(t.createdByUserId, t.installationId, t.journalId, t.seq),
+  ownerAt: index("device_diagnostic_entry_owner_at_idx").on(t.createdByUserId, t.at),
+  ownerAreaAt: index("device_diagnostic_entry_owner_area_at_idx").on(t.createdByUserId, t.area, t.at),
+  fieldsIdx: index("device_diagnostic_entry_fields_idx").using("gin", t.fields.op("jsonb_path_ops")),
+  levelCheck: check("device_diagnostic_entry_level_check", sql`${t.level} between 0 and 4`),
+}));
+

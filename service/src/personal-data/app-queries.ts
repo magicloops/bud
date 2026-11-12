@@ -11,8 +11,10 @@ const schemas = {
   contacts_search: z.object({ ...page, search: z.string().max(200).optional(), visibility: z.enum(["visible", "all", "hidden"]).optional() }).strict(),
   contacts_get: z.object({ contact_id: contactId }).strict(),
   contacts_history: z.object({ ...page, contact_id: contactId }).strict(),
-  timeline_query: z.object({ ...page, from: z.string(), to: z.string() }).strict(),
+  timeline_query: z.object({ ...page, from: z.string(), to: z.string(), kind: z.enum(["visits", "points", "all"]).optional() }).strict(),
   location_context: z.object({ contact_id: contactId, from: z.string(), to: z.string() }).strict(),
+  location_recent: z.object({}).strict(),
+  location_visits: z.object({ ...page, from: z.string(), to: z.string(), order: z.enum(["asc", "desc"]).optional() }).strict(),
   health_workouts: z.object({ ...page, from: z.string(), to: z.string(), activity_type: z.string().max(64).optional(),
     order: z.enum(["asc", "desc"]).optional() }).strict(),
   health_sleep: z.object({ from: z.string(), to: z.string(), timezone: z.string().max(64).optional() }).strict(),
@@ -24,7 +26,7 @@ type Location = Awaited<ReturnType<LocationQueries["list"]>>["items"][number];
 export class AppDataQueries {
   constructor(private readonly keys: Pick<AppKeys, "authenticate" | "confirmCurrent"> = new AppKeys(),
     private readonly contacts: Pick<ContactQueries, "list" | "get" | "history"> = new ContactQueries(),
-    private readonly locations: Pick<LocationQueries, "list" | "contactContext"> = new LocationQueries(),
+    private readonly locations: Pick<LocationQueries, "list" | "contactContext" | "visits" | "recent"> = new LocationQueries(),
     private readonly now = () => new Date(),
     private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries()) {}
 
@@ -32,7 +34,7 @@ export class AppDataQueries {
     const authority = await this.keys.authenticate(credential);
     const parsed = schemas[operation]?.safeParse(input);
     if (!parsed?.success) throw new DataRequestError(400, "invalid_app_data_query", "Invalid app data query");
-    const required = operation === "timeline_query" ? ["location.read"] : operation === "location_context"
+    const required = operation === "timeline_query" || operation === "location_recent" || operation === "location_visits" ? ["location.read"] : operation === "location_context"
       ? ["contacts.read", "location.read"] : operation.startsWith("health_") ? ["health.read"] : ["contacts.read"];
     const healthType = operation === "health_workouts" ? "workouts" : operation === "health_sleep" ? "sleep" : null;
     if (!required.every(scope => (authority.policy.scopes as string[]).includes(scope))
@@ -42,14 +44,28 @@ export class AppDataQueries {
     const policy = { observedSince: since, cursorBinding: `app:${authority.keyId}:${authority.version}`,
       contactFields: authority.policy.contact_fields };
     const args = parsed.data;
-    const location = (row: Location) => ({ id: row.id, kind: row.kind,
-      coordinate: authority.policy.location_precision === "rounded_2_decimals" ? {
-        lat: Math.round(row.coordinate.lat * 100) / 100, lon: Math.round(row.coordinate.lon * 100) / 100,
-      } : row.coordinate,
+    const rounded = authority.policy.location_precision === "rounded_2_decimals";
+    // Rounded keys get 2-decimal coordinates and the city/region only: no street address and no specific place.
+    const restrict = (row: { coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number;
+      address?: Record<string, string | null> | null; place?: unknown }) => ({
+      coordinate: rounded ? { lat: Math.round(row.coordinate.lat * 100) / 100, lon: Math.round(row.coordinate.lon * 100) / 100 } : row.coordinate,
       coordinate_precision: authority.policy.location_precision,
       // Sensor accuracy is distinct from the additional rounding of coordinates.
       source_horizontal_accuracy_m: row.horizontal_accuracy_m,
+      address: rounded && row.address ? { city: row.address.city ?? null, city_with_context: row.address.city_with_context ?? null,
+        region: row.address.region ?? null, region_code: row.address.region_code ?? null } : row.address ?? null,
+      place: rounded ? null : row.place ?? null,
+    });
+    const location = (row: Location) => ({ id: row.id, kind: row.kind, ...restrict(row),
       occurred_at: row.occurred_at, received_at: row.received_at, arrival_at: row.arrival_at, departure_at: row.departure_at });
+    const visit = (row: Awaited<ReturnType<LocationQueries["visits"]>>["items"][number]) => {
+      const { coordinate: _c, horizontal_accuracy_m: _a, address: _d, place: _p, visit_key: _k, places, ...rest } = row;
+      // Saved place names, nearby places and earlier visits there (Phase 12) are as specific as an
+      // address, so rounded keys don't get them.
+      const { nearby_places: _n, match: _m, match_note: _mn, earlier_visits: _e, ...general } = rest as typeof rest
+        & { nearby_places?: unknown; match?: unknown; match_note?: unknown; earlier_visits?: unknown };
+      return { ...(rounded ? general : rest), ...restrict(row), places: rounded ? [] : places };
+    };
     let data: unknown;
     if (operation === "contacts_search") {
       data = await this.contacts.list(authority.owner, args as z.infer<typeof schemas.contacts_search>, policy);
@@ -58,6 +74,20 @@ export class AppDataQueries {
     } else if (operation === "contacts_history") {
       const query = args as z.infer<typeof schemas.contacts_history>;
       data = await this.contacts.history(authority.owner, query.contact_id, query, policy);
+    } else if (operation === "location_recent") {
+      const result = await this.locations.recent(authority.owner, { notBefore: since });
+      const latest = result.location;
+      // The recent readings are precise coordinates (Phase 13): rounded keys get only what they imply.
+      const { recent_readings: readings, ...general } = result as typeof result & { recent_readings?: unknown };
+      data = { ...(rounded ? general : { ...general, ...(readings ? { recent_readings: readings } : {}) }), location: !latest ? null : latest.kind === "visit"
+        ? { kind: "visit", ...visit(latest as Parameters<typeof visit>[0]) }
+        : { kind: latest.kind, ...restrict(latest as Parameters<typeof restrict>[0]),
+            occurred_at: (latest as { occurred_at: Date }).occurred_at, received_at: (latest as { received_at: Date }).received_at } };
+    } else if (operation === "location_visits") {
+      const query = args as z.infer<typeof schemas.location_visits>;
+      if (locationWindow(query).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");
+      const result = await this.locations.visits(authority.owner, query, { cursorBinding: policy.cursorBinding });
+      data = { ...result, items: result.items.map(visit) };
     } else if (healthType) {
       const query = args as z.infer<typeof schemas.health_workouts> & z.infer<typeof schemas.health_sleep>;
       if (healthWindow(query, 366).from < since) throw new DataRequestError(403, "history_outside_grant", "Requested time window exceeds approved app history");

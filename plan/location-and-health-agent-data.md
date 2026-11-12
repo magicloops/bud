@@ -14,7 +14,11 @@
   Location append durability remains open.
 - **Phase 4 implemented October 14, 2026** (branches `feat/health-data-queries`
   here, stacked on #154, and mobile `feature/health-data-screens`, stacked on
-  mobile #65). See "Phase 4 implementation" below. Phases 5–8 are not started.
+  mobile #65). See "Phase 4 implementation" below.
+- **Phase 5 implemented October 15, 2026** (branches `feat/workout-trigger`
+  here and mobile `feature/workout-trigger`). See "Phase 5 implementation" below.
+  Phases 6–8 are not started; location is now planned in
+  [location-agent-data](location-agent-data/README.md).
 - Builds on [personal data ingestion and agent triggers](../design/personal-data-ingestion-and-agent-triggers.md)
   and its [implementation spec](personal-data-ingestion-and-agent-triggers/implementation-spec.md).
   Replaces the two deferred items in [TODO.md](../TODO.md) ("HealthKit durability…"
@@ -208,40 +212,17 @@ later.
   - A duplicate upload produces one delivery.
   - Delete-then-re-add on device produces no second run for the same UUID.
 
-### Phase 6 — Places and location triggers
+### Phases 6–7 — Location
 
-- **Places.** A `place` table (owner, name, center, radius) with routes, client
-  screens and agent tools (`places_list`, `places_create`). Places are labels,
-  not permissions, so agents may create them; the user sees and edits them in
-  Personal data.
-- **Presence.** Evaluated from visits:
-  - A visit arriving inside a place publishes `place.arrived`.
-  - A departure publishes `place.departed`.
-  - Creating a place establishes a baseline and doesn't fire for a visit
-    already in progress.
-  - Significant-change points alone never fire triggers.
-- **Visit trigger.** `visit.ended` for "log where I was" automations, with
-  optional place matches.
-- **Queries.** `timeline_query` results are annotated with matching places. A
-  location history and map view in Personal data on both clients.
-- **Acceptance.**
-  - Overlapping places.
-  - Visits with missing arrival or departure.
-  - Late uploads within and past the event age.
-  - The trigger delay (visit latency plus upload) is shown in the client.
+Superseded on October 15, 2026 by [location for agents, automations and apps](location-agent-data/README.md).
+Phase 6 was split into four sub-phases, because location also needed reliable
+capture, naming and screens before triggers would be useful:
+- 6.1 reliable capture and permission;
+- 6.2 place names;
+- 6.3 location for agents and screens;
+- 6.4 named places and triggers.
 
-### Phase 7 — Timely place triggers (mobile, optional)
-
-Only if phase 6's latency is too slow in practice.
-
-- `CLMonitor` circular regions for the user's places (iOS 17+, within the
-  system's region limit, nearest places first). Transitions become
-  `location.region_transition.v1` with an immediate upload attempt.
-- The server de-duplicates region and visit transitions for the same place
-  within a window. This requires Always location permission, which the
-  onboarding copy must explain.
-- Acceptance is device-only: app killed, locked device, low power, and limit
-  rotation.
+Phase 7 (geofences) stays optional.
 
 ### Phase 8 — More health types
 
@@ -376,6 +357,48 @@ Follow-ups, not blocking:
 - Location append durability.
 - Location and workout triggers (phases 5–6). Full contacts parity is not
   reached until then.
+
+## Phase 5 implementation
+
+Implemented as planned, with these choices:
+- **Domain events** use typed subject columns (`revision_id` or `workout_id`)
+  instead of a generic `subject_kind`/`subject_id`, so both keep database
+  foreign keys. Exactly one is set.
+- **Publication** happens when a workout row is first inserted from incremental
+  collection with no deletion recorded. It is never published for the baseline,
+  re-uploads or already-deleted samples, and each workout is published once.
+- **Matching:**
+  - Filters are activity types (none = any) and a minimum duration.
+  - `max_event_age_seconds` is measured from the workout's end, against the
+    database clock.
+  - Workouts deleted after publication are suppressed at matching, or fail at
+    admission.
+- **Permissions:** runs need the grant's `workouts` health type, checked at
+  admission and on every policy check. The workout itself must be within
+  approved history (rule and grant), checked at admission and again at first
+  start.
+- **Freshness:** `max_event_age_seconds` applies at matching and also bounds
+  the first start. The deadline is the earlier of publication plus
+  `latest_start_seconds` and the workout's end plus the maximum age.
+- **Deletion:** a workout deleted after admission is caught at first start,
+  under the owner lock, and the run fails.
+- **Evidence:** the agent receives the workout record, plus location samples
+  within 10 minutes of it when both the rule and the grant allow location. There
+  is still no workout route.
+- No trigger registry yet: the matcher, admission, policy and evidence each
+  dispatch on event type in a few lines.
+
+Validation:
+- Service: full suite, plus the PostgreSQL workout fixture (run repeatedly)
+  and the personal-data suites.
+- Web: build and tests, including a render test for the workout review.
+- iOS: unit suite.
+
+End-to-end runs from a real watch workout are not yet checked.
+
+Rollout: migration 0053 runs in Render's pre-deploy step; deploy the service
+and web, then the iOS build. Older iOS builds can't decode the automation list
+once a workout rule exists, as with schedules.
 
 ## Decisions
 

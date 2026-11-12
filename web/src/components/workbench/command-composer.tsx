@@ -15,6 +15,7 @@ import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
+import { useComposerHistory, type ComposerHistoryProps } from './use-composer-history'
 
 const NULL_PANE_REF: RefObject<HTMLDivElement | null> = { current: null }
 
@@ -81,7 +82,7 @@ function FitSelect({
   )
 }
 
-type CommandComposerProps = {
+type CommandComposerProps = ComposerHistoryProps & {
   messageText: string
   onMessageChange: (value: string) => void
   status: WorkbenchStatus
@@ -129,6 +130,11 @@ export function CommandComposer({
   onViewModelContext,
   alignToPaneRef,
   autoFocusKey = null,
+  messageHistory,
+  hasOlderMessages,
+  isLoadingOlderMessages,
+  olderMessagesError,
+  onLoadOlderMessages,
 }: CommandComposerProps) {
   const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
@@ -149,8 +155,18 @@ export function CommandComposer({
     (canCancelInvocation || status === 'dispatching' || status === 'streaming' || status === 'waiting_for_terminal')
   const inputDisabled = status === 'dispatching' || Boolean(disabledReason)
   const showBudOfflineNotice = environment?.mode === 'bud_offline'
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const history = useComposerHistory({
+    messageHistory, hasOlderMessages, isLoadingOlderMessages, olderMessagesError,
+    onLoadOlderMessages, messageText, onMessageChange, textareaRef,
+  })
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (inputDisabled || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      history.cancelPending()
+      return
+    }
+    if (history.onKeyDown(event)) return
     // Soft keyboards have no visible Shift affordance: on coarse pointers
     // Enter inserts a newline and the send button submits
     // (design/responsive-web-layout.md §3.2).
@@ -174,7 +190,6 @@ export function CommandComposer({
   // visual viewport (1000px absolute) and scrolls internally beyond that.
   // Dragging the top edge sets a manual height that overrides auto-grow
   // until the next send (or a double-click on the edge).
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const formRef = useRef<HTMLFormElement | null>(null)
   const alignment = useComposerColumnAlignment(alignToPaneRef ?? NULL_PANE_REF, formRef)
   const [manualHeight, setManualHeight] = useState<number | null>(null)
@@ -222,6 +237,7 @@ export function CommandComposer({
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    history.reset()
     setManualHeight(null)
     onSubmit(event)
   }
@@ -294,12 +310,26 @@ export function CommandComposer({
         name="message"
         rows={1}
         value={messageText}
-        onChange={(e) => onMessageChange(e.target.value)}
+        onChange={(e) => {
+          history.cancelPending()
+          onMessageChange(e.target.value)
+        }}
         onKeyDown={handleKeyDown}
+        onBlur={history.cancelPending}
+        onPointerDown={history.cancelPending}
+        onCompositionStart={history.cancelPending}
+        aria-label="Message Bud"
+        aria-description="Up at the start recalls sent messages. While browsing history, use Up and Down for older and newer messages. Escape restores your draft."
+        title="↑ / ↓: sent messages · Esc: restore draft"
         placeholder={disabledReason ?? 'Describe a task for Bud…'}
         className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:min-h-28 md:px-4 md:py-3 md:pb-16"
         disabled={inputDisabled}
       />
+      {history.isLoadingHistory && (
+        <div role="status" className="px-4 pb-2 font-mono text-xs text-muted-foreground">
+          Loading earlier messages…
+        </div>
+      )}
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
       <div

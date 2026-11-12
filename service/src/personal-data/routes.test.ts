@@ -75,6 +75,77 @@ test("encapsulated upload parser, auth, explicit ACK, owner status and commit fa
   assert.ok(!failed.body.includes("sensitive"));
 });
 
+test("uploads with follow-up readings process inline and answer which follow-ups are settled", async t => {
+  const app = Fastify();
+  t.after(() => app.close());
+  const processed: Array<string | undefined> = [];
+  let pending = 2;
+  await registerPersonalDataRoutes(app, {
+    authenticate: async () => ({ userId: "owner-a" }),
+    repository: {
+      persist: async (_context, batch) => ({ accepted_count: batch.events.length, duplicate_count: 0,
+        acked_event_ids: batch.events.map(e => e.eventId), rejected: batch.rejected }),
+      status: async () => ({}),
+    },
+    processor: {
+      requeueSupportedLocations: async () => false,
+      // The background worker polls without an owner; only the inline drain is counted.
+      processNext: async (owner?: string) => { if (!owner) return false; processed.push(owner); return pending-- > 0; },
+      publishNext: async () => false,
+    },
+    settleFollowUps: async (_owner, requests) => Object.fromEntries([...requests].map(([id, request]) =>
+      [id, request.transition === "entered" ? "open" : "settled"])),
+  });
+  const place = "01M5KD6NQN33ZS31CJ8NRXDXCZ", office = "01M5DV10ZNSFWHYS34RCZ6F1PR";
+  const line = (eventId: string, type: string, payload: unknown) => JSON.stringify({ ...envelope, event_id: eventId, event_type: type, payload });
+  const headers = { "content-type": "application/x-ndjson", "x-installation-id": "phone-a", "x-batch-id": "batch-f" };
+  const body = [
+    line("f1", "location.fix.v1", { fix_key: "fix:a", reason: "follow_up", coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 5,
+      follow_up: { id: "entry-1", place_id: place, geometry_revision: "1", transition: "entered" } }),
+    line("f2", "location.region_transition.v1", { place_id: office, transition: "exited", initial: false, occurred_at: envelope.occurred_at,
+      geometry_revision: "1", follow_up_id: "exit-1" }),
+  ].join("\n") + "\n";
+  const response = await app.inject({ method: "POST", url: "/v1/events/batches", headers, payload: body });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().follow_ups, { "entry-1": "open", "exit-1": "settled" });
+  assert.deepEqual(processed, ["owner-a", "owner-a", "owner-a"], "the owner's pending jobs were drained inline, until none were left");
+  // A batch without follow-ups answers as before.
+  const plain = await app.inject({ method: "POST", url: "/v1/events/batches", headers: { ...headers, "x-batch-id": "batch-g" },
+    payload: JSON.stringify(envelope) + "\n" });
+  assert.equal(plain.json().follow_ups, undefined);
+});
+
+test("inline processing is bounded: a slow job leaves the ACK without follow-up answers", async t => {
+  const app = Fastify();
+  t.after(() => app.close());
+  await registerPersonalDataRoutes(app, {
+    authenticate: async () => ({ userId: "owner-a" }),
+    repository: {
+      persist: async (_context, batch) => ({ accepted_count: batch.events.length, duplicate_count: 0,
+        acked_event_ids: batch.events.map(e => e.eventId), rejected: batch.rejected }),
+      status: async () => ({}),
+    },
+    processor: {
+      requeueSupportedLocations: async () => false,
+      // Stuck behind the owner lock, or a long job: never resolves within the budget.
+      processNext: async (owner?: string) => owner ? new Promise<boolean>(() => {}) : false,
+      publishNext: async () => false,
+    },
+    settleFollowUps: async () => { throw new Error("must not answer after the budget"); },
+    followUpProcessingMs: 50,
+  });
+  const body = JSON.stringify({ ...envelope, event_id: "f1", event_type: "location.fix.v1", payload: { fix_key: "fix:a",
+    coordinate: { lat: 1, lon: 1 }, horizontal_accuracy_m: 5,
+    follow_up: { id: "entry-1", place_id: "01M5KD6NQN33ZS31CJ8NRXDXCZ", geometry_revision: "1", transition: "entered" } } }) + "\n";
+  const started = Date.now();
+  const response = await app.inject({ method: "POST", url: "/v1/events/batches", payload: body,
+    headers: { "content-type": "application/x-ndjson", "x-installation-id": "phone-a", "x-batch-id": "batch-slow" } });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().acked_event_ids, ["f1"]);
+  assert.equal(response.json().follow_ups, undefined);
+  assert.ok(Date.now() - started < 1000, "the ACK isn't held past the budget");
+});
+
 test("app permission capability follows explicit composition setting", async t => {
   const app = Fastify();
   t.after(() => app.close());
@@ -185,4 +256,28 @@ test("missing field schema fails readiness before contact processing starts", as
   });
   await assert.rejects(async () => { await app.ready(); }, /missing_contact_fields/);
   assert.deepEqual(work, []);
+});
+
+test("place search: signed in, 2–200 characters, Geoapify's attribution, and a per-owner rate limit", async (t) => {
+  const app = Fastify();
+  t.after(() => app.close());
+  const asked: unknown[] = [];
+  await registerPersonalDataRoutes(app, {
+    repository: { persist: async () => { throw new Error("unused"); }, status: async () => ({}) },
+    authenticate: async request => request.headers.authorization === "Bearer ok" ? { userId: "owner-a" } : null,
+    placeSearch: { search: async (text, near) => { asked.push([text, near]); return [{ name: null, address: "3327 26th Street, San Francisco",
+      coordinate: { lat: 37.749, lon: -122.4165 }, category: "building" }]; } },
+  });
+  const search = (query: string, authorization = "Bearer ok") => app.inject({ method: "GET", url: `/api/places/search?${query}`, headers: { authorization } });
+  assert.equal((await search("q=3327 26th", "Bearer no")).statusCode, 401);
+  assert.equal((await search("q=3")).json().error, "invalid_query");
+  const found = await search("q=3327%2026th&near=37.75,-122.42");
+  assert.deepEqual(found.json(), { results: [{ name: null, address: "3327 26th Street, San Francisco", coordinate: { lat: 37.749, lon: -122.4165 },
+    category: "building" }], attribution: "Powered by Geoapify · © OpenStreetMap contributors" });
+  assert.deepEqual(asked[0], ["3327 26th", { lat: 37.75, lon: -122.42 }]);
+  assert.deepEqual((await search("q=cafe&near=nowhere")).statusCode, 200);
+  assert.deepEqual(asked[1], ["cafe", undefined], "a malformed near is ignored");
+  for (let i = 0; i < 58; i++) await search("q=cafe");
+  const limited = await search("q=cafe");
+  assert.deepEqual([limited.statusCode, limited.json().error], [429, "place_search_rate_limited"]);
 });

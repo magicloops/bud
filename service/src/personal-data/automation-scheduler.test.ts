@@ -79,7 +79,9 @@ test("scheduled automations run the latest due window once and admit without con
   assert.equal(admitted.status, "admitted");
   const [invocation] = await db.select().from(s.agentInvocationTable).where(eq(s.agentInvocationTable.id, admitted.invocationId!));
   const [input] = await db.select().from(s.messageTable).where(eq(s.messageTable.messageId, invocation.inputMessageId));
-  assert.match(input.content, /^Automation: Daily digest\n\nSummarize my day\.\n\nScheduled run for /);
+  assert.match(input.content, /^Scheduled run for [^\n]+\.\n\nSummarize my day\.\n\n---\nFor reference\./);
+  assert.match(input.content, /- Triggered by the "Daily digest" automation/);
+  assert.equal(input.metadata?.automation_name, "Daily digest");
   assert.match(input.content, /first scheduled run/);
   assert.match(input.content, /no personal-data access/);
   assert.equal(input.metadata?.scheduled_for, window(2).toISOString());

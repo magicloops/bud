@@ -117,7 +117,9 @@ Message list with auto-scroll and full-height message rendering.
 ### `automation-attribution.ts` and `automation-attribution.test.ts`
 
 Recognizes server-stamped system-origin automation input, retaining its recorded
-name/revision/run/event identity independently of current rule state. Tests reject
+name/revision/run/event identity independently of current rule state. The name
+comes from `automation_name` metadata; messages admitted before it began with
+"Automation: <name>", which is the fallback. Tests reject
 ordinary messages and text-only impersonation, and cover incomplete metadata.
 Chat timeline renders these as compact expandable Triggered by rows even when
 generic system messages are hidden. Expanded rows retain full original input;
@@ -360,7 +362,9 @@ Inline structured prompt form for pending `ask_user_questions` tool calls.
 - optional `disabled` / `error`
 
 **Features**:
-- renders boolean, single-choice, multi-choice, text, and number question kinds
+- renders boolean, single-choice, multi-choice, text, number, and place question kinds
+- a `place` question is a row ("Home — 3327 26th St", or the saved place's name for a move) with "Choose on map", opening `PlacePinDialog` seeded by `placeQuestionStart` (search for `query`, or the saved `place_id`'s centre and radius; radius from `place.radius_m`, else 100); the chosen pin, radius, name and address (when given) become the answer, and the row shows the address, and the service saves the place when it accepts it
+- a refused place answer (409 `place_not_found`, `place_limit_reached`) shows as words via `placeErrorMessage` and the prompt stays to retry or skip
 - supports per-question skip plus skip-all
 - generates a browser UUIDv7 `client_response_id`
 - submits only normalized answer payloads; labels remain display-only
@@ -383,7 +387,7 @@ Node-runner coverage for structured prompt response helpers.
 
 **Coverage**:
 - initial answer state for every v1 question kind
-- answer payload construction for boolean, single-choice, multi-choice, text, and number questions
+- answer payload construction for boolean, single-choice, multi-choice, text, number, and place questions
 - per-question skip and skip-all payload construction
 
 ### `model-context-view.tsx`

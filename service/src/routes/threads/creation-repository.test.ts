@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { config } from "../../config.js";
@@ -27,7 +27,12 @@ test("atomic creation: race, current-state retry, owner isolation, rollback and 
   skip: process.env.BUD_DATA_DB_TEST !== "1",
 }, async t => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(config.databaseUrl).hostname));
-  const pool = new Pool({ connectionString: config.databaseUrl, max: 6 });
+  // Its own schema, for this test and the service pool (node runs each test file in its own
+  // process): a running dev service's worker claims any owner's due invocations in the shared
+  // tables, so it could lease the one this test claims.
+  const isolated = `creation_repo_${randomUUID().replaceAll("-", "")}`;
+  const pool = new Pool({ connectionString: config.databaseUrl, max: 6, options: `-c search_path=${isolated},public` });
+  servicePool.on("connect", client => { void client.query(`set search_path to "${isolated}", public`); });
   const database = drizzle(pool, { schema });
   const owners = [0, 1].map(() => `creation-test-${randomUUID()}`);
   const buds = owners.map(() => `bud-${randomUUID()}`);
@@ -36,14 +41,21 @@ test("atomic creation: race, current-state retry, owner isolation, rollback and 
   t.after(async () => {
     unsubscribe();
     try {
-      await database.delete(schema.threadCreationReceiptTable).where(inArray(schema.threadCreationReceiptTable.createdByUserId, owners));
-      await database.delete(schema.agentInvocationTable).where(inArray(schema.agentInvocationTable.createdByUserId, owners));
-      await database.delete(schema.messageTable).where(inArray(schema.messageTable.createdByUserId, owners));
-      await database.delete(schema.threadTable).where(inArray(schema.threadTable.createdByUserId, owners));
-      await database.delete(schema.budTable).where(inArray(schema.budTable.budId, buds));
-      await database.delete(schema.authUserTable).where(inArray(schema.authUserTable.id, owners));
-    } finally { await pool.end(); await servicePool.end(); }
+      await pool.query(`drop schema if exists "${isolated}" cascade`);
+      // Users live in the shared auth schema, outside the isolated one.
+      await pool.query(`delete from auth."user" where id = any($1)`, [owners]);
+    }
+    finally { await pool.end(); await servicePool.end(); }
   });
+  await pool.query(`create schema "${isolated}"`);
+  for (const { tablename } of (await pool.query("select tablename from pg_tables where schemaname='public'")).rows) {
+    assert.match(tablename, /^[a-zA-Z0-9_]+$/);
+    await pool.query(`create table "${isolated}"."${tablename}" (like public."${tablename}" including all)`);
+  }
+  // `like` doesn't copy foreign keys, and this test checks them.
+  for (const key of (await pool.query(`select c.relname, k.conname, pg_get_constraintdef(k.oid) as def from pg_constraint k
+    join pg_class c on c.oid = k.conrelid where k.contype = 'f' and k.connamespace = 'public'::regnamespace`)).rows)
+    await pool.query(`alter table "${isolated}"."${key.relname}" add constraint "${key.conname}" ${key.def.replaceAll("REFERENCES public.", "REFERENCES ")}`);
   await database.insert(schema.authUserTable).values(owners.map(id => ({ id, name: "Creation fixture", email: `${id}@example.invalid`, emailVerified: false })));
   await database.insert(schema.budTable).values(owners.map((owner, i) => ({ budId: buds[i], name: "Fixture", os: "test", arch: "test", createdByUserId: owner, tenantId: "fixture-tenant" })));
 

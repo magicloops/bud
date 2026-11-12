@@ -95,7 +95,7 @@ Vite build configuration with:
 - TanStack Router plugin (`@tanstack/router-plugin`)
 - Tailwind CSS plugin (`@tailwindcss/vite`)
 - Path aliases (`@/` → `src/`)
-- Development proxy for `/v1/events/*` mobile ingestion alongside existing API/discovery proxies
+- Development proxy for `/v1/events/*` mobile ingestion and `/v1/diagnostics(/*)` device diagnostics alongside existing API/discovery proxies
 - HTTP and WebSocket forwarding for `/ws`, including the daemon's
   `/ws/browser-media` connection through the public HTTP development origin.
   Service authentication and one-use media ticket validation remain authoritative.

@@ -1,11 +1,14 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { Check, CircleSlash, Send } from 'lucide-react'
+import { Check, CircleSlash, MapPin, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { PlacePinDialog } from '@/components/place-pin-editor'
 import type {
   ApiAskUserQuestion,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
 } from '@/lib/api-types'
+import { usePlaces } from '@/lib/places'
+import { formatPin, placeAnswer, placeErrorMessage, placeQuestionStart, placeQuestionTitle } from '@/lib/place-pin'
 import { cn } from '@/lib/utils'
 import {
   buildAskUserQuestionsResponseInput,
@@ -79,7 +82,7 @@ export function QuestionRequestCard({
         ))}
       </div>
 
-      {submitError && <div className="text-[11px] text-destructive">{submitError}</div>}
+      {submitError && <div className="text-[11px] text-destructive">{placeErrorMessage(submitError)}</div>}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">
@@ -273,6 +276,10 @@ function renderQuestionControl(
         </div>
       )
     }
+    case 'place':
+      return question.place
+        ? <PlaceQuestionControl question={question} place={question.place} value={value} onChange={onChange} />
+        : null
     default:
       return (
         <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
@@ -280,6 +287,63 @@ function renderQuestionControl(
         </div>
       )
   }
+}
+
+/** A place to pin: the chosen pin, radius and name become the answer; the service saves it on submit. */
+function PlaceQuestionControl({
+  question,
+  place,
+  value,
+  onChange,
+}: {
+  question: ApiAskUserQuestion
+  place: NonNullable<ApiAskUserQuestion['place']>
+  value: QuestionRequestAnswerState
+  onChange: (value: QuestionRequestAnswerState) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const { places } = usePlaces(Boolean(place.place_id))
+  const existing = places?.find((saved) => saved.id === place.place_id)
+  const answer = value.answer?.kind === 'place' ? value.answer : null
+  const start = answer
+    ? { name: answer.name, center: { lat: answer.latitude, lon: answer.longitude }, radius: answer.radius_m, address: answer.address ?? '',
+      ...(place.query ? { query: place.query } : {}) }
+    : placeQuestionStart(place, existing)
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-1.5 text-xs text-foreground">
+      <MapPin className="h-3.5 w-3.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div>{placeQuestionTitle(place, existing)}</div>
+        {answer && <div className="text-[11px] text-muted-foreground">
+          {answer.name}{answer.address ? `, ${answer.address},` : ''} at {formatPin(answer)}
+        </div>}
+        {place.place_id && places && !existing && (
+          <div className="text-[11px] text-muted-foreground">That place no longer exists. Skip, or ask for a new one.</div>
+        )}
+      </div>
+      <button
+        type="button"
+        disabled={Boolean(place.place_id) && !places}
+        onClick={() => setOpen(true)}
+        className={choiceButtonClass(false)}
+      >
+        {answer ? 'Change pin' : 'Choose on map'}
+      </button>
+      {open && (
+        <PlacePinDialog
+          title={question.label}
+          start={start}
+          existing={Boolean(existing)}
+          saveLabel="Use this pin"
+          onSave={(pin) => {
+            onChange({ status: 'answered', answer: placeAnswer(pin) })
+            setOpen(false)
+          }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </div>
+  )
 }
 
 function choiceButtonClass(active: boolean) {

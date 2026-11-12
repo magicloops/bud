@@ -1,16 +1,26 @@
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getOptionalBearerViewer, getOptionalViewer } from "../auth/session.js";
-import { DataRequestError, INGEST_LIMITS, validIdentifier, type IngestContext } from "./contracts.js";
+import { DataRequestError, INGEST_LIMITS, validIdentifier, type IngestContext, type ValidEvent } from "./contracts.js";
+import { FOLLOW_UP_PROCESSING_MS, followUpRequests, settleFollowUps } from "./follow-ups.js";
 import { ContactProcessor } from "./contact-processor.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, type LocationQuery } from "./location.js";
 import { DataGrants } from "./grants.js";
+import { Places } from "./places.js";
+import { mapKitToken, type MapKitKey } from "./maps.js";
+import { Geoapify, GEOAPIFY_ATTRIBUTION } from "./geoapify.js";
+import { VisitNaming } from "./visit-naming.js";
+
+/** Each search is one Geoapify credit; autocomplete is debounced on the clients. */
+const PLACE_SEARCHES_PER_MINUTE = 60;
+import { config } from "../config.js";
 import { HealthQueries, type SleepQuery, type WorkoutQuery } from "./health.js";
 import { Automations } from "./automations.js";
 import { AutomationBootstrap } from "./automation-bootstrap.js";
 import { AUTOMATION_EVENT_TYPES, automationCreateSchema, automationActivateBootstrapSchema, parseAutomationInput } from "./automation-contracts.js";
 import { parseBatch } from "./parser.js";
+import { DailyDiagnosticsBudget, DeviceDiagnostics, DIAGNOSTICS_LIMITS, parseDiagnostics } from "./diagnostics.js";
 import { PostgresIngestRepository, type IngestRepository } from "./repository.js";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
 import { AutomationProposals } from "./automation-proposals.js";
@@ -25,6 +35,7 @@ type Dependencies = {
   queries?: ContactQueries;
   locationQueries?: LocationQueries;
   healthQueries?: Pick<HealthQueries, "workouts" | "sleep">;
+  places?: Pick<Places, "list" | "create" | "update" | "delete">;
   grants?: DataGrants;
   automations?: Pick<Automations, "list" | "get" | "history" | "create" | "update" | "pause" | "activate" | "delete">;
   automationActivationEnabled?: boolean;
@@ -35,7 +46,18 @@ type Dependencies = {
   automationProposals?: Pick<AutomationProposals, "get" | "list" | "decide" | "cancel" | "expireNext">;
   bootstrap?: Pick<AutomationBootstrap, "list" | "get" | "page" | "capture" | "activateAndCapture" | "cancel" | "progress" | "preview">;
   processor?: Pick<ContactProcessor, "requeueSupportedLocations" | "processNext" | "publishNext">;
+  /** Follow-up answers from processed presence; injectable for route tests. */
+  settleFollowUps?: typeof settleFollowUps;
+  /** The inline processing budget (default `FOLLOW_UP_PROCESSING_MS`); injectable for tests. */
+  followUpProcessingMs?: number;
   authenticate?: (request: FastifyRequest) => Promise<{ userId: string } | null>;
+  /** The Maps key for MapKit JS tokens (default from config); injectable for route tests. */
+  mapsKey?: MapKitKey;
+  /** Place search (default Geoapify from config); injectable for route tests. */
+  placeSearch?: Pick<Geoapify, "search">;
+  /** Device diagnostics storage and the daily budget; injectable for route tests. */
+  deviceDiagnostics?: Pick<DeviceDiagnostics, "store" | "delete">;
+  diagnosticsBudget?: DailyDiagnosticsBudget;
 };
 
 export async function registerPersonalDataRoutes(server: FastifyInstance, dependencies: Dependencies = {}) {
@@ -43,9 +65,11 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
   const queries = dependencies.queries ?? new ContactQueries();
   const locationQueries = dependencies.locationQueries ?? new LocationQueries();
   const healthQueries = dependencies.healthQueries ?? new HealthQueries();
+  const places = dependencies.places ?? new Places();
   const grants = dependencies.grants ?? new DataGrants();
   const automations = dependencies.automations ?? new Automations();
   const bootstrap = dependencies.bootstrap ?? new AutomationBootstrap();
+  const mapsKey = dependencies.mapsKey ?? { teamId: config.appleMapsTeamId, keyId: config.appleMapsKeyId, privateKey: config.appleMapsPrivateKey };
   let contactsV2Ready = false;
   // Normal composition must verify migration 0035 before workers or HTTP readiness.
   // Injected repositories do not imply compatible capture; fixtures opt in explicitly.
@@ -58,6 +82,25 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     });
   }
   let stop = async () => {};
+  const placeSearch = dependencies.placeSearch ?? new Geoapify();
+  // The service names visits itself (Phase 11), when it has a Geoapify key. Not in injection tests.
+  const naming = !dependencies.repository ? new VisitNaming() : null;
+  let stopNaming = async () => {};
+  if (naming?.available) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let active: Promise<void> | undefined;
+    const run = async () => {
+      try { for (let round = 0; round < 10 && !stopped && await naming.nameNext(); round++) { /* drain a few */ } }
+      catch { server.log.warn("Visit naming failed; it retries"); }
+      finally { if (!stopped) { timer = setTimeout(() => { active = run(); }, 2000); timer.unref(); } }
+    };
+    server.addHook("onReady", async () => { active = run(); });
+    stopNaming = async () => { stopped = true; clearTimeout(timer); await active; };
+    server.addHook("preClose", stopNaming);
+  }
+  // Uploads that carry follow-up readings answer from processed presence (Phase 7.2).
+  const inlineProcessor = dependencies.processor ?? (dependencies.repository ? undefined : new ContactProcessor());
   // Injection tests do not start a background worker against a real database.
   if (!dependencies.repository || dependencies.processor) {
     const processor = dependencies.processor ?? new ContactProcessor();
@@ -195,6 +238,30 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       queries.history(viewers.get(request)!.userId, request.params.id, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
     app.get<{ Querystring: Omit<LocationQuery, "limit"> & { limit?: string } }>("/api/data/location", async request =>
       locationQueries.list(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
+    app.get<{ Querystring: { from: string; to: string; order?: string; limit?: string; cursor?: string } }>("/api/data/location/visits", async request =>
+      locationQueries.visits(viewers.get(request)!.userId, { ...request.query, limit: request.query.limit === undefined ? undefined : Number(request.query.limit) }));
+    app.get("/api/data/location/recent", async request => locationQueries.recent(viewers.get(request)!.userId));
+    // Places are labels for presence and triggers; the owner manages them.
+    app.get("/api/data/places", async request => places.list(viewers.get(request)!.userId));
+    app.post("/api/data/places", async request => places.create(viewers.get(request)!.userId, request.body, "user"));
+    app.put<{ Params: { id: string } }>("/api/data/places/:id", async request => places.update(viewers.get(request)!.userId, request.params.id, request.body));
+    app.delete<{ Params: { id: string } }>("/api/data/places/:id", async request => places.delete(viewers.get(request)!.userId, request.params.id));
+    // Place search for the pin editors (Geoapify, Phase 11). Results can be stored, unlike Apple's.
+    const searches = new Map<string, number[]>();
+    app.get<{ Querystring: { q?: string; near?: string } }>("/api/places/search", async request => {
+      const owner = viewers.get(request)!.userId, text = request.query.q?.trim() ?? "";
+      if (text.length < 2 || text.length > 200) throw new DataRequestError(400, "invalid_query", "Search with 2–200 characters");
+      const [lat, lon] = (request.query.near ?? "").split(",").map(Number);
+      const near = request.query.near && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : undefined;
+      const now = Date.now(), recent = (searches.get(owner) ?? []).filter(at => at > now - 60_000);
+      if (recent.length >= PLACE_SEARCHES_PER_MINUTE)
+        throw new DataRequestError(429, "place_search_rate_limited", "Too many searches; try again shortly", true, 10);
+      searches.set(owner, [...recent, now]);
+      return { results: await placeSearch.search(text, near), attribution: GEOAPIFY_ATTRIBUTION };
+    });
+    // The web map (MapKit JS); the page passes its own origin.
+    app.get<{ Querystring: { origin?: string } }>("/api/maps/token", async request =>
+      mapKitToken(mapsKey, request.query.origin, config.betterAuthTrustedOrigins));
     app.get<{ Params: { id: string }; Querystring: Pick<LocationQuery, "from" | "to"> }>("/api/data/contacts/:id/location-context", async request =>
       locationQueries.contactContext(viewers.get(request)!.userId, request.params.id, request.query));
     // First-party owner reads; agents and apps go through their grant-aware adapters.
@@ -221,6 +288,37 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     await app.register(async (uploads) => {
       uploads.removeAllContentTypeParsers();
       uploads.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: INGEST_LIMITS.compressed_bytes }, (_request, body, done) => done(null, body));
+      /**
+       * For a batch with follow-up readings or region reports, processes this owner's pending
+       * jobs inline, as the background worker would, so the phone learns which follow-ups are
+       * settled from this response. The whole step is bounded: if processing and answering
+       * don't finish within the budget (a long job, or a wait for the owner lock), the ACK goes
+       * without `follow_ups` (the phone keeps sampling) and the work carries on in the
+       * background. The batch is already persisted, so its ACK never waits beyond that.
+       */
+      const answerFollowUps = async (request: FastifyRequest, owner: string, events: ValidEvent[]) => {
+        const requests = followUpRequests(events);
+        if (requests.size === 0 || !inlineProcessor) return null;
+        const budget = dependencies.followUpProcessingMs ?? FOLLOW_UP_PROCESSING_MS;
+        const deadline = Date.now() + budget;
+        const work = (async () => {
+          while (Date.now() < deadline && await inlineProcessor.processNext(owner)) { /* drain this owner */ }
+          if (Date.now() >= deadline) return null;
+          return (dependencies.settleFollowUps ?? settleFollowUps)(owner, requests);
+        })();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), budget); });
+        try {
+          return await Promise.race([work, late]);
+        } catch {
+          request.log.warn("Inline follow-up processing failed; work stays queued");
+          return null;
+        } finally {
+          clearTimeout(timer);
+          // A job still running past the budget finishes (or fails) on its own; never unhandled.
+          work.catch(() => request.log.warn("Inline follow-up processing failed; work stays queued"));
+        }
+      };
       const handler = async (request: FastifyRequest, reply: FastifyReply) => {
         const installationId = request.headers["x-installation-id"];
         const batchId = request.headers["x-batch-id"];
@@ -231,9 +329,48 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
         if (!Buffer.isBuffer(request.body)) throw new DataRequestError(400, "invalid_body", "NDJSON body is required");
         const batch = await parseBatch(request.body, String(request.headers["content-encoding"] ?? "").toLowerCase(), context);
         const result = await repository.persist(context, batch);
-        return reply.code(200).send({ request_id: request.id, batch_id: batchId, server_time: new Date().toISOString(), ...result, rejected_count: result.rejected.length, retry_after_s: 0 });
+        const followUps = await answerFollowUps(request, context.userId, batch.events);
+        return reply.code(200).send({ request_id: request.id, batch_id: batchId, server_time: new Date().toISOString(), ...result,
+          rejected_count: result.rejected.length, retry_after_s: 0, ...(followUps ? { follow_ups: followUps } : {}) });
       };
       uploads.post("/v1/events/batches", { bodyLimit: INGEST_LIMITS.compressed_bytes }, handler);
+
+      /**
+       * Device diagnostics (bud-mobile `design/diagnostics-upload.md`): the phone's journal, sent
+       * on its own direct uploads when its sharing setting is on. Always accepted from a
+       * signed-in installation. `acked_through_seq` covers every entry line in the request (stored,
+       * already stored, or rejected), so the phone advances past them.
+       */
+      const diagnostics = dependencies.deviceDiagnostics ?? new DeviceDiagnostics();
+      const diagnosticsBudget = dependencies.diagnosticsBudget ?? new DailyDiagnosticsBudget();
+      const diagnosticsUploading = new Set<string>();
+      uploads.post("/v1/diagnostics/batches", { bodyLimit: DIAGNOSTICS_LIMITS.compressed_bytes }, async (request, reply) => {
+        const owner = viewers.get(request)!.userId;
+        const installationId = request.headers["x-installation-id"];
+        if (!validIdentifier(installationId)) throw new DataRequestError(400, "invalid_headers", "A valid installation identifier is required");
+        if (!Buffer.isBuffer(request.body)) throw new DataRequestError(400, "invalid_body", "NDJSON body is required");
+        if (diagnosticsUploading.has(owner))
+          return reply.code(429).header("Retry-After", "5").send({ error: "upload_busy", retryable: true, retry_after_s: 5 });
+        diagnosticsUploading.add(owner);
+        try {
+          const batch = await parseDiagnostics(request.body, String(request.headers["content-encoding"] ?? "").toLowerCase());
+          if (!diagnosticsBudget.take(`${owner}:${installationId}`, batch.entries.length)) {
+            const midnight = new Date(); midnight.setUTCHours(24, 0, 0, 0);
+            const wait = Math.max(60, Math.ceil((midnight.getTime() - Date.now()) / 1000));
+            return reply.code(429).header("Retry-After", String(wait)).send({ error: "daily_limit", retryable: true, retry_after_s: wait });
+          }
+          const accepted = await diagnostics.store(owner, installationId, batch);
+          return reply.code(200).send({ request_id: request.id, acked_through_seq: batch.maxSeq, accepted,
+            duplicates: batch.entries.length - accepted, rejected: batch.rejected, retry_after_s: 0 });
+        } finally {
+          diagnosticsUploading.delete(owner);
+        }
+      });
+      uploads.delete("/v1/diagnostics", async request => {
+        const installationId = request.headers["x-installation-id"];
+        if (!validIdentifier(installationId)) throw new DataRequestError(400, "invalid_headers", "A valid installation identifier is required");
+        return { deleted: await diagnostics.delete(viewers.get(request)!.userId, installationId) };
+      });
     });
   });
   const appKeys = await registerAppKeyRoutes(server, {
@@ -257,5 +394,5 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     server.addHook("onReady", async () => { bootstrapMaintenance.start(); });
     server.addHook("preClose", async () => { await bootstrapMaintenance.stop(); });
   }
-  return { stop: async () => { await Promise.all([stop(), appKeys.stop(), proposalMaintenance?.stop(), bootstrapMaintenance?.stop()]); } };
+  return { stop: async () => { await Promise.all([stop(), stopNaming(), appKeys.stop(), proposalMaintenance?.stop(), bootstrapMaintenance?.stop()]); } };
 }

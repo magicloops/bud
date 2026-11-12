@@ -5,6 +5,8 @@ import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-types'
 import { apiFetchJson, isApiError } from '@/lib/transport'
+import { describeTrigger } from '@/lib/automation-schedule'
+import { usePlaces } from '@/lib/places'
 
 const button = 'rounded border px-3 py-2 disabled:opacity-50'
 type Decision = { decision: 'approve' | 'decline'; expected_version: number; idempotency_key: string }
@@ -12,6 +14,7 @@ type Decision = { decision: 'approve' | 'decline'; expected_version: number; ide
 /** Parent must key by authenticated owner and proposal ID. No mutation occurs on mount. */
 export function AutomationProposalReview({ id, onResolved }: { id: string; onResolved?: () => void }) {
   const [proposal, setProposal] = useState<ApiAutomationProposal | ApiBootstrapProposal | null>(null)
+  const { names: placeNames } = usePlaces(['place.arrived', 'place.departed', 'visit.ended'].includes(proposal?.definition.event_type ?? ''))
   const [enabled, setEnabled] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -80,12 +83,12 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
       <p className="text-sm font-semibold">{automationReviewOperation(proposal)}</p>
       <h3 className="font-semibold">{proposal.definition.name}</h3>
       <p className="line-clamp-2 text-sm whitespace-pre-wrap">{proposal.definition.instruction}</p>
-      <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : 'New contacts only'} · {automationReviewDestination(proposal)} · Up to {proposal.definition.max_invocations_per_day}/day</p>
+      <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : describeTrigger(proposal.definition, placeNames)} · {automationReviewDestination(proposal)} · Up to {proposal.definition.max_invocations_per_day}/day</p>
       <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.length ? proposal.definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : scope === 'health.read' ? 'Health' : 'Collected location').join(', ') : 'No personal data'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
       <div className="review-actions">
       {proposal.status === 'pending' && !uncertain && <button className="review-deny" disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button>}
       <ReviewDetails title="Automation details">
-        <AutomationProposalSummary proposal={proposal} />
+        <AutomationProposalSummary proposal={proposal} placeNames={placeNames} />
         <Link className="underline" to="/automations" search={{ rule: proposal.automation_id }}>Adjust settings</Link>
         <p>Edits require a new review before enabling. Closing details makes no decision.</p>
       </ReviewDetails>

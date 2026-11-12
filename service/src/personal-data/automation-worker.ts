@@ -2,12 +2,18 @@ import { AutomationMatcher } from "./automation-matcher.js";
 import { AutomationAdmission } from "./automation-admission.js";
 import { BootstrapAdmission } from "./bootstrap-admission.js";
 import { AutomationScheduler } from "./automation-scheduler.js";
+import { PlacePresence } from "./place-presence.js";
 
-type Work = { matchNext(): Promise<boolean>; scheduleDue?(): Promise<boolean>; admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
+type Work = { settleDepartures?(): Promise<boolean>; matchNext(): Promise<boolean>; scheduleDue?(): Promise<boolean>;
+  admitLive(): Promise<boolean>; admitBootstrap(): Promise<boolean> };
+
+const MATCH_BATCH = 100;
 
 function defaultWork(): Work {
   const scheduler = new AutomationScheduler();
   return {
+    // Region exits that stayed out past the settle window publish before matching.
+    settleDepartures: () => new PlacePresence().settleDepartures(),
     matchNext: () => new AutomationMatcher().matchNext(),
     scheduleDue: () => scheduler.scheduleDue(),
     admitLive: () => new AutomationAdmission().admitNext(),
@@ -51,11 +57,20 @@ export class AutomationWorker {
       // operation owns a transaction and can be retried without duplicating work.
       for (const [kind, operation] of Object.entries(this.work)) {
         if (this.stopped) break;
-        try { progressed = await operation() || progressed; }
+        try { progressed = await (kind === "matchNext" ? this.matchPending() : operation()) || progressed; }
         catch { this.reportError(`automation_${kind}_failed`); }
       }
       if (!progressed) break;
     }
+  }
+
+  /** Matches everything already published before anything is admitted, so events published
+   * together (a reading's departure and arrival, or a visit's departure and end) are pending
+   * together and form one run. Bounded, so a large contact import still lets admission run. */
+  private async matchPending() {
+    let matched = false;
+    for (let count = 0; count < MATCH_BATCH && !this.stopped && await this.work.matchNext(); count++) matched = true;
+    return matched;
   }
 
   async stop() {

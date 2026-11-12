@@ -667,9 +667,15 @@ export class AgentModelRunner {
       case "timeline_query":
       case "health_workouts":
       case "health_sleep":
+      case "location_recent":
+      case "location_visits":
+      case "places_list":
+      case "places_create":
+      case "places_nearby":
+      case "place_details":
         return { type: "tool_call", tool: toolCall.name, callId: toolCall.id,
           args: Object.fromEntries(Object.entries(args).filter(([key, value]) =>
-            value !== null || !["search", "visibility", "limit", "cursor", "activity_type", "timezone", "order"].includes(key))) };
+            value !== null || !["search", "visibility", "limit", "cursor", "activity_type", "timezone", "order", "kind"].includes(key))) };
       case "terminal_send":
         return {
           type: "tool_call",

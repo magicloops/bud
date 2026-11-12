@@ -11,7 +11,7 @@ export const AUTOMATION_LIMITS = {
 } as const;
 
 /** Trigger types a definition may use. Each type has its own filter fields. */
-export const AUTOMATION_EVENT_TYPES = ["contact.added", "schedule"] as const;
+export const AUTOMATION_EVENT_TYPES = ["contact.added", "schedule", "workout.completed", "place.arrived", "place.departed", "visit.ended"] as const;
 export type AutomationEventType = typeof AUTOMATION_EVENT_TYPES[number];
 
 const identifier = z.string().min(1).max(128);
@@ -65,15 +65,61 @@ export const scheduleDefinitionSchema = z.object({
   data_access: z.object({ scopes, history_days: historyDays }).strict(),
 }).strict();
 
+/** Activity names match the health workout `activity_type` values; empty means any. */
+export const workoutFilterSchema = z.object({
+  activity_types: z.array(z.string().regex(/^[a-z_]{1,64}$/)).max(20)
+    .refine(values => new Set(values).size === values.length, "Duplicate activity types"),
+  min_duration_minutes: z.number().int().min(0).max(1440),
+}).strict();
+
+/** Runs for each newly recorded workout (never the initial import). HealthKit delivers
+ * about hourly and uploads can lag, so workouts older than max_event_age_seconds
+ * (measured from the workout's end) are suppressed instead of starting stale runs. */
+export const workoutCompletedDefinitionSchema = z.object({
+  event_type: z.literal("workout.completed"),
+  ...common,
+  workout_filter: workoutFilterSchema,
+  max_event_age_seconds: z.number().int().min(300).max(604_800),
+  data_access: z.object({
+    scopes: scopes.refine(values => values.includes("health.read"), "Health access is required"),
+    history_days: historyDays,
+  }).strict(),
+}).strict();
+
+const placeIds = z.array(identifier).max(20).refine(values => new Set(values).size === values.length, "Duplicate places");
+const locationAccess = z.object({
+  scopes: scopes.refine(values => values.includes("location.read"), "Location access is required"),
+  history_days: historyDays,
+}).strict();
+/** iOS reports visits minutes late, then uploads; stale arrivals and departures are skipped. */
+const visitEventAge = z.number().int().min(300).max(604_800);
+
+/** Runs when a visit starts (`place.arrived`) or ends (`place.departed`) at one of the places. */
+export const placeArrivedDefinitionSchema = z.object({
+  event_type: z.literal("place.arrived"), ...common,
+  place_trigger: z.object({ place_ids: placeIds.refine(values => values.length > 0, "Choose at least one place") }).strict(),
+  max_event_age_seconds: visitEventAge, data_access: locationAccess,
+}).strict();
+export const placeDepartedDefinitionSchema = placeArrivedDefinitionSchema.extend({ event_type: z.literal("place.departed") }).strict();
+
+/** Runs when any visit ends; optionally only at the listed places or after a minimum stay. */
+export const visitEndedDefinitionSchema = z.object({
+  event_type: z.literal("visit.ended"), ...common,
+  visit_filter: z.object({ place_ids: placeIds, min_duration_minutes: z.number().int().min(0).max(1440) }).strict(),
+  max_event_age_seconds: visitEventAge, data_access: locationAccess,
+}).strict();
+
 // Shape validation is not authorization. Activation/dispatch must resolve all
 // source/Bud/thread identifiers through the stored owner and current grants.
 export const automationDefinitionSchema = z.discriminatedUnion("event_type", [
-  contactAddedDefinitionSchema, scheduleDefinitionSchema,
+  contactAddedDefinitionSchema, scheduleDefinitionSchema, workoutCompletedDefinitionSchema,
+  placeArrivedDefinitionSchema, placeDepartedDefinitionSchema, visitEndedDefinitionSchema,
 ]);
 
 export type AutomationDefinition = z.infer<typeof automationDefinitionSchema>;
 export type ContactAddedDefinition = z.infer<typeof contactAddedDefinitionSchema>;
 export type ScheduleDefinition = z.infer<typeof scheduleDefinitionSchema>;
+export type WorkoutCompletedDefinition = z.infer<typeof workoutCompletedDefinitionSchema>;
 
 /** Rules without data scopes need no grant. Otherwise the grant must cover the
  * requested scopes/history and, when pinned, still be the approved version. */
@@ -83,6 +129,11 @@ export function grantCoversDefinition(grant: { version: number; scopes: string[]
   return !!grant && (pinnedVersion === undefined || grant.version === pinnedVersion) &&
     definition.data_access.scopes.every(scope => grant.scopes.includes(scope)) &&
     definition.data_access.history_days <= grant.historyDays;
+}
+
+/** Approved-history bound for a record, by its start time. */
+export function withinHistory(startAt: Date, now: Date, historyDays: number) {
+  return startAt.getTime() >= now.getTime() - historyDays * 86400_000;
 }
 
 export function requireContactDefinition(definition: AutomationDefinition): ContactAddedDefinition {

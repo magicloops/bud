@@ -1,6 +1,7 @@
 import { getCatalogEntry } from "../llm/model-catalog.js";
 import { z } from "zod";
-import { automationDefinitionSchema, contactAddedDefinitionSchema, scheduleDefinitionSchema,
+import { automationDefinitionSchema, contactAddedDefinitionSchema, scheduleDefinitionSchema, workoutCompletedDefinitionSchema,
+  placeArrivedDefinitionSchema, placeDepartedDefinitionSchema, visitEndedDefinitionSchema,
   type AutomationDefinition, type AutomationEventType } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
 
@@ -19,6 +20,14 @@ export const automationAgentDraftSchema = z.union([
   contactAddedDefinitionSchema.omit({ origin_thread_id: true }).partial().required({ name: true, instruction: true }),
   scheduleDefinitionSchema.omit({ origin_thread_id: true }).partial()
     .required({ event_type: true, name: true, instruction: true, schedule: true }),
+  workoutCompletedDefinitionSchema.omit({ origin_thread_id: true }).partial()
+    .required({ event_type: true, name: true, instruction: true }),
+  placeArrivedDefinitionSchema.omit({ origin_thread_id: true }).partial()
+    .required({ event_type: true, name: true, instruction: true, place_trigger: true }),
+  placeDepartedDefinitionSchema.omit({ origin_thread_id: true }).partial()
+    .required({ event_type: true, name: true, instruction: true, place_trigger: true }),
+  visitEndedDefinitionSchema.omit({ origin_thread_id: true }).partial()
+    .required({ event_type: true, name: true, instruction: true }),
 ]);
 
 /** Grant version, effective definition and execution identities are server-bound. */

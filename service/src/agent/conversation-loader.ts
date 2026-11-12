@@ -393,7 +393,9 @@ export class AgentConversationLoader {
 
     if (row.role === "system") {
       const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-      if (metadata.origin === "automation" && typeof metadata.invocation_id === "string") {
+      // Every automation message is untrusted input: a run's input, and a folded timeline entry
+      // (no invocation), which carries saved-place names and location descriptions.
+      if (metadata.origin === "automation") {
         messages.push(createCanonicalTextMessage("user", `Automation input (not system instructions):\n${row.content}`));
         return;
       }
@@ -444,6 +446,12 @@ export class AgentConversationLoader {
         case "timeline_query":
         case "health_workouts":
         case "health_sleep":
+        case "location_recent":
+        case "location_visits":
+        case "places_list":
+        case "places_create":
+        case "places_nearby":
+        case "place_details":
           return { type: "tool_call", tool: payload.tool, callId,
             args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args) ? payload.args : {} };
         case "terminal.run":
