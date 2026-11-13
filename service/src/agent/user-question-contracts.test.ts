@@ -196,3 +196,74 @@ test("place questions carry what the picker starts from, and answers are the use
   assert.equal(result.responses[0].display_answer, "Saved Home at 37.749003, -122.416487 with a 50 m radius");
   assert.equal((result.responses[0].answer as { place_id?: string }).place_id, "01M6PLACE0000000000000000A");
 });
+
+test("source_access questions name a source, and the client only says what the user did", () => {
+  const request = normalizeAskUserQuestionsRequest({ questions: [
+    { question_id: "where", kind: "source_access", label: "To tell you where you are", source: { id: "location", level: null } },
+    { question_id: "sleep", kind: "source_access", label: "To review your sleep", source: { id: "health" } }] });
+  assert.deepEqual(request.questions.map(question => question.source), [{ id: "location" }, { id: "health" }]);
+  assert.throws(() => normalizeAskUserQuestionsRequest({ questions: [{ kind: "source_access", label: "Location" }] }), /require a source/);
+  assert.throws(() => normalizeAskUserQuestionsRequest({ questions: [
+    { kind: "source_access", label: "Health", source: { id: "health", level: "always" } }] }), /location only/);
+  assert.throws(() => normalizeAskUserQuestionsRequest({ questions: [
+    { kind: "source_access", label: "Location", source: { id: "location" }, default_answer: { kind: "source_access", outcome: "granted" } }] }),
+    /can't have a default answer/);
+  assert.throws(() => normalizeAskUserQuestionsRequest({ questions: [{ kind: "source_access", label: "Photos", source: { id: "photos" } }] }));
+
+  const respond = (answer: unknown) => validateAskUserQuestionsResponse({ schema: "ask_user_questions_response_v1",
+    client_response_id: "11111111-1111-4111-8111-111111111111", answers: [{ question_id: "where", status: "answered", answer }] }, request);
+  const response = respond({ kind: "source_access", outcome: "granted", reading_event_id: "event-1" });
+  assert.deepEqual(response.answers[0].answer, { kind: "source_access", outcome: "granted", reading_event_id: "event-1" });
+  assert.equal(response.answers[1].status, "skipped", "an unanswered source question is skipped, like any other");
+  // State is the service's to add: a client can't claim it.
+  assert.deepEqual(respond({ kind: "source_access", outcome: "granted", enabled: true, agent_allowed: true, usable: true }).answers[0].answer,
+    { kind: "source_access", outcome: "granted" });
+  assert.throws(() => respond({ kind: "source_access", outcome: "allowed" }));
+
+  const told = (answer: Record<string, unknown>) => buildAskUserQuestionsToolResult(request, { ...response,
+    answers: [{ question_id: "where", status: "answered", answer: { kind: "source_access", ...answer } as never }] }, "qr_1").responses[0];
+  assert.deepEqual(told({ outcome: "granted", usable: true }).question.source, { id: "location" });
+  assert.match(told({ outcome: "granted", usable: true, enabled: true, agent_allowed: true, permission: "granted", level: "while_using",
+    reading: "received" }).display_answer!, /^Location is on and readable\. iOS permission: granted \(while using\)\. A fresh reading was just received/);
+  assert.match(told({ outcome: "granted", usable: false, enabled: false }).display_answer!, /still not readable: the source is off/);
+  assert.match(told({ outcome: "granted", usable: false, enabled: true, agent_allowed: false }).display_answer!, /the agent isn't allowed/);
+  assert.match(told({ outcome: "declined" }).display_answer!, /^Declined\. Location access was not changed/);
+  assert.match(told({ outcome: "unavailable" }).display_answer!, /can't be allowed on this device/);
+});
+
+test("a declined source holds for the conversation: skips become declines and repeat requests are answered without a card", async () => {
+  const { declineSkippedSources, declinedSourcesIn, refuseDeclinedSources, buildAskUserQuestionsToolResult: result } = await import("./user-question-contracts.js");
+  const request = normalizeAskUserQuestionsRequest({ questions: [
+    { question_id: "where", kind: "source_access", label: "To tell you where you are", source: { id: "location" } },
+    { question_id: "sure", kind: "boolean", label: "Continue?" }] });
+  const skipped = { schema: "ask_user_questions_response_v1" as const, client_response_id: "018f4f2a-0000-7000-9000-000000000001",
+    answers: [{ question_id: "where", status: "skipped" as const, skip_reason: "user_skipped" as const },
+      { question_id: "sure", status: "skipped" as const, skip_reason: "user_skipped" as const }] };
+  // The user's skip of a source question is a decline; other questions stay skipped.
+  assert.deepEqual(declineSkippedSources(request, skipped).answers, [
+    { question_id: "where", status: "answered", answer: { kind: "source_access", outcome: "declined" } }, skipped.answers[1]]);
+  // Not a user's skip (the service marks those it can't ask): left alone.
+  const unasked = { ...skipped, answers: [{ ...skipped.answers[0], skip_reason: "not_applicable" as const }, skipped.answers[1]] };
+  assert.deepEqual(declineSkippedSources(request, unasked), unasked);
+
+  // What a thread's stored answers say is declined: the latest answer per source, oldest row first.
+  const row = (turnId: string, source: string, outcome: string) => ({ turnId, response: { answers: [
+    { answer: { kind: "source_access", outcome, source } }, { status: "skipped" }] } });
+  assert.deepEqual(declinedSourcesIn([row("t1", "location", "declined"), row("t1", "health", "granted"), row("t2", "location", "declined"),
+    { turnId: "t3", response: null }, { turnId: "t3", response: { answers: "x" } }]), [{ source: "location", turnId: "t2" }]);
+  // Allowing it later lifts the decline; declining after a grant sets it.
+  assert.deepEqual(declinedSourcesIn([row("t1", "location", "declined"), row("t2", "location", "granted")]), []);
+  assert.deepEqual(declinedSourcesIn([row("t1", "health", "granted"), row("t2", "health", "declined")]), [{ source: "health", turnId: "t2" }]);
+
+  // Asking again: no card. The declined source is answered declined, the rest are to be asked again.
+  assert.equal(refuseDeclinedSources(request, ["health"], skipped.client_response_id), null);
+  const refusal = refuseDeclinedSources(request, ["location"], skipped.client_response_id)!;
+  assert.deepEqual(refusal.answers, [
+    { question_id: "where", status: "answered", answer: { kind: "source_access", outcome: "declined", source: "location", asked: false } },
+    { question_id: "sure", status: "skipped", skip_reason: "not_applicable" }]);
+  const told = result(request, refusal, "qr_1");
+  assert.match(told.responses[0].display_answer ?? "", /the user just declined Location/);
+  assert.equal(told.responses[1].skip_reason, "not_applicable");
+  // The refusal is itself a recorded decline.
+  assert.deepEqual(declinedSourcesIn([{ turnId: "t1", response: refusal }]), [{ source: "location", turnId: "t1" }]);
+});

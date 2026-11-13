@@ -146,7 +146,11 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
       "Ask the user one or more structured, skippable questions before continuing the current task. Use only when the answer is needed to proceed. "
       + "To save a place from an address, a business or a description, or to move or resize a saved place, ask a place question: the user "
       + "places the pin on a map, starting from your query, and the answer is the saved place (its id, coordinate and radius). Never guess or "
-      + "look up coordinates for a place; ask several places in one call.",
+      + "look up coordinates for a place; ask several places in one call. "
+      + "When a personal-data tool can't answer because access is missing (reason source_off, agent_not_allowed, or a collection state such as "
+      + "permission_not_asked or permission_denied), or the location is stale and the user wants where they are now, ask a source_access question: "
+      + "the user's phone shows a card that walks whatever is missing, each a tap by the user, and for location takes a fresh reading. Say in the "
+      + "label what it is for, e.g. \"To tell you where you are\". You cannot grant access yourself. Ask once: after a declined answer, ask again only if the user later says they want to share it (a repeat request in the same turn is refused without being shown).",
     parameters: {
       type: "object",
       properties: {
@@ -178,7 +182,7 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
               },
               kind: {
                 type: "string",
-                enum: ["boolean", "single_choice", "multi_choice", "text", "number", "place"],
+                enum: ["boolean", "single_choice", "multi_choice", "text", "number", "place", "source_access"],
               },
               label: {
                 type: "string",
@@ -218,9 +222,19 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
                 required: ["name"],
                 additionalProperties: false,
               },
+              source: {
+                type: "object",
+                description: "Required for source_access questions: the data source the user is asked to allow.",
+                properties: {
+                  id: { type: "string", enum: ["location", "health", "contacts"] },
+                  level: { type: "string", enum: ["always"], description: "Location only: also ask for background access. Use only when the task needs arrivals or visit history, not for where the user is now." },
+                },
+                required: ["id"],
+                additionalProperties: false,
+              },
               default_answer: {
                 type: "object",
-                description: "Optional typed default answer matching the question kind (not for place questions).",
+                description: "Optional typed default answer matching the question kind (not for place or source_access questions).",
               },
               multiline: { type: "boolean" },
               placeholder: { type: "string" },

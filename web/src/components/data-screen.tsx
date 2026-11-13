@@ -1,5 +1,6 @@
 import { SettingsNavigation } from './settings-layout'
 import { AppDataPermissions } from './app-data-permissions'
+import { DataSources } from './data-sources'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useAuthSession } from '@/contexts/auth-session-context'
@@ -51,7 +52,7 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
     <div className="mx-auto max-w-5xl space-y-6">
       <SettingsNavigation />
       <header className="space-y-2"><h1 className="text-2xl font-bold">{browse ? "Contacts" : "Data sources"}</h1>
-        <p className="text-muted-foreground">{browse ? "Browse the contact data received from your phone." : "Manage the data your phone shares with Bud. Connect Contacts in the mobile app under Settings → Data sources."}</p>
+        <p className="text-muted-foreground">{browse ? "Browse the contact data received from your phone." : "Choose what your phone shares with Bud. Each source is off until you turn it on; iOS permission is granted on the phone."}</p>
         <p className="text-sm text-muted-foreground">Observation times do not establish when a contact was created or where you met.</p>
       </header>
       {!browse && <>
@@ -63,9 +64,9 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
         <summary className="cursor-pointer font-semibold">App data access</summary>
         <AppDataPermissions requestId={focusedRequest} />
       </details>
-      <section aria-label="Contacts source" className="rounded border p-4 text-sm space-y-3">
-        <h2 className="text-xl font-semibold">Contacts</h2>
-        <p>Names, organizations, phone numbers and emails. To also upload postal addresses and websites, enable “Include addresses and websites” in the mobile app’s Data sources settings. Pictures and notes are not collected.</p>
+      <DataSources refresh={refresh} />
+      <section aria-label="Contacts import" className="rounded border p-4 text-sm space-y-3">
+        <h2 className="text-xl font-semibold">Contacts import</h2>
         <p className="text-muted-foreground">First import does not trigger agents. New-contact automations are managed from Settings → Automations.</p>
         {!status ? <p>{loading ? 'Checking received data…' : 'Received-data status is unavailable. Refresh to retry.'}</p> : <>
           <p role="status">{status.projection_status === 'ready' ? 'Received data has finished processing.' : status.projection_status === 'needs_reconciliation' ? 'Some received data needs attention. Open Troubleshooting below.' : 'Received data is still processing.'}</p>
@@ -82,17 +83,7 @@ function ContactsView({ browse, focusedRequest }: { browse: boolean; focusedRequ
           </details>
         </>}
       </section>
-      <section aria-label="Location source" className="rounded border p-4 text-sm space-y-3">
-        <h2 className="text-xl font-semibold">Location</h2>
-        <p>Places you visit and large moves, not a continuous track. Turn location on, and allow it all the time for background visits, in the mobile app under Data sources → Location.</p>
-        {status?.location && <p>{status.location.last_received_at ? `Last received ${time(status.location.last_received_at)}` : 'Nothing received yet'}{status.location.latest_visit_at ? ` · Latest visit ${time(status.location.latest_visit_at)}` : ''}</p>}
-      </section>
-      <section aria-label="Health source" className="rounded border p-4 text-sm space-y-3">
-        <h2 className="text-xl font-semibold">Health</h2>
-        <p>Workouts and sleep from the phone's Health app, starting with the last 30 days. Allow Health access in the mobile app; HealthKit does not tell Bud when reading is denied.</p>
-        {status?.health && <p>Workouts: {status.health.workouts_last_received_at ? `last received ${time(status.health.workouts_last_received_at)}` : 'nothing received yet'} · Sleep: {status.health.sleep_last_received_at ? `last received ${time(status.health.sleep_last_received_at)}` : 'nothing received yet'}</p>}
-      </section>
-      <div className="flex flex-wrap gap-3"><Link to="/data/contacts" className="settings-action">Browse contacts →</Link><Link to="/data/health" className="settings-action">Browse health →</Link><Link to="/data/location" className="settings-action">Browse location →</Link><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
+      <div className="flex flex-wrap gap-3"><button disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh received data</button></div>
       {error && <p role="alert">{error}</p>}
       </>}
       {browse && <>

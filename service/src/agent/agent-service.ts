@@ -81,7 +81,7 @@ import {
   markPendingAgentQuestionRequestsCanceled,
   type AcceptedQuestionResponse,
 } from "./user-question-repository.js";
-import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
+import { ASK_USER_QUESTIONS_TOOL, type AskUserQuestionsToolResult } from "./user-question-contracts.js";
 import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 import { AgentContextCompactor, type CompactContextResult } from "./context-compactor.js";
 import {
@@ -869,6 +869,7 @@ export class AgentService {
             }
             let effectiveToolCall = toolCall;
             let durableQuestionRequestId: string | null = null;
+            let settledQuestionResult: AskUserQuestionsToolResult | null = null;
             let pendingQuestionResponse:
               | ReturnType<AgentUserQuestionRegistry["register"]>
               | null = null;
@@ -886,7 +887,11 @@ export class AgentService {
                 ...toolCall,
                 request: created.request,
               };
-              if (args.executionHooks?.parkQuestion) {
+              if (created.settled) {
+                // Asked again for a source the user declined in this turn: answered at
+                // once, with no card and nothing to wait for.
+                settledQuestionResult = created.settled;
+              } else if (args.executionHooks?.parkQuestion) {
                 durableQuestionRequestId = created.row.questionRequestId;
               } else {
                 pendingQuestionResponse = this.userQuestions.register(threadId, created.row.questionRequestId);
@@ -985,6 +990,8 @@ export class AgentService {
                 result: { kind: "automation", ok: !error, error },
                 payload: { tool: effectiveToolCall.tool, call_id: effectiveToolCall.callId, args: effectiveToolCall.args,
                   kind: "automation", ok: !error, ...data, summary } };
+            } else if (isUserQuestionToolDirective(effectiveToolCall) && settledQuestionResult) {
+              execution = buildExecutedUserQuestionTool({ directive: effectiveToolCall, toolResult: settledQuestionResult });
             } else if (isUserQuestionToolDirective(effectiveToolCall)) {
               if (!pendingQuestionResponse) {
                 throw new Error("missing_pending_question_response");

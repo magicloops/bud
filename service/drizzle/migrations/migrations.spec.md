@@ -8,6 +8,25 @@ after canceling db:push's unrelated invocation constraint recreation. Exact SQL
 executes in isolated PostgreSQL migration tests; metadata is generated and unedited.
 Deploy via db:migrate before enabling the combined-create service/web release.
 
+### `0067_fast_ikaris.sql`
+
+Data sources (bud-mobile `plan/data-sources-ux`, Phase 1): generated tables
+`data_source_setting`, `data_source_setting_history` and `data_installation_source_state`,
+plus hand-written statements at the end that turn a source on for owners who already have
+stored data for it (location observations, workouts or sleep, contact scans) and record that
+in the history. New accounts have no rows, so every source starts off. Metadata is generated
+and unedited. Executed in an isolated schema by `sources.test.ts` and applied locally in one
+transaction. Deploy via `db:migrate` before the phone build that reads the switches.
+
+### `0068_chief_starbolt.sql`
+
+The access log (bud-mobile `plan/data-sources-ux`, Phase 3): generated tables
+`data_access_log` and `agent_data_grant_history`, plus one hand-written statement at the end
+that copies each owner's current agent permission into the history as its first entry, so
+the next change has something to be compared with. Metadata is generated and unedited.
+Executed in isolated schemas by `access-log.test.ts` and applied locally in one transaction.
+Additive: deploy via `db:migrate` with the service release.
+
 SQL migration files generated or maintained for schema evolution.
 
 ## Purpose

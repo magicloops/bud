@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, type Database } from "../db/client.js";
-import { agentDataGrantTable as grants, dataOwnerStateTable as owners } from "../db/schema.js";
+import { ulid } from "ulid";
+import { agentDataGrantHistoryTable as history, agentDataGrantTable as grants, dataOwnerStateTable as owners } from "../db/schema.js";
 import { DataRequestError, isRecord } from "./contracts.js";
 import { HEALTH_DATA_TYPES } from "./health.js";
 
@@ -48,6 +49,9 @@ export class DataGrants {
         updatedAt: new Date(), updatedByUserId: owner };
       if (prior) await tx.update(grants).set(next).where(eq(grants.createdByUserId, owner));
       else await tx.insert(grants).values({ createdByUserId: owner, ...next });
+      // Every version is kept (bud-mobile `plan/data-sources-ux`, Phase 3): what the agent could read, and when that changed.
+      await tx.insert(history).values({ id: ulid(), createdByUserId: owner, version: next.version, scopes: next.scopes,
+        contactFields: next.contactFields, healthTypes: next.healthTypes, historyDays: next.historyDays, changedAt: next.updatedAt });
     });
     return this.get(owner);
   }

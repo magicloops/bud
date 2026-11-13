@@ -471,6 +471,17 @@ IDs). Types live in `api-types.ts` (`ApiAutomationSchedule`,
 `usePlaces(enabled, refresh)` loads `/api/data/places` and returns the places
 and an ID-to-name map.
 
+### `data-sources.ts`
+
+Types for `GET /api/data/sources` and the text for a source card: stored counts in a fixed
+order, a phone's reported iOS permission and whether it needs attention, who can read, and
+the off note. `webAccessSteps` lists what is left for a `source_access` question as far as
+the web can tell (`allow_agent`, `turn_on`, `continue_on_phone`). For the access log (plan
+phase 3) it has the types for `recent_access`, `GET /api/data/access` and source changes, and
+their wording: who read (`accessActorName`), one actor's week (`accessGroupLine`), what was
+read (`accessOperation`), what came of it (`accessOutcome`) and a change as a sentence
+(`sourceChangeLine`). Tested in `data-sources.test.ts`.
+
 ### `location-format.ts`
 
 Visit labels shared by the location screen:

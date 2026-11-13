@@ -23,7 +23,7 @@ test("Postgres location projection and grants preserve ownership, bounded querie
   const owner = "location-test-" + randomUUID();
   t.after(async () => {
     try {
-      for (const table of [s.locationObservationTable, s.agentDataGrantTable, s.contactTable, s.contactSourceTable, s.dataProcessingJobTable, s.dataEventTable, s.dataCollectionEpochTable, s.dataInstallationTable, s.dataOwnerStateTable]) await db.delete(table).where(eq(table.createdByUserId, owner));
+      for (const table of [s.dataAccessLogTable, s.agentDataGrantHistoryTable, s.locationObservationTable, s.agentDataGrantTable, s.contactTable, s.contactSourceTable, s.dataProcessingJobTable, s.dataEventTable, s.dataCollectionEpochTable, s.dataInstallationTable, s.dataOwnerStateTable]) await db.delete(table).where(eq(table.createdByUserId, owner));
       await db.delete(s.authUserTable).where(eq(s.authUserTable.id, owner));
     } finally { await pool.end(); }
   });

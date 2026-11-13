@@ -4,6 +4,9 @@ import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries, locationWindow } from "./location.js";
 import { HealthQueries, healthWindow } from "./health.js";
 import { DataRequestError } from "./contracts.js";
+import { DataSources, sourcesOfScopes } from "./sources.js";
+import { AccessLog, countRecords, queryWindow } from "./access-log.js";
+import type { DataScope } from "./grants.js";
 
 const page = { limit: z.number().int().min(1).max(100).optional(), cursor: z.string().max(600).optional() };
 const contactId = z.string().min(1).max(128);
@@ -22,28 +25,50 @@ const schemas = {
 type Query = keyof typeof schemas;
 type Location = Awaited<ReturnType<LocationQueries["list"]>>["items"][number];
 
+function requiredScopes(operation: Query): DataScope[] {
+  return operation === "timeline_query" || operation === "location_recent" || operation === "location_visits" ? ["location.read"]
+    : operation === "location_context" ? ["contacts.read", "location.read"] : operation.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+}
+
 /** Query-key entry point, intentionally independent from first-party/agent grants. */
 export class AppDataQueries {
   constructor(private readonly keys: Pick<AppKeys, "authenticate" | "confirmCurrent"> = new AppKeys(),
     private readonly contacts: Pick<ContactQueries, "list" | "get" | "history"> = new ContactQueries(),
     private readonly locations: Pick<LocationQueries, "list" | "contactContext" | "visits" | "recent"> = new LocationQueries(),
     private readonly now = () => new Date(),
-    private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries()) {}
+    private readonly health: Pick<HealthQueries, "workouts" | "sleep"> = new HealthQueries(),
+    private readonly sources: Pick<DataSources, "requireOn"> = new DataSources(),
+    private readonly log: Pick<AccessLog, "record" | "recordQuietly"> = new AccessLog()) {}
 
+  /** Every request by a valid key is in the access log (plan phase 3), refused or not. */
   async execute(credential: unknown, operation: Query, input: unknown) {
     const authority = await this.keys.authenticate(credential);
     const parsed = schemas[operation]?.safeParse(input);
     if (!parsed?.success) throw new DataRequestError(400, "invalid_app_data_query", "Invalid app data query");
-    const required = operation === "timeline_query" || operation === "location_recent" || operation === "location_visits" ? ["location.read"] : operation === "location_context"
-      ? ["contacts.read", "location.read"] : operation.startsWith("health_") ? ["health.read"] : ["contacts.read"];
+    const entry = { owner: authority.owner, actor: { kind: "app" as const, ref: authority.keyId }, sources: sourcesOfScopes(requiredScopes(operation)),
+      operation, window: queryWindow(parsed.data), policyVersion: authority.version };
+    try {
+      const result = await this.read(authority, operation, parsed.data);
+      // Written before the result is returned: a read that can't be logged isn't delivered.
+      await this.log.record({ ...entry, recordCount: countRecords(result.data) });
+      return result;
+    } catch (error) {
+      if (error instanceof DataRequestError) await this.log.recordQuietly({ ...entry, outcome: error.code });
+      throw error;
+    }
+  }
+
+  private async read(authority: Awaited<ReturnType<AppKeys["authenticate"]>>, operation: Query, args: unknown) {
+    const required = requiredScopes(operation);
     const healthType = operation === "health_workouts" ? "workouts" : operation === "health_sleep" ? "sleep" : null;
     if (!required.every(scope => (authority.policy.scopes as string[]).includes(scope))
       || (healthType && !authority.policy.health_types.includes(healthType)))
       throw new DataRequestError(403, "app_data_scope_required", "This app was not granted the requested data scope");
+    // A source that is off can't be read by apps either; the key is left as it was.
+    await this.sources.requireOn(authority.owner, required as DataScope[]);
     const since = new Date(this.now().getTime() - authority.policy.history_days * 86400_000);
     const policy = { observedSince: since, cursorBinding: `app:${authority.keyId}:${authority.version}`,
       contactFields: authority.policy.contact_fields };
-    const args = parsed.data;
     const rounded = authority.policy.location_precision === "rounded_2_decimals";
     // Rounded keys get 2-decimal coordinates and the city/region only: no street address and no specific place.
     const restrict = (row: { coordinate: { lat: number; lon: number }; horizontal_accuracy_m: number;
@@ -107,6 +132,7 @@ export class AppDataQueries {
         data = { ...result, evidence: result.evidence ? location(result.evidence) : null };
       }
     }
+    await this.sources.requireOn(authority.owner, required as DataScope[]);
     await this.keys.confirmCurrent(authority);
     return { data, permission: { key_id: authority.keyId, version: authority.version,
       ...authority.policy, observed_since: since.toISOString() },

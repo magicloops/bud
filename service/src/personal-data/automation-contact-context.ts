@@ -5,6 +5,7 @@ import type { Invocation } from "../agent/invocation-repository.js";
 import { ContactQueries, LEGACY_CONTACT_FIELDS, type ContactField } from "./contact-queries.js";
 import { automationDefinitionSchema, parseAutomationInput, requireContactDefinition } from "./automation-contracts.js";
 import { DataRequestError } from "./contracts.js";
+import { AccessLog } from "./access-log.js";
 import { automationWorkoutContext } from "./automation-workout-context.js";
 import { automationVisitContext } from "./automation-visit-context.js";
 
@@ -16,8 +17,21 @@ export async function automationStartEvidence(tx: Transaction, invocation: Invoc
     eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, invocation.createdByUserId),
     isNotNull(deliveries.scheduledFor))).limit(1);
   if (scheduled) return null;
-  return await automationWorkoutContext(tx, invocation) ?? await automationVisitContext(tx, invocation)
-    ?? automationContactContext(tx, invocation);
+  const workout = await automationWorkoutContext(tx, invocation);
+  const visit = workout ? null : await automationVisitContext(tx, invocation);
+  const evidence = workout ?? visit ?? await automationContactContext(tx, invocation);
+  // Copying evidence into a run is a read of that source by the automation (access log, plan
+  // phase 3). Written in the start's transaction: evidence that isn't logged isn't delivered.
+  // Workout evidence logs itself: it can include location as well.
+  if (evidence && !workout) {
+    const rules = await tx.selectDistinct({ id: deliveries.automationId }).from(deliveries).where(and(
+      eq(deliveries.invocationId, invocation.id), eq(deliveries.createdByUserId, invocation.createdByUserId)));
+    for (const rule of rules)
+      await new AccessLog().record({ owner: invocation.createdByUserId,
+        actor: { kind: "automation", ref: rule.id, threadId: invocation.threadId, turnId: invocation.turnId },
+        sources: [visit ? "location" : "contacts"], operation: "trigger_evidence", recordCount: 1 }, tx);
+  }
+  return evidence;
 }
 
 /** Caller holds owner + invocation locks and has checked current automation policy. */

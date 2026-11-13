@@ -137,7 +137,29 @@ retain their own surface background.
 Owner-remounted source/access management and the separate Contacts browser.
 Management loads status without fetching contact inventory; browsing uses existing
 owner-scoped search/detail/history/location APIs. Agent grants retain immediate
-versioned saves. Future data types are explicitly unavailable.
+versioned saves. Future data types are explicitly unavailable. The per-source
+sections are `data-sources.tsx`; this file keeps the Contacts import status and
+troubleshooting.
+
+### `data-sources.tsx`
+
+One card per data source from `GET /api/data/sources` (bud-mobile
+`plan/data-sources-ux`): the account's switch (`PUT /api/data/sources/:source`, kept at
+the last confirmed value on failure), what is stored, each phone's iOS permission as it
+last reported (read-only: permission is changed on the phone), who can read, and a browse
+link. Text comes from `lib/data-sources.ts`.
+
+Each card also has "Read in the last week" (plan phase 3): the document's `recent_access`
+groups, with a link to the conversation an agent's reads happened in. "Show every read and
+change" loads `GET /api/data/access?source=` a page at a time into a table (when, who, what,
+result) and `GET /api/data/sources/:source/changes` into a list. The log holds no content,
+so neither does the table.
+
+`workbench/question-request-card.tsx` renders `source_access` questions
+(`SourceAccessControl`): the agent's permission and the source's switch are changed in
+place, one click each; when no phone has reported that it can collect, it says to continue
+on the iPhone and shows each phone's reported state. Once nothing is left that the web can
+see, the answer is `granted`; the service checks it on submit.
 
 ### `app-data-permissions.tsx`
 

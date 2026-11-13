@@ -1672,6 +1672,89 @@ export const agentDataGrantTable = pgTable("agent_data_grant", {
   updatedByUserId: text("updated_by_user_id").notNull().references(() => authUserTable.id),
 });
 
+// Data sources (bud-mobile `plan/data-sources-ux`). The account-level switch per source: off stops
+// collection on the owner's phones, rejects that source's events at ingest and blocks agent and
+// app reads; what was already stored is kept. No row means off.
+export const dataSourceSettingTable = pgTable("data_source_setting", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  source: text("source").notNull(), enabled: boolean("enabled").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  // Which client changed it: `ios`, `web`, or `migration`.
+  changedBy: text("changed_by").notNull(),
+}, t => ({
+  pk: primaryKey({ name: "data_source_setting_pk", columns: [t.createdByUserId, t.source] }),
+  sourceCheck: check("data_source_setting_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+}));
+
+// Every change to a switch, appended.
+export const dataSourceSettingHistoryTable = pgTable("data_source_setting_history", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  source: text("source").notNull(), enabled: boolean("enabled").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  changedBy: text("changed_by").notNull(),
+}, t => ({
+  ownerIdx: index("data_source_setting_history_owner_idx").on(t.createdByUserId, t.source, t.changedAt),
+}));
+
+// The access log (bud-mobile `plan/data-sources-ux`, Phase 3): one row per read of a source, kept
+// so the user can see what read their data, when, and on whose behalf. Append-only and
+// content-free: counts and time windows, never coordinates, names or field values. Thread and
+// actor references aren't foreign keys: the log outlives what it refers to.
+export const dataAccessLogTable = pgTable("data_access_log", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  // `agent`, `automation`, `app`, `processor` (a third party the service sends data to).
+  actorKind: text("actor_kind").notNull(),
+  // The thread for an agent, the automation, the app key, or the processor's name.
+  actorRef: text("actor_ref").notNull(),
+  // The conversation and turn the read happened in, when there is one (agent, automation runs,
+  // and lookups made for them).
+  threadId: text("thread_id"), turnId: text("turn_id"),
+  source: text("source").notNull(), operation: text("operation").notNull(),
+  windowFrom: timestamp("window_from", { withTimezone: true }), windowTo: timestamp("window_to", { withTimezone: true }),
+  recordCount: integer("record_count"), policyVersion: integer("policy_version"),
+  // `ok`, or the code the read was refused with.
+  outcome: text("outcome").notNull().default("ok"),
+}, t => ({
+  sourceIdx: index("data_access_log_source_idx").on(t.createdByUserId, t.source, t.at),
+  actorIdx: index("data_access_log_actor_idx").on(t.createdByUserId, t.actorKind, t.actorRef, t.at),
+  actorCheck: check("data_access_log_actor_check", sql`${t.actorKind} in ('agent', 'automation', 'app', 'processor')`),
+  sourceCheck: check("data_access_log_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+}));
+
+// Every version of the agent's data permission, appended when it changes.
+export const agentDataGrantHistoryTable = pgTable("agent_data_grant_history", {
+  id: text("id").primaryKey(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  version: integer("version").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().notNull(), contactFields: jsonb("contact_fields").$type<string[]>().notNull(),
+  healthTypes: jsonb("health_types").$type<string[]>().notNull(), historyDays: integer("history_days").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerIdx: index("agent_data_grant_history_owner_idx").on(t.createdByUserId, t.changedAt),
+  versionKey: unique("agent_data_grant_history_version_key").on(t.createdByUserId, t.version),
+}));
+
+// What each phone last reported about a source: its iOS permission, never content. Keyed by the
+// phone's own installation ID, which may not have uploaded anything yet (a denied source sends
+// nothing, which is why the phone reports this).
+export const dataInstallationSourceStateTable = pgTable("data_installation_source_state", {
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  installationId: text("installation_id").notNull(), source: text("source").notNull(),
+  permission: text("permission").notNull(), level: text("level"),
+  caveats: jsonb("caveats").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  askedAt: timestamp("asked_at", { withTimezone: true }),
+  reportedAt: timestamp("reported_at", { withTimezone: true }).notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  pk: primaryKey({ name: "data_installation_source_state_pk", columns: [t.createdByUserId, t.installationId, t.source] }),
+  sourceCheck: check("data_installation_source_state_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+  permissionCheck: check("data_installation_source_state_permission_check",
+    sql`${t.permission} in ('not_asked', 'granted', 'denied', 'restricted', 'unknowable')`),
+}));
+
 export const agentInvocationStatusValues = [
   "pending", "retry_wait", "leased", "waiting_for_bud", "waiting_for_model",
   "running", "waiting_for_user", "succeeded", "failed", "canceled", "expired", "needs_review",

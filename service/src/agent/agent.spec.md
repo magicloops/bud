@@ -973,7 +973,7 @@ From `../config.js`:
 ## Personal-data query integration
 
 - `personal-data-tools.ts`: canonical schemas for contact search/history, contact-location context and the location timeline. Descriptions state consent, uncertainty and imported-data boundaries; service-only queries remain in the offline catalog.
-- `personal-data-tool-executor.ts`: validates thread and Bud ownership before the grant-aware adapter and again after the query/ceiling check, withholding results if ownership changes or the thread is deleted. Propagates cancellation through the final check and returns structured consent/query failures without raw database errors.
+- `personal-data-tool-executor.ts`: validates thread and Bud ownership before the grant-aware adapter and again after the query/ceiling check, withholding results if ownership changes or the thread is deleted. Propagates cancellation through the final check and returns structured consent/query failures without raw database errors. Every call for an owned thread is written to the access log (`personal-data/access-log.ts`): a successful result is logged before it is returned and withheld if the log can't be written; a refusal is logged with its code.
 - `personal-data-tools.test.ts`: offline catalog/parser/replay checks, executor authorization/error/cancellation tests, ownership-loss-during-read and final-check cancellation fixtures, and an agent-loop fixture proving result delivery to the next model step with owner attribution. Provider calls and persistence are mocked in that loop fixture.
 
 Contracts, model parsing, execution, transcript serialization and conversation reload support the four underscore tool names. Query arguments cannot choose an owner; provider-strict optional nulls normalize to omitted options. Live results have `kind: "personal_data"` and `ok`; canonical messages retain the approved result and permission version. Queries require the current owner-wide data grant, and delivery rechecks that version. This adds no daemon protocol or terminal permission restriction. Real-provider and cross-client validation remain phase gates.
@@ -1680,3 +1680,38 @@ The automation definition accepts `place.arrived` and `place.departed` with
 are a 1-hour maximum age for arrive/leave and 6 hours for visit-ended, with
 Location access. Provider-strict nulls for `place_trigger` and `visit_filter`
 are dropped.
+
+## Source access questions (bud-mobile `plan/data-sources-ux`, Phase 2)
+
+`ask_user_questions` has a question kind `source_access` with `source: { id, level? }`
+(`location` | `health` | `contacts`; `level: "always"` for location only). It is how the agent
+asks for a data source it can't use; there is no separate tool, so parking, resumption,
+supersede and durability are the question machinery's. The phone renders it as a card that walks
+what is missing, each a tap by the user; the web handles the agent's permission and the switch
+and hands iOS permission to the phone.
+
+- `user-question-contracts.ts`: the kind, `normalizeSource` (a source is required; no default
+  answer; `level` only for location) and the client answer `{ kind, outcome, reading_event_id? }`
+  (`outcome`: `granted` | `declined` | `unavailable`). Extra fields from a client are dropped.
+- `user-question-repository.ts`: `settleSourceAnswers` runs in the answer's transaction after
+  `savePlaceAnswers` and adds what the service holds: `enabled`, `agent_allowed`, `usable`
+  (both true), the phone's reported `permission`, `level` and `caveats`, and `reading`
+  (`received` | `not_received`) when the answer names a reading. `awaitReadings` waits up to 5 s
+  before the transaction for that reading to be stored and projected, so the agent's next
+  `location_recent` sees it. The `display_answer` tells the agent what to do next (query now;
+  still not readable and why; declined, don't ask again).
+- `tool-definitions.ts` and `default-system-prompt.md` (PERSONAL DATA ACCESS): when to ask,
+  once, and not after a decline.
+- **A decline stops the agent asking again in that turn.** A source question the user skips is
+  recorded as answered `declined` (`declineSkippedSources`; only for an answer the user sent, so
+  a question superseded by a follow-up message stays skipped and is not a decline).
+  `sourceDeclines(threadId)` reads the thread's answered question rows oldest first; the latest
+  answer per source decides. `createAgentQuestionRequest` answers a request for the source made
+  in the same turn as the decline at once, with no card and no wait: the row is stored
+  `answered` with no `answered_by_user_id`, the source question as `declined` with
+  `asked: false`, and any other question in the request as skipped (`not_applicable`) to be
+  asked again without it. A turn is one input message, so once the user has written again the
+  agent may ask again; the prompt tells it to do so only when the user says they want to share
+  the source. A decline changes no access: reads are decided by the switch and the agent's
+  permission alone, so declining a fresh reading or an upgrade leaves existing access as it was.
+- No push is sent when a question opens.

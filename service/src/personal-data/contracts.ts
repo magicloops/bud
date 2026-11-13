@@ -14,6 +14,8 @@ export class DataRequestError extends Error {
     message: string,
     readonly retryable = false,
     readonly retryAfterSeconds = 0,
+    /** Content-free facts for the caller, e.g. which source is off. */
+    readonly details?: Record<string, unknown>,
   ) { super(message); }
 }
 

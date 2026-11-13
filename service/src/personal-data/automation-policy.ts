@@ -40,7 +40,7 @@ export async function loadAutomationDataCeiling(threadId: string, owner: string,
   if (!revision) throw new DataRequestError(403, "automation_authority_lost", "Automation data permission is no longer available");
   const definition = parseAutomationInput(automationDefinitionSchema, revision.definition);
   return { scopes: definition.data_access.scopes, historyDays: definition.data_access.history_days,
-    grantVersion: revision.grantVersion, binding: `${current.invocation.id}:${current.invocation.fence}:${revision.automationId}:${revision.revision}` };
+    grantVersion: revision.grantVersion, automationId: revision.automationId, binding: `${current.invocation.id}:${current.invocation.fence}:${revision.automationId}:${revision.revision}` };
 }
 
 /** Current authority for a persisted run; caller separately checks thread/Bud ownership. A

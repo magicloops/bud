@@ -17,6 +17,7 @@ test("agent field choices persist with legacy defaults, owner isolation and vers
   try {
     await client.query("CREATE TEMP TABLE agent_data_grant (LIKE public.agent_data_grant INCLUDING ALL)");
     await client.query("CREATE TEMP TABLE data_owner_state (LIKE public.data_owner_state INCLUDING ALL)");
+    await client.query("CREATE TEMP TABLE agent_data_grant_history (LIKE public.agent_data_grant_history INCLUDING ALL)");
     const grants = new DataGrants(drizzle(client, { schema }));
     const legacy = ["names", "organization", "phones", "emails"];
     assert.deepEqual((await grants.get("alice")).fields, legacy);
@@ -53,6 +54,10 @@ test("agent field choices persist with legacy defaults, owner isolation and vers
     assert.equal(empty.version, 4);
     const rows = await client.query("SELECT created_by_user_id, updated_by_user_id, contact_fields FROM agent_data_grant");
     assert.deepEqual(rows.rows, [{ created_by_user_id: "alice", updated_by_user_id: "alice", contact_fields: [] }]);
+    // Every version is kept, in order, with what it allowed.
+    const history = await client.query("SELECT version, scopes, history_days FROM agent_data_grant_history WHERE created_by_user_id = 'alice' ORDER BY version");
+    assert.deepEqual(history.rows.map(row => row.version), [...Array(empty.version).keys()].map(index => index + 1));
+    assert.deepEqual(history.rows.at(-1), { version: 4, scopes: ["contacts.read"], history_days: 30 });
   } finally {
     client.release(); await pool.end();
   }

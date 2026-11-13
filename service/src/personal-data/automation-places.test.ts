@@ -35,7 +35,7 @@ test("visits at saved places publish arrival, departure and visit end once, matc
     "location_observation", "location_visit", "location_visit_name", "place", "place_presence", "place_presence_event",
     "health_workout", "data_domain_event",
     "automation", "automation_revision", "automation_delivery", "automation_bootstrap", "automation_bootstrap_member", "automation_bootstrap_group",
-    "agent_invocation", "agent_invocation_action", "agent_data_grant", "bud", "thread", "message", "browser_handoff"])
+    "agent_invocation", "agent_invocation_action", "agent_data_grant", "agent_data_grant_history", "data_access_log", "bud", "thread", "message", "browser_handoff"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
 
   const owner = "place-owner", budId = "bud", originThread = randomUUID();

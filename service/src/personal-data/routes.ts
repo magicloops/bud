@@ -23,6 +23,8 @@ import { parseBatch } from "./parser.js";
 import { DailyDiagnosticsBudget, DeviceDiagnostics, DIAGNOSTICS_LIMITS, parseDiagnostics } from "./diagnostics.js";
 import { PostgresIngestRepository, type IngestRepository } from "./repository.js";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
+import { AccessLog, GEOAPIFY } from "./access-log.js";
+import { DataSources } from "./sources.js";
 import { AutomationProposals } from "./automation-proposals.js";
 import { registerAutomationProposalRoutes } from "./automation-proposal-routes.js";
 import { AutomationProposalMaintenance } from "./automation-proposal-maintenance.js";
@@ -37,6 +39,8 @@ type Dependencies = {
   healthQueries?: Pick<HealthQueries, "workouts" | "sleep">;
   places?: Pick<Places, "list" | "create" | "update" | "delete">;
   grants?: DataGrants;
+  /** Data source switches and phone state; injectable for route tests. */
+  sources?: Pick<DataSources, "document" | "set" | "report" | "enabled">;
   automations?: Pick<Automations, "list" | "get" | "history" | "create" | "update" | "pause" | "activate" | "delete">;
   automationActivationEnabled?: boolean;
   appKeysEnabled?: boolean;
@@ -55,13 +59,16 @@ type Dependencies = {
   mapsKey?: MapKitKey;
   /** Place search (default Geoapify from config); injectable for route tests. */
   placeSearch?: Pick<Geoapify, "search">;
+  accessLog?: Pick<AccessLog, "list" | "changes" | "recordQuietly" | "recent" | "appReads">;
   /** Device diagnostics storage and the daily budget; injectable for route tests. */
   deviceDiagnostics?: Pick<DeviceDiagnostics, "store" | "delete">;
   diagnosticsBudget?: DailyDiagnosticsBudget;
 };
 
 export async function registerPersonalDataRoutes(server: FastifyInstance, dependencies: Dependencies = {}) {
-  const repository = dependencies.repository ?? new PostgresIngestRepository();
+  const accessLog = dependencies.accessLog ?? new AccessLog();
+  const sources = dependencies.sources ?? new DataSources(undefined, undefined, accessLog);
+  const repository = dependencies.repository ?? new PostgresIngestRepository(undefined, undefined, sources);
   const queries = dependencies.queries ?? new ContactQueries();
   const locationQueries = dependencies.locationQueries ?? new LocationQueries();
   const healthQueries = dependencies.healthQueries ?? new HealthQueries();
@@ -156,7 +163,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
     app.setErrorHandler((error, request, reply) => {
       if (error instanceof DataRequestError) {
         if (error.retryAfterSeconds) reply.header("Retry-After", String(error.retryAfterSeconds));
-        return reply.code(error.statusCode).send({ error: error.code, message: error.message, retryable: error.retryable, retry_after_s: error.retryAfterSeconds });
+        return reply.code(error.statusCode).send({ error: error.code, message: error.message, retryable: error.retryable, retry_after_s: error.retryAfterSeconds, ...error.details });
       }
       // Do not log Drizzle/PG error objects: their query parameters may contain
       // raw personal-data payloads. The request ID is sufficient for correlation.
@@ -257,7 +264,11 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       if (recent.length >= PLACE_SEARCHES_PER_MINUTE)
         throw new DataRequestError(429, "place_search_rate_limited", "Too many searches; try again shortly", true, 10);
       searches.set(owner, [...recent, now]);
-      return { results: await placeSearch.search(text, near), attribution: GEOAPIFY_ATTRIBUTION };
+      const results = await placeSearch.search(text, near);
+      // A search biased towards a coordinate sends that coordinate to Geoapify (access log, plan phase 3).
+      if (near) await accessLog.recordQuietly({ owner, actor: { kind: "processor", ref: GEOAPIFY }, sources: ["location"],
+        operation: "place_search", recordCount: 1 });
+      return { results, attribution: GEOAPIFY_ATTRIBUTION };
     });
     // The web map (MapKit JS); the page passes its own origin.
     app.get<{ Querystring: { origin?: string } }>("/api/maps/token", async request =>
@@ -271,6 +282,25 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       healthQueries.sleep(viewers.get(request)!.userId, request.query));
     app.get("/api/data/agent-grant", async request => grants.get(viewers.get(request)!.userId));
     app.put("/api/data/agent-grant", async request => grants.update(viewers.get(request)!.userId, request.body));
+    // Data sources (bud-mobile `plan/data-sources-ux`): the account's switch per source, what is
+    // stored, each phone's permission state and who can read. A bearer is a phone; a cookie is web.
+    app.get("/api/data/sources", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return sources.document(viewers.get(request)!.userId);
+    });
+    app.put<{ Params: { source: string } }>("/api/data/sources/:source", { bodyLimit: 1024 }, async request =>
+      sources.set(viewers.get(request)!.userId, request.params.source, request.body, request.headers.authorization ? "ios" : "web"));
+    app.put<{ Params: { installationId: string } }>("/api/data/installations/:installationId/source-state", { bodyLimit: 4096 }, async request =>
+      sources.report(viewers.get(request)!.userId, request.params.installationId, request.body));
+    // The access log (plan phase 3): what read each source, and what changed about who may.
+    app.get<{ Querystring: Record<string, unknown> }>("/api/data/access", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return accessLog.list(viewers.get(request)!.userId, request.query);
+    });
+    app.get<{ Params: { source: string } }>("/api/data/sources/:source/changes", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return accessLog.changes(viewers.get(request)!.userId, request.params.source);
+    });
     app.get("/api/data/status", async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       return {

@@ -13,6 +13,7 @@ import { DataRequestError } from "./contracts.js";
 import Fastify from "fastify";
 import { registerAppKeyRoutes } from "./app-key-routes.js";
 import { AppDataQueries } from "./app-queries.js";
+import { AccessLog } from "./access-log.js";
 import { ContactQueries } from "./contact-queries.js";
 import { LocationQueries } from "./location.js";
 import { BudAppData } from "./app-key-backend.mjs";
@@ -31,6 +32,7 @@ test("app data approval, encrypted recovery, scoped proof and revocation are dur
   const sites = owners.map(() => "site-" + randomUUID());
   t.after(async () => {
     try {
+      await database.delete(schema.dataAccessLogTable).where(inArray(schema.dataAccessLogTable.createdByUserId, owners));
       await database.delete(schema.dataAppKeyTable).where(inArray(schema.dataAppKeyTable.createdByUserId, owners));
       await database.delete(schema.dataAccessRequestTable).where(inArray(schema.dataAccessRequestTable.createdByUserId, owners));
       await database.delete(schema.agentInvocationTable).where(inArray(schema.agentInvocationTable.createdByUserId, owners));
@@ -62,7 +64,7 @@ test("app data approval, encrypted recovery, scoped proof and revocation are dur
   const app = Fastify();
   t.after(() => app.close());
   await registerAppKeyRoutes(app, { keys: repo, issuanceEnabled: true,
-    queries: new AppDataQueries(repo, new ContactQueries(database), new LocationQueries(database)),
+    queries: new AppDataQueries(repo, new ContactQueries(database), new LocationQueries(database), undefined, undefined, { requireOn: async () => {} }, new AccessLog(database)),
     authenticate: async request => request.headers.authorization === "Bearer user-a" ? { userId: owners[0] }
       : request.headers.authorization === "Bearer user-b" ? { userId: owners[1] } : null,
   });

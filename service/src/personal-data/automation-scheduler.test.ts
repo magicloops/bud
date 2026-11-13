@@ -29,7 +29,7 @@ test("scheduled automations run the latest due window once and admit without con
   // Isolated copies keep fixture deliveries away from the running development worker.
   for (const table of ["automation", "automation_revision", "automation_delivery", "automation_bootstrap",
     "automation_bootstrap_group", "automation_bootstrap_member", "agent_invocation", "agent_invocation_action",
-    "data_owner_state", "bud", "thread", "message", "agent_data_grant", "data_domain_event", "browser_handoff"]) {
+    "data_owner_state", "bud", "thread", "message", "agent_data_grant", "agent_data_grant_history", "data_access_log", "data_domain_event", "browser_handoff"]) {
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   }
   const owner = "schedule-owner", budId = "bud", originThread = randomUUID();

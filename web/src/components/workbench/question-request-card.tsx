@@ -1,13 +1,16 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Check, CircleSlash, MapPin, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PlacePinDialog } from '@/components/place-pin-editor'
 import type {
   ApiAskUserQuestion,
+  ApiAskUserQuestionSource,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
 } from '@/lib/api-types'
+import { phonePermission, webAccessSteps, type DataSource, type DataSourcesDocument } from '@/lib/data-sources'
 import { usePlaces } from '@/lib/places'
+import { apiFetchJson } from '@/lib/transport'
 import { formatPin, placeAnswer, placeErrorMessage, placeQuestionStart, placeQuestionTitle } from '@/lib/place-pin'
 import { cn } from '@/lib/utils'
 import {
@@ -280,6 +283,8 @@ function renderQuestionControl(
       return question.place
         ? <PlaceQuestionControl question={question} place={question.place} value={value} onChange={onChange} />
         : null
+    case 'source_access':
+      return question.source ? <SourceAccessControl source={question.source} value={value} onChange={onChange} /> : null
     default:
       return (
         <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
@@ -287,6 +292,78 @@ function renderQuestionControl(
         </div>
       )
   }
+}
+
+/**
+ * A request for access to a data source. The agent's permission and the source's switch are
+ * changed here, each by a click; iOS permission (and a fresh location reading) only on the phone,
+ * where the same request shows as a card. The agent can't grant anything.
+ */
+function SourceAccessControl({ source, value, onChange }: {
+  source: ApiAskUserQuestionSource
+  value: QuestionRequestAnswerState
+  onChange: (value: QuestionRequestAnswerState) => void
+}) {
+  const [entry, setEntry] = useState<DataSource | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [reload, setReload] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    apiFetchJson<DataSourcesDocument>('/api/data/sources', { signal: controller.signal })
+      .then(document => { if (!controller.signal.aborted) setEntry(document.sources.find(item => item.id === source.id) ?? null) })
+      .catch(() => { if (!controller.signal.aborted) setMessage('Could not load this data source.') })
+    return () => controller.abort()
+  }, [source.id, reload])
+  const steps = entry ? webAccessSteps(entry) : null
+  const granted = value.answer?.kind === 'source_access' && value.answer.outcome === 'granted'
+  const remaining = steps?.length
+  useEffect(() => {
+    // Nothing left that the web can see: the answer is "allowed"; the service checks it on submit.
+    if (remaining === 0 && !granted) onChange({ status: 'answered', answer: { kind: 'source_access', outcome: 'granted' } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `onChange` is a new function each render; the answer is what matters
+  }, [remaining, granted])
+  const act = async (step: 'allow_agent' | 'turn_on') => {
+    setBusy(true); setMessage('')
+    try {
+      if (step === 'turn_on') {
+        await apiFetchJson(`/api/data/sources/${source.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true }) })
+      } else {
+        const grant = await apiFetchJson<{ version: number; scopes: string[]; history_days: number }>('/api/data/agent-grant')
+        const scope = `${source.id}.read`
+        if (!grant.scopes.includes(scope)) {
+          await apiFetchJson('/api/data/agent-grant', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: grant.version, scopes: [...grant.scopes, scope], history_days: grant.history_days }) })
+        }
+      }
+    } catch { setMessage('That did not go through. Try again.') }
+    finally { setBusy(false); setReload(count => count + 1) }
+  }
+  if (!entry || !steps) return <div className="text-[11px] text-muted-foreground">{message || 'Checking access…'}</div>
+  const name = entry.label.toLowerCase()
+  const step = steps[0]
+  return (
+    <div className="space-y-2 text-xs">
+      {step === 'allow_agent' && <>
+        <div className="text-muted-foreground">Your agent, and the model provider it uses, will be able to read your {name}.</div>
+        <Button size="sm" disabled={busy} onClick={() => void act('allow_agent')}>Let my agent read {name}</Button>
+      </>}
+      {step === 'turn_on' && <>
+        <div className="text-muted-foreground">Bud will collect {name} from your phone and keep it in your account.</div>
+        <Button size="sm" disabled={busy} onClick={() => void act('turn_on')}>Turn on {entry.label}</Button>
+      </>}
+      {step === 'continue_on_phone' && <>
+        <div>Continue on your iPhone: open Bud there and this request appears in the conversation, where iOS can ask for access.</div>
+        {entry.installations.map((phone, index) => <div key={phone.installation_id} className="text-muted-foreground">
+          Phone {index + 1}: {phonePermission(source.id, phone)}</div>)}
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => setReload(count => count + 1)}>Check again</Button>
+      </>}
+      {!step && <div className="text-muted-foreground">{entry.label} is on and your agent can read it.{source.id === 'location' ? ' For a fresh reading, answer from your phone.' : ''}</div>}
+      {steps.length > 1 && <div className="text-[11px] text-muted-foreground">{steps.length} steps left</div>}
+      {message && <div className="text-[11px] text-destructive">{message}</div>}
+    </div>
+  )
 }
 
 /** A place to pin: the chosen pin, radius and name become the answer; the service saves it on submit. */

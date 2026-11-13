@@ -5,6 +5,7 @@ import { dataOwnerStateTable as ownerState, dataInstallationTable as installatio
   locationObservationTable as locations } from "../db/schema.js";
 import { DataRequestError, type BatchResult, type IngestContext, type ParsedBatch } from "./contracts.js";
 import { HealthQueries } from "./health.js";
+import { sourceOfEventType, type DataSources } from "./sources.js";
 
 export interface IngestRepository {
   persist(context: IngestContext, batch: ParsedBatch): Promise<BatchResult>;
@@ -12,7 +13,12 @@ export interface IngestRepository {
 }
 
 export class PostgresIngestRepository implements IngestRepository {
-  constructor(private readonly database: Database = db, private readonly maxStoredBytes = 1024 * 1024 * 1024) {}
+  /**
+   * `sources`, when given, is the collection gate: events of a source that is off are rejected,
+   * not stored. The routes pass it; fixtures that exercise storage alone leave it out.
+   */
+  constructor(private readonly database: Database = db, private readonly maxStoredBytes = 1024 * 1024 * 1024,
+    private readonly sources?: Pick<DataSources, "enabled">) {}
 
   async persist(context: IngestContext, batch: ParsedBatch): Promise<BatchResult> {
     return this.database.transaction(async (tx) => {
@@ -43,7 +49,14 @@ export class PostgresIngestRepository implements IngestRepository {
       }
       const rows: (typeof event.$inferInsert)[] = [];
       let addedBytes = 0;
+      const on = this.sources ? await this.sources.enabled(context.userId, tx) : null;
       for (const e of batch.events) {
+        // A phone that hasn't learned its source was turned off: tell it, and keep nothing.
+        const source = on ? sourceOfEventType(e.eventType) : null;
+        if (source && !on!.has(source)) {
+          result.rejected.push({ line: e.line, event_id: e.eventId, code: "source_off", message: "This data source is turned off", retryable: false });
+          continue;
+        }
         if (conflicts.has(e.eventId) || (hashes.has(e.eventId) && hashes.get(e.eventId) !== e.payloadHash)) {
           result.rejected.push({ line: e.line, event_id: e.eventId, code: "event_id_conflict", message: "Event ID already identifies different content", retryable: false });
           continue;

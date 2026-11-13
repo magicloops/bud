@@ -470,6 +470,20 @@
       "when": 1794130804347,
       "tag": "0066_device_diagnostics",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794387355821,
+      "tag": "0067_fast_ikaris",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1794470963265,
+      "tag": "0068_chief_starbolt",
+      "breakpoints": true
     }
   ]
 }

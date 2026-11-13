@@ -30,7 +30,8 @@ export async function registerAppKeyRoutes(server: FastifyInstance, dependencies
   await server.register(async app => {
     app.addHook("onRequest", async (_request, reply) => { reply.header("Cache-Control", "no-store"); });
     app.setErrorHandler((error, request, reply) => {
-      if (error instanceof DataRequestError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      if (error instanceof DataRequestError) return reply.code(error.statusCode).send({ error: error.code, message: error.message,
+        ...(error.code === "source_off" ? { reason: "source_off", ...error.details } : {}) });
       const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 503;
       // Do not pass request bodies, credentials, signatures or database errors to logs.
       request.log.warn({ request_id: request.id, status_code: status }, "App data request failed");
