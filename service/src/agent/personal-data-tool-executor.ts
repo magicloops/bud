@@ -65,7 +65,11 @@ export class PersonalDataToolExecutor {
       // (plan phase 2b). The user can then fix it without the agent asking.
       const unavailable = errorCode === "source_off" ? (error as DataRequestError).details?.source
         : errorCode === "data_permission_required" ? sourcesOfScopes(scopesOfTool(directive.tool))[0] : undefined;
-      if (typeof unavailable === "string") response.unavailable_source = unavailable;
+      if (typeof unavailable === "string") {
+        response.unavailable_source = unavailable;
+        // For the model: the refusal alone reads as a dead end, and it then sends the user to settings.
+        response.next_step = "If you have data_source_request, call it now to ask the user to turn this on. Otherwise tell the user what is missing.";
+      }
     }
     return { directive, args: directive.args, summary, outputTruncationReason: null,
       result: { kind: "personal_data", ok: !errorCode, error: errorCode, retryable },

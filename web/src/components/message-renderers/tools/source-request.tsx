@@ -96,10 +96,10 @@ export function SourceRequestContent({ payload }: ToolContentRendererProps) {
       {source?.installations.length === 0 && <p className="text-muted-foreground">No phone has reported yet. Open Bud on your iPhone.</p>}
     </>}
     {!step && <p className="text-muted-foreground">{label} is on and your agent can read it.{request.source === 'location' ? ' For a fresh reading, answer from your phone.' : ''}</p>}
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <button type="button" className="underline underline-offset-4" disabled={busy} onClick={() => void respond('declined')}>Not now</button>
       {step === 'turn_on' && <button type="button" className="settings-action" disabled={busy} onClick={() => void allow()}>Turn on {label}</button>}
       {!step && <button type="button" className="settings-action" disabled={busy} onClick={() => { setActed(true); void respond('granted') }}>Use {label}</button>}
-      <button type="button" className="underline underline-offset-4" disabled={busy} onClick={() => void respond('declined')}>Not now</button>
     </div>
     {message && <p role="alert">{message}</p>}
   </div>
