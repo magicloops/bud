@@ -5,7 +5,7 @@ import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycl
 import { AutomationManagement } from "../personal-data/automation-management.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 
-type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff">>
+type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff" | "parkSourceRequest">>
   & Pick<InvocationRepository,
     | "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction"
     | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal"
@@ -201,6 +201,29 @@ export class InvocationWorker {
           parked = true;
           return request;
         },
+        // Only a turn the user started can ask them for a data source: nobody answers an automation's.
+        ...(invocation.origin === "human" && this.repository.parkSourceRequest ? { parkSourceRequest: async (callId: string, clientId: string, input: unknown) => {
+          await renew();
+          ended = true;
+          if (heartbeat) clearTimeout(heartbeat);
+          try {
+            const result = await this.repository.parkSourceRequest!(invocation, callId, clientId, input);
+            if (result.kind === "request") {
+              parked = true;
+            } else {
+              // Answered at once: nothing was parked. Continue through the ordinary result path.
+              ended = false;
+              scheduleHeartbeat();
+            }
+            return result;
+          } catch (error) {
+            if (error instanceof DataRequestError && !controller.signal.aborted) {
+              ended = false;
+              scheduleHeartbeat();
+            }
+            throw error;
+          }
+        } } : {}),
         parkAutomationProposal: async (callId, clientId, input) => {
           await renew();
           ended = true;

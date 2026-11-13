@@ -18,6 +18,7 @@ export interface AgentExecutionHooks {
   parkUserBrowserHandoff?(nextCall?:AgentToolCallDirective): ReturnType<InvocationRepository["parkUserBrowserHandoff"]>;
   parkQuestion?(directive: AgentToolCallDirective, questionRequestId: string): Promise<void>;
   parkAppDataRequest?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAppDataRequest"]>;
+  parkSourceRequest?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkSourceRequest"]>;
   parkAutomationProposal?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAutomationProposal"]>;
   parkBootstrapProposal?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkBootstrapProposal"]>;
   executeAutomationTool?(name: Exclude<AutomationToolName, "automations_request_activation" | "automations_request_existing_contacts">, callId: string, input: unknown): Promise<Record<string, unknown>>;

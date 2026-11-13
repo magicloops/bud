@@ -13,8 +13,9 @@ import { modelContextMessageCreatedAt, modelContextMessageVisible } from "./mode
 import { automationStartEvidence } from "../personal-data/automation-contact-context.js";
 import { checkAutomationPolicy } from "../personal-data/automation-policy.js";
 import { dataOwnerStateTable, automationDeliveryTable, automationBootstrapGroupTable,
-  dataAccessRequestTable as dataRequest, dataAppKeyTable as appKey, automationProposalTable as automationProposal, automationBootstrapProposalTable as bootstrapProposal } from "../db/schema.js";
+  dataAccessRequestTable as dataRequest, dataSourceRequestTable as sourceRequest, dataAppKeyTable as appKey, automationProposalTable as automationProposal, automationBootstrapProposalTable as bootstrapProposal } from "../db/schema.js";
 import { AppKeys, APP_KEY_REQUEST_TOOL, serializeAppDataRequest, serializeAppKey } from "../personal-data/app-keys.js";
+import { SourceRequests, SOURCE_REQUEST_TOOL, serializeSourceRequest, sourceRequestToolResult } from "../personal-data/source-requests.js";
 
 import { AutomationProposals, AUTOMATION_PROPOSAL_TOOL, serializeAutomationProposal } from "../personal-data/automation-proposals.js";
 
@@ -124,6 +125,21 @@ export class InvocationRepository {
       call_id: row.request.callId, request: serializeAppDataRequest(row.request), created_at: row.request.createdAt }));
   }
 
+  async pendingSourceRequestsForThread(owner: string, threadId: string) {
+    const rows = await this.database.select({ request: sourceRequest, evidence: action.evidence })
+      .from(sourceRequest).innerJoin(inv, and(eq(inv.id, sourceRequest.invocationId),
+        eq(inv.threadId, sourceRequest.threadId), eq(inv.createdByUserId, sourceRequest.createdByUserId)))
+      .innerJoin(action, and(eq(action.invocationId, inv.id), eq(action.callId, sourceRequest.callId),
+        eq(action.createdByUserId, sourceRequest.createdByUserId), eq(action.kind, SOURCE_REQUEST_TOOL),
+        eq(action.status, "waiting_for_user"), sql`${action.evidence}->>'data_source_request_id' = ${sourceRequest.id}`))
+      .where(and(eq(sourceRequest.createdByUserId, owner), eq(sourceRequest.threadId, threadId),
+        eq(sourceRequest.status, "pending"), eq(inv.reservesThread, true), isNull(inv.cancelRequestedAt)))
+      .orderBy(asc(sourceRequest.createdAt), asc(sourceRequest.id)).limit(20);
+    return rows.map(row => ({ request_id: row.request.id, turn_id: row.request.turnId,
+      client_id: typeof row.evidence?.tool_client_id === "string" ? row.evidence.tool_client_id : null,
+      call_id: row.request.callId, request: serializeSourceRequest(row.request), created_at: row.request.createdAt }));
+  }
+
   async pendingAutomationProposalsForThread(owner: string, threadId: string) {
     const rows = await this.database.select({ proposal: automationProposal, turnId: inv.turnId, evidence: action.evidence })
       .from(automationProposal).innerJoin(inv, and(eq(inv.id, automationProposal.invocationId),
@@ -192,6 +208,9 @@ export class InvocationRepository {
           .where(and(eq(browserHandoff.invocationId,wait.id),eq(browserHandoff.createdByUserId,input.owner)));
       }
     }
+    // A new message also replaces an unanswered request for a data source: the waiting turn
+    // resumes with `superseded`, finishes, and then this message runs.
+    if (input.origin === "human") await new SourceRequests(this.database).supersedeInTransaction(tx, input.owner, input.threadId);
     const id = ulid();
     const [message] = await tx.insert(messageTable).values({
       clientId: input.clientId ?? generateMessageClientId(), threadId: thread.threadId,
@@ -237,6 +256,13 @@ export class InvocationRepository {
                 on r.id = a.evidence->>'data_access_request_id'
               where a.invocation_id = agent_invocation.id and a.status = 'waiting_for_user'
                 and a.kind = ${APP_KEY_REQUEST_TOOL} and r.status <> 'pending'
+                and r.invocation_id = ${inv.id} and r.call_id = a.call_id
+                and r.thread_id = ${inv.threadId} and r.created_by_user_id = ${inv.createdByUserId}
+            ) or exists (
+              select 1 from agent_invocation_action a join data_source_request r
+                on r.id = a.evidence->>'data_source_request_id'
+              where a.invocation_id = agent_invocation.id and a.status = 'waiting_for_user'
+                and a.kind = ${SOURCE_REQUEST_TOOL} and r.status <> 'pending'
                 and r.invocation_id = ${inv.id} and r.call_id = a.call_id
                 and r.thread_id = ${inv.threadId} and r.created_by_user_id = ${inv.createdByUserId}
             ) or exists (
@@ -468,6 +494,8 @@ export class InvocationRepository {
             eq(question.createdByUserId, owner), eq(question.status, "pending")));
         await tx.update(dataRequest).set({ status: "canceled", version: sql`${dataRequest.version} + 1`, updatedAt: sql`clock_timestamp()` })
           .where(and(eq(dataRequest.invocationId, row.id), eq(dataRequest.createdByUserId, owner), eq(dataRequest.status, "pending")));
+        await tx.update(sourceRequest).set({ status: "canceled", updatedAt: sql`clock_timestamp()` })
+          .where(and(eq(sourceRequest.invocationId, row.id), eq(sourceRequest.createdByUserId, owner), eq(sourceRequest.status, "pending")));
       }
       await tx.update(automationProposal).set({ status: "canceled", version: sql`${automationProposal.version} + 1`, updatedAt: sql`clock_timestamp()` })
         .where(and(eq(automationProposal.invocationId, row.id), eq(automationProposal.createdByUserId, owner), eq(automationProposal.status, "pending")));
@@ -567,6 +595,31 @@ export class InvocationRepository {
     });
   }
 
+  /**
+   * Opens a request for a data source and parks on it, atomically. When the request is answered
+   * at once (nothing to ask, or declined earlier in this turn) nothing parks and the caller
+   * records an ordinary tool result.
+   */
+  async parkSourceRequest(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
+      throw new InvocationError("invalid_tool_client_id");
+    return invocationTimingTransaction(this.database, async tx => {
+      const row = await this.lockedLease(tx, lease, ["running"]);
+      const result = await new SourceRequests(this.database).requestInTransaction(tx,
+        { owner: lease.createdByUserId, invocationId: lease.id, callId }, input);
+      if (result.kind === "settled") return result;
+      recordInvocationChange(tx, lease.id);
+      const [intent] = await tx.update(action).set({ status: "waiting_for_user",
+        evidence: { data_source_request_id: result.request.request_id, tool_client_id: clientId } })
+        .where(and(eq(action.invocationId, row.id), eq(action.callId, callId), eq(action.fence, lease.fence),
+          eq(action.kind, SOURCE_REQUEST_TOOL), eq(action.status, "intent"))).returning();
+      if (!intent) throw new InvocationError("source_request_action_not_pending");
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true, workerId: null, leaseExpiresAt: null,
+        fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` }).where(eq(inv.id, row.id));
+      return result;
+    });
+  }
+
   async parkAutomationProposal(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
       throw new InvocationError("invalid_tool_client_id");
@@ -638,6 +691,8 @@ export class InvocationRepository {
           eq(question.createdByUserId, owner), eq(question.status, "pending")));
       await tx.update(dataRequest).set({ status: "canceled", version: sql`${dataRequest.version} + 1`, updatedAt: sql`clock_timestamp()` })
         .where(and(eq(dataRequest.invocationId, row.id), eq(dataRequest.createdByUserId, owner), eq(dataRequest.status, "pending")));
+      await tx.update(sourceRequest).set({ status: "canceled", updatedAt: sql`clock_timestamp()` })
+        .where(and(eq(sourceRequest.invocationId, row.id), eq(sourceRequest.createdByUserId, owner), eq(sourceRequest.status, "pending")));
       await tx.update(automationProposal).set({ status: "canceled", version: sql`${automationProposal.version} + 1`, updatedAt: sql`clock_timestamp()` })
         .where(and(eq(automationProposal.invocationId, row.id), eq(automationProposal.createdByUserId, owner), eq(automationProposal.status, "pending")));
       await tx.update(bootstrapProposal).set({ status: "canceled", version: sql`${bootstrapProposal.version} + 1`, updatedAt: sql`clock_timestamp()` })
@@ -721,6 +776,20 @@ export class InvocationRepository {
               proposal: serializeAutomationProposal(stored),
               summary: approved ? "The user approved this automation revision. Activation is complete; do not activate it again."
                 : "The automation proposal was not approved. Do not silently replace it or activate standing work." } };
+        } else if (pending.kind === SOURCE_REQUEST_TOOL) {
+          const requestId = pending.evidence?.data_source_request_id;
+          const clientId = pending.evidence?.tool_client_id;
+          if (typeof requestId !== "string" || typeof clientId !== "string") throw new InvocationError("source_request_reference_missing");
+          const [stored] = await tx.select().from(sourceRequest).where(and(eq(sourceRequest.id, requestId),
+            eq(sourceRequest.invocationId, current.id), eq(sourceRequest.threadId, current.threadId),
+            eq(sourceRequest.callId, pending.callId), eq(sourceRequest.createdByUserId, current.createdByUserId),
+            sql`${sourceRequest.status} <> 'pending'`));
+          if (!stored) throw new InvocationError("source_request_answer_missing");
+          const outcome = sourceRequestToolResult(stored);
+          answer = { clientId, createdAt: stored.createdAt, answeredAt: stored.answeredAt ?? stored.updatedAt,
+            evidence: { data_source_request_id: requestId, continuation_restored: true },
+            payload: { tool: SOURCE_REQUEST_TOOL, call_id: pending.callId, kind: "source_access", ok: stored.status === "granted",
+              request: serializeSourceRequest(stored), ...outcome, summary: String(outcome.next ?? "") } };
         } else if (pending.kind === APP_KEY_REQUEST_TOOL) {
           const requestId = pending.evidence?.data_access_request_id;
           const clientId = pending.evidence?.tool_client_id;
@@ -778,7 +847,7 @@ export class InvocationRepository {
           const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block,
             pending.evidence?.browser_handoff_id ? "browser"
               : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation"
-              : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question", answer.payload.runtime_replaced === true);
+              : pending.kind === APP_KEY_REQUEST_TOOL || pending.kind === SOURCE_REQUEST_TOOL ? "permission" : "question", answer.payload.runtime_replaced === true);
           const content = JSON.stringify(payload);
           const finishedAt = isQuestion ? answer.answeredAt : new Date();
           const startedAt = isQuestion ? answer.createdAt : finishedAt;

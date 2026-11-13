@@ -1,20 +1,16 @@
 import { invocationTimingTransaction, recordInvocationChange } from "./invocation-timing.js";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { agentQuestionRequestTable, placeTable } from "../db/schema.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 import { Places } from "../personal-data/places.js";
-import { DataSources, type SourceId } from "../personal-data/sources.js";
 import {
   ASK_USER_QUESTIONS_TOOL,
   ASK_USER_QUESTIONS_RESPONSE_SCHEMA,
   attachRequestIdToAskUserQuestionsRequest,
   buildAskUserQuestionsToolResult,
-  declinedSourcesIn,
-  declineSkippedSources,
-  refuseDeclinedSources,
   parseStoredAskUserQuestionsRequest,
   validateAskUserQuestionsResponse,
   type AskUserQuestionResponseAnswer,
@@ -59,22 +55,13 @@ export async function createAgentQuestionRequest(args: {
   clientId: string;
   request: AskUserQuestionsRequest;
   ownerUserId?: string | null;
-  database?: Pick<Database, "select" | "insert">;
 }): Promise<{
   row: AgentQuestionRequestRow;
   request: AskUserQuestionsRequest;
-  /** Set when the service answered at once, with no card: the request asked again for a source declined in this turn. */
-  settled?: AskUserQuestionsToolResult;
 }> {
-  const database = args.database ?? db;
   const questionRequestId = args.questionRequestId ?? createQuestionRequestId();
   const request = attachRequestIdToAskUserQuestionsRequest(args.request, questionRequestId);
-  const asksForSource = request.questions.some(question => question.kind === "source_access");
-  const refusal = asksForSource
-    ? refuseDeclinedSources(request, (await sourceDeclines(args.threadId, database))
-      .filter(decline => decline.turnId === args.turnId).map(decline => decline.source), generateMessageClientId()) : null;
-  const settled = refusal ? buildAskUserQuestionsToolResult(request, refusal, questionRequestId) : undefined;
-  const [row] = await database
+  const [row] = await db
     .insert(agentQuestionRequestTable)
     .values({
       questionRequestId,
@@ -82,33 +69,13 @@ export async function createAgentQuestionRequest(args: {
       turnId: args.turnId,
       callId: args.callId,
       clientId: args.clientId,
-      status: refusal ? "answered" : "pending",
+      status: "pending",
       request: request as unknown as Record<string, unknown>,
       createdByUserId: args.ownerUserId ?? undefined,
-      ...(refusal ? { clientResponse: refusal as unknown as Record<string, unknown>,
-        toolResult: settled as unknown as Record<string, unknown>,
-        clientResponseId: refusal.client_response_id, answeredAt: new Date() } : {}),
     })
     .returning();
 
-  return { row, request, ...(settled ? { settled } : {}) };
-}
-
-/**
- * The sources whose latest access answer in this conversation is a decline, with the turn of
- * the decline (bud-mobile `plan/data-sources-ux`, Phase 2). The agent can't ask for one again
- * in the turn it was declined in (`createAgentQuestionRequest`); in a later turn (the user has
- * spoken since) it may. A decline changes no access: what the agent can read is decided by the
- * source's switch and the agent's permission alone.
- */
-export async function sourceDeclines(threadId: string, database: Pick<Database, "select"> = db): Promise<{ source: string; turnId: string }[]> {
-  const asked = JSON.stringify({ answers: [{ answer: { kind: "source_access" } }] });
-  const rows = await database.select({ response: agentQuestionRequestTable.clientResponse, turnId: agentQuestionRequestTable.turnId })
-    .from(agentQuestionRequestTable)
-    .where(and(eq(agentQuestionRequestTable.threadId, threadId), eq(agentQuestionRequestTable.status, "answered"),
-      sql`${agentQuestionRequestTable.clientResponse} @> ${asked}::jsonb`))
-    .orderBy(asc(agentQuestionRequestTable.answeredAt), asc(agentQuestionRequestTable.questionRequestId));
-  return declinedSourcesIn(rows);
+  return { row, request };
 }
 
 export async function getAgentQuestionRequestForThread(
@@ -135,9 +102,6 @@ export async function acceptAgentQuestionResponse(args: {
   response: unknown;
   answeredByUserId: string;
 }): Promise<AcceptedQuestionResponse> {
-  // Before the transaction: let a reading the phone just uploaded be stored and projected, so
-  // the agent's next query sees it. Bounded; a late reading is reported as not received.
-  await awaitReadings(args.response, args.answeredByUserId);
   return invocationTimingTransaction(db, async (tx) => {
     const [row] = await tx
       .select()
@@ -175,10 +139,8 @@ export async function acceptAgentQuestionResponse(args: {
       throw new AgentQuestionRequestError("question_request_not_pending", 409);
     }
 
-    const owner = row.createdByUserId ?? args.answeredByUserId;
-    const response = await settleSourceAnswers(tx, owner, request,
-      await savePlaceAnswers(tx, owner, request,
-        declineSkippedSources(request, validateAskUserQuestionsResponse(args.response, request))));
+    const response = await savePlaceAnswers(tx, row.createdByUserId ?? args.answeredByUserId, request,
+      validateAskUserQuestionsResponse(args.response, request));
     const toolResult = buildAskUserQuestionsToolResult(
       request,
       response,
@@ -258,46 +220,6 @@ async function savePlaceAnswers(tx: Transaction, owner: string, request: AskUser
       if (error instanceof DataRequestError) throw new AgentQuestionRequestError(error.code, 409, error.message);
       throw error;
     }
-  }
-  return { ...response, answers };
-}
-
-/** How long an answer waits for a reading the phone uploaded just before it. */
-const READING_WAIT_MS = 5_000;
-
-async function awaitReadings(response: unknown, owner: string): Promise<void> {
-  const answers = (response as { answers?: unknown } | null)?.answers;
-  if (!Array.isArray(answers)) return;
-  const ids = answers.flatMap(entry => {
-    const id = (entry as { answer?: { kind?: unknown; reading_event_id?: unknown } } | null)?.answer;
-    return id?.kind === "source_access" && typeof id.reading_event_id === "string" && id.reading_event_id.length <= 200 ? [id.reading_event_id] : [];
-  }).slice(0, 3);
-  if (!ids.length) return;
-  const sources = new DataSources();
-  const deadline = Date.now() + READING_WAIT_MS;
-  for (const id of ids) await sources.readingArrived(owner, id, Math.max(0, deadline - Date.now()));
-}
-
-/**
- * Completes each source-access answer with what the service holds (bud-mobile
- * `plan/data-sources-ux`, Phase 2), in the answer's transaction. The client says what the user
- * did; the switch, the agent's permission and the phone's iOS permission are read here, so a
- * client can't report access that doesn't exist. `usable` is what the agent acts on.
- */
-async function settleSourceAnswers(tx: Transaction, owner: string, request: AskUserQuestionsRequest,
-  response: AskUserQuestionsResponse): Promise<AskUserQuestionsResponse> {
-  const sources = new DataSources(tx as unknown as Database);
-  const answers: AskUserQuestionResponseAnswer[] = [];
-  for (const answer of response.answers) {
-    const asked = request.questions.find(question => question.question_id === answer.question_id)?.source;
-    if (answer.status !== "answered" || answer.answer?.kind !== "source_access" || !asked) { answers.push(answer); continue; }
-    const given = answer.answer;
-    const access = await sources.access(owner, asked.id as SourceId, tx as unknown as Database);
-    const usable = access.enabled && access.agent_allowed;
-    const reading = given.reading_event_id === undefined ? undefined
-      : await sources.readingArrived(owner, given.reading_event_id, 0, tx as unknown as Database) ? "received" as const : "not_received" as const;
-    answers.push({ ...answer, answer: { kind: "source_access", outcome: given.outcome, source: asked.id, ...access, usable,
-      ...(reading ? { reading } : {}) } });
   }
   return { ...response, answers };
 }

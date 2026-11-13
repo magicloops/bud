@@ -311,7 +311,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.equal(questionsSchema.maxItems, undefined);
   assert.deepEqual(
     (questionsSchema.items?.properties?.kind as { enum?: unknown }).enum,
-    ["boolean", "single_choice", "multi_choice", "text", "number", "place", "source_access"],
+    ["boolean", "single_choice", "multi_choice", "text", "number", "place"],
   );
 });
 

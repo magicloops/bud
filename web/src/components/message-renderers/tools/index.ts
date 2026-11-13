@@ -1,4 +1,5 @@
 import { AppPermissionContent } from './app-permission'
+import { SourceRequestContent } from './source-request'
 import { BrowserHandoffContent } from './browser-handoff'
 import { WebRetrievalContent } from './web-retrieval'
 import type { ToolContentRenderer } from '../types'
@@ -27,6 +28,7 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.observe': TerminalObserveContent,
   'terminal.wait': TerminalWaitContent,
   data_request_api_key: AppPermissionContent,
+  data_source_request: SourceRequestContent,
   ask_user_questions: AskUserQuestionsContent,
   automations_request_activation: AutomationProposalContent,
   automations_request_existing_contacts: AutomationProposalContent,

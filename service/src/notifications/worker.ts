@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import { db } from "../db/client.js";
-import { pushEndpointTable, pushNotificationOutboxTable, threadReadStateTable, threadTable } from "../db/schema.js";
+import { dataSourceRequestTable, pushEndpointTable, pushNotificationOutboxTable, threadReadStateTable, threadTable } from "../db/schema.js";
 import { isMessageNewerThanWatermark } from "./attention.js";
 import { ApnsPushProvider, resolveApnsAuthority, type PushProviderSendResult } from "./apns.js";
 import { buildGenericNotificationBody } from "./payload.js";
@@ -135,7 +135,18 @@ export class PushNotificationWorker {
       return;
     }
 
-    if (
+    if (row.kind === "human_input_requested") {
+      // A request waiting on the user has no message to compare with what they've read. It is
+      // due while the request is still open and no client has shown its card.
+      const requestId = typeof row.payload?.request_id === "string" ? row.payload.request_id : null;
+      const [open] = requestId ? await db.select({ id: dataSourceRequestTable.id }).from(dataSourceRequestTable)
+        .where(and(eq(dataSourceRequestTable.id, requestId), eq(dataSourceRequestTable.status, "pending"),
+          isNull(dataSourceRequestTable.seenAt))).limit(1) : [];
+      if (!open) {
+        await this.markSuppressed(row.notificationId, "no_longer_waiting");
+        return;
+      }
+    } else if (
       threadState.lastAttentionMessageId &&
       row.messageId &&
       threadState.lastAttentionMessageId !== row.messageId
@@ -145,6 +156,7 @@ export class PushNotificationWorker {
     }
 
     if (
+      row.kind !== "human_input_requested" &&
       !isMessageNewerThanWatermark(
         threadState.lastAttentionMessageCreatedAt,
         threadState.lastAttentionMessageId,

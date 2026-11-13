@@ -59,6 +59,7 @@ import {
 	  isUserQuestionToolDirective,
       isPersonalDataToolDirective,
       isAutomationToolDirective,
+      isSourceRequestToolDirective,
 	} from "./contracts.js";
 import {
   applyRuntimeInstructions,
@@ -81,7 +82,7 @@ import {
   markPendingAgentQuestionRequestsCanceled,
   type AcceptedQuestionResponse,
 } from "./user-question-repository.js";
-import { ASK_USER_QUESTIONS_TOOL, type AskUserQuestionsToolResult } from "./user-question-contracts.js";
+import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 import { AgentContextCompactor, type CompactContextResult } from "./context-compactor.js";
 import {
@@ -275,6 +276,7 @@ export class AgentService {
     return resolveAgentToolsForEnvironment(environment, {
       browser, browserHandoff,
       appPermissions: this.appPermissionsEnabled && (hooks ? Boolean(hooks.parkAppDataRequest) : durable),
+      sourceRequests: hooks ? Boolean(hooks.parkSourceRequest) : durable,
       automations: this.automationToolsEnabled && (hooks ? Boolean(hooks.executeAutomationTool && hooks.parkAutomationProposal) : durable),
       existingContactReviews: this.existingContactReviewsEnabled && (hooks ? Boolean(hooks.parkBootstrapProposal) : durable),
     });
@@ -867,9 +869,29 @@ export class AgentService {
               this.cancellations.clear(threadId);
               return { status: "waiting_for_user" };
             }
+            // A request for a data source parks like the approvals above, unless the service
+            // answers it at once (nothing to ask, or declined earlier in this turn).
+            let sourceRequestSettled: Record<string, unknown> | null = null;
+            let sourceRequestFailure: DataRequestError | null = null;
+            if (isSourceRequestToolDirective(toolCall)) {
+              if (!args.executionHooks?.parkSourceRequest) throw new Error("source_requests_unavailable");
+              await args.executionHooks.beforeTool(toolCall);
+              if (controller.signal.aborted) throw new Error("agent_canceled");
+              try {
+                const result = await args.executionHooks.parkSourceRequest(toolCall.callId, toolClientId, toolCall.args);
+                if (result.kind === "request") {
+                  this.transcriptWriter.emitSourceRequest(threadId, turnId, toolCall.callId, toolClientId, startedAt, result.request);
+                  this.cancellations.clear(threadId);
+                  return { status: "waiting_for_user" };
+                }
+                sourceRequestSettled = result.result;
+              } catch (failure) {
+                if (!(failure instanceof DataRequestError)) throw failure;
+                sourceRequestFailure = failure;
+              }
+            }
             let effectiveToolCall = toolCall;
             let durableQuestionRequestId: string | null = null;
-            let settledQuestionResult: AskUserQuestionsToolResult | null = null;
             let pendingQuestionResponse:
               | ReturnType<AgentUserQuestionRegistry["register"]>
               | null = null;
@@ -887,11 +909,7 @@ export class AgentService {
                 ...toolCall,
                 request: created.request,
               };
-              if (created.settled) {
-                // Asked again for a source the user declined in this turn: answered at
-                // once, with no card and nothing to wait for.
-                settledQuestionResult = created.settled;
-              } else if (args.executionHooks?.parkQuestion) {
+              if (args.executionHooks?.parkQuestion) {
                 durableQuestionRequestId = created.row.questionRequestId;
               } else {
                 pendingQuestionResponse = this.userQuestions.register(threadId, created.row.questionRequestId);
@@ -918,7 +936,7 @@ export class AgentService {
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              (!isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall))
+	              (!isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall) && !isSourceRequestToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -938,7 +956,7 @@ export class AgentService {
 	                : null
 	              : null;
 
-            if (!reviewRequestFailure && !bootstrapNoWork) await args.executionHooks?.beforeTool(effectiveToolCall);
+            if (!reviewRequestFailure && !bootstrapNoWork && !isSourceRequestToolDirective(effectiveToolCall)) await args.executionHooks?.beforeTool(effectiveToolCall);
             if (controller.signal.aborted) throw new Error("agent_canceled");
             if (durableQuestionRequestId && args.executionHooks?.parkQuestion) {
               await args.executionHooks.parkQuestion(effectiveToolCall, durableQuestionRequestId);
@@ -961,6 +979,14 @@ export class AgentService {
                 this.cancellations.clear(threadId);
                 return { status: "waiting_for_user" };
               }
+            } else if (isSourceRequestToolDirective(effectiveToolCall)) {
+              const data = sourceRequestSettled ?? { error: sourceRequestFailure?.code ?? "source_request_failed", message: sourceRequestFailure?.message };
+              const ok = sourceRequestSettled?.outcome === "granted";
+              const summary = sourceRequestSettled ? String(sourceRequestSettled.next ?? "") : "The request was not made: " + String(data.error);
+              execution = { directive: effectiveToolCall, args: effectiveToolCall.args, summary, outputTruncationReason: null,
+                result: { kind: "source_access", ok, ...(sourceRequestFailure ? { error: sourceRequestFailure.code } : {}) },
+                payload: { tool: effectiveToolCall.tool, call_id: effectiveToolCall.callId, args: effectiveToolCall.args,
+                  kind: "source_access", ok, ...data, summary } };
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {
@@ -990,8 +1016,6 @@ export class AgentService {
                 result: { kind: "automation", ok: !error, error },
                 payload: { tool: effectiveToolCall.tool, call_id: effectiveToolCall.callId, args: effectiveToolCall.args,
                   kind: "automation", ok: !error, ...data, summary } };
-            } else if (isUserQuestionToolDirective(effectiveToolCall) && settledQuestionResult) {
-              execution = buildExecutedUserQuestionTool({ directive: effectiveToolCall, toolResult: settledQuestionResult });
             } else if (isUserQuestionToolDirective(effectiveToolCall)) {
               if (!pendingQuestionResponse) {
                 throw new Error("missing_pending_question_response");

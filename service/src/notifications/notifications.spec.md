@@ -80,7 +80,7 @@ Responsibilities:
 - FCM provider support is not implemented yet even though the route and schema shapes are designed to support it later.
 
 <!-- SPEC:TODO -->
-- `human_input_requested` is supported by the schema, unread math, and delivery preferences, but the service does not enqueue that kind yet. The `ask_user_questions` tool flow now exists; attention stamping and push enqueue are deferred until the prompt visibility/read-watermark boundary is finalized.
+- `human_input_requested` is enqueued only for a request for a data source (`../personal-data/source-requests.ts`, bud-mobile `plan/data-sources-ux` Phase 2b): one row per request, due 10 seconds after it opens, with the generic body and no source or purpose. The worker skips the read-watermark checks for this kind (there is no message to compare) and sends only while the request is still `pending` and no client has shown its card (`seen_at` is null); otherwise the row is suppressed as `no_longer_waiting`. `ask_user_questions`, app-key requests and automation proposals still enqueue nothing.
 
 ---
 

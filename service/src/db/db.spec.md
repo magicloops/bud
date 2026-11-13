@@ -682,3 +682,12 @@ no foreign keys to threads or actors, because a row outlives what it refers to. 
 owner + source + time and owner + actor + time. It also adds `agent_data_grant_history`: one
 row per version of the agent's permission (unique on owner + version), seeded with each
 owner's current permission.
+
+Migration `0069_motionless_reaper.sql` (bud-mobile `plan/data-sources-ux` Phase 2b) adds
+`data_source_request`: the agent's request for a data source, bound to its invocation and
+tool action (unique on invocation + call). It holds `source`, the agent's `purpose`, `level`
+(`always` or null), `status` (`pending`, `granted`, `declined`, `unavailable`, `superseded`,
+`canceled`), `settled` (what the service found when the user answered: the tool result),
+`reading_event_id`, `answered_from` (`ios`, `web`), `answered_at` and `seen_at` (when a client
+first showed the card; a seen request sends no push). An answered status requires `settled`
+and `answered_at`. A trigger publishes pending-request hints for the thread.

@@ -155,11 +155,15 @@ change" loads `GET /api/data/access?source=` a page at a time into a table (when
 result) and `GET /api/data/sources/:source/changes` into a list. The log holds no content,
 so neither does the table.
 
-`workbench/question-request-card.tsx` renders `source_access` questions
-(`SourceAccessControl`): the agent's permission and the source's switch are changed in
-place, one click each; when no phone has reported that it can collect, it says to continue
-on the iPhone and shows each phone's reported state. Once nothing is left that the web can
-see, the answer is `granted`; the service checks it on submit.
+`message-renderers/tools/source-request.tsx` renders the agent's request for a data source
+(tool `data_source_request`, plan phase 2b) as one card: the purpose in a fixed sentence, one
+button, "Turn on *Source*", which calls `POST /api/data/source-requests/:id/allow` (the switch
+and the agent's permission together), and "Not now". When no phone has reported that it can
+collect, it says to continue on the iPhone, shows each phone's reported state and polls until
+that changes. After a click, nothing left means `granted`; the service settles the answer. A
+closed request is one line with a link to Data sources. `SourceUnavailableContent` adds a
+"Turn on" link under a personal-data read refused for a setting (`unavailable_source`),
+chosen by `getToolContentRenderer(toolName, payload)`. The question form has no source kind.
 
 ### `app-data-permissions.tsx`
 

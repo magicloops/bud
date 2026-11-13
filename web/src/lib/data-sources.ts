@@ -20,7 +20,8 @@ export type AccessEntry = { id: string; at: string; source: string; operation: s
   thread: AccessThread | null; window: { from: string | null; to: string | null } | null; record_count: number | null }
 export type AccessPage = { items: AccessEntry[]; next_cursor: string | null }
 /** One change to who may read a source, from `GET /api/data/sources/:source/changes`. */
-export type SourceChange = { at: string; kind: 'switch' | 'agent' | 'agent_detail' | 'app' | (string & {}); enabled?: boolean; by?: string
+export type SourceChange = { at: string; kind: 'switch' | 'agent' | 'agent_detail' | 'app' | 'request' | (string & {}); enabled?: boolean; by?: string
+  outcome?: string; thread_id?: string
   allowed?: boolean; detail?: { history_days?: number; fields?: string[]; health_types?: string[] }; label?: string | null; action?: string }
 export type DataSourcesDocument = { sources: DataSource[] }
 
@@ -82,11 +83,11 @@ export function readersSummary(source: Pick<DataSource, 'enabled' | 'agent' | 'a
  * agent's permission and the switch can be changed here; iOS permission only on the phone, so
  * `phone` says whether some phone has reported that it can collect.
  */
-export type WebAccessStep = 'allow_agent' | 'turn_on' | 'continue_on_phone'
+export type WebAccessStep = 'turn_on' | 'continue_on_phone'
 export function webAccessSteps(source: Pick<DataSource, 'enabled' | 'agent' | 'installations'>): WebAccessStep[] {
   const steps: WebAccessStep[] = []
-  if (!source.agent.allowed) steps.push('allow_agent')
-  if (!source.enabled) steps.push('turn_on')
+  // One click covers both: the switch and the agent's permission (plan phase 2b).
+  if (!source.agent.allowed || !source.enabled) steps.push('turn_on')
   if (!source.installations.some(phone => phone.permission === 'granted' || phone.permission === 'unknowable')) steps.push('continue_on_phone')
   return steps
 }
@@ -146,6 +147,29 @@ export function sourceChangeLine(change: SourceChange): string {
     case 'agent': return change.allowed ? 'Your agent was allowed to read this' : 'Your agent’s access was removed'
     case 'agent_detail': return `Your agent’s access changed${change.detail?.history_days ? `: ${plural(change.detail.history_days, 'day', 'days')} of history` : ''}`
     case 'app': return `${change.label ?? 'An app'} was ${change.action === 'revoked' ? 'revoked' : 'approved'}`
+    case 'request': return change.outcome === 'granted' ? 'Your agent asked, and you turned this on'
+      : change.outcome === 'declined' ? 'Your agent asked, and you chose not to share' : 'Your agent asked, but the phone doesn’t allow it'
     default: return change.kind.replaceAll('_', ' ')
+  }
+}
+
+/** The agent's request for a data source (plan phase 2b), from `GET /api/data/source-requests/:id`. */
+export type SourceRequest = { request_id: string; source: string; purpose: string; level: string | null
+  status: 'pending' | 'granted' | 'declined' | 'unavailable' | 'superseded' | 'canceled' | (string & {})
+  result?: { usable?: boolean; reading?: string } | null }
+
+/** The agent's purpose in Bud's sentence. The agent writes only the part after "to". */
+export function sourceRequestPurpose(purpose: string): string {
+  const words = purpose.trim().replace(/[.!]+$/, '').replace(/^to\s+/i, '')
+  return words ? `Your agent wants this to ${words}.` : 'Your agent asked for this.'
+}
+
+/** The one line left in the conversation once a request is closed. */
+export function sourceRequestClosedLine(request: Pick<SourceRequest, 'status' | 'result'>, label: string): string {
+  switch (request.status) {
+    case 'granted': return request.result?.reading === 'received' ? `${label} shared, with a fresh reading` : `${label} turned on`
+    case 'declined': return `${label} not shared`
+    case 'unavailable': return `${label} isn’t available on the phone`
+    default: return `${label} request closed`
   }
 }

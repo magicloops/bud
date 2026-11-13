@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-o
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { agentDataGrantHistoryTable as grantHistory, automationTable as automations, dataAccessLogTable as log,
-  dataAccessRequestTable as accessRequests, dataAppKeyTable as appKeys, dataSourceSettingHistoryTable as switchHistory,
+  dataAccessRequestTable as accessRequests, dataAppKeyTable as appKeys, dataSourceRequestTable as sourceRequests, dataSourceSettingHistoryTable as switchHistory,
   threadTable as threads } from "../db/schema.js";
 import { DataRequestError } from "./contracts.js";
 import { SOURCES, SOURCE_IDS, appScopes, sourcesOfScopes, type SourceId } from "./sources.js";
@@ -57,8 +57,11 @@ export class AccessLog {
   /** Appends one row per source. Throws when it can't: a caller about to hand data over withholds it. */
   async record(entry: AccessEntry, database: Writer = this.database): Promise<void> {
     if (!entry.sources.length) return;
+    // Set here, to the millisecond: the list's cursor carries the time as a JavaScript date, so
+    // a finer database time would let a page boundary skip or repeat a row.
+    const at = new Date();
     await database.insert(log).values(entry.sources.map(source => ({
-      id: ulid(), createdByUserId: entry.owner, actorKind: entry.actor.kind, actorRef: entry.actor.ref.slice(0, 200),
+      id: ulid(), at, createdByUserId: entry.owner, actorKind: entry.actor.kind, actorRef: entry.actor.ref.slice(0, 200),
       threadId: entry.actor.threadId ?? null, turnId: entry.actor.turnId ?? null, source, operation: entry.operation.slice(0, 80),
       windowFrom: entry.window?.from ?? null, windowTo: entry.window?.to ?? null, recordCount: entry.recordCount ?? null,
       policyVersion: entry.policyVersion ?? null, outcome: (entry.outcome ?? "ok").slice(0, 80) })));
@@ -154,7 +157,11 @@ export class AccessLog {
         .from(appKeys).innerJoin(accessRequests, and(eq(accessRequests.id, appKeys.requestId), eq(accessRequests.createdByUserId, owner)))
         .where(eq(appKeys.createdByUserId, owner)).orderBy(desc(appKeys.createdAt)).limit(200),
     ]);
-    type Change = { at: Date; kind: "switch" | "agent" | "agent_detail" | "app"; [key: string]: unknown };
+    // What the agent asked for in a conversation and how the user answered (plan phase 2b). Never the purpose.
+    const asked = await this.database.select({ status: sourceRequests.status, threadId: sourceRequests.threadId, at: sourceRequests.answeredAt })
+      .from(sourceRequests).where(and(eq(sourceRequests.createdByUserId, owner), eq(sourceRequests.source, entry.id),
+        inArray(sourceRequests.status, ["granted", "declined", "unavailable"]))).orderBy(desc(sourceRequests.answeredAt)).limit(100);
+    type Change = { at: Date; kind: "switch" | "agent" | "agent_detail" | "app" | "request"; [key: string]: unknown };
     const changes: Change[] = switches.map(row => ({ at: row.changedAt, kind: "switch", enabled: row.enabled, by: row.changedBy }));
     const detail = (row: typeof grants[number]) => entry.id === "contacts" ? { history_days: row.historyDays, fields: row.contactFields }
       : entry.id === "health" ? { history_days: row.historyDays, health_types: row.healthTypes } : { history_days: row.historyDays };
@@ -172,6 +179,7 @@ export class AccessLog {
       if (key.installedAt) changes.push({ at: key.installedAt, kind: "app", key_id: key.id, label, action: "approved" });
       if (key.revokedAt) changes.push({ at: key.revokedAt, kind: "app", key_id: key.id, label, action: "revoked" });
     }
+    for (const row of asked) if (row.at) changes.push({ at: row.at, kind: "request", outcome: row.status, thread_id: row.threadId });
     return { source: entry.id, changes: changes.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, 100) };
   }
 

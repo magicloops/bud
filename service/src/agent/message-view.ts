@@ -4,7 +4,7 @@ type StoredMessage = {
   content: string; metadata: Record<string, unknown>; createdAt: Date;
 };
 export type ToolPresentation = {
-  kind: "questions" | "app_permission" | "automation_activation" | "bootstrap" | "browser_handoff" | "terminal" | "generic";
+  kind: "questions" | "app_permission" | "source_access" | "source_unavailable" | "automation_activation" | "bootstrap" | "browser_handoff" | "terminal" | "generic";
   id: string | null;
   status: string | null;
 };
@@ -18,11 +18,15 @@ export function toolPresentation(name: string, payload: Record<string, unknown>,
   const request = record(payload.request) ? payload.request : result;
   const kind: ToolPresentation["kind"] = name === "ask_user_questions" ? "questions"
     : name === "data_request_api_key" ? "app_permission"
+    : name === "data_source_request" ? "source_access"
+    // A personal-data read refused for something the user can change: clients offer "Turn on".
+    : text(payload.unavailable_source) ? "source_unavailable"
     : name === "automations_request_activation" ? "automation_activation"
     : name === "automations_request_existing_contacts" ? "bootstrap"
     : name === "browser_request_handoff" || payload.wait_kind === "return_control" ? "browser_handoff"
     : name.startsWith("terminal.") ? "terminal" : "generic";
-  const id = kind === "questions" || kind === "app_permission" ? text(request.request_id)
+  const id = kind === "questions" || kind === "app_permission" || kind === "source_access" ? text(request.request_id) ?? text(payload.request_id)
+    : kind === "source_unavailable" ? text(payload.unavailable_source)
     : kind === "automation_activation" || kind === "bootstrap" ? text(proposal.proposal_id)
     : kind === "browser_handoff" ? text(payload.handoff_id) ?? text(result.handoff_id) : null;
   // Unknown historical state stays unknown; result presence does not imply approval.

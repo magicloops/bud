@@ -165,10 +165,6 @@ export type ApiAskUserQuestionKind =
   | 'text'
   | 'number'
   | 'place'
-  | 'source_access'
-
-/** A data source the agent asks the user to allow; `level: 'always'` asks for background location too. */
-export type ApiAskUserQuestionSource = { id: 'location' | 'health' | 'contacts'; level?: 'always' }
 
 /** A place to choose on a map: start from `query` or the saved place `place_id`, with `radius_m` suggested. */
 export type ApiAskUserQuestionPlace = {
@@ -193,10 +189,6 @@ export type ApiAskUserQuestionAnswer =
   /** The user's pin. The service adds `place_id` and `operation` once it has saved the place. */
   | { kind: 'place'; name: string; latitude: number; longitude: number; radius_m: number; address?: string
     place_id?: string; operation?: 'created' | 'updated' }
-  /** What the user did with an access request. The service adds the state it holds when it accepts the answer. */
-  | { kind: 'source_access'; outcome: 'granted' | 'declined' | 'unavailable'; asked?: false; reading_event_id?: string
-    source?: string; enabled?: boolean; agent_allowed?: boolean; usable?: boolean; permission?: string | null
-    level?: string | null; caveats?: string[]; reading?: 'received' | 'not_received' }
 
 export type ApiAskUserQuestion = {
   question_id: string
@@ -207,7 +199,6 @@ export type ApiAskUserQuestion = {
   skippable?: boolean
   choices?: ApiAskUserQuestionChoice[]
   place?: ApiAskUserQuestionPlace
-  source?: ApiAskUserQuestionSource
   default_answer?: ApiAskUserQuestionAnswer
   multiline?: boolean
   placeholder?: string
@@ -549,6 +540,11 @@ export type ApiAgentState = {
   pending_questions?: ApiPendingQuestion[]
   pending_automation_requests?: ApiPendingAutomationRequest[]
   pending_bootstrap_requests?: ApiPendingBootstrapRequest[]
+  /** Open requests for a data source (bud-mobile `plan/data-sources-ux` Phase 2b). */
+  pending_source_requests?: Array<{
+    request_id: string; turn_id: string; client_id: string | null; call_id: string; created_at: string
+    request: { request_id: string; source: string; purpose: string; level: string | null; status: string }
+  }>
   pending_data_requests?: Array<{
     request_id: string; turn_id: string; client_id: string | null; call_id: string; created_at: string
     request: { request_id: string; app_label: string; purpose: string; status: string; version: number }

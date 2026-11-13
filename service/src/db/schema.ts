@@ -1979,6 +1979,40 @@ export const dataAccessRequestTable = pgTable("data_access_request", {
   actorCheck: check("data_access_request_actor_check", sql`${t.decidedByUserId} is null or ${t.decidedByUserId} = ${t.createdByUserId}`),
 }));
 
+// The agent asked the user for a data source it can't use (bud-mobile
+// `plan/data-sources-ux`, Phase 2b), bound to the durable tool action that waits on it. The
+// agent supplies only the source, a purpose and (location) the level; what the answer means is
+// read from the service's own state when the user responds and stored here.
+export const dataSourceRequestTable = pgTable("data_source_request", {
+  id: text("id").primaryKey(), invocationId: text("invocation_id").notNull(),
+  threadId: uuid("thread_id").notNull(), budId: text("bud_id").notNull(), turnId: text("turn_id").notNull(),
+  callId: text("call_id").notNull(),
+  source: text("source").notNull(), purpose: text("purpose").notNull(),
+  // `always` when the task needs background location; otherwise null.
+  level: text("level"),
+  status: text("status", { enum: ["pending", "granted", "declined", "unavailable", "superseded", "canceled"] }).notNull().default("pending"),
+  // What the service found when it settled the answer: the tool result's content.
+  settled: jsonb("settled").$type<Record<string, unknown>>(),
+  readingEventId: text("reading_event_id"),
+  // Which client answered: `ios` or `web`.
+  answeredFrom: text("answered_from"),
+  answeredAt: timestamp("answered_at", { withTimezone: true }),
+  // When a client first showed the card. A request that was seen sends no push.
+  seenAt: timestamp("seen_at", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id), tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  callKey: unique("data_source_request_call_key").on(t.invocationId, t.callId),
+  ownerIdx: index("data_source_request_owner_idx").on(t.createdByUserId, t.source, t.createdAt),
+  threadIdx: index("data_source_request_thread_idx").on(t.threadId, t.status),
+  invocationFk: foreignKey({ name: "data_source_request_invocation_fk", columns: [t.invocationId, t.threadId, t.budId, t.createdByUserId], foreignColumns: [agentInvocationTable.id, agentInvocationTable.threadId, agentInvocationTable.budId, agentInvocationTable.createdByUserId] }),
+  actionFk: foreignKey({ name: "data_source_request_action_fk", columns: [t.invocationId, t.callId], foreignColumns: [agentInvocationActionTable.invocationId, agentInvocationActionTable.callId] }),
+  sourceCheck: check("data_source_request_source_check", sql`${t.source} in ('location', 'health', 'contacts')`),
+  stateCheck: check("data_source_request_state_check", sql`${t.status} in ('pending','granted','declined','unavailable','superseded','canceled') and (${t.level} is null or ${t.level} = 'always')`),
+  answerCheck: check("data_source_request_answer_check", sql`(${t.status} in ('granted','declined','unavailable')) = (${t.settled} is not null and ${t.answeredAt} is not null)`),
+}));
+
 // Frozen automation review, bound to the originating durable tool action.
 // Only an explicit owner decision may publish the captured draft revision.
 export const automationProposalTable = pgTable("automation_proposal", {

@@ -653,6 +653,9 @@ export class AgentModelRunner {
       args: parseAutomationToolInput(toolCall.name, args) };
 
     switch (toolCall.name) {
+      // Kept as given: an invalid request is answered with a validation error when it runs.
+      case "data_source_request":
+        return { type: "tool_call", tool: "data_source_request", callId: toolCall.id, args };
       case "data_request_api_key": {
         const parsed = parseAppKeyInput(appKeyRequestSchema, args);
         return { type: "tool_call", tool: "data_request_api_key", callId: toolCall.id,

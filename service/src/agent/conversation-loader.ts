@@ -325,10 +325,13 @@ export class AgentConversationLoader {
       let recorded: Record<string, unknown> | null = null;
       try {
         const parsed = JSON.parse(row.content);
-        if (parsed?.tool === "data_request_api_key" && typeof parsed.call_id === "string") recorded = parsed;
+        if ((parsed?.tool === "data_request_api_key" || parsed?.tool === "data_source_request") && typeof parsed.call_id === "string") recorded = parsed;
       } catch { /* Other historical tool payloads use the normal parser. */ }
       if (recorded) {
-        const input = recorded.request;
+        // A source request replays what the agent asked: its own arguments, or those kept on the request.
+        const asked = recorded.request as { source?: unknown; purpose?: unknown; level?: unknown } | undefined;
+        const input = recorded.tool !== "data_source_request" ? recorded.request
+          : recorded.args ?? (asked ? { source: asked.source, purpose: asked.purpose, ...(asked.level ? { level: asked.level } : {}) } : {});
         if (!options.toolUseFromProviderLedger) messages.push({ role: "assistant", content: [{
           type: "tool_use", id: recorded.call_id as string, name: recorded.tool as string,
           input: input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {},

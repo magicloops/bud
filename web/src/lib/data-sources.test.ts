@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { accessGroupLine, accessOperation, accessOutcome, phoneNeedsAttention, phonePermission, readersSummary, sourceChangeLine, storedSummary,
+import { accessGroupLine, accessOperation, accessOutcome, phoneNeedsAttention, phonePermission, readersSummary, sourceChangeLine,
+  sourceRequestClosedLine, sourceRequestPurpose, storedSummary,
   webAccessSteps, type AccessGroup, type DataSource } from './data-sources.ts'
 
 const phone = (overrides: Partial<DataSource['installations'][number]> = {}): DataSource['installations'][number] => ({
@@ -40,7 +41,8 @@ test('an access request on the web walks the agent and the switch, then hands iO
     ({ enabled: true, agent: { allowed: true }, installations: [phone({ level: 'always' })], ...overrides })
   assert.deepEqual(webAccessSteps(source()), [])
   assert.deepEqual(webAccessSteps(source({ enabled: false, agent: { allowed: false }, installations: [] })),
-    ['allow_agent', 'turn_on', 'continue_on_phone'])
+    ['turn_on', 'continue_on_phone'])
+  assert.deepEqual(webAccessSteps(source({ agent: { allowed: false } })), ['turn_on'], 'the agent’s permission alone is still one click')
   assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' })] })), ['continue_on_phone'])
   assert.deepEqual(webAccessSteps(source({ installations: [phone({ permission: 'denied' }), phone({ permission: 'unknowable' })] })), [],
     'one phone that can collect is enough')
@@ -82,4 +84,16 @@ test('changes to who may read a source read as sentences', () => {
   assert.equal(sourceChangeLine({ at, kind: 'agent', allowed: false }), 'Your agent’s access was removed')
   assert.equal(sourceChangeLine({ at, kind: 'agent_detail', detail: { history_days: 30 } }), 'Your agent’s access changed: 30 days of history')
   assert.equal(sourceChangeLine({ at, kind: 'app', label: 'Week in review', action: 'revoked' }), 'Week in review was revoked')
+})
+
+test('a source request reads as one sentence and one closing line', () => {
+  assert.equal(sourceRequestPurpose('tell you where you are'), 'Your agent wants this to tell you where you are.')
+  assert.equal(sourceRequestPurpose(' To tell you where you are. '), 'Your agent wants this to tell you where you are.')
+  assert.equal(sourceRequestPurpose('  '), 'Your agent asked for this.')
+  assert.equal(sourceRequestClosedLine({ status: 'granted' }, 'Location'), 'Location turned on')
+  assert.equal(sourceRequestClosedLine({ status: 'granted', result: { reading: 'received' } }, 'Location'), 'Location shared, with a fresh reading')
+  assert.equal(sourceRequestClosedLine({ status: 'declined' }, 'Health'), 'Health not shared')
+  assert.equal(sourceRequestClosedLine({ status: 'superseded' }, 'Contacts'), 'Contacts request closed')
+  assert.equal(sourceChangeLine({ at: '', kind: 'request', outcome: 'declined' }), 'Your agent asked, and you chose not to share')
+  assert.equal(sourceChangeLine({ at: '', kind: 'request', outcome: 'granted' }), 'Your agent asked, and you turned this on')
 })
