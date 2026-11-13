@@ -1,5 +1,29 @@
 # agent
 
+## Connected Google tools
+
+`google_search_tools` and `google_call` use the service-owned
+[Google module](../google/google.spec.md). Canonical catalog/parser/contracts and conversation
+reload preserve both names and arguments across providers. Discovered schemas
+arrive as bounded tool results, so normal context accounting includes them without
+adding every server tool to every prompt. Existing transcript/SSE envelopes apply.
+
+`ServiceInvocationExecutor` grants `executionHooks.googleEnabled` only to human-origin
+invocations. `AgentService.getContextTools` shares this gate with provider/accounting
+catalogs; offline human chat retains these service tools. The executor enforces the
+gate even for stale/hallucinated calls. `beforeTool` records the durable intent;
+lease and thread/Bud ownership are checked again immediately before the Google API call
+and before returning evidence. Debug logs omit Google arguments. Unknown remote write
+outcomes throw `GOOGLE_OUTCOME_UNKNOWN`, halt further calls and leave the action intent
+unresolved for existing needs-review recovery. Failure copy asks the user to verify
+the app before retrying. No autonomous automation integration is enabled.
+
+Task-aware Google discovery requests `read_only` or `read_write` access. Missing
+access returns a normal `connect_request` carrying that exact requirement for an
+explicit OAuth card; Settings connects with read/write access. Effective service
+revocation is enforced before Google dispatch. Google calls use the existing tool
+result lifecycle without a separate per-action approval or parked invocation.
+
 Agent orchestration layer for AI-assisted terminal interactions using the LLM provider abstraction.
 
 ## Unified terminal input, readiness, and open-command facts

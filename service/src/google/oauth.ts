@@ -1,0 +1,57 @@
+import { OAuth2Client, CodeChallengeMethod, type Credentials } from "google-auth-library";
+import { serviceScopes, GoogleError, type GoogleConfig, type GoogleSelection } from "./config.js";
+import { googleFetch, googleJson } from "./http.js";
+
+export class GoogleOAuth {
+  constructor(readonly config: GoogleConfig, private readonly baseFetch: typeof fetch = fetch) {}
+
+  private client(signal?: AbortSignal) {
+    const client = new OAuth2Client({ clientId: this.config.clientId, clientSecret: this.config.clientSecret,
+      redirectUri: this.config.redirectUri, transporterOptions: {
+        fetchImplementation: googleFetch(this.baseFetch, signal), timeout: 20_000, maxRedirects: 0,
+      } });
+    client.transporter.interceptors.request.add({ resolved: async options => {
+      options.retry = false; options.redirect = "error";
+      return options;
+    } });
+    return client;
+  }
+
+  async authorize(state: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }], loginHint?: string) {
+    const client = this.client(), pkce = await client.generateCodeVerifierAsync();
+    return { verifier: pkce.codeVerifier, url: client.generateAuthUrl({
+      scope: [...new Set(selections.flatMap(selection => serviceScopes(selection.service, selection.access)))],
+      state, access_type: "offline", prompt: "consent", include_granted_scopes: true, login_hint: loginHint,
+      code_challenge: pkce.codeChallenge, code_challenge_method: CodeChallengeMethod.S256,
+    }) };
+  }
+
+  async exchange(code: string, verifier: string, signal: AbortSignal) {
+    try {
+      const { tokens } = await this.client(signal).getToken({ code, codeVerifier: verifier });
+      if (!tokens.access_token || !tokens.scope) throw new GoogleError("google_offline_access_required");
+      const identity = await googleJson(googleFetch(this.baseFetch, signal),
+        "https://openidconnect.googleapis.com/v1/userinfo", tokens.access_token);
+      if (typeof identity.sub !== "string" || typeof identity.email !== "string" || identity.email_verified !== true) {
+        throw new GoogleError("google_identity_unavailable");
+      }
+      // ID tokens are not needed after the authenticated Google userinfo lookup.
+      delete tokens.id_token;
+      return { tokens, subject: identity.sub, email: identity.email, scopes: tokens.scope.split(/\s+/).filter(Boolean) };
+    } catch (error) {
+      if (error instanceof GoogleError) throw error;
+      throw new GoogleError("google_authorization_failed");
+    }
+  }
+
+  async refresh(tokens: Credentials, signal: AbortSignal): Promise<Credentials> {
+    if (!tokens.refresh_token) throw new GoogleError("google_reconnect_required");
+    try {
+      const client = this.client(signal); client.setCredentials(tokens);
+      const { credentials } = await client.refreshAccessToken();
+      if (!credentials.access_token) throw new GoogleError("google_reconnect_required");
+      return { access_token: credentials.access_token, refresh_token: credentials.refresh_token ?? tokens.refresh_token,
+        expiry_date: credentials.expiry_date, scope: credentials.scope ?? tokens.scope, token_type: credentials.token_type };
+    } catch { throw new GoogleError("google_reconnect_required"); }
+  }
+}

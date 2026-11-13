@@ -79,7 +79,8 @@ export class ServiceInvocationExecutor implements InvocationExecutor {
       model: selection.model, reasoningEffort: selection.reasoningEffort,
       modelSelectionSource: "explicit_request", ownerUserId: invocation.createdByUserId,
       reservedTurnId: invocation.turnId, signal,
-      executionHooks: { ...hooks, checkpoint, beforeTool: async directive => { await checkpoint(); await hooks.beforeTool(directive); } },
+      executionHooks: { ...hooks, googleEnabled: invocation.origin === "human", checkpoint,
+        beforeTool: async directive => { await checkpoint(); await hooks.beforeTool(directive); } },
     });
       return await started.completion;
     } finally {
