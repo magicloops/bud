@@ -515,3 +515,10 @@ and `keepAddress`. Create bodies and answers carry a non-empty address; update
 bodies send it when it changed and always with a move (kept, or null), because
 the service clears an address omitted from a move of more than 50 m. Tested in
 `place-pin.test.ts`.
+
+## Google approval waiting metadata
+
+`ApiAgentState.pending_google_approvals` carries owner-scoped durable waits as
+turn/invocation identity plus the original `google_call` pending-tool envelope.
+Its args include the public approval view. An empty array clears pending Google
+reviews while preserving unrelated live tools; canonical results take precedence.

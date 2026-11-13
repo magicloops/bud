@@ -9,38 +9,48 @@ import { resolveAgentToolsForEnvironment } from "../agent/tool-definitions.js";
 import { buildToolArgs, toolNameForConversation, type GoogleToolCallDirective } from "../agent/contracts.js";
 import type { AgentExecutionHooks } from "../agent/execution-lifecycle.js";
 import type { CanonicalMessage, CanonicalResponse } from "../llm/index.js";
+import type { GoogleApprovals } from "./approvals.js";
 import { GoogleAgentExecutor } from "./agent-executor.js";
 import { googleFetch, googleJson } from "./http.js";
 import type { GoogleConnections } from "./connections.js";
 import { googleFixture } from "./test-fixture.js";
 import { GoogleError, GoogleHttpError } from "./config.js";
 
+const dispatchContext = { account_subject: "alice", account_email: "alice@example.com", grant_id: "grant" };
+const approvedActions: Pick<GoogleApprovals, "approved" | "consume"> = {
+  approved: async (_owner, id, threadId, invocationId, expected) => ({ ...expected, ...dispatchContext,
+    approval_id: id, thread_id: threadId, invocation_id: invocationId, operation_id: "original-action",
+    status: "approved", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString() }),
+  consume: async () => {},
+};
 const logger = { info() {}, warn() {}, error() {} };
 const offline = buildAgentEnvironmentSnapshot({ budId: "bud", online: false, lastSeenAt: null });
 const hooks: AgentExecutionHooks = {
   googleEnabled: true, invocation: { id: "invocation", workerId: "worker", fence: 1 },
   async checkpoint() {}, async beforeTool() {}, async afterTool() {},
+  async parkGoogleApproval() { throw new Error("Only the agent loop parks proposals"); },
 };
 const call: GoogleToolCallDirective = { type: "tool_call", tool: "google_call", callId: "call",
-  args: { connection_id: "connection", tool_name: "calendar_create_event", arguments_json: JSON.stringify({ calendar_id: "primary", event: { summary: "Test", start: { date_time: "2030-11-13T15:00:00-08:00" }, end: { date_time: "2030-11-13T15:15:00-08:00" } } }) } };
+  args: { connection_id: "connection", approval_id: "approval", tool_name: "calendar_create_event", arguments_json: JSON.stringify({ calendar_id: "primary", event: { summary: "Test", start: { date_time: "2030-11-13T15:00:00-08:00" }, end: { date_time: "2030-11-13T15:15:00-08:00" } } }) } };
 
 function fixtureExecutor() {
   const fixture = googleFixture();
   let owns = true;
   let onDispatch = () => {};
-  const connections: Pick<GoogleConnections, "list" | "call"> = {
+  const connections: Pick<GoogleConnections, "list" | "call" | "writeContext"> = {
+    writeContext: async () => dispatchContext,
     list: async owner => owner === "alice" ? [{ connection_id: "connection", email: "alice@example.com",
-      status: "connected", calendar_access: true, updated_at: new Date().toISOString() }] : [],
+      status: "connected", calendar_access: true, calendar_write_access: true, gmail_write_access: false, drive_write_access: false, write_policy: { calendar: "ask_before_write", gmail: "read_only", drive: "read_only" }, updated_at: new Date().toISOString() }] : [],
     call: async (owner, id, request, signal, beforeDispatch) => {
       assert.equal(owner, "alice"); assert.equal(id, "connection");
-      await beforeDispatch();
+      await beforeDispatch("dispatch", dispatchContext);
       const reply = await googleJson(googleFetch(fixture.fetcher, signal),
         `https://www.googleapis.com/calendar/v3${request.path}`, owner, { method: request.method,
           body: request.body === undefined ? undefined : JSON.stringify(request.body) });
       onDispatch(); return reply;
     },
   };
-  return { fixture, executor: new GoogleAgentExecutor(connections, async owner => owner === "alice" && owns),
+  return { fixture, executor: new GoogleAgentExecutor(connections, async owner => owner === "alice" && owns, approvedActions),
     loseOwnershipAfterDispatch: () => { onDispatch = () => { owns = false; }; } };
 }
 
@@ -80,6 +90,19 @@ test("agent discovery and call use the owning connection; legacy/automation/fore
   assert.equal(fixture.calls.length, 1);
 });
 
+test("unapproved writes propose exact action without dispatch and read tools need no approval", async () => {
+  const { executor, fixture } = fixtureExecutor();
+  const unapproved = { ...call, args: { ...call.args, approval_id: undefined } };
+  const proposed = await executor.execute("thread", unapproved, "alice", new AbortController().signal, hooks);
+  assert.ok(proposed.payload.google_approval_proposal);
+  assert.equal(fixture.calls.length, 0);
+  const denied = await executor.execute("thread", unapproved, "alice", new AbortController().signal, { ...hooks, parkGoogleApproval: undefined });
+  assert.equal(denied.result.error, "google_approval_unavailable");
+  const read = { ...call, args: { connection_id: "connection", tool_name: "calendar_list_calendars", arguments_json: "{}" } };
+  assert.equal((await executor.execute("thread", read, "alice", new AbortController().signal, hooks)).result.ok, true);
+  assert.equal(fixture.calls.length, 1);
+});
+
 test("lost write responses and lost authority after dispatch stop instead of returning retryable errors", async () => {
   for (const outcome of ["lost_response", "lost_owner"] as const) {
     const { executor, fixture, loseOwnershipAfterDispatch } = fixtureExecutor();
@@ -91,13 +114,13 @@ test("lost write responses and lost authority after dispatch stop instead of ret
 
 test("disabled Calendar API gives setup guidance and remains a definite write rejection", async () => {
   let requests = 0;
-  const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, request, signal, beforeDispatch) => {
-    await beforeDispatch();
+  const executor = new GoogleAgentExecutor({ writeContext: async () => dispatchContext, list: async () => [], call: async (_owner, _id, request, signal, beforeDispatch) => {
+    await beforeDispatch("dispatch", dispatchContext);
     return googleJson(googleFetch(async () => {
       requests++;
       return Response.json({ error: { message: "private provider text", details: [{ reason: "SERVICE_DISABLED" }] } }, { status: 403 });
     }, signal), `https://www.googleapis.com/calendar/v3${request.path}`, "fixture-token", { method: request.method });
-  } }, async () => true);
+  } }, async () => true, approvedActions);
   const result = await executor.execute("thread", call, "alice", new AbortController().signal, hooks);
   assert.equal(result.result.error, "google_api_disabled");
   assert.equal(result.result.retryable, false);
@@ -109,8 +132,8 @@ test("disabled Calendar API gives setup guidance and remains a definite write re
 
 test("missing or revoked Calendar access offers in-chat consent only to the owning human", async () => {
   let failure = "google_reconnect_required";
-  const executor = new GoogleAgentExecutor({ list: async () => [], call: async () => { throw new GoogleError(failure); } },
-    async owner => owner === "alice");
+  const executor = new GoogleAgentExecutor({ writeContext: async () => dispatchContext, list: async () => [], call: async () => { throw new GoogleError(failure); } },
+    async owner => owner === "alice", approvedActions);
   const signal = new AbortController().signal;
   const discovery = { ...call, tool: "google_search_tools" as const, args: { query: "calendar" } };
   for (const directive of [discovery, call]) {
@@ -126,9 +149,9 @@ test("missing or revoked Calendar access offers in-chat consent only to the owni
   assert.ok((await executor.execute("thread", call, "alice", signal, hooks)).payload.connect_request);
   failure = "google_not_found";
   assert.equal((await executor.execute("thread", call, "alice", signal, hooks)).payload.connect_request, undefined);
-  const rejected = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before) => {
-    await before(); throw new GoogleHttpError(401);
-  } }, async () => true);
+  const rejected = new GoogleAgentExecutor({ writeContext: async () => dispatchContext, list: async () => [], call: async (_owner, _id, _request, _signal, before) => {
+    await before("dispatch", dispatchContext); throw new GoogleHttpError(401);
+  } }, async () => true, approvedActions);
   assert.ok((await rejected.execute("thread", call, "alice", signal, hooks)).payload.connect_request);
   const { executor: connected } = fixtureExecutor();
   assert.equal((await connected.execute("thread", discovery, "alice", signal, hooks)).payload.connect_request, undefined);
@@ -185,4 +208,15 @@ for (const lostResponse of [false, true]) test(`agent loop ${lostResponse ? "lea
     assert.match(JSON.stringify(delivered), /event for alice/);
   }
   assert.equal(intentCount, 1); assert.equal(fixture.calls.length, 1);
+});
+
+test("dispatch-edge policy rejection is reported as blocked, never an unknown write", async () => {
+  const executor = new GoogleAgentExecutor({ list: async () => [], writeContext: async () => dispatchContext,
+    call: async (_owner, _id, _request, _signal, before) => {
+      await before("dispatch", dispatchContext);
+      throw new GoogleError("google_writes_disabled");
+    } }, async () => true, approvedActions);
+  const result = await executor.execute("thread", call, "alice", new AbortController().signal, hooks);
+  assert.equal(result.result.error, "google_writes_disabled");
+  assert.equal(result.result.retryable, false);
 });

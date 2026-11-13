@@ -1,6 +1,8 @@
 import { BrowserHandoffContent } from '@/components/message-renderers/tools/browser-handoff'
-import { CalendarConnectCard } from '@/features/connected-apps/calendar-connect-card'
-import { calendarConnectRequest } from '@/features/connected-apps/calendar-connect-request'
+import { GoogleConnectCard } from '@/features/connected-apps/google-connect-card'
+import { googleConnectRequest } from '@/features/connected-apps/google-connect-request'
+import { GoogleApprovalCard } from '@/features/connected-apps/google-approval-card'
+import { googleApprovalRequest } from '@/features/connected-apps/google-approval-request'
 import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -533,11 +535,16 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     </div>
   }
 
-  const calendarRequest = calendarConnectRequest(payload)
-  if (calendarRequest) {
+  const googleApproval = googleApprovalRequest(payload)
+  if (googleApproval) return <div className={TRANSCRIPT_COLUMN_CLASSES}>
+    <div className="border-l-[3px] border-transparent px-4 py-2.5"><GoogleApprovalCard request={googleApproval} /></div>
+  </div>
+
+  const googleRequest = googleConnectRequest(payload)
+  if (googleRequest) {
     return <div className={TRANSCRIPT_COLUMN_CLASSES}>
       <div className="border-l-[3px] border-transparent px-4 py-2.5">
-        <CalendarConnectCard threadId={calendarRequest.thread_id} />
+        <GoogleConnectCard threadId={googleRequest.thread_id} service={googleRequest.service} writeRequired={googleRequest.write_required} />
       </div>
     </div>
   }

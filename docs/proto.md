@@ -4359,3 +4359,36 @@ Migration 0050 must precede service startup; coordinate web/mobile cursor resets
 and budget endpoint adoption. No daemon protocol changes or new auth-revocation
 guarantees. See [handoff](../plan/client-state-performance/mobile-api-handoff.md)
 and [mutation coverage](../plan/client-state-performance/mutation-coverage.md).
+
+
+## Google access and exact-action approvals
+
+Google consent and Bud write policy are separate. Authenticated connection
+inventory reports actual service read/write access and per-service `write_policy`.
+`POST /api/google/connect` accepts explicit service/access selections;
+`PATCH /api/google/connection/:connection_id/policy` changes Bud policy without
+starting OAuth. Review uses `GET /api/google/approvals/:approval_id` and
+`POST /api/google/approvals/:approval_id/decision` with only
+`{decision:"approved"|"rejected"}`. Decisions do not dispatch Google operations.
+See [Google approval API and rollout](./google-write-approvals.md) for complete
+request/response fields, scope upgrades and the service-wide write switch.
+
+A write needing review durably parks its original invocation before repeating
+`agent.tool_call` with the same `client_id`/`call_id`, `name:"google_call"`, and
+`args.google_approval` containing the public immutable review. Phase becomes
+`waiting_for_user`. Authorized `/agent/state` and `/open.agent_state` add
+`pending_google_approvals`, at most 20 owner/thread/action-bound rows:
+`[{turn_id,invocation_id,pending_tool:{client_id,call_id,name,args,started_at}}]`.
+An empty array is authoritative; clients restore reviews from this collection
+across restart and refresh after a decision. Existing pending-request change
+notifications also invalidate this array. Private grant/account-subject and
+operation identifiers never appear in the public review.
+
+Approval, rejection or ten-minute expiry restores a canonical Google tool result
+with `approval_request` and `executed:false`; only approved results include the
+one-use `approval_id`. A later exact matching call must pass fresh ownership,
+lease, scope and write-policy checks before consuming approval and dispatching.
+Trailing calls from the parked provider response are not executed. Stop prevents
+continuation; ordinary chat text never approves a write. Existing owned transcript
+and SSE authorization apply. Deploy matching service/web; no new schema or daemon
+protocol change. Mobile must support these reviews or direct users to web.

@@ -19,6 +19,7 @@ import { AppKeys, APP_KEY_REQUEST_TOOL, serializeAppDataRequest, serializeAppKey
 import { AutomationProposals, AUTOMATION_PROPOSAL_TOOL, serializeAutomationProposal } from "../personal-data/automation-proposals.js";
 
 import { AutomationBootstrapProposals, BOOTSTRAP_PROPOSAL_TOOL, serializeBootstrapProposal } from "../personal-data/automation-bootstrap-proposals.js";
+import { serializeGoogleApproval, type GoogleApproval, type GoogleApprovalProposal } from "../google/approvals.js";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 export type InvocationAdmission = {
@@ -154,6 +155,28 @@ export class InvocationRepository {
       call_id: row.proposal.callId, proposal: serializeBootstrapProposal(row.proposal), created_at: row.proposal.createdAt }));
   }
 
+  async pendingGoogleApprovalsForThread(owner: string, threadId: string) {
+    const rows = await this.database.select({ action, turnId: inv.turnId, invocationId: inv.id }).from(action)
+      .innerJoin(inv, and(eq(inv.id, action.invocationId), eq(inv.createdByUserId, action.createdByUserId)))
+      .innerJoin(threadTable, and(eq(threadTable.threadId, inv.threadId), eq(threadTable.createdByUserId, owner)))
+      .innerJoin(budTable, and(eq(budTable.budId, inv.budId), eq(budTable.createdByUserId, owner)))
+      .where(and(eq(action.createdByUserId, owner), eq(inv.threadId, threadId), eq(inv.status, "waiting_for_user"),
+        eq(action.kind, "google_call"), eq(action.status, "waiting_for_user"), isNull(inv.cancelRequestedAt),
+        isNull(threadTable.deletedAt), sql`${action.evidence}->'google_approval'->>'status' = 'pending'`,
+        sql`(${action.evidence}->'google_approval'->>'expires_at')::timestamptz > clock_timestamp()`))
+      .orderBy(asc(action.id)).limit(20);
+    return rows.flatMap(row => {
+      const approval = row.action.evidence?.google_approval as GoogleApproval | undefined;
+      const clientId = row.action.evidence?.tool_client_id;
+      if (!approval || typeof clientId !== "string") return [];
+      return [{ turn_id: row.turnId, invocation_id: row.invocationId,
+        pending_tool: { client_id: clientId, call_id: row.action.callId, name: "google_call",
+          started_at: approval.created_at, args: { connection_id: approval.connection_id,
+            tool_name: approval.tool_name, arguments_json: approval.arguments_json,
+            google_approval: serializeGoogleApproval(approval) } } }];
+    });
+  }
+
   async admit(input: InvocationAdmission) {
     return invocationTimingTransaction(this.database, tx => this.admitInTransaction(tx, input));
   }
@@ -232,6 +255,13 @@ export class InvocationRepository {
               where a.invocation_id = agent_invocation.id and a.status = 'waiting_for_user'
                 and q.status = 'answered' and q.turn_id = ${inv.turnId}
                 and q.thread_id = ${inv.threadId} and q.created_by_user_id = ${inv.createdByUserId}
+            ) or exists (
+              select 1 from agent_invocation_action a
+              where a.invocation_id = agent_invocation.id and a.created_by_user_id = ${inv.createdByUserId}
+                and a.kind = 'google_call' and a.status = 'waiting_for_user'
+                and a.evidence ? 'google_approval'
+                and (a.evidence->'google_approval'->>'status' <> 'pending'
+                  or (a.evidence->'google_approval'->>'expires_at')::timestamptz <= clock_timestamp())
             ) or exists (
               select 1 from agent_invocation_action a join data_access_request r
                 on r.id = a.evidence->>'data_access_request_id'
@@ -544,6 +574,30 @@ export class InvocationRepository {
     });
   }
 
+  async parkGoogleApproval(lease: InvocationLease, callId: string, clientId: string, proposal: GoogleApprovalProposal) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
+      throw new InvocationError("invalid_tool_client_id");
+    return invocationTimingTransaction(this.database, async tx => {
+      const row = await this.lockedLease(tx, lease, ["running"]);
+      if (row.origin !== "human") throw new InvocationError("google_approval_origin_denied");
+      const [intent] = await tx.select().from(action).where(and(eq(action.invocationId, row.id),
+        eq(action.createdByUserId, row.createdByUserId), eq(action.callId, callId), eq(action.fence, lease.fence),
+        eq(action.kind, "google_call"), eq(action.status, "intent"))).for("update");
+      if (!intent) throw new InvocationError("google_approval_action_not_pending");
+      const now = new Date();
+      const approval: GoogleApproval = { ...proposal, approval_id: intent.id, thread_id: row.threadId,
+        invocation_id: row.id, status: "pending", created_at: now.toISOString(),
+        expires_at: new Date(now.getTime() + 10 * 60_000).toISOString() };
+      await tx.update(action).set({ status: "waiting_for_user", fence: lease.fence + 1,
+        evidence: { google_approval: approval, tool_client_id: clientId } }).where(eq(action.id, intent.id));
+      await tx.update(inv).set({ ...settleWorkTiming(), status: "waiting_for_user", reservesThread: true,
+        workerId: null, leaseExpiresAt: null, fence: sql`${inv.fence} + 1`, updatedAt: sql`clock_timestamp()` })
+        .where(eq(inv.id, row.id));
+      recordInvocationChange(tx, row.id);
+      return serializeGoogleApproval(approval);
+    });
+  }
+
   async parkAppDataRequest(lease: InvocationLease, callId: string, clientId: string, input: unknown) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId))
       throw new InvocationError("invalid_tool_client_id");
@@ -659,7 +713,30 @@ export class InvocationRepository {
       const messages: (typeof messageTable.$inferSelect)[] = [];
       for (const pending of waiting) {
         let answer: { payload: Record<string, unknown>; clientId: string; createdAt: Date; answeredAt: Date; evidence: Record<string, unknown> };
-        if (typeof pending.evidence?.browser_handoff_id === "string") {
+        if (pending.kind === "google_call" && pending.evidence?.google_approval) {
+          let approval = pending.evidence.google_approval as GoogleApproval;
+          const clientId = pending.evidence.tool_client_id;
+          if (typeof clientId !== "string" || approval.approval_id !== pending.id ||
+            approval.invocation_id !== current.id || approval.thread_id !== current.threadId)
+            throw new InvocationError("google_approval_reference_missing");
+          if (["pending", "approved"].includes(approval.status) && new Date(approval.expires_at) <= new Date())
+            approval = { ...approval, status: "expired" };
+          if (approval.status === "pending") throw new InvocationError("google_approval_decision_missing");
+          const approved = approval.status === "approved";
+          const originalArgs = { connection_id: approval.connection_id, tool_name: approval.tool_name,
+            arguments_json: approval.arguments_json };
+          const summary = approved ? "The user approved this Google action. It has not been executed yet."
+            : `The Google action was ${approval.status}; it was not executed.`;
+          answer = { clientId, createdAt: new Date(approval.created_at),
+            answeredAt: new Date(approval.decided_at ?? approval.expires_at),
+            evidence: { ...pending.evidence, google_approval: approval, continuation_restored: true },
+            payload: { tool: "google_call", call_id: pending.callId, kind: "google", ok: approved, executed: false,
+              args: originalArgs, approval_request: serializeGoogleApproval(approval),
+              ...(approved ? { approval_id: approval.approval_id,
+                note: "Call google_call with this approval_id and the same connection_id, tool_name and arguments_json to execute exactly this approved action. The action has not executed yet; approval permits one dispatch only." }
+                : { error: `google_approval_${approval.status}`, retryable: false,
+                  note: "Do not execute or silently request approval again. Ask the user for a new instruction if they want to reconsider." }), summary } };
+        } else if (typeof pending.evidence?.browser_handoff_id === "string") {
           const [handoff] = await tx.select().from(browserHandoff).where(and(
             eq(browserHandoff.id,pending.evidence.browser_handoff_id),eq(browserHandoff.invocationId,current.id),
             eq(browserHandoff.createdByUserId,current.createdByUserId),eq(browserHandoff.status,"returned")));
@@ -778,7 +855,7 @@ export class InvocationRepository {
           const payload = isQuestion && !userTakeover ? answer.payload : deferredToolResult(block,
             pending.evidence?.browser_handoff_id ? "browser"
               : (pending.kind === AUTOMATION_PROPOSAL_TOOL || pending.kind === BOOTSTRAP_PROPOSAL_TOOL) ? "automation"
-              : pending.kind === APP_KEY_REQUEST_TOOL ? "permission" : "question", answer.payload.runtime_replaced === true);
+              : pending.kind === APP_KEY_REQUEST_TOOL || pending.evidence?.google_approval ? "permission" : "question", answer.payload.runtime_replaced === true);
           const content = JSON.stringify(payload);
           const finishedAt = isQuestion ? answer.answeredAt : new Date();
           const startedAt = isQuestion ? answer.createdAt : finishedAt;

@@ -1,8 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { Credentials } from "google-auth-library";
-import { GoogleError } from "./config.js";
+import { GoogleError, type GoogleSelection, type GoogleService, type GoogleWritePolicy } from "./config.js";
 
-export type GoogleCredentials = { tokens?: Credentials; verifier?: string; returnThreadId?: string };
+export type GoogleCredentials = { tokens?: Credentials; grantId?: string; verifier?: string; returnThreadId?: string;
+  requestedSelections?: GoogleSelection[]; writePolicy?: Partial<Record<GoogleService, GoogleWritePolicy>>;
+  previousStatus?: "connected" | "reconnect_required" };
 export const hashGoogleSecret = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export function readGoogleEncryptionKey(raw = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY): Buffer {

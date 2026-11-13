@@ -42,7 +42,7 @@ The model asks the user to connect in chat and continue with a new message.
 
 `routes.ts` mounts owned inventory, cookie-origin-checked connect/disconnect and
 same-session callbacks. Tokens never enter browser state; inventory includes only
-email, status, Calendar grant completeness, connection ID and timestamp.
+email, status, Calendar read/write grants, policy, connection ID and timestamp.
 Connect accepts an optional `thread_id`, authorizes both thread and Bud before
 starting consent, then reauthorizes on callback. The service derives the return
 path from those owned IDs on its configured origin; arbitrary return URLs are
@@ -58,3 +58,30 @@ including isolated PostgreSQL callback and encrypted return-context recovery.
 The user confirmed real Calendar listing after enabling the API, with a Calendar
 email different from their Bud login. Real event mutation acceptance remains pending.
 See [setup](../../../docs/google-calendar.md) and [plan](../../../plan/google-direct-oauth.md).
+
+## Consent and enforced write approval
+
+`config.ts` defines true read-only and read/write scope sets. `oauth.ts` requests
+selected capabilities together with incremental consent. `connections.ts` preserves
+prior usable grants on canceled upgrades, stores actual granted scopes, and keeps
+per-service policies and a rotating grant identity in encrypted credentials.
+Inventory separates read access, write scope and Bud write policy. Policy changes
+and disconnect invalidate outstanding approval identities.
+
+`approvals.ts` owns exact, expiring, single-use approvals in existing invocation
+action evidence; owner-scoped lookups join invocation/thread/Bud. It exposes a
+public projection without internal account/grant identities. `approvals.test.ts`
+covers owner, decision, expiry, exact-action and single-use boundaries with isolated
+PostgreSQL. No new table or migration.
+
+The executor proposes writes without dispatch. The durable agent parks, displays
+the approval and resumes after approve/reject/expiry. Approved calls must supply
+`approval_id` with unchanged arguments in the same invocation; execution uses the
+stored operation key. Scope, account/grant, per-service policy and global
+`GOOGLE_WRITES_ENABLED` are checked before dispatch. Every write requires approval;
+a model assertion never substitutes for an owner decision.
+
+Routes add selected consent, owned policy changes and approval reads/decisions.
+See [API and rollout](../../../docs/google-write-approvals.md),
+[plan](../../../plan/google-write-approvals.md) and
+[validation](../../../debug/google-write-approvals.md).

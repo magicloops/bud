@@ -29,6 +29,32 @@ Routes resolve requireViewer before SQL; agent calls derive owner from the human
 invocation and recheck matching live thread/Bud ownership. Rows stamp owner and
 nullable tenant. OAuth tokens never enter browser inventory or model evidence.
 
+## Google write consent and approval boundary
+
+- [x] Isolated PostgreSQL continuation checks: atomic owner/action-bound parking,
+  foreign-owner/thread exclusion, restart recovery, stable call/client identity,
+  expiry, cancellation and one-time restoration without executing a write.
+- [x] Runtime/bootstrap fixtures: public review appears only after durable parking;
+  private grant/subject/operation fields stay out of events and transcript;
+  resolved cards disappear and an unrelated active turn retains its identity.
+- [ ] Real two-account cookie/bearer checks for connection policy and approval
+  GET/decision: anonymous 401, foreign connection/thread/approval 404, and
+  missing/hostile cookie Origin rejected before mutation.
+- [ ] Real two-client `/agent/state`, `/open` and SSE recovery: only the current
+  thread owner sees pending reviews; sign-out/account switch/deletion fences late
+  reads, and opposite-client decisions remove the original card.
+- [ ] Real Google consent: read-only grants cannot write; canceled/partial upgrades
+  preserve prior access; successful OAuth never executes the pending action.
+- [ ] Real test-data write: rejection, expiry, Stop, changed account/grant, revoked
+  scope, Block changes and service-wide disable prevent dispatch; repeated approval
+  or changed arguments cannot execute the same reviewed action again.
+
+Review evidence inherits the existing action's invocation/thread owner and tenant;
+no new table is introduced. Human endpoints resolve the authenticated viewer before
+owner-filtered SQL, including live thread/Bud checks. Decisions accept no replacement
+arguments or owner identity. Pending inventory is scoped in SQL before projection.
+See [the API contract](../../docs/google-write-approvals.md).
+
 ## Production browser capture/takeover reliability — October 13
 
 - [x] Local media fences retire idle sockets even with silent peers and coalesced

@@ -5,7 +5,7 @@ import type { AgentExecutionHooks, AgentTurnOutcome } from "./execution-lifecycl
 import { AutomationManagement } from "../personal-data/automation-management.js";
 import { DataRequestError } from "../personal-data/contracts.js";
 
-type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff">>
+type Repository = Partial<Pick<InvocationRepository, "parkBrowserHandoff" | "parkUserBrowserHandoff" | "parkGoogleApproval">>
   & Pick<InvocationRepository,
     | "claim" | "recoverExpired" | "expireQueued" | "heartbeat" | "start" | "defer" | "recordAction" | "completeAction"
     | "parkQuestion" | "parkAppDataRequest" | "parkAutomationProposal" | "parkBootstrapProposal"
@@ -192,6 +192,15 @@ export class InvocationWorker {
           if (heartbeat) clearTimeout(heartbeat);
           await this.repository.parkQuestion(invocation, directive.callId, questionRequestId);
           parked = true;
+        },
+        parkGoogleApproval: async (callId, clientId, proposal) => {
+          await renew();
+          if (!this.repository.parkGoogleApproval) throw new Error("google_approval_unavailable");
+          ended = true;
+          if (heartbeat) clearTimeout(heartbeat);
+          const approval = await this.repository.parkGoogleApproval(invocation, callId, clientId, proposal);
+          parked = true;
+          return approval;
         },
         parkAppDataRequest: async (callId, clientId, input) => {
           await renew();

@@ -18,6 +18,28 @@ outcomes throw `GOOGLE_OUTCOME_UNKNOWN`, halt further calls and leave the action
 unresolved for existing needs-review recovery. Failure copy asks the user to verify
 the app before retrying. No autonomous automation integration is enabled.
 
+Google writes that require review return an internal proposal before any provider
+dispatch. `AgentService` passes it to `parkGoogleApproval`, which atomically stores
+the immutable account/grant/action binding in the existing invocation action's
+`evidence.google_approval`, releases the worker lease and retains the thread
+reservation. Only the public review fields enter the pending `google_call` event
+under `args.google_approval`; credentials and private binding fields stay server-side.
+The worker stops without finishing the action or executing trailing provider calls.
+Approval, rejection or the ten-minute expiry makes the same invocation claimable.
+Continuation writes one paired `google_call` result with `executed:false`, public
+`approval_request`, original arguments and an `approval_id` only when approved.
+The exact action must then pass the Google executor's one-use approval consumption;
+the initial approval result never claims the Google change already happened.
+Original private approval evidence survives transcript reconstruction. Trailing
+calls receive `not_executed_due_to_permission`. Cancel/ownership checks still fence
+decisions and execution; a pending review can be resolved, stopped or expired.
+
+`google-approval-loop.test.ts` covers pre-dispatch parking, public-only emission and
+no post-park execution. `invocation-google-approval.test.ts` covers PostgreSQL
+rollback, fenced parking, owner-scoped restart recovery, expiry, rejection, cancel,
+same-turn reclaim and exactly-once provider-result reconstruction. Worker tests
+cover renewal stopping at the Google park boundary.
+
 Agent orchestration layer for AI-assisted terminal interactions using the LLM provider abstraction.
 
 ## Unified terminal input, readiness, and open-command facts

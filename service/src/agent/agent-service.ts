@@ -1,4 +1,5 @@
 import { GoogleAgentExecutor } from "../google/agent-executor.js";
+import type { GoogleApprovalProposal } from "../google/approvals.js";
 import { googleConfigured } from "../google/config.js";
 import { isGoogleToolDirective } from "./contracts.js";
 import { captureContextBaseline } from "./context-accounting.js";
@@ -964,6 +965,17 @@ export class AgentService {
               }
             } else if (isGoogleToolDirective(effectiveToolCall)) {
               execution = await this.googleToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, args.executionHooks);
+              if (execution.payload.google_approval_proposal) {
+                if (!args.executionHooks?.parkGoogleApproval) throw new Error("google_approval_unavailable");
+                const approval = await args.executionHooks.parkGoogleApproval(effectiveToolCall.callId, toolClientId,
+                  execution.payload.google_approval_proposal as GoogleApprovalProposal);
+                const pendingTool = { client_id: toolClientId, call_id: effectiveToolCall.callId, name: effectiveToolCall.tool,
+                  args: { ...clientArgs, google_approval: approval }, started_at: startedAt.toISOString() };
+                const cursor = this.runtime.emit(threadId, { event: "agent.tool_call", data: { turn_id: turnId, ...pendingTool } });
+                this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+                this.cancellations.clear(threadId);
+                return { status: "waiting_for_user" };
+              }
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {

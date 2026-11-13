@@ -6,6 +6,32 @@ export const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events.freebusy",
 ] as const;
 export const GOOGLE_SCOPES = ["openid", "email", "profile", ...CALENDAR_SCOPES];
+export const GOOGLE_SERVICES = ["calendar"] as const;
+export type GoogleService = typeof GOOGLE_SERVICES[number];
+export type GoogleAccess = "read_only" | "read_write";
+export type GoogleWritePolicy = "read_only" | "ask_before_write";
+export type GoogleSelection = { service: GoogleService; access: GoogleAccess };
+export const SERVICE_NAMES: Record<GoogleService, string> = { calendar: "Google Calendar" };
+export const SERVICE_SCOPES: Record<GoogleService, readonly string[]> = {
+  calendar: CALENDAR_SCOPES,
+};
+export const SERVICE_READ_SCOPES: Record<GoogleService, readonly string[]> = {
+  calendar: CALENDAR_SCOPES.map(scope => scope.endsWith("/calendar.events") ? `${scope}.readonly` : scope),
+};
+export const serviceScopes = (service: GoogleService, access: GoogleAccess = "read_write") =>
+  ["openid", "email", "profile", ...(access === "read_only" ? SERVICE_READ_SCOPES : SERVICE_SCOPES)[service]];
+export function serviceWriteGranted(scopes: string[], service: GoogleService): boolean {
+  if (service === "calendar") return scopes.includes("https://www.googleapis.com/auth/calendar") ||
+    scopes.includes("https://www.googleapis.com/auth/calendar.events");
+  return false;
+}
+export function serviceGranted(scopes: string[], service: GoogleService): boolean {
+  if (service === "calendar") return calendarGranted(scopes);
+  return false;
+}
+export function googleWritesEnabled(): boolean {
+  return process.env.GOOGLE_WRITES_ENABLED === undefined || process.env.GOOGLE_WRITES_ENABLED === "true";
+}
 
 export class GoogleError extends Error {
   constructor(public readonly code: string) { super(code); }
@@ -35,5 +61,6 @@ export function googleConfigured(): boolean {
 }
 
 export function calendarGranted(scopes: string[]): boolean {
-  return scopes.includes("https://www.googleapis.com/auth/calendar") || CALENDAR_SCOPES.every(scope => scopes.includes(scope));
+  return scopes.includes("https://www.googleapis.com/auth/calendar") || scopes.includes("https://www.googleapis.com/auth/calendar.readonly") ||
+    CALENDAR_SCOPES.every(scope => scopes.includes(scope) || scope.endsWith("/calendar.events") && scopes.includes(`${scope}.readonly`));
 }

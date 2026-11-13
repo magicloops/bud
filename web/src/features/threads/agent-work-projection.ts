@@ -1,5 +1,6 @@
 import { isFinalAssistantMessage } from './assistant-activity-indicator-state.ts'
-import { calendarConnectRequest } from '../connected-apps/calendar-connect-request.ts'
+import { googleConnectRequest } from '../connected-apps/google-connect-request.ts'
+import { googleApprovalRequest } from '../connected-apps/google-approval-request.ts'
 import type { ApiMessage } from '../../lib/api-types'
 import {
   getToolName,
@@ -75,7 +76,7 @@ const isWorkMessage = (message: ApiMessage): boolean => {
     return true
   }
   if (message.role === 'tool') {
-    if (calendarConnectRequest(message.tool_payload)) return false
+    if (googleConnectRequest(message.tool_payload) || googleApprovalRequest(message.tool_payload)) return false
     const tool = getToolName(message)
     if (tool === QUESTION_TOOL) return false
     const approval = message.tool_payload?.wait_kind === 'return_control' || tool === 'browser_request_handoff' || tool === 'data_request_api_key' || tool === 'automations_request_activation' || tool === 'automations_request_existing_contacts'

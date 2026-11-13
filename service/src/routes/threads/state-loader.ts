@@ -17,6 +17,8 @@ export async function loadThreadAgentState(owner: string, thread: AuthorizedThre
   const repository = agentService.durableInvocations;
   const threadId = thread.threadId;
   const browserHandoff = await repository?.pendingBrowserHandoffForThread?.(owner, threadId);
+  const googleApprovals = await repository?.pendingGoogleApprovalsForThread?.(owner, threadId) ?? [];
+  const googleApproval = googleApprovals.find(wait => !runtimeSnapshot.turn_id || wait.turn_id === runtimeSnapshot.turn_id);
   const environment = await agentService.getEnvironmentForBud(thread.budId);
   const contextBudget = activeTurnContextBudget(runtimeSnapshot);
   const { context_budget: _runtimeBudget, ...runtime } = runtimeSnapshot;
@@ -25,12 +27,16 @@ export async function loadThreadAgentState(owner: string, thread: AuthorizedThre
     ...(!runtime.active && browserHandoff && (!runtime.turn_id || runtime.turn_id === browserHandoff.turn_id)
       ? browserHandoff : ((runtime.pending_tool?.name === "browser_request_handoff" || runtime.pending_tool?.args?.wait_kind === "return_control")
         && runtime.turn_id !== browserHandoff?.turn_id ? { pending_tool: null } : {})),
+    ...(googleApproval && (!runtime.active || runtime.pending_tool?.args?.google_approval)
+      ? { turn_id: googleApproval.turn_id, phase: "waiting_for_user" as const, pending_tool: googleApproval.pending_tool }
+      : runtime.pending_tool?.args?.google_approval ? { pending_tool: null } : {}),
     ...(repository ? {
       invocations: (await repository.listForThread(owner, threadId)).map(serializeInvocation),
       pending_questions: await repository.pendingQuestionsForThread(owner, threadId),
       pending_data_requests: await repository.pendingDataRequestsForThread(owner, threadId),
       pending_automation_requests: await repository.pendingAutomationProposalsForThread(owner, threadId),
       pending_bootstrap_requests: await repository.pendingBootstrapProposalsForThread(owner, threadId),
+      pending_google_approvals: googleApprovals,
     } : {}),
     ...(repository?.pendingBrowserWaitsForThread ? { pending_browser_waits: await repository.pendingBrowserWaitsForThread(owner, threadId) } : {}),
     environment,

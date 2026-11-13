@@ -1,6 +1,7 @@
 import type { AgentToolCallDirective, ExecutedAgentTool } from "./contracts.js";
 import type { InvocationRepository } from "./invocation-repository.js";
 import type { AutomationToolName } from "../personal-data/automation-tool-contracts.js";
+import type { GoogleApprovalProposal } from "../google/approvals.js";
 
 export type AgentTurnOutcome = {
   status: "succeeded" | "failed" | "canceled" | "waiting_for_user";
@@ -19,6 +20,7 @@ export interface AgentExecutionHooks {
   browserWaitParked?(): void;
   parkUserBrowserHandoff?(nextCall?:AgentToolCallDirective): ReturnType<InvocationRepository["parkUserBrowserHandoff"]>;
   parkQuestion?(directive: AgentToolCallDirective, questionRequestId: string): Promise<void>;
+  parkGoogleApproval?(callId: string, clientId: string, proposal: GoogleApprovalProposal): ReturnType<InvocationRepository["parkGoogleApproval"]>;
   parkAppDataRequest?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAppDataRequest"]>;
   parkAutomationProposal?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkAutomationProposal"]>;
   parkBootstrapProposal?(callId: string, clientId: string, input: unknown): ReturnType<InvocationRepository["parkBootstrapProposal"]>;

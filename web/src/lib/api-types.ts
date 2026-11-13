@@ -537,6 +537,7 @@ export type ApiAgentState = {
   output_activity?: ApiOutputActivity | null
   invocations?: ApiAgentInvocation[]
   pending_browser_waits?: Array<{ turn_id: string; invocation_id: string; pending_tool: NonNullable<ApiAgentState["pending_tool"]> }>
+  pending_google_approvals?: Array<{ turn_id: string; invocation_id: string; pending_tool: NonNullable<ApiAgentState["pending_tool"]> }>
   pending_questions?: ApiPendingQuestion[]
   pending_automation_requests?: ApiPendingAutomationRequest[]
   pending_bootstrap_requests?: ApiPendingBootstrapRequest[]

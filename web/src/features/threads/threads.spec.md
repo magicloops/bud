@@ -85,7 +85,7 @@ Node-runner coverage for transcript reconciliation rules.
 Agent-work projection under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
 Raw messages remain canonical; presentation collects contiguous work by turn while
 preserving user, final, question, pending approval and compaction boundaries.
-Canonical Google Calendar connection requests also stay top-level after final
+Canonical Google connection and approval requests also stay top-level after final
 and reload, so a user can connect without expanding Worked. Recognition uses the
 connected-apps structured-payload helper; no display text is parsed.
 
@@ -833,3 +833,12 @@ old message cursors with a fresh open window while retaining protected live rows
 foreground and owner changes. `client-state-refresh.test.tsx` mounts message state
 to test pending-only cleanup and obsolete-cursor reset with live work preserved.
 Budget tests additionally verify supplied nonstale unknown avoids duplicate reads.
+
+## Google write approval recovery
+
+`thread-message-state.ts` overlays `pending_google_approvals` independently of
+active runtime state, dedupes against canonical tool identities, and clears only
+managed Google approval waits on an explicit empty inventory. Ordinary live
+Google reads remain intact. `use-agent-stream.ts` treats a re-emitted
+`google_call` with `args.google_approval` as waiting for the user. The work
+projector keeps structured consent and approval cards outside collapsed work.

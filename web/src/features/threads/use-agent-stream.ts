@@ -516,7 +516,8 @@ export function useAgentStream({
       try {
         const data = JSON.parse(evt.data) as AgentToolCallEvent
         callbacksRef.current.onStatusChange(
-          data.name === 'ask_user_questions' || data.name === 'browser_request_handoff' || data.args?.wait_kind === 'return_control'
+          data.name === 'ask_user_questions' || data.name === 'browser_request_handoff' || data.args?.wait_kind === 'return_control' ||
+          (data.name === 'google_call' && Boolean(data.args?.google_approval))
             ? 'waiting_for_user'
             : data.name === 'terminal.wait'
               ? 'waiting_for_terminal'

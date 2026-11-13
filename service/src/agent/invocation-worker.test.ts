@@ -196,6 +196,28 @@ test("a parked automation review releases execution without renewing or completi
   assert.ok(!events.includes("failed"));
 });
 
+test("a Google approval binds the current action and stops worker renewal before waiting", async () => {
+  const events: string[] = [];
+  const proposal = { connection_id: "google_connection", service: "calendar" as const, tool_name: "create_event",
+    arguments_json: "{}", operation_id: "original-operation", account_subject: "google-subject",
+    account_email: "owner@example.test", grant_id: "grant" };
+  const repo = { ...repository(events), parkGoogleApproval: async (...input: unknown[]) => {
+    assert.deepEqual(input, [invocation, "google-call", "client", proposal]);
+    events.push("park_google");
+    return { approval_id: "approval" } as never;
+  } };
+  repo.heartbeat = async () => { assert.ok(!events.includes("park_google")); events.push("fence"); };
+  const worker = new InvocationWorker({ preflight: async () => "ready", execute: async (_row, _signal, hooks) => {
+    const approval = await hooks.parkGoogleApproval!("google-call", "client", proposal);
+    assert.equal(approval.approval_id, "approval");
+    return { status: "waiting_for_user" };
+  } }, repo);
+  await worker.runOnce();
+  assert.equal(events.at(-1), "park_google");
+  assert.ok(!events.includes("succeeded"));
+  assert.ok(!events.includes("failed"));
+});
+
 test("parked existing-contact review releases execution and binds the invocation context", async () => {
   const events: string[] = [];
   const repo = repository(events);

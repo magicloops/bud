@@ -10,7 +10,8 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ### `connected-apps/` → [connected-apps.spec.md](./connected-apps/connected-apps.spec.md)
 
-Owner-scoped direct Google Calendar connections in account settings, separate from sign-in providers.
+Owner-scoped Google Calendar consent, per-service write policy and exact-action
+approval cards in Settings and chat, separate from sign-in providers.
 
 ### `browser/` → [browser/browser.spec.md](./browser/browser.spec.md)
 

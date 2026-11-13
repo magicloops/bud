@@ -22,6 +22,9 @@ timings. `state-loader.ts` shares the authorized durable/runtime projection;
 ordinary `/agent/state` never reconstructs context. The dedicated authorized
 `/context-budget` route owns optional reconstruction.
 
+`state-loader.test.ts` covers durable Google approval recovery after restart,
+removal of resolved process-local cards, and preservation of another active turn.
+
 `GET /api/threads/:threadId/open?limit=100` authorizes the thread, accepts limits
 1–200 and returns `thread`, `transcript`, `agent_state`, `stream_cursor`, and
 `included:{web_view:false,browser:false,context_budget:<supplied>}`. No optional resource
@@ -258,6 +261,15 @@ is disabled, allowing recovery of existing work. Route tests verify authorizatio
 before reads, an empty runtime snapshot and removal after resolution.
 
 ## Model preference intent and retirement
+
+Durable state/open responses include `pending_google_approvals`, up to 20 current
+owner/thread/action-bound reviews with `{turn_id, invocation_id, pending_tool}`.
+The pending tool remains `google_call`; `args.google_approval` contains only the
+public review fields. The current-turn card also overlays `pending_tool` and
+`phase:waiting_for_user` after restart. Resolved, canceled and expired reviews
+are omitted, and stale local cards are cleared. Existing route authorization
+precedes these reads; SQL repeats owner/thread/Bud checks. No rows are stamped by
+this read path and no credentials or private grant bindings enter responses.
 
 Thread creation with no explicit selection leaves model/effort null. Normal
 message admission resolves stored preferences or the service default without

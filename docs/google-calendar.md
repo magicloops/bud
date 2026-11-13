@@ -23,6 +23,7 @@ is no longer used. For external apps in Testing, add your Google email to Audien
 - openid, email, profile (Google account identity)
 - https://www.googleapis.com/auth/calendar.calendarlist.readonly
 - https://www.googleapis.com/auth/calendar.events
+- https://www.googleapis.com/auth/calendar.events.readonly (optional genuine read-only access)
 - https://www.googleapis.com/auth/calendar.events.freebusy
 
 Google login and Calendar consent are separate flows. A user may choose a Google
@@ -157,3 +158,10 @@ session-bound state, reauthorizes the saved thread and redirects to its same-ori
 state or unavailable destinations fall back to Settings; callers cannot supply a
 return URL. Settings calls omit thread_id. No new DB schema or daemon version is
 needed for chat consent; deploy matching service/web builds together.
+
+## Approval and policy update
+
+Every event write now requires an exact in-chat approval. OAuth consent alone
+never authorizes a mutation. See [Google permissions and write approvals](./google-write-approvals.md)
+for selected consent, per-service Block changes, the global service switch, API
+contracts and coordinated rollout.

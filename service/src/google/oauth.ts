@@ -1,5 +1,5 @@
 import { OAuth2Client, CodeChallengeMethod, type Credentials } from "google-auth-library";
-import { GOOGLE_SCOPES, GoogleError, type GoogleConfig } from "./config.js";
+import { serviceScopes, GoogleError, type GoogleConfig, type GoogleSelection } from "./config.js";
 import { googleFetch, googleJson } from "./http.js";
 
 export class GoogleOAuth {
@@ -17,10 +17,11 @@ export class GoogleOAuth {
     return client;
   }
 
-  async authorize(state: string) {
+  async authorize(state: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }], loginHint?: string) {
     const client = this.client(), pkce = await client.generateCodeVerifierAsync();
     return { verifier: pkce.codeVerifier, url: client.generateAuthUrl({
-      scope: GOOGLE_SCOPES, state, access_type: "offline", prompt: "consent", include_granted_scopes: true,
+      scope: [...new Set(selections.flatMap(selection => serviceScopes(selection.service, selection.access)))],
+      state, access_type: "offline", prompt: "consent", include_granted_scopes: true, login_hint: loginHint,
       code_challenge: pkce.codeChallenge, code_challenge_method: CodeChallengeMethod.S256,
     }) };
   }
@@ -28,7 +29,7 @@ export class GoogleOAuth {
   async exchange(code: string, verifier: string, signal: AbortSignal) {
     try {
       const { tokens } = await this.client(signal).getToken({ code, codeVerifier: verifier });
-      if (!tokens.access_token || !tokens.refresh_token || !tokens.scope) throw new GoogleError("google_offline_access_required");
+      if (!tokens.access_token || !tokens.scope) throw new GoogleError("google_offline_access_required");
       const identity = await googleJson(googleFetch(this.baseFetch, signal),
         "https://openidconnect.googleapis.com/v1/userinfo", tokens.access_token);
       if (typeof identity.sub !== "string" || typeof identity.email !== "string" || identity.email_verified !== true) {

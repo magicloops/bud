@@ -77,11 +77,14 @@ parsed as tool JSON. Null/missing payloads retain plain-text rendering without
 resurrecting a tool from metadata. `tool-payload.test.ts` covers continuations,
 pending forms, null payloads and structured-payload precedence.
 
-Google Calendar `connect_request` results render a dedicated connected-apps card
-outside work disclosures. The card owns current connection reads and explicit
-OAuth navigation, keyed by viewer/thread; the normal tool payload is retained in
-history. Consent returns to the originating chat without automatically resuming
-Calendar work. Mounted coverage lives in connected-apps/calendar-connect-card.test.tsx.
+Google `connect_request` and write `approval_request` results render dedicated
+connected-apps cards outside work disclosures. Consent cards own current
+connection reads and explicit OAuth navigation, keyed by viewer/thread/service.
+Approval cards obtain fresh owner-scoped status before displaying private details
+or submitting a decision. Pending `google_call` approval arguments use the same
+card; canonical tool results remain visible after completion/reload. Approval
+permits an attempt; only the subsequent tool result reports its outcome. Mounted
+coverage lives in connected-apps/google-connect-card.test.tsx.
 
 Message list with auto-scroll and full-height message rendering.
 

@@ -187,6 +187,7 @@ export const buildPendingToolMessageFromState = (agentState: ApiAgentState): Api
     return buildPendingToolMessageFromToolCall({turnId:agentState.turn_id,clientId:tool.client_id,
       callId:tool.call_id,name:tool.name,args:tool.args,startedAt:tool.started_at})
   }
+  if (agentState.pending_google_approvals !== undefined && agentState.pending_tool?.name === 'google_call' && agentState.pending_tool.args?.google_approval) return null
   if (agentState.pending_data_requests !== undefined && agentState.pending_tool?.name === 'data_request_api_key') return null
   if (agentState.pending_questions !== undefined && agentState.pending_tool?.name === 'ask_user_questions') return null
   if (agentState.pending_bootstrap_requests !== undefined && agentState.pending_tool?.name === 'automations_request_existing_contacts') return null
@@ -266,7 +267,7 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
     nextMessages = upsertMessage(nextMessages, pendingToolMessage)
   }
 
-  for (const wait of agentState.pending_browser_waits ?? []) {
+  for (const wait of [...(agentState.pending_browser_waits ?? []), ...(agentState.pending_google_approvals ?? [])]) {
     const tool = wait.pending_tool
     if (nextMessages.some(message => message.client_id === tool.client_id && !isAgentSyntheticMessage(message))) continue
     nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
@@ -392,7 +393,8 @@ export function applyPendingRequestInventory(messages: ApiMessage[], state: ApiA
   if (state.pending_browser_waits !== undefined) managed.add('browser_request_handoff')
   const belongs = (message: ApiMessage) => isPendingToolMessage(message) && (
     managed.has(String(message.tool_payload?.tool ?? message.display_role)) ||
-    (state.pending_browser_waits !== undefined && message.tool_payload?.wait_kind === 'return_control'))
+    (state.pending_browser_waits !== undefined && message.tool_payload?.wait_kind === 'return_control') ||
+    (state.pending_google_approvals !== undefined && message.tool_payload?.tool === 'google_call' && Boolean(message.tool_payload?.google_approval)))
   let next = applyAgentStateOverlay(messages.filter(message => !isAgentSyntheticMessage(message)), {
     ...state, active: false, pending_tool: null, draft_assistant: null, draft_reasoning: [],
   })
