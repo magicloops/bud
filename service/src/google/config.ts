@@ -36,7 +36,7 @@ export function serviceGranted(scopes: string[], service: GoogleService): boolea
 }
 
 export class GoogleError extends Error {
-  constructor(public readonly code: string) { super(code); }
+  constructor(public readonly code: string, public readonly retryable = false) { super(code); }
 }
 export class GoogleHttpError extends GoogleError {
   constructor(public readonly status: number, reason?: "service_disabled") {
@@ -48,17 +48,23 @@ export class GoogleHttpError extends GoogleError {
 }
 
 export function googleConfig() {
-  const redirect = new URL(process.env.GOOGLE_REDIRECT_URI || "/api/google/callback", config.appBaseUrl);
+  let redirectUri = process.env.GOOGLE_REDIRECT_URI || "/api/google/callback";
+  try { redirectUri = new URL(redirectUri, config.appBaseUrl).href; } catch { /* Validated when connecting. */ }
+  return { clientId: config.googleClientId ?? "", clientSecret: config.googleClientSecret ?? "", redirectUri };
+}
+export type GoogleConfig = ReturnType<typeof googleConfig>;
+export function validateGoogleRedirectUri(cfg: GoogleConfig): void {
+  let redirect: URL;
+  try { redirect = new URL(cfg.redirectUri); } catch { throw new GoogleError("google_invalid_redirect_uri"); }
   if (redirect.username || redirect.password || redirect.hash || redirect.search ||
     (redirect.protocol !== "https:" && !(process.env.NODE_ENV !== "production" &&
       redirect.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(redirect.hostname)))) {
     throw new GoogleError("google_invalid_redirect_uri");
   }
-  return { clientId: config.googleClientId ?? "", clientSecret: config.googleClientSecret ?? "", redirectUri: redirect.href };
 }
-export type GoogleConfig = ReturnType<typeof googleConfig>;
 export function googleConfigured(): boolean {
   const cfg = googleConfig();
+  try { validateGoogleRedirectUri(cfg); } catch { return false; }
   return Boolean(cfg.clientId && cfg.clientSecret && process.env.GOOGLE_TOKEN_ENCRYPTION_KEY);
 }
 

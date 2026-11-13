@@ -121,3 +121,56 @@ produced an exact match to the pushed `google_connection` table: all 14 columns
 auth-user foreign key and checks), and three indexes. The comparison transaction
 was rolled back after verification. The disposable database was then removed;
 manual testing uses the existing local development database.
+
+## Local PR startup
+
+Started the service with
+`DOTENV_CONFIG_PATH=/Users/sp/Documents/bud/service/.env pnpm dev` from this
+worktree's `service/`. The `web/` command
+`pnpm exec vite --host localhost --port 5173 --strictPort` stopped in the local
+package wrapper:
+
+```text
+Error: ERR_PNPM_IGNORED_BUILDS
+Ignored build scripts: esbuild@0.25.12, esbuild@0.27.1
+```
+
+The already-installed Vite dependencies are usable (the production build passed).
+Started `node node_modules/vite/bin/vite.js --host localhost --port 5173 --strictPort`
+instead and removed the wrapper's generated `pnpm-workspace.yaml` placeholder.
+Both server working directories resolve to this PR worktree. `/readyz` returns
+200 with database/auth checks `ok`; the web returns 200 and the Google API proxy
+correctly returns 401 without a session.
+
+The background automation worker logs `automation_settleDepartures_failed`.
+Read-only EXPLAIN identified PostgreSQL 42P01: `relation "place_presence" does
+not exist`. The local database also lacks older place/visit dependencies; their
+migration chain includes existing-data conversion and index replacement. This
+unrelated schema catch-up was not applied during Google startup. Google human-chat
+testing does not use the place-presence automation worker.
+
+## Follow-up: complete local startup repair
+
+The user reported the app unusable and the Bud offline. The daemon was not
+running; only a surviving terminal holder remained. Verified the retained local
+device secret against the local database without exposing it, then started the
+existing daemon identity. It authenticated as the same Bud and reattached the
+existing terminal; no device claim, ownership or credential changes were needed.
+
+A full catalog comparison found missing migrations 0053–0066, including seven
+tables, six columns and a nullability change. Created a private local pg_dump
+backup and rehearsed that exact chain on a restored copy. All backfill DML
+affected zero rows, and count/hash comparisons across every pre-existing table
+proved existing values unchanged. Stopped the service, rechecked the same
+conditions, and applied only that chain in one transaction with lock timeouts.
+All 83 pre-existing auth/public tables retained their data, including messages,
+threads, Google credentials and unrelated file/OpenAI tables. Migration metadata
+was not edited and no broad schema push was run. The backup was retained; the
+temporary rehearsal database was removed.
+
+Restarted the service with the same local environment. The daemon automatically
+reconnected. Browser verification created a fresh "Local PR Smoke Test" chat;
+the model returned exactly "Bud test OK" without using tools, and the new terminal
+reported Ready/connected. Account Settings opened with all three Google service
+sections. The Google account chooser was left to the user; no OAuth grant was
+changed during the diagnostic test.

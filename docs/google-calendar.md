@@ -55,7 +55,14 @@ The local encryption key is already generated in the ignored service/.env file;
 do not regenerate it on restart. In production use the service secret manager,
 HTTPS URLs, and the same key on all replicas. Changing/loss of the encryption key
 requires reconnecting accounts. No online key-rotation mechanism is implemented.
+Unreadable saved credentials do not block Settings: connect a service again or
+choose **Clear saved connection** to remove them. Clearing still works if the
+encryption key or Google configuration is unavailable.
 The callback origin must be included in BETTER_AUTH_TRUSTED_ORIGINS.
+An invalid Google callback disables new Google connections, rather than stopping
+Bud from starting. Plain HTTP on a network address can serve Bud, but Google
+consent still needs a registered HTTPS callback (or localhost for development),
+as required by [Google's redirect URI rules](https://developers.google.com/identity/protocols/oauth2/web-server#uri-validation).
 
 ### Hosted configuration — 2026-11-12
 
@@ -145,6 +152,8 @@ sends real mail or changes real Calendar/Drive data. See the
 [validation note](../debug/google-task-access.md) for current commands/results.
 Real Calendar listing was confirmed previously; real task-consent upgrades and
 write acceptance remain manual checks before release.
+The [recovery note](../debug/google-service-recovery.md) covers unreadable
+credentials, revoked grants, transient refresh errors and owner-scoped concurrency.
 
 ## Chat connection contract
 
@@ -168,6 +177,8 @@ never performs the task: the user sends a message after connecting to continue.
 ID, account email, status and update time. Effective access is the intersection of
 the user's selected access and actual Google scopes. Incremental Google consent
 may retain earlier broader scopes, but Bud still enforces the selected access.
+Unreadable credentials return `status:"reconnect_required"`, no effective access
+and `recovery_required:true`; the owner can reconnect or clear the saved connection.
 
 `DELETE /api/google/connection/:connection_id/services/:service` revokes only that
 service in Bud. `DELETE /api/google/connection/:connection_id` disconnects the shared

@@ -265,3 +265,87 @@ test('a reconnect-required service shows no usable access but retains Revoke acc
     assert.equal(button(view, 'Revoke access'), undefined)
   } finally { await act(async () => view.unmount()); f.restore() }
 })
+
+function recoveryInventory(configured = true): GoogleInventory {
+  const result = inventory({})
+  result.configured = configured
+  result.connections[0].status = 'reconnect_required'
+  result.connections[0].recovery_required = true
+  return result
+}
+
+test('unusable saved credentials show account recovery and can be cleared once with or without OAuth setup', async () => {
+  for (const configured of [true, false]) {
+    const f = fixture()
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(authorized(createElement(ConnectedAppsSettings))) })
+      await f.reply(0, recoveryInventory(configured))
+      assert.equal(view.root.findAllByProps({ 'aria-label': 'Google connection recovery' }).length, 1)
+      assert.match(JSON.stringify(view.toJSON()), /google@example.com/)
+      assert.doesNotMatch(JSON.stringify(view.toJSON()), /Could not load|encryption|decrypt/)
+      assert.equal(view.root.findAllByType('button').filter(item => item.children.join('') === 'Connect').length, configured ? services.length : 0)
+      await act(async () => { button(view, 'Clear saved connection').props.onClick(); button(view, 'Clear saved connection').props.onClick() })
+      assert.equal(f.requests.length, 2)
+      assert.equal(f.requests[1].path, '/api/google/connection/connection')
+      assert.equal(f.requests[1].init?.method, 'DELETE')
+      assert.equal(f.requests[1].init?.credentials, 'include')
+      await f.reply(1, {})
+      assert.equal(button(view, 'Clear saved connection'), undefined)
+      assert.doesNotMatch(JSON.stringify(view.toJSON()), /google@example.com/)
+      await f.reply(2, { ...disconnected, configured })
+      assert.equal(view.root.findAllByProps({ 'aria-label': 'Google connection recovery' }).length, 0)
+    } finally { await act(async () => view.unmount()); f.restore() }
+  }
+})
+
+test('settings can reconnect unusable credentials directly without first clearing the saved connection', async () => {
+  const f = fixture()
+  let view!: ReactTestRenderer
+  try {
+    await act(async () => { view = create(authorized(createElement(ConnectedAppsSettings))) })
+    await f.reply(0, recoveryInventory())
+    const gmail = view.root.findByProps({ 'aria-label': 'Gmail connection' })
+    await act(async () => gmail.findByType('button').props.onClick())
+    assert.equal(f.requests[1].path, '/api/google/connect')
+    assert.deepEqual(JSON.parse(String(f.requests[1].init?.body)), { selections: [{ service: 'gmail', access: 'read_write' }] })
+    await f.reply(1, { authorization_url: 'https://accounts.google.com/reconnect' })
+    assert.deepEqual(f.navigation, ['https://accounts.google.com/reconnect'])
+    assert.equal(f.requests.some(request => request.init?.method === 'DELETE'), false)
+  } finally { await act(async () => view.unmount()); f.restore() }
+})
+
+test('late clear responses cannot change a different owner’s connection view', async () => {
+  const f = fixture()
+  let view!: ReactTestRenderer
+  try {
+    await act(async () => { view = create(authorized(createElement(ConnectedAppsSettings))) })
+    await f.reply(0, recoveryInventory())
+    await act(async () => button(view, 'Clear saved connection').props.onClick())
+    await act(async () => view.update(authorized(createElement(ConnectedAppsSettings), 'bob')))
+    assert.equal(f.requests[1].init?.signal?.aborted, true)
+    assert.doesNotMatch(JSON.stringify(view.toJSON()), /google@example.com|Reconnect Google/)
+    await f.reply(2, inventory({ gmail: 'read_write' }))
+    await f.reply(1, {})
+    assert.equal(f.requests.length, 3)
+    assert.equal(view.root.findByProps({ 'aria-label': 'Gmail connection' }).findByType('button').children.join(''), 'Revoke access')
+  } finally { await act(async () => view.unmount()); f.restore() }
+})
+
+test('task recovery preserves its exact requested access and does not require clearing or Settings', async () => {
+  for (const access of ['read_only', 'read_write'] as const) {
+    const f = fixture()
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(authorized(createElement(GoogleConnectCard, { threadId: 'thread', service: 'gmail', access }))) })
+      await f.reply(0, recoveryInventory())
+      assert.match(JSON.stringify(view.toJSON()), /saved Google connection needs to be reconnected/)
+      assert.doesNotMatch(JSON.stringify(view.toJSON()), /Send a message to continue/)
+      assert.equal(view.root.findAllByType('button').length, 1)
+      await act(async () => button(view, 'Connect Gmail').props.onClick())
+      assert.deepEqual(JSON.parse(String(f.requests[1].init?.body)), { thread_id: 'thread', selections: [{ service: 'gmail', access }] })
+      await f.reply(1, { authorization_url: 'https://accounts.google.com/reconnect-task' })
+      assert.deepEqual(f.navigation, ['https://accounts.google.com/reconnect-task'])
+    } finally { await act(async () => view.unmount()); f.restore() }
+  }
+})

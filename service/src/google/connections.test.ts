@@ -12,7 +12,7 @@ import { GoogleOAuth } from "./oauth.js";
 import { registerGoogleRoutes } from "./routes.js";
 import { googleFixture } from "./test-fixture.js";
 import { decryptGoogleCredentials, encryptGoogleCredentials } from "./credentials.js";
-import { GOOGLE_SERVICES, serviceScopes, type GoogleService, type GoogleSelection } from "./config.js";
+import { GOOGLE_SERVICES, GoogleError, serviceScopes, type GoogleService, type GoogleSelection } from "./config.js";
 import { DRIVE_TOOLS } from "./drive.js";
 
 test("owned Google grants: callback binding, expiry, replay, partial consent, refresh and disconnect", {
@@ -20,10 +20,10 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
 }, async t => {
   assert.ok(["localhost", "127.0.0.1"].includes(new URL(config.databaseUrl).hostname));
   const namespace = `google_test_${randomUUID().replaceAll("-", "")}`;
-  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 4 });
+  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 8 });
   await pool.query(`create schema ${namespace}`);
   t.after(async () => { await pool.query(`drop schema ${namespace} cascade`); await pool.end(); });
-  await pool.query("create table fixture_user(id text primary key); insert into fixture_user values ('alice'),('bob'),('carol'),('dave'),('erin')");
+  await pool.query("create table fixture_user(id text primary key); insert into fixture_user values ('alice'),('bob'),('carol'),('dave'),('erin'),('frank'),('grace'),('heidi'),('ivan'),('transient'),('limited'),('other')");
   const migration = await readFile(new URL("../../drizzle/migrations/0070_google_connections.sql", import.meta.url), "utf8");
   await pool.query(migration.replaceAll('"auth"."user"', `"${namespace}"."fixture_user"`));
   const database = drizzle(pool, { schema }), fixture = googleFixture(), key = randomBytes(32);
@@ -54,7 +54,7 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
   await assert.rejects(grantService("gmail", "another-account"), /google_account_mismatch/);
   assert.equal((await manager.list("alice"))[0].email, "alice@example.com");
   fixture.partialScopes();
-  await assert.rejects(grantService("drive"), /google_calendar_permissions_required/);
+  await assert.rejects(grantService("drive"), /google_drive_permissions_required/);
   assert.equal((await manager.list("alice"))[0].calendar_access, true);
   fixture.partialScopes(false); fixture.omitRefresh();
   await grantService("gmail"); await grantService("drive");
@@ -115,17 +115,15 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
     await manager.finish(owner, `${owner}-session`, new URLSearchParams({ state: url.searchParams.get("state")!, code: owner }));
     return (await manager.list(owner))[0];
   };
-  // A partial response must not replace established tokens, even when that service is selected again.
+  // A valid newly selected service replaces scopes that Google has revoked upstream.
   const established = await connectSelected("erin", [{ service: "calendar", access: "read_write" }]);
   fixture.grantOnly(serviceScopes("gmail", "read_write"));
-  await assert.rejects(connectSelected("erin", [{ service: "calendar", access: "read_write" }, { service: "gmail", access: "read_write" }]), /google_calendar_permissions_required/);
-  assert.equal((await manager.list("erin"))[0].access.gmail, "none");
+  await connectSelected("erin", [{ service: "gmail", access: "read_write" }]);
+  assert.equal((await manager.list("erin"))[0].access.calendar, "none");
+  assert.equal((await manager.list("erin"))[0].access.gmail, "read_write");
   fixture.grantOnly(serviceScopes("calendar", "read_only"));
-  await assert.rejects(connectSelected("erin", [{ service: "calendar", access: "read_write" }]), /google_calendar_permissions_required/);
-  assert.equal((await manager.list("erin"))[0].access.calendar, "read_write");
-  // An explicit read-only selection can intentionally reduce the existing capability.
-  await connectSelected("erin", [{ service: "calendar", access: "read_only" }]);
-  assert.equal((await manager.list("erin"))[0].access.calendar, "read_only");
+  await connectSelected("erin", [{ service: "calendar", access: "read_write" }, { service: "drive", access: "read_write" }]);
+  assert.deepEqual((await manager.list("erin"))[0].access, { calendar: "read_only", gmail: "none", drive: "none" });
   fixture.grantOnly();
   await manager.revokeService("erin", established.connection_id, "calendar");
   const readSelections = GOOGLE_SERVICES.map(service => ({ service, access: "read_only" as const }));
@@ -312,4 +310,139 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
   auth = new URL(await manager.begin("bob", "bob-session", undefined, [{ service: "gmail", access: "read_write" }])); fixture.authorize(auth.href, "bob");
   await assert.rejects(manager.finish("bob", "bob-session", new URLSearchParams({ state: auth.searchParams.get("state")!, code: "bob" })), /google_offline_access_required/);
   assert.equal((await manager.list("bob"))[0].gmail_access, false);
+  fixture.omitRefresh(false);
+
+  const grantWith = async (target: GoogleConnections, owner: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }]) => {
+    const url = new URL(await target.begin(owner, `${owner}-session`, undefined, selections));
+    fixture.authorize(url.href, owner);
+    await target.finish(owner, `${owner}-session`, new URLSearchParams({ state: url.searchParams.get("state")!, code: owner }));
+    return (await target.list(owner))[0];
+  };
+  const expire = async (owner: string, id: string) => {
+    const stored = (await pool.query("select encrypted_credentials from google_connection where id=$1", [id])).rows[0];
+    const binding = JSON.stringify([owner, id, fixture.config.clientId]);
+    const value = decryptGoogleCredentials(stored.encrypted_credentials, binding, key);
+    value.tokens!.expiry_date = Date.now() - 1000;
+    await pool.query("update google_connection set encrypted_credentials=$1 where id=$2", [encryptGoogleCredentials(value, binding, key), id]);
+    return value;
+  };
+
+  await t.test("unreadable credentials remain owner-scoped and support direct reconnect or local removal", async () => {
+    const all = GOOGLE_SERVICES.map(service => ({ service, access: "read_write" as const }));
+    const saved = await grantWith(manager, "frank", all), replacementKey = randomBytes(32);
+    const rotated = new GoogleConnections(fixture.config, database, () => replacementKey, new GoogleOAuth(fixture.config, fixture.fetcher), fixture.fetcher);
+    const recoveryApp = Fastify();
+    await registerGoogleRoutes(recoveryApp, rotated, async (request, reply) => {
+      const owner = request.headers["x-test-owner"];
+      if (typeof owner !== "string") { reply.code(401).send({ error: "unauthorized" }); return null; }
+      return { userId: owner, sessionId: `${owner}-session`, email: null, authType: "cookie" };
+    }, () => true, async (actor, threadId) => threadId === `${actor.userId}-thread`
+      ? { threadId, budId: `${actor.userId}-bud` } : null);
+    t.after(() => recoveryApp.close());
+    const ownerHeaders = { "x-test-owner": "frank", origin: config.betterAuthTrustedOrigins[0] };
+    const foreignHeaders = { ...ownerHeaders, "x-test-owner": "bob" };
+    const savedUrl = `/api/google/connection/${saved.connection_id}`;
+    const beforeAttacks = (await pool.query("select encrypted_credentials from google_connection where id=$1", [saved.connection_id])).rows[0].encrypted_credentials;
+    assert.equal((await recoveryApp.inject({ method: "GET", url: "/api/google/connection" })).statusCode, 401);
+    for (const url of [savedUrl, `${savedUrl}/services/calendar`]) {
+      assert.equal((await recoveryApp.inject({ method: "DELETE", url })).statusCode, 401);
+      assert.equal((await recoveryApp.inject({ method: "DELETE", url, headers: foreignHeaders })).statusCode, 404);
+      assert.equal((await recoveryApp.inject({ method: "DELETE", url, headers: { ...ownerHeaders, origin: "https://attacker.example" } })).statusCode, 403);
+    }
+    assert.equal((await recoveryApp.inject({ method: "POST", url: "/api/google/connect", payload: {} })).statusCode, 401);
+    assert.equal((await recoveryApp.inject({ method: "POST", url: "/api/google/connect", headers: foreignHeaders, payload: { connection_id: saved.connection_id } })).statusCode, 400);
+    assert.equal((await recoveryApp.inject({ method: "POST", url: "/api/google/connect", headers: foreignHeaders, payload: { thread_id: "frank-thread" } })).statusCode, 404);
+    const foreignInventory = await recoveryApp.inject({ method: "GET", url: "/api/google/connection", headers: foreignHeaders });
+    assert.equal(foreignInventory.statusCode, 200); assert.ok(!foreignInventory.body.includes(saved.connection_id));
+    assert.ok(!foreignInventory.body.includes("frank@example.com"));
+    assert.equal((await pool.query("select encrypted_credentials from google_connection where id=$1", [saved.connection_id])).rows[0].encrypted_credentials, beforeAttacks);
+    const broken = (await rotated.list("frank"))[0];
+    assert.equal(broken.status, "reconnect_required"); assert.equal(broken.recovery_required, true);
+    assert.equal(broken.email, "frank@example.com");
+    assert.deepEqual(broken.access, { calendar: "none", gmail: "none", drive: "none" });
+    assert.equal(broken.calendar_access, false); assert.equal(broken.calendar_write_access, false);
+    assert.doesNotMatch(JSON.stringify(broken), /refresh-frank|encrypted_credentials|access_token|device_secret/);
+    const ownerInventory = await recoveryApp.inject({ method: "GET", url: "/api/google/connection", headers: ownerHeaders });
+    assert.equal(ownerInventory.statusCode, 200); assert.deepEqual(ownerInventory.json().connections, [broken]);
+    assert.doesNotMatch(ownerInventory.body, /refresh-frank|encrypted_credentials|access_token|device_secret/);
+    await assert.rejects(rotated.call("frank", saved.connection_id, request, signal, async () => { assert.fail("Unreadable credentials dispatched"); }), /google_reconnect_required/);
+    await assert.rejects(rotated.revokeService("bob", saved.connection_id, "calendar"), /google_not_found/);
+    await assert.rejects(rotated.disconnect("bob", saved.connection_id), /google_not_found/);
+    const freshConsent = await recoveryApp.inject({ method: "POST", url: "/api/google/connect", headers: ownerHeaders,
+      payload: { selections: [{ service: "drive", access: "read_only" }] } });
+    assert.equal(freshConsent.statusCode, 200);
+    const consent = new URL(freshConsent.json().authorization_url); fixture.authorize(consent.href, "frank");
+    const completed = await recoveryApp.inject({ method: "GET", url: `/api/google/callback?${new URLSearchParams({ state: consent.searchParams.get("state")!, code: "frank" })}`, headers: ownerHeaders });
+    assert.equal(completed.statusCode, 303);
+    const restored = (await rotated.list("frank"))[0];
+    assert.equal(restored.recovery_required, undefined); assert.equal(restored.status, "connected");
+    assert.deepEqual(restored.access, { calendar: "none", gmail: "none", drive: "read_only" });
+    await rotated.call("frank", saved.connection_id, { method: "GET", path: "/files" }, signal, async () => {}, "drive");
+
+    const revoked = await grantWith(manager, "grace", all);
+    assert.equal((await recoveryApp.inject({ method: "DELETE", url: `/api/google/connection/${revoked.connection_id}/services/gmail`,
+      headers: { ...ownerHeaders, "x-test-owner": "grace" } })).statusCode, 204);
+    const row = (await pool.query("select * from google_connection where id=$1", [revoked.connection_id])).rows[0];
+    assert.equal(row.status, "disconnected"); assert.equal(row.encrypted_credentials, null);
+    assert.equal(row.account_subject, null); assert.equal(row.oauth_state_hash, null); assert.deepEqual(row.granted_scopes, []);
+    const withoutKey = new GoogleConnections(fixture.config, database, () => { throw new GoogleError("google_encryption_key_required"); });
+    const missingKey = await grantWith(manager, "heidi");
+    assert.equal((await withoutKey.list("heidi"))[0].recovery_required, true);
+    await withoutKey.revokeService("heidi", missingKey.connection_id, "calendar");
+    assert.equal((await withoutKey.list("heidi"))[0].status, "disconnected");
+    const disconnected = await grantWith(manager, "ivan");
+    assert.equal((await recoveryApp.inject({ method: "DELETE", url: `/api/google/connection/${disconnected.connection_id}`,
+      headers: { ...ownerHeaders, "x-test-owner": "ivan" } })).statusCode, 204);
+    assert.equal((await rotated.list("ivan"))[0].status, "disconnected");
+  });
+
+  await t.test("transient refresh failures retain tokens and access, while invalid_grant requires reconnect", async () => {
+    const connected = await grantWith(manager, "transient"), expired = await expire("transient", connected.connection_id);
+    let refreshAttempts = 0, rejectPermanently = false, dispatched = 0;
+    const transport: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (new URL(req.url).pathname === "/token" && new URLSearchParams(await req.clone().text()).get("grant_type") === "refresh_token") {
+        refreshAttempts++;
+        if (rejectPermanently) return Response.json({ error: "invalid_grant", error_description: "private provider failure" }, { status: 400 });
+        if (refreshAttempts <= 3) return Response.json({ error: "temporarily_unavailable", error_description: "private provider failure" }, { status: [500, 503, 429][refreshAttempts - 1] });
+        if (refreshAttempts === 4) throw new Error("private transport failure");
+      }
+      return fixture.fetcher(req);
+    };
+    const refreshing = new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, transport), fixture.fetcher);
+    const callsBefore = fixture.calls.length;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await assert.rejects(refreshing.call("transient", connected.connection_id, write, signal, async () => { dispatched++; }), error => {
+        assert.ok(error instanceof GoogleError); assert.equal(error.code, "google_refresh_unavailable"); assert.equal(error.retryable, true);
+        assert.doesNotMatch(JSON.stringify(error), /private|refresh-transient/); return true;
+      });
+      assert.equal(refreshAttempts, attempt, "one explicit request must make only one refresh attempt");
+      const current = (await refreshing.list("transient"))[0];
+      assert.equal(current.status, "connected"); assert.equal(current.access.calendar, "read_write");
+      const encrypted = (await pool.query("select encrypted_credentials from google_connection where id=$1", [connected.connection_id])).rows[0].encrypted_credentials;
+      assert.deepEqual(decryptGoogleCredentials(encrypted, JSON.stringify(["transient", connected.connection_id, fixture.config.clientId]), key).tokens, expired.tokens);
+    }
+    assert.equal(dispatched, 0); assert.equal(fixture.calls.length, callsBefore);
+    await refreshing.call("transient", connected.connection_id, write, signal, async () => { dispatched++; });
+    assert.equal(refreshAttempts, 5); assert.equal(dispatched, 1); assert.equal(fixture.calls.length, callsBefore + 1);
+    await expire("transient", connected.connection_id); rejectPermanently = true;
+    await assert.rejects(refreshing.call("transient", connected.connection_id, write, signal, async () => { assert.fail("Revoked refresh token dispatched"); }), error => {
+      assert.ok(error instanceof GoogleError); assert.equal(error.code, "google_reconnect_required"); assert.equal(error.retryable, false); return true;
+    });
+    assert.equal((await refreshing.list("transient"))[0].status, "reconnect_required");
+  });
+
+  await t.test("one owner's four active operations do not exhaust another owner's admission", async () => {
+    const limited = await grantWith(manager, "limited"), other = await grantWith(manager, "other");
+    let release!: () => void, entered!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+    const first = manager.call("limited", limited.connection_id, request, signal, async () => { entered(); await hold; });
+    await started;
+    const queued = Array.from({ length: 3 }, () => manager.call("limited", limited.connection_id, request, signal, async () => {}));
+    try {
+      await assert.rejects(manager.call("limited", limited.connection_id, request, signal, async () => {}), /google_busy/);
+      await manager.call("other", other.connection_id, request, AbortSignal.timeout(2000), async () => {});
+    } finally { release(); await Promise.all([first, ...queued]); }
+    await manager.call("limited", limited.connection_id, request, signal, async () => {});
+  });
 });

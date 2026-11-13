@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getAuthorizedBud, getAuthorizedThread, requireViewer, type Viewer } from "../auth/session.js";
 import { config } from "../config.js";
 import { GoogleCallbackError, googleConnections, type GoogleConnections } from "./connections.js";
-import { googleConfigured, GoogleError, GOOGLE_SERVICES } from "./config.js";
+import { googleConfigured, validateGoogleRedirectUri, GoogleError, GOOGLE_SERVICES } from "./config.js";
 
 function failure(reply: FastifyReply, error: unknown) {
   const code = error instanceof GoogleError ? error.code : error instanceof z.ZodError ? "google_invalid_request" : "google_connection_failed";
@@ -54,7 +54,11 @@ export async function registerGoogleRoutes(server: FastifyInstance, manager: Goo
   });
   server.get("/api/google/callback", async (request, reply) => {
     const actor = await viewer(request, reply); if (!actor) return;
-    const target = new URL("/settings", manager.config.redirectUri);
+    let target: URL;
+    try {
+      validateGoogleRedirectUri(manager.config);
+      target = new URL("/settings", manager.config.redirectUri);
+    } catch (error) { return failure(reply, error); }
     let returnThreadId: string | undefined;
     try {
       if (!actor.sessionId || actor.authType !== "cookie") throw new GoogleError("google_browser_session_required");

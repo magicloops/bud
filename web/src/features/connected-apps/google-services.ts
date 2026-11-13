@@ -21,6 +21,7 @@ export type GoogleAccessLevel = 'none' | GoogleAccess
 export type GoogleConnection = {
   connection_id: string; email: string | null; status: string
   access: Record<GoogleService, GoogleAccessLevel>
+  recovery_required?: true
 } & Record<`${GoogleService}_access` | `${GoogleService}_write_access`, boolean>
 export type GoogleInventory = { configured: boolean; connections: GoogleConnection[] }
 

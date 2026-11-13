@@ -6,13 +6,17 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
 
 - `config.ts`: existing Google credentials/callback, per-service scopes and
   sanitized errors. Calendar retains its narrow scopes; Gmail and Drive have read-only and full
-  capability sets. Full Drive uses drive to reach existing files.
+  capability sets. Full Drive uses drive to reach existing files. Invalid callback
+  configuration disables new Google connections without preventing service startup;
+  HTTPS/loopback validation runs before consent starts.
 - `credentials.ts`: AES-256-GCM token/PKCE encryption, bound to owner/row/client.
   Pending flow data includes requested service/access selections, previous connection
   status and optional return thread. Effective per-service access is encrypted too. Credentials never enter browser/model evidence.
 - `oauth.ts`: google-auth-library PKCE, offline incremental consent, verified
   userinfo identity, exchange/refresh without automatic retries. An identity hint
-  keeps all connected services on the same Google account.
+  keeps all connected services on the same Google account. Temporary refresh
+  failures return a retryable error and preserve the grant; a missing/rejected
+  refresh grant requires reconnecting.
 - `http.ts`: fixed Google OAuth/Calendar/Gmail users/me/Drive destinations; no
   redirects or retries, 20s network timeout, 64 KiB request and 1 MiB response caps.
   Binary multipart bodies retain exact bytes. Text responses expose at most
@@ -20,10 +24,12 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   error messages remain private; known disabled-API reasons get static guidance.
 - `connections.ts`: one google_connection row per Bud user (migration 0069),
   owner-filtered SQL, session-bound single-use state, 10-minute consent expiry,
-  5s lock timeout, 45s call signal and four active locked operations/process.
+  5s lock timeout, 45s call signal and four active locked operations per owner/process.
   Serialized refresh/API calls/disconnect prevent credential resurrection.
   Incremental consent preserves previous grants until successful same-subject
-  exchange; canceled/partial/wrong-account consent cannot overwrite them. An
+  exchange with at least one selected service granted; canceled/denied/wrong-account
+  consent cannot overwrite them. A replacement grant can omit revoked old scopes;
+  stored service access is capped to the new grant without reviving local revokes. An
   omitted new refresh token can reuse the existing one only for that same subject.
   Inventory reflects the previous usable status while new consent is pending.
   Each call intersects actual Google scopes with the stored service access.
@@ -32,6 +38,9 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   Service revoke stores `none`, cancels pending OAuth state, and leaves other
   services usable. The last service revoke and account disconnect clear credentials.
   These operations do not revoke the upstream Google grant shared with sign-in.
+  Unreadable credentials remain visible as reconnect-required inventory with no
+  effective access and `recovery_required:true`. Explicit reconnect or revocation
+  clears unusable credentials under the owner lock; account disconnect needs no key.
 - `tool-contracts.ts`: shared reviewed request/tool definitions, response transforms
   and model schema helpers. Request paths/headers/preflights are service-owned.
 - `calendar.ts`: seven operations: calendars/events list, event get/create/update/
@@ -43,6 +52,8 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   header/sender injection, folds Unicode subjects/recipient headers, validates
   threading headers and uses a deterministic Message-ID (not an idempotency key).
   Read transforms decode text and expose attachment metadata without binary dumps.
+  Large threads retain recent messages within one structured result budget, with
+  explicit body/message omissions and bounded IDs for individual-message reads.
   Sending/downloading attachments is not implemented; replacing a draft replaces
   the full message. No permanent message deletion or settings/delegation tools.
 - `drive.ts`: existing-file search/metadata/text/export, folder creation, small
@@ -58,6 +69,9 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   Unknown write outcomes halt for needs-review; definite 4xx rejections return an
   ordinary non-retryable error. Readable results cap at 32 KiB. Content is untrusted
   data in the owned transcript/model, not authority for additional actions.
+  Transient refresh failures are retryable without a consent card; no write has
+  dispatched at that point. Bounded Gmail results serialize intact as valid JSON;
+  other oversized results use a labeled JSON preview instead of cutting JSON mid-value.
 - `routes.ts`: owned inventory, cookie-Origin checked connect/disconnect, and
   same-session callbacks. Connect accepts service/access selections and optional owned thread_id;
   callback reauthorizes the thread/Bud and builds its return path on the configured
@@ -75,6 +89,8 @@ is resumed or replayed automatically. Existing opaque tool_payload/SSE envelopes
 are unchanged. Inventory exposes effective `access[service]` (`none|read_only|read_write`),
 read/write booleans, email, status, connection ID and timestamp. Credentials and
 internal Google subjects never enter model inputs.
+An optional `recovery_required:true` marks unreadable saved credentials. Settings
+offers direct reconnect or **Clear saved connection** via the existing account DELETE.
 
 `DELETE /api/google/connection/:connection_id/services/:service` revokes that
 service in Bud. The normal owner-filtered connection lock serializes revocation
@@ -91,6 +107,10 @@ checks, version preflight, disconnect races and uncertain writes. DB tests use a
 isolated local PostgreSQL schema. Task-specific access, partial upgrades, service
 revocation and stale OAuth callbacks have dedicated regressions. No real Gmail send or Drive
 mutation was used. Real Gmail/Drive consent and write acceptance remain pending.
+`config.test.ts` covers optional-integration startup with unusable callback URLs
+and consent-time URL validation. Recovery regressions cover key changes, missing
+old scopes, repeated temporary refresh errors, cross-owner concurrency and large
+Gmail threads. See [recovery plan](../../../plan/google-service-recovery.md).
 
 Deploy matching service/web builds after migration `0069_google_connections.sql`, generated after main
 migrations 0067/0068. No daemon upgrade is needed. Keep the stable encryption key across replicas/restarts.

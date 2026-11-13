@@ -91,6 +91,64 @@ test("lost write responses and lost authority after dispatch stop instead of ret
   }
 });
 
+test("oversized Gmail threads retain newest messages as valid bounded JSON with follow-up IDs", async () => {
+  const messages = Array.from({ length: 6 }, (_, index) => ({ id: `message${index}`, internalDate: String(1000 + index),
+    payload: { mimeType: "text/plain", headers: [{ name: "Subject", value: "Conversation" }],
+      body: { data: Buffer.from(`reply ${index}: ` + '最新🌱\n"'.repeat(4000)).toString("base64url") } } }));
+  let requests = 0;
+  const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, request, _signal, before) => {
+    await before("dispatch"); requests++;
+    return request.path === "/threads/conversation" ? { id: "conversation", messages } : messages.find(message => request.path === `/messages/${message.id}`)!;
+  } }, async () => true);
+  const invoke = (tool_name: string, args: unknown) => executor.execute("thread", { ...call, args: { connection_id: "connection", tool_name,
+    arguments_json: JSON.stringify(args) } }, "alice", new AbortController().signal, hooks);
+  const thread = await invoke("gmail_get_thread", { thread_id: "conversation" });
+  assert.equal(thread.result.ok, true);
+  const text = String(thread.payload.text), data = JSON.parse(text);
+  assert.ok(Buffer.byteLength(text) < 32768);
+  assert.doesNotMatch(text, /\ufffd/);
+  assert.equal(data.messages_order, "newest_first");
+  assert.equal(data.messages[0].id, "message5");
+  assert.match(data.messages[0].bodies[0].content, /^reply 5: 最新🌱/);
+  assert.equal(thread.payload.truncated, true);
+  assert.ok(data.omitted_messages > 0);
+  assert.ok(data.omitted_message_ids.includes("message0"));
+  const earlier = await invoke("gmail_get_message", { message_id: data.omitted_message_ids[0] });
+  const message = JSON.parse(String(earlier.payload.text));
+  assert.equal(message.id, data.omitted_message_ids[0]);
+  assert.ok(message.bodies[0].content.length > 0);
+  assert.ok(Buffer.byteLength(String(earlier.payload.text)) < 32768);
+  assert.equal(requests, 2);
+});
+
+test("transient Google refresh failure remains retryable without an OAuth card or automatic retry", async () => {
+  let attempts = 0;
+  const executor = new GoogleAgentExecutor({ list: async () => [], call: async () => {
+    attempts++;
+    throw new GoogleError("google_refresh_unavailable", true);
+  } }, async () => true);
+  const result = await executor.execute("thread", call, "alice", new AbortController().signal, hooks);
+  assert.equal(result.result.error, "google_refresh_unavailable");
+  assert.equal(result.result.retryable, true);
+  assert.equal(result.payload.retryable, true);
+  assert.equal(result.payload.connect_request, undefined);
+  assert.equal(attempts, 1);
+  assert.match(result.summary, /temporarily/);
+});
+
+test("oversized non-Gmail fallback is a valid JSON preview within the existing result cap", async () => {
+  const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before) => {
+    await before("dispatch"); return { id: "event", description: '🌱"\\'.repeat(12000) };
+  } }, async () => true);
+  const result = await executor.execute("thread", { ...call, args: { connection_id: "connection", tool_name: "calendar_get_event",
+    arguments_json: JSON.stringify({ calendar_id: "primary", event_id: "event" }) } }, "alice", new AbortController().signal, hooks);
+  assert.equal(result.payload.truncated, true);
+  const text = String(result.payload.text);
+  assert.ok(Buffer.byteLength(text) <= 32768);
+  assert.equal(JSON.parse(text).truncated, true);
+  assert.doesNotMatch(text, /\ufffd/);
+});
+
 test("task discovery requests only its exact access level and skips consent for sufficient grants", async () => {
   for (const service of ["calendar", "gmail", "drive"] as const) {
     for (const granted of ["none", "read_only", "read_write"] as const) {

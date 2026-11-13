@@ -34,6 +34,9 @@ not upgrade an existing Calendar grant. Bud requests the selected services and a
 incremental authorization for later additions. Canceling/denying extra consent
 preserves the prior grant. Choosing a different Google account is rejected;
 revoke every connected service first to deliberately switch the shared account.
+A successful replacement grant may omit services previously removed in Google
+Account permissions. Bud accepts the newly selected service and updates the
+others to the access actually granted, without restoring locally revoked services.
 
 The Gmail and Drive read-only and full-access scopes are **restricted**. A public external release requires Google's
 applicable restricted-scope verification and, for server-stored/transmitted data,
@@ -69,6 +72,9 @@ No local Finder path, remote URL fetch, or dependency on the separate file-libra
 branch is introduced. Text exports expose at most 24,000 bytes; provider responses
 over 1 MiB fail explicitly. Tool results cap at 32 KiB, requests at 64 KiB, lists at
 25 items/page. Pagination/truncation must be checked before claiming completeness.
+Large Gmail threads return valid JSON containing the newest messages that fit,
+with explicit truncation/omission metadata and bounded omitted-message IDs for
+follow-up reads using `gmail_get_message`.
 
 Drive edits require the last-read `version`, checked by a fresh metadata read
 before dispatch. This detects an already changed file; it is **not an atomic
@@ -77,6 +83,9 @@ can still race. Native content replacement is rejected by that preflight.
 Calendar retains its documented If-Match/etag behavior.
 Unknown send/upload/write outcomes stop for review and are never automatically
 retried. Review Gmail/Drive before trying the action again.
+Temporary token-refresh failures preserve the saved connection and return a
+retryable error; only a missing or rejected refresh grant requires reconnecting.
+The four-operation concurrency cap applies per Bud user, not across all users.
 
 Sources: [Gmail sending](https://developers.google.com/workspace/gmail/api/guides/sending),
 [reply threading](https://developers.google.com/workspace/gmail/api/guides/threads),
@@ -115,6 +124,9 @@ no real Drive files. Public production acceptance remains separate.
 Cookie viewer/Origin and owned return thread/Bud are resolved before consent.
 Inventory exposes effective `access[service]` plus read/write booleans. Tokens,
 service access and pending selection/return context stay encrypted; no new columns.
+If credentials cannot be read, inventory still succeeds with no effective access,
+`status:"reconnect_required"` and `recovery_required:true`. Settings offers fresh
+consent or **Clear saved connection** using the existing account DELETE endpoint.
 
 `google_search_tools` accepts `service`, task-required `access` and `query`.
 `google_call` executes only reviewed server-defined tools; the connection boundary

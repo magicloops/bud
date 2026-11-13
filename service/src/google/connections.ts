@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { googleConnectionTable as connections } from "../db/schema.js";
-import { googleConfig, GOOGLE_SERVICES, GoogleError, serviceGranted, serviceWriteGranted, type GoogleConfig, type GoogleService, type GoogleSelection, type GoogleServiceAccess } from "./config.js";
+import { googleConfig, validateGoogleRedirectUri, GOOGLE_SERVICES, GoogleError, serviceGranted, serviceWriteGranted, type GoogleConfig, type GoogleService, type GoogleSelection, type GoogleServiceAccess } from "./config.js";
 import { GoogleOAuth } from "./oauth.js";
 import { decryptGoogleCredentials, encryptGoogleCredentials, hashGoogleSecret, readGoogleEncryptionKey, type GoogleCredentials } from "./credentials.js";
 import { googleFetch, googleJson } from "./http.js";
@@ -26,7 +26,7 @@ export class GoogleCallbackError extends GoogleError {
   constructor(code: string, readonly returnThreadId?: string) { super(code); }
 }
 export class GoogleConnections {
-  private active = 0;
+  private readonly active = new Map<string, number>();
   constructor(readonly config: GoogleConfig = googleConfig(), private readonly database: Database = db,
     private readonly key = readGoogleEncryptionKey, private readonly oauth = new GoogleOAuth(config),
     private readonly baseFetch: typeof fetch = fetch) {}
@@ -36,31 +36,52 @@ export class GoogleConnections {
       email: connections.accountEmail, scopes: connections.grantedScopes, encrypted: connections.encryptedCredentials, updatedAt: connections.updatedAt })
       .from(connections).where(eq(connections.createdByUserId, owner));
     return rows.map(row => {
-      const data = row.encrypted ? decryptGoogleCredentials(row.encrypted, JSON.stringify([owner, row.id, row.clientId]), this.key()) : {};
-      const access = effectiveAccess(row.scopes, data);
+      let data: GoogleCredentials = {}, recoveryRequired = false;
+      try { if (row.encrypted) data = decryptGoogleCredentials(row.encrypted, JSON.stringify([owner, row.id, row.clientId]), this.key()); }
+      catch (error) {
+        if (!this.credentialUnavailable(error)) throw error;
+        recoveryRequired = true;
+      }
+      const access = effectiveAccess(recoveryRequired ? [] : row.scopes, data);
       return { connection_id: row.id, email: row.email,
-        status: row.clientId !== this.config.clientId ? "reconnect_required" : row.status === "connecting"
+        status: recoveryRequired || row.clientId !== this.config.clientId ? "reconnect_required" : row.status === "connecting"
           ? data.previousStatus ?? "connecting" : row.status,
         calendar_access: access.calendar !== "none", calendar_write_access: access.calendar === "read_write",
         gmail_access: access.gmail !== "none", gmail_write_access: access.gmail === "read_write",
         drive_access: access.drive !== "none", drive_write_access: access.drive === "read_write",
-        access,
+        access, ...(recoveryRequired ? { recovery_required: true as const } : {}),
         updated_at: row.updatedAt.toISOString() };
     });
   }
 
   private clearFlow(row: Connection) { row.oauthStateHash = null; row.oauthSessionHash = null; row.oauthExpiresAt = null; }
+  private credentialUnavailable(error: unknown) {
+    return error instanceof GoogleError && ["google_credentials_unreadable", "google_encryption_key_required", "google_encryption_key_invalid"].includes(error.code);
+  }
+  private clearConnection(row: Connection) {
+    this.clearFlow(row); row.status = "disconnected"; row.encryptedCredentials = null;
+    row.accountSubject = null; row.accountEmail = null; row.grantedScopes = [];
+  }
   private async locked<T>(owner: string, id: string,
-    fn: (row: Connection, data: GoogleCredentials, signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (this.active >= 4) throw new GoogleError("google_busy");
-    this.active++;
+    fn: (row: Connection, data: GoogleCredentials, signal: AbortSignal) => Promise<T>, recoverUnreadable = false): Promise<T> {
+    const active = this.active.get(owner) ?? 0;
+    if (active >= 4) throw new GoogleError("google_busy");
+    this.active.set(owner, active + 1);
     try {
       const outcome = await this.database.transaction(async tx => {
         await tx.execute(sql`set local lock_timeout = '5s'`);
         const [row] = await tx.select().from(connections)
           .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner))).for("update");
         if (!row) throw new GoogleError("google_not_found");
-        const key = this.key(), data = row.encryptedCredentials ? decryptGoogleCredentials(row.encryptedCredentials, aad(row), key) : {};
+        let key: Buffer | undefined, data: GoogleCredentials = {};
+        try {
+          key = this.key();
+          if (row.encryptedCredentials) data = decryptGoogleCredentials(row.encryptedCredentials, aad(row), key);
+        } catch (error) {
+          if (!this.credentialUnavailable(error)) throw error;
+          if (!recoverUnreadable) throw new GoogleError("google_reconnect_required");
+          this.clearConnection(row);
+        }
         // Materialize legacy scope-derived access before exchanging or refreshing tokens.
         // Once present, explicit "none" entries must survive Google's combined grants.
         data.serviceAccess ??= effectiveAccess(row.grantedScopes, data);
@@ -69,18 +90,22 @@ export class GoogleConnections {
         // Persist consumed state and rotated tokens even if a later API call fails.
         await tx.update(connections).set({ status: row.status, oauthClientId: row.oauthClientId,
           accountSubject: row.accountSubject, accountEmail: row.accountEmail, grantedScopes: row.grantedScopes,
-          encryptedCredentials: row.status === "disconnected" ? null : encryptGoogleCredentials(data, aad(row), key),
+          encryptedCredentials: row.status === "disconnected" ? null : encryptGoogleCredentials(data, aad(row), key ?? this.key()),
           oauthStateHash: row.oauthStateHash, oauthSessionHash: row.oauthSessionHash, oauthExpiresAt: row.oauthExpiresAt,
           updatedAt: new Date() }).where(and(eq(connections.id, id), eq(connections.createdByUserId, owner)));
         return { result, error };
       });
       if (outcome.error) throw outcome.error;
       return outcome.result as T;
-    } finally { this.active--; }
+    } finally {
+      const remaining = (this.active.get(owner) ?? 1) - 1;
+      if (remaining) this.active.set(owner, remaining); else this.active.delete(owner);
+    }
   }
 
   async begin(owner: string, sessionId: string, returnThreadId?: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }]) {
     if (!this.config.clientId || !this.config.clientSecret) throw new GoogleError("google_not_configured");
+    validateGoogleRedirectUri(this.config);
     if (!selections.length || new Set(selections.map(selection => selection.service)).size !== selections.length ||
       selections.some(selection => !GOOGLE_SERVICES.includes(selection.service) || !["read_only", "read_write"].includes(selection.access))) {
       throw new GoogleError("google_invalid_selection");
@@ -106,7 +131,7 @@ export class GoogleConnections {
       row.oauthExpiresAt = new Date(Date.now() + 10 * 60_000);
       const auth = await this.oauth.authorize(state, selections, row.accountEmail ?? undefined); data.verifier = auth.verifier;
       return auth.url;
-    });
+    }, true);
   }
 
   async finish(owner: string, sessionId: string, params: URLSearchParams) {
@@ -129,23 +154,15 @@ export class GoogleConnections {
         if (!verifier) throw new GoogleError("google_missing_verifier");
         const grant = await this.oauth.exchange(params.get("code")!, verifier, signal);
         if (row.accountSubject && grant.subject !== row.accountSubject) throw new GoogleError("google_account_mismatch");
-        // Keep a usable existing token if a partial response omits established capabilities.
-        // Never union old scope labels onto a new token that did not actually receive them.
-        const previousAccess = effectiveAccess(row.grantedScopes, data);
-        const missingPrior = GOOGLE_SERVICES.find(service => {
-          const selection = selections.find(candidate => candidate.service === service);
-          const retained = previousAccess[service] === "read_write" && selection?.access === "read_only"
-            ? "read_only" : previousAccess[service];
-          return retained !== "none" && !serviceGranted(grant.scopes, service) ||
-            retained === "read_write" && !serviceWriteGranted(grant.scopes, service);
-        });
-        if (missingPrior) throw new GoogleError(`google_${missingPrior}_permissions_required`);
+        // A valid new grant is authoritative even when Google revoked older service scopes.
+        // Do not overwrite the previous credentials unless a selected service was accepted.
         const accepted = selections.filter(selection => serviceGranted(grant.scopes, selection.service));
         if (!accepted.length) throw new GoogleError(`google_${selections[0].service}_permissions_required`);
         const refreshToken = grant.tokens.refresh_token ?? data.tokens?.refresh_token;
         if (!refreshToken) throw new GoogleError("google_offline_access_required");
         grant.tokens.refresh_token = refreshToken;
         data.tokens = grant.tokens;
+        data.serviceAccess = effectiveAccess(grant.scopes, data);
         for (const selection of accepted) {
           data.serviceAccess![selection.service] = selection.access === "read_write" && serviceWriteGranted(grant.scopes, selection.service)
             ? "read_write" : "read_only";
@@ -176,9 +193,9 @@ export class GoogleConnections {
       delete data.verifier; delete data.returnThreadId; delete data.requestedSelections; delete data.previousStatus;
       if (GOOGLE_SERVICES.every(candidate => effectiveAccess(row.grantedScopes, data)[candidate] === "none")) {
         delete data.tokens;
-        row.status = "disconnected"; row.accountSubject = null; row.accountEmail = null; row.grantedScopes = [];
+        this.clearConnection(row);
       }
-    });
+    }, true);
   }
 
   async call(owner: string, id: string, request: GoogleRequest, signal: AbortSignal,

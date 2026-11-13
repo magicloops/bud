@@ -63,6 +63,17 @@ function Settings() {
       }
     })
   }
+  async function clearConnection() {
+    if (!connection?.recovery_required) return
+    await mutate('clear', async signal => {
+      const response = await apiFetch(`/api/google/connection/${encodeURIComponent(connection.connection_id)}`, { method: 'DELETE', signal })
+      if (!response.ok) throw new Error('Clearing connection failed')
+      if (!signal.aborted) {
+        setInventory(current => current && { ...current, connections: current.connections.filter(item => item.connection_id !== connection.connection_id) })
+        setRevision(value => value + 1)
+      }
+    })
+  }
   return <section className="rounded-xl border-2 border-border bg-card p-6 shadow-[2px_2px_0px_var(--border)]">
     <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Connected apps</h2>
     <p className="mt-3 text-sm text-muted-foreground">Connect the Google services Bud can use.</p>
@@ -71,6 +82,13 @@ function Settings() {
     {callbackStatus === 'permissions_required' && <p role="status" className="mt-3 text-sm">Some requested permissions were not granted. Available services still work.</p>}
     {callbackStatus === 'account_mismatch' && <p role="status" className="mt-3 text-sm">Choose the Google account already connected to Bud.</p>}
     {!inventory && !error && <p className="mt-4 text-sm" role="status">Loading connected apps…</p>}
+    {connection?.recovery_required && <div aria-label="Google connection recovery" className="mt-4 rounded-lg border border-border p-4">
+      <p className="font-semibold">Reconnect Google</p>
+      <p className="mt-2 text-sm text-muted-foreground">Bud can no longer use your saved Google connection{connection.email ? ` for ${connection.email}` : ''}. {inventory?.configured ? 'Connect a service below to restore access, or clear the saved connection.' : 'You can clear the saved connection while Google setup is unavailable.'}</p>
+      <Button type="button" variant="outline" className="mt-3" disabled={pending !== null} onClick={() => void clearConnection()}>
+        {pending === 'clear' ? 'Clearing…' : 'Clear saved connection'}
+      </Button>
+    </div>}
     {inventory && services.map(service => {
       const { name } = GOOGLE_SERVICES[service]
       const access = googleAccess(connection, service)

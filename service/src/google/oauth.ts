@@ -11,7 +11,8 @@ export class GoogleOAuth {
         fetchImplementation: googleFetch(this.baseFetch, signal), timeout: 20_000, maxRedirects: 0,
       } });
     client.transporter.interceptors.request.add({ resolved: async options => {
-      options.retry = false; options.redirect = "error";
+      // The SDK supplies retryConfig, which gaxios honors even when retry is false.
+      options.retry = false; options.retryConfig = { retry: 0, noResponseRetries: 0 }; options.redirect = "error";
       return options;
     } });
     return client;
@@ -49,9 +50,18 @@ export class GoogleOAuth {
     try {
       const client = this.client(signal); client.setCredentials(tokens);
       const { credentials } = await client.refreshAccessToken();
-      if (!credentials.access_token) throw new GoogleError("google_reconnect_required");
+      if (!credentials.access_token) throw new GoogleError("google_refresh_unavailable", true);
       return { access_token: credentials.access_token, refresh_token: credentials.refresh_token ?? tokens.refresh_token,
         expiry_date: credentials.expiry_date, scope: credentials.scope ?? tokens.scope, token_type: credentials.token_type };
-    } catch { throw new GoogleError("google_reconnect_required"); }
+    } catch (error) {
+      const response = error && typeof error === "object" && "response" in error ? error.response : undefined;
+      const data = response && typeof response === "object" && "data" in response ? response.data : undefined;
+      const status = response && typeof response === "object" && "status" in response ? response.status : undefined;
+      if (typeof status === "number" && status >= 400 && status < 500 &&
+        data && typeof data === "object" && "error" in data && data.error === "invalid_grant") {
+        throw new GoogleError("google_reconnect_required");
+      }
+      throw new GoogleError("google_refresh_unavailable", true);
+    }
   }
 }

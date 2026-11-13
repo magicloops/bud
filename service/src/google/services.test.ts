@@ -75,6 +75,34 @@ test("Gmail decodes nested messages and lists attachments without dumping bytes"
   assert.equal(huge.body_truncated, true);
 });
 
+test("Gmail bounds escaped Unicode, headers, attachments and omitted IDs without losing newest text", () => {
+  const messages = Array.from({ length: 80 }, (_, index) => ({ id: `message_${index}_${"a".repeat(200)}`, internalDate: String(index + 1),
+    payload: { headers: [{ name: "Subject", value: '"🌱\\'.repeat(3000) }], parts: [
+      { mimeType: "text/html", body: { data: Buffer.from("duplicate HTML".repeat(1000)).toString("base64url") } },
+      { mimeType: "text/plain", body: { data: Buffer.from(`message ${index}: ` + '🌱\n"\\'.repeat(3000)).toString("base64url") } },
+      { mimeType: "application/pdf", filename: "f".repeat(20000), body: { attachmentId: "attachment", data: "BINARY-SECRET" } },
+    ] } }));
+  const result = gmailResult({ id: "thread", historyId: "h".repeat(40000), messages });
+  const serialized = JSON.stringify(result);
+  assert.ok(Buffer.byteLength(serialized) < 32768);
+  assert.doesNotMatch(serialized, /\ufffd|BINARY-SECRET|duplicate HTML/);
+  const included = result.messages as { id: string; bodies: { content: string }[]; body_truncated: boolean; metadata_truncated: boolean }[];
+  assert.equal(included[0].id, messages.at(-1)!.id);
+  assert.match(included[0].bodies[0].content, /^message 79: 🌱/);
+  assert.equal(included[0].body_truncated, true);
+  assert.equal(included[0].metadata_truncated, true);
+  assert.equal(result.truncated, true);
+  assert.equal(result.omitted_messages, messages.length - included.length);
+  const omitted = result.omitted_message_ids as string[];
+  assert.ok(omitted.length > 0 && Buffer.byteLength(JSON.stringify(omitted)) <= 4000);
+  assert.ok(omitted.every(messageId => messages.some(message => message.id === messageId) && !included.some(message => message.id === messageId)));
+  assert.equal(result.omitted_message_ids_truncated, true);
+  assert.match(String(result.note), /gmail_get_message/);
+  const draft = gmailResult({ id: "draft", message: messages.at(-1) });
+  assert.ok(Buffer.byteLength(JSON.stringify(draft)) < 32768);
+  assert.equal(draft.truncated, true);
+});
+
 test("Drive upload constructs byte-correct multipart, preserves metadata, and rejects unsafe/oversized inputs", () => {
   for (const [content, encoding, expected] of [["Résumé 🌱", "utf8", Buffer.from("Résumé 🌱")], ["AP8NCg==", "base64", Buffer.from([0, 255, 13, 10])]] as const) {
     const request = prepare("drive_upload_file", { name: "test.txt", parent_id: "folder", content, encoding });

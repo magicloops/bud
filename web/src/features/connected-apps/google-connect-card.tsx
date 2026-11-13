@@ -49,6 +49,7 @@ function ConnectionCard({ threadId, service, access }: Props) {
   }
   const connection = inventory?.connections.find(item => hasGoogleAccess(item, service, access))
   const upgrade = access === 'read_write' && inventory?.connections.some(item => googleAccess(item, service) === 'read_only')
+  const recoveryRequired = inventory?.connections.some(item => item.recovery_required)
   return <section aria-label={`${name} connection`} className="max-w-lg rounded-xl border-2 border-border bg-card p-4 shadow-[2px_2px_0px_var(--border)]">
     <div className="flex items-center gap-2 font-semibold"><Icon className="size-5 shrink-0" aria-hidden="true" />{access === 'read_only' ? `Read ${shortName}` : `Full ${shortName} access`}</div>
     {connection ? <div role="status" className="mt-3 text-sm">
@@ -56,6 +57,7 @@ function ConnectionCard({ threadId, service, access }: Props) {
       <p className="mt-2 text-muted-foreground">Send a message to continue your request.</p>
     </div> : <>
       <p className="mt-2 text-sm text-muted-foreground">{access === 'read_only' ? readDescription : fullDescription} You’ll return to this chat after connecting.</p>
+      {recoveryRequired && <p role="status" className="mt-2 text-sm">Your saved Google connection needs to be reconnected.</p>}
       {upgrade && <p className="mt-2 text-sm">Read access is connected. This request needs full access.</p>}
       {!inventory && !error && <p role="status" className="mt-3 text-sm">Checking connection…</p>}
       {inventory && !inventory.configured && <p role="status" className="mt-3 text-sm">{name} is awaiting app setup.</p>}
