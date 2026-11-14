@@ -313,6 +313,9 @@ export const googleConnectionTable = pgTable("google_connection", {
   oauthStateHash: text("oauth_state_hash"),
   oauthSessionHash: text("oauth_session_hash"),
   oauthExpiresAt: timestamp("oauth_expires_at", { withTimezone: true }),
+  // Raised when authorization changes (a grant, a revoke, a disconnect, reconnect required).
+  // Work that talked to Google compares it before sending or saving anything.
+  grantEpoch: integer("grant_epoch").notNull().default(0),
   createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
   tenantId: text("tenant_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

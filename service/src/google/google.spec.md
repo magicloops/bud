@@ -45,7 +45,7 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   These operations do not revoke the upstream Google grant shared with sign-in.
   Unreadable credentials remain visible as reconnect-required inventory with no
   effective access and `recovery_required:true`. Explicit reconnect or revocation
-  clears unusable credentials under the owner lock; account disconnect needs no key.
+  clears unusable credentials in one short row-locked edit; account disconnect needs no key.
 - `tool-contracts.ts`: shared reviewed request/tool definitions, response transforms
   and model schema helpers. Request paths/headers/preflights are service-owned.
 - `calendar.ts`: seven operations: calendars/events list, event get/create/update/
@@ -107,9 +107,41 @@ An optional `recovery_required:true` marks unreadable saved credentials. Setting
 offers direct reconnect or **Clear saved connection** via the existing account DELETE.
 
 `DELETE /api/google/connection/:connection_id/services/:service` revokes that
-service in Bud. The owner-scoped operation lease serializes revocation
-with callback/refresh/API work. There is no per-action approval layer or global
+service in Bud. It is one short edit that raises `grant_epoch` and never waits
+for callback, refresh or API work; that work stops at its next request (see
+Concurrency). There is no per-action approval layer or global
 write-policy switch; user-request and uncertain-outcome handling remain unchanged.
+
+## Concurrency
+
+Design: [options](../../../design/google-connection-concurrency.md),
+[plan](../../../plan/google-connection-concurrency.md). There is no operation
+lease, and calls for one account run together (at most four per owner per process).
+
+- Only the connection row is protected. Every write is `edit`: read the current
+  row under `FOR UPDATE NOWAIT`, change it, save. The change is local work only,
+  never a request to Google. A locked row is retried for two seconds without
+  holding a pool client, then fails as retryable `google_busy`.
+- `grant_epoch` rises when authorization changes: a completed grant, a service
+  revoke, a disconnect, a move to `reconnect_required`, cleared unreadable
+  credentials, or a changed OAuth client. A token refresh does not raise it.
+- A call reads the row without a lock and remembers the epoch. Before each
+  preflight and dispatch, after the invocation and ownership checks, it compares
+  the epoch. If it changed the request is not sent: the call reports the missing
+  access when access is gone, and otherwise retryable `google_connection_changed`
+  (the account may differ from the one the request was prepared for).
+- A refresh is shared: one per connection per process. Its result is saved onto the
+  current row only if the epoch is unchanged, so it cannot undo a disconnect or
+  drop a pending connect flow. A second service instance could refresh at the same
+  time; Google's documentation does not describe a refresh replacing the refresh
+  token, and production runs one instance.
+- The OAuth callback consumes its state in one edit, exchanges the code outside any
+  transaction, and applies the grant in a second edit only if the epoch is
+  unchanged. A newer connect flow that began meanwhile stays pending and falls
+  back to that grant.
+- A call or exchange is cut off after 45 seconds (`google_operation_timed_out`,
+  retryable; a write already sent is still reported as unknown). Nothing is
+  checked after Google has answered.
 
 ## Validation and rollout
 

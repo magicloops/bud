@@ -9,6 +9,7 @@ CREATE TABLE "google_connection" (
 	"oauth_state_hash" text,
 	"oauth_session_hash" text,
 	"oauth_expires_at" timestamp with time zone,
+	"grant_epoch" integer DEFAULT 0 NOT NULL,
 	"created_by_user_id" text NOT NULL,
 	"tenant_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

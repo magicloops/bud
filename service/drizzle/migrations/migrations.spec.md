@@ -5,7 +5,9 @@
 Generated from main’s `0069_motionless_reaper` snapshot. Adds one owned
 Google OAuth connection per user with encrypted credentials, granted scopes,
 expiring session-bound state, ownership FK and status/flow checks. The SQL matches
-the previously reviewed Google DDL. Deploy with `pnpm db:migrate` before the
+the previously reviewed Google DDL plus `grant_epoch` (integer, default 0), added
+in place before the table reached production: a local database that applied the
+earlier 0070 takes the column with `pnpm db:push`. Deploy with `pnpm db:migrate` before the
 matching service and web builds.
 See [setup](../../../docs/google-calendar.md) and [debug note](../../../debug/google-direct-oauth.md).
 
