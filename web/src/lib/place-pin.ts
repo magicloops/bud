@@ -85,10 +85,6 @@ export function placeQuestionTitle(place: ApiAskUserQuestionPlace, existing: Api
   return place.query ? `${place.name} — ${place.query}` : place.name
 }
 
-export function formatPin(pin: { latitude: number; longitude: number; radius_m: number }) {
-  return `${pin.latitude.toFixed(6)}, ${pin.longitude.toFixed(6)} · ${Math.round(pin.radius_m)} m`
-}
-
 /** Place save failures (from the places API or a refused place answer) in words. */
 export function placeErrorMessage(code: string) {
   switch (code) {

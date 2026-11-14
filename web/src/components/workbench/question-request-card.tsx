@@ -1,6 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { Check, CircleSlash, MapPin, Send } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { MapPin } from 'lucide-react'
 import { PlacePinDialog } from '@/components/place-pin-editor'
 import type {
   ApiAskUserQuestion,
@@ -8,12 +7,15 @@ import type {
   ApiAskUserQuestionsResponseInput,
 } from '@/lib/api-types'
 import { usePlaces } from '@/lib/places'
-import { formatPin, placeAnswer, placeErrorMessage, placeQuestionStart, placeQuestionTitle } from '@/lib/place-pin'
+import { placeAnswer, placeErrorMessage, placeQuestionStart, placeQuestionTitle } from '@/lib/place-pin'
 import { cn } from '@/lib/utils'
+import '@/components/settings-layout.css'
 import {
   buildAskUserQuestionsResponseInput,
   buildInitialQuestionAnswers,
   buildSkippedQuestionAnswers,
+  needsSkipConfirmation,
+  submitsOnClick,
   type QuestionRequestAnswerState,
 } from './question-request-response.ts'
 
@@ -40,25 +42,44 @@ export function QuestionRequestCard({
     [answers],
   )
 
-  const updateAnswer = (questionId: string, answer: QuestionRequestAnswerState) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: answer }))
-  }
+  const [confirmingSkip, setConfirmingSkip] = useState(false)
+  const single = request.questions.length === 1
+  const answerOnClick = submitsOnClick(request)
+  const blocked = disabled || isSubmitting
 
-  const skipAll = () => {
-    setAnswers(buildSkippedQuestionAnswers(request))
-  }
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (disabled || isSubmitting) {
+  const submit = async (next: Record<string, QuestionRequestAnswerState>) => {
+    if (blocked) {
       return
     }
     setIsSubmitting(true)
     try {
-      await onSubmit(buildAskUserQuestionsResponseInput(request, answers))
+      await onSubmit(buildAskUserQuestionsResponseInput(request, next))
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const updateAnswer = (questionId: string, answer: QuestionRequestAnswerState) => {
+    const next = { ...answers, [questionId]: answer }
+    setAnswers(next)
+    if (answerOnClick && answer.status === 'answered') void submit(next)
+  }
+
+  // Skipping everything sends the response; an important question asks first.
+  const skipAll = (confirmed = false) => {
+    if (!confirmed && needsSkipConfirmation(request)) {
+      setConfirmingSkip(true)
+      return
+    }
+    setConfirmingSkip(false)
+    const skipped = buildSkippedQuestionAnswers(request)
+    setAnswers(skipped)
+    void submit(skipped)
+  }
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    void submit(answers)
   }
 
   return (
@@ -76,7 +97,9 @@ export function QuestionRequestCard({
             key={question.question_id}
             question={question}
             value={answers[question.question_id] ?? { status: 'skipped' }}
-            disabled={disabled || isSubmitting}
+            disabled={blocked}
+            single={single}
+            answerOnClick={answerOnClick}
             onChange={(answer) => updateAnswer(question.question_id, answer)}
           />
         ))}
@@ -84,47 +107,62 @@ export function QuestionRequestCard({
 
       {submitError && <div className="text-[11px] text-destructive">{placeErrorMessage(submitError)}</div>}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">
-          {answeredCount} of {request.questions.length} answered
-        </span>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={disabled || isSubmitting}
-            onClick={skipAll}
-            className="border-2 border-black text-[11px]"
-          >
-            <CircleSlash className="h-3.5 w-3.5" />
-            {request.skip_all_label ?? 'Skip all'}
-          </Button>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={disabled || isSubmitting}
-            className="border-2 border-black text-[11px]"
-            style={{ backgroundColor: 'var(--bud-accent-muted)', color: 'black' }}
-          >
-            {isSubmitting ? <Check className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
-            {request.submit_label ?? 'Submit answers'}
-          </Button>
+      {confirmingSkip ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs" role="alertdialog" aria-label="Skip important questions">
+          <span>
+            {single
+              ? 'This question was marked important. You can still skip it.'
+              : 'One or more questions were marked important. You can still skip them.'}
+          </span>
+          <div className="flex items-center gap-3">
+            <button type="button" className={quietButtonClass} onClick={() => setConfirmingSkip(false)}>Cancel</button>
+            <button type="button" className="settings-action" disabled={blocked} onClick={() => skipAll(true)}>
+              {single ? 'Skip' : 'Skip all'}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        // The way out on the left, the answer on the right.
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <button type="button" className={quietButtonClass} disabled={blocked} onClick={() => skipAll()}>
+              {single ? 'Skip' : request.skip_all_label ?? 'Skip all'}
+            </button>
+            {!single && (
+              <span className="text-[11px] text-muted-foreground">
+                {answeredCount} of {request.questions.length} answered
+              </span>
+            )}
+          </div>
+          {isSubmitting && answerOnClick && <span className="text-[11px] text-muted-foreground">Sending…</span>}
+          {!answerOnClick && (
+            <button type="submit" className="settings-action" disabled={blocked}>
+              {isSubmitting ? 'Sending…' : request.submit_label ?? 'Submit'}
+            </button>
+          )}
+        </div>
+      )}
     </form>
   )
 }
+
+const quietButtonClass = 'text-xs underline underline-offset-4 disabled:opacity-50'
 
 function QuestionInput({
   question,
   value,
   disabled,
+  single,
+  answerOnClick,
   onChange,
 }: {
   question: ApiAskUserQuestion
   value: QuestionRequestAnswerState
   disabled: boolean
+  /** The only question: the footer's "Skip" is its way out. */
+  single: boolean
+  /** A click on an option sends the answer, so options are buttons. */
+  answerOnClick: boolean
   onChange: (value: QuestionRequestAnswerState) => void
 }) {
   const skipped = value.status === 'skipped'
@@ -136,7 +174,7 @@ function QuestionInput({
           <legend className="text-xs font-semibold text-foreground">{question.label}</legend>
           {question.help_text && <p className="mt-0.5 text-[11px] text-muted-foreground">{question.help_text}</p>}
         </div>
-        <button
+        {!single && <button
           type="button"
           onClick={() => onChange({ status: 'skipped' })}
           className={cn(
@@ -147,9 +185,9 @@ function QuestionInput({
           )}
         >
           Skip
-        </button>
+        </button>}
       </div>
-      {renderQuestionControl(question, value, onChange)}
+      {renderQuestionControl(question, value, onChange, answerOnClick)}
     </fieldset>
   )
 }
@@ -158,6 +196,7 @@ function renderQuestionControl(
   question: ApiAskUserQuestion,
   value: QuestionRequestAnswerState,
   onChange: (value: QuestionRequestAnswerState) => void,
+  answerOnClick: boolean,
 ) {
   switch (question.kind) {
     case 'boolean':
@@ -176,6 +215,22 @@ function renderQuestionControl(
         </div>
       )
     case 'single_choice':
+      if (answerOnClick) {
+        return (
+          <div className="grid gap-1.5">
+            {(question.choices ?? []).map((choice) => (
+              <button
+                key={choice.choice_id}
+                type="button"
+                onClick={() => onChange({ status: 'answered', answer: { kind: 'single_choice', choice_id: choice.choice_id } })}
+                className={cn(choiceButtonClass(value.answer?.kind === 'single_choice' && value.answer.choice_id === choice.choice_id), 'text-left')}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        )
+      }
       return (
         <div className="grid gap-1.5">
           {(question.choices ?? []).map((choice) => (
@@ -315,7 +370,7 @@ function PlaceQuestionControl({
       <div className="min-w-0 flex-1">
         <div>{placeQuestionTitle(place, existing)}</div>
         {answer && <div className="text-[11px] text-muted-foreground">
-          {answer.name}{answer.address ? `, ${answer.address},` : ''} at {formatPin(answer)}
+          {answer.name} · {answer.address || 'Pin chosen on the map'}
         </div>}
         {place.place_id && places && !existing && (
           <div className="text-[11px] text-muted-foreground">That place no longer exists. Skip, or ask for a new one.</div>

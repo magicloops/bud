@@ -5,6 +5,8 @@ import {
   buildAskUserQuestionsResponseInput,
   buildInitialQuestionAnswers,
   buildSkippedQuestionAnswers,
+  needsSkipConfirmation,
+  submitsOnClick,
   type QuestionRequestAnswerState,
 } from './question-request-response.ts'
 
@@ -172,4 +174,26 @@ test('buildInitialQuestionAnswers uses matching default answers only', () => {
     answer: { kind: 'boolean', value: true },
   })
   assert.deepEqual(initial.notes, { status: 'skipped' })
+})
+
+test('submitsOnClick is true only for a lone yes/no or single choice', () => {
+  const request = (...kinds: ApiAskUserQuestionsRequest['questions'][number]['kind'][]): ApiAskUserQuestionsRequest => ({
+    schema: 'ask_user_questions_request_v1',
+    request_id: 'qr_click',
+    questions: kinds.map((kind, index) => ({ question_id: `q${index}`, kind, label: 'Q', skippable: true })),
+  })
+
+  assert.deepEqual(
+    [request('boolean'), request('single_choice'), request('multi_choice'), request('text'), request('boolean', 'boolean'), request()]
+      .map(submitsOnClick),
+    [true, true, false, false, false, false],
+  )
+})
+
+test('needsSkipConfirmation is true when any question is important', () => {
+  assert.equal(needsSkipConfirmation(REQUEST), false)
+  assert.equal(needsSkipConfirmation({
+    ...REQUEST,
+    questions: [...REQUEST.questions, { question_id: 'why', kind: 'text', label: 'Why?', importance: 'important', skippable: true }],
+  }), true)
 })
