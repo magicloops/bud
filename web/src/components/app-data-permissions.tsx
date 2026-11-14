@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { apiFetchJson, isApiError } from '@/lib/transport'
+import { appAccessSummary } from '@/lib/data-sources'
 import { ReviewDetails } from './review-details'
 import './settings-layout.css'
 type Page<T> = { items: T[]; next_cursor: string | null }
@@ -96,7 +97,7 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
   const blocked = busy || done || !canMutate
   const details = <PermissionDetails title={request.app_label} inline={inline}>
     <p className="whitespace-pre-wrap break-words">{request.purpose}</p>
-    <p>Data: {request.data_access.scopes.join(', ')} · History: {request.data_access.history_days} days</p>
+    <p>Data: {appAccessSummary(request.data_access)}</p>
     <p>Contact fields: {request.data_access.contact_fields.join(', ') || 'None'} · Location: {request.data_access.location_precision.replaceAll('_', ' ')} · Health: {request.data_access.health_types?.join(', ') || 'None'}</p>
     <p className="text-sm break-all">Private app: {request.destination.proxied_site_id}</p>
     <details className="app-access-details text-sm"><summary>Installation identity</summary><p className="break-all">{request.destination.recipient_fingerprint}</p></details>
@@ -107,12 +108,12 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
     </PermissionDetails>
   return <article className={`rounded border p-3 space-y-2 ${!inline && !pending ? 'app-access-row' : ''}`}>
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{request.app_label}</h3><span className="text-sm text-muted-foreground">{appPermissionStatus(request)}</span>{request.key?.last_used_at && <span className="text-xs text-muted-foreground">Used {time(request.key.last_used_at)}</span>}</div>
-    {pending && <p className="text-sm">Read {request.data_access.contact_fields.join(', ').replaceAll('_', ' ') || request.data_access.scopes.join(', ')} · {request.data_access.history_days} days{request.data_access.scopes.includes('location.read') ? ` · Location: ${request.data_access.location_precision.replaceAll('_', ' ')}` : ''}{request.data_access.health_types?.length ? ` · Health: ${request.data_access.health_types.join(', ')}` : ''}</p>}
+    {pending && <p className="text-sm">Wants to read {appAccessSummary(request.data_access)}.</p>}
     {(!inline || !pending) && details}
     {pending && <div className="review-actions">
-      <button className="review-deny" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>
+      <button className="review-quiet" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>
       {inline && details}
-      <button className="review-approve" disabled={blocked || !canApprove || (!!retry && retry.action !== 'approve')} onClick={() => void act('approve')}>{retry?.action === 'approve' ? 'Retry approval' : 'Allow'}</button>
+      <button disabled={blocked || !canApprove || (!!retry && retry.action !== 'approve')} onClick={() => void act('approve')}>{retry?.action === 'approve' ? 'Retry approval' : 'Allow'}</button>
     </div>}
     {request.key && ['installed', 'handoff_pending'].includes(request.key.status) && <button className="rounded border p-2" disabled={blocked || (!!retry && retry.action !== 'revoke')} onClick={() => void act('revoke')}>{retry?.action === 'revoke' ? 'Retry revocation' : 'Revoke app access'}</button>}
     {done && onRefresh && <button onClick={onRefresh}>Refresh review</button>}

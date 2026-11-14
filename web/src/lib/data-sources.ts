@@ -173,3 +173,13 @@ export function sourceRequestClosedLine(request: Pick<SourceRequest, 'status' | 
     default: return `${label} request closed`
   }
 }
+
+/** What an app asks to read, in a sentence: "Contacts and Location, last 90 days". */
+export function appAccessSummary(access: { scopes: string[]; history_days: number }): string {
+  const names = access.scopes.map((scope) => {
+    const source = scope.split('.')[0]
+    return source.charAt(0).toUpperCase() + source.slice(1)
+  })
+  const what = names.length ? new Intl.ListFormat('en', { type: 'conjunction' }).format(names) : 'No data'
+  return `${what}, last ${access.history_days === 1 ? 'day' : `${access.history_days} days`}`
+}

@@ -32,6 +32,12 @@
 .settings-surface button.review-deny:not(:disabled):hover { background: #991b1b; }
 .settings-surface button.review-approve { background: #15803d; color: white; }
 .settings-surface button.review-approve:not(:disabled):hover { background: #166534; }
+/* The way out of a request: quiet, on the left (bud-mobile plan/chat-card-simplification.md). */
+.settings-surface button.review-quiet {
+  border: 0; box-shadow: none; background: transparent; padding: .5rem .25rem; font-weight: 500;
+  text-decoration: underline; text-underline-offset: 4px;
+}
+.settings-surface button.review-quiet:not(:disabled):hover { background: transparent; }
 .settings-surface button.review-details-link {
   border: 0; box-shadow: none; background: transparent; color: #2563eb;
   padding: .5rem .25rem; font-weight: 500;

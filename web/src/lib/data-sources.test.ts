@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { accessGroupLine, accessOperation, accessOutcome, phoneNeedsAttention, phonePermission, readersSummary, sourceChangeLine,
+import { accessGroupLine, appAccessSummary, accessOperation, accessOutcome, phoneNeedsAttention, phonePermission, readersSummary, sourceChangeLine,
   sourceRequestClosedLine, sourceRequestPurpose, storedSummary,
   webAccessSteps, type AccessGroup, type DataSource } from './data-sources.ts'
 
@@ -96,4 +96,11 @@ test('a source request reads as one sentence and one closing line', () => {
   assert.equal(sourceRequestClosedLine({ status: 'superseded' }, 'Contacts'), 'Contacts request closed')
   assert.equal(sourceChangeLine({ at: '', kind: 'request', outcome: 'declined' }), 'Your agent asked, and you chose not to share')
   assert.equal(sourceChangeLine({ at: '', kind: 'request', outcome: 'granted' }), 'Your agent asked, and you turned this on')
+})
+
+test('appAccessSummary names the sources and the window', () => {
+  assert.equal(appAccessSummary({ scopes: ['contacts.read', 'location.read'], history_days: 90 }), 'Contacts and Location, last 90 days')
+  assert.equal(appAccessSummary({ scopes: ['contacts.read', 'location.read', 'health.read'], history_days: 30 }), 'Contacts, Location, and Health, last 30 days')
+  assert.equal(appAccessSummary({ scopes: ['health.read'], history_days: 1 }), 'Health, last day')
+  assert.equal(appAccessSummary({ scopes: [], history_days: 7 }), 'No data, last 7 days')
 })
