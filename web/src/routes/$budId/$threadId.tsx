@@ -1048,7 +1048,7 @@ function ThreadViewContent() {
 
   return (
     <BrowserPaneContext.Provider value={browserPane.open}>
-    <BrowserWaitActionsContext.Provider value={{ visibleSessionId: viewMode === 'browser' ? browserPane.sessionId : null, returnAction: browserReturnAction, error: browserControlError, stop: async (invocationId) => {
+    <BrowserWaitActionsContext.Provider value={{ visibleSessionId: viewMode === 'browser' ? browserPane.sessionId : null, returnAction: browserReturnAction, handoffs: browserPane.handoffs, error: browserControlError, stop: async (invocationId) => {
       await apiFetchJson(`/api/threads/${threadId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invocation_id: invocationId }) })
       await refreshAgentBootstrap(threadId)
     } }}>

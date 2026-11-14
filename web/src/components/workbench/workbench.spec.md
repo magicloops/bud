@@ -670,6 +670,10 @@ return to normal tool rendering using the same stable client identity.
 
 
 Pending browser waits render directly as an action row without the tool label, timestamp, copy control or payload toggle. Completed tool receipts retain normal work-group rendering.
+The row shows the agent's reason above it while the wait's handoff is the session's
+open one (from the browser inventory, via `BrowserWaitActionsContext.handoffs`), with
+Cancel on the left and the action on the right (bud-mobile
+`plan/chat-card-simplification.md`, Phase 5W).
 
 ## Authoritative work duration
 

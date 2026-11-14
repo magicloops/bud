@@ -35,3 +35,21 @@ test('inline wait uses only its own mounted controller and stops its invocation'
   assert.equal(tree.root.findAllByType('button').length,0)
   await act(async()=>tree.unmount())
 })
+
+test('the card shows why the agent asked only for its own open handoff', async () => {
+  const sessionId = 'browser_01M2KFXEFBTPXR71B57JFBW9Z1'
+  const payload = {pending:true,wait_kind:'return_control',invocation_id:'waiting',session_id:sessionId,viewer_path:`/browser/${sessionId}`,handoff_id:'one'}
+  let tree!: ReturnType<typeof create>
+  const render = (id: string, pending = true) => <BrowserWaitActionsContext.Provider value={{
+    returnAction:null,error:null,stop:async()=>{},handoffs:{[sessionId]:{id,reason:'Sign in, then return control.'}}
+  }}><BrowserHandoffContent payload={{...payload,pending}} /></BrowserWaitActionsContext.Provider>
+  await act(async()=>{tree=create(render('one'))})
+  assert.match(JSON.stringify(tree.toJSON()),/Sign in, then return control\./)
+  const buttons = tree.root.findAll(node => node.type === 'button' || node.type === 'a')
+  assert.deepEqual(buttons.map(node => node.children[0]),['Cancel','Take control'])
+  await act(async()=>tree.update(render('two')))
+  assert.doesNotMatch(JSON.stringify(tree.toJSON()),/Sign in/)
+  await act(async()=>tree.update(render('one',false)))
+  assert.doesNotMatch(JSON.stringify(tree.toJSON()),/Sign in/)
+  await act(async()=>tree.unmount())
+})
