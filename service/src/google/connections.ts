@@ -28,6 +28,14 @@ const REFRESH_LEASE_MS = 30_000;
 const validFor = (tokens: GoogleCredentials["tokens"], ms: number) =>
   Boolean(tokens?.access_token && tokens.expiry_date && tokens.expiry_date > Date.now() + ms);
 const usable = (tokens: GoogleCredentials["tokens"]) => validFor(tokens, 60_000);
+/** Stops waiting when `signal` aborts. The awaited work carries on for whoever else shares it. */
+function abandonable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(signal.reason);
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+    if (signal.aborted) stop(); else signal.addEventListener("abort", stop, { once: true });
+  });
+}
 const aad = (row: Connection) => JSON.stringify([row.createdByUserId, row.id, row.oauthClientId]);
 const scopeAccess = (scopes: string[], service: GoogleService): GoogleServiceAccess =>
   !serviceGranted(scopes, service) ? "none" : serviceWriteGranted(scopes, service) ? "read_write" : "read_only";
@@ -217,6 +225,7 @@ export class GoogleConnections {
         const ours = current.row.refreshLeaseUntil?.getTime() === lease.getTime();
         if (ours) current.row.refreshLeaseUntil = null;
         current.unchanged = !ours;
+        return ours;
       };
       let refreshed: NonNullable<GoogleCredentials["tokens"]>;
       try {
@@ -228,15 +237,19 @@ export class GoogleConnections {
         throw error;
       }
       const saved = await this.edit(owner, id, current => {
-        release(current);
+        const held = release(current);
         // The user disconnected, revoked or granted again meanwhile: these tokens belong to the old grant.
-        if (current.row.grantEpoch !== epoch) return null;
-        current.unchanged = false;
+        if (current.row.grantEpoch !== epoch) return "changed" as const;
+        // This instance stalled past its lease and another one refreshed. Nothing cuts off a
+        // paused process, so the lease is checked here, under the row lock: the later tokens stay.
+        if (!held) return "superseded" as const;
         current.data.tokens = refreshed; // a replacement refresh token is saved here, before anyone uses the access token
         if (refreshed.scope) current.row.grantedScopes = refreshed.scope.split(/\s+/).filter(Boolean);
         return current;
       });
-      if (!saved) throw new GoogleError("google_connection_changed", true);
+      if (saved === "changed") throw new GoogleError("google_connection_changed", true);
+      // Go round again: the other instance's tokens are there to use, or about to be.
+      if (saved === "superseded") continue;
       return saved;
     }
   }
@@ -379,8 +392,8 @@ export class GoogleConnections {
         throw new GoogleError("google_connection_changed", true);
       };
       const refresh = async (rejected?: GoogleCredentials["tokens"]) => {
-        const latest = await this.refreshShared(owner, id, rejected);
-        callSignal.throwIfAborted();
+        // A cancelled or timed-out call stops waiting; the refresh carries on for the others.
+        const latest = await abandonable(this.refreshShared(owner, id, rejected), callSignal);
         sameGrant(latest);
         state = latest;
         assertAccess(state);

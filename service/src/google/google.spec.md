@@ -135,7 +135,10 @@ lease, and calls for one account run together (at most four per owner per proces
   `refresh_lease_until` (30 s on the database's clock, longer than a refresh can
   take) asks Google and clears it when done or failed; the others poll every
   250 ms for its tokens, or carry on with a token that still has five seconds
-  left. A lease left by an instance that died ends by itself. The result is saved
+  left. A lease left by an instance that died ends by itself, and an instance that
+  stalled past its lease finds on saving that it no longer holds it and keeps the
+  other instance's tokens. A cancelled or timed-out call stops waiting for a
+  shared refresh, which carries on for the others. The result is saved
   onto the current row only if the epoch is unchanged, so it cannot undo a
   disconnect or drop a pending connect flow. This lease covers the token request
   only: calls never wait on each other.

@@ -262,3 +262,16 @@ one refresh request for two instances; a lease left by a dead instance delays th
 refresh only until it ends; a failed refresh gives the lease back; a token with life left
 is used during another instance's refresh; a call rejected with 401 during another
 instance's refresh waits for that instance's token. `connections.test.ts` passes 25.
+
+### Review fixes (2026-11-14)
+
+- **A stalled refresher is fenced by its lease, not by the network timeout.** The save
+  checked `grant_epoch` only, so an instance paused past its lease could save over the
+  tokens of the instance that took over (both see the same epoch). The save now also
+  requires that the lease is still the one this instance set; otherwise it keeps the later
+  tokens and goes round again to use them.
+- **A caller's wait for a shared refresh ends with its signal.** A cancelled or timed-out
+  call used to hold its admission slot until the shared refresh finished. It now stops
+  waiting at once; the refresh carries on for the other callers.
+
+Tests: `connections.test.ts` passes 27; both new tests fail on the previous commit.

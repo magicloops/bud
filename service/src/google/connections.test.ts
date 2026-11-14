@@ -872,6 +872,56 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
     assert.equal(apiAttempts, 2); assert.equal(refreshes, 0);
   });
 
+  await t.test("an instance that stalled past its refresh lease cannot overwrite the tokens of the one that took over", async () => {
+    const { connection_id: id } = await grantWith(manager, "frank");
+    await expire("frank", id);
+    const stall = gate();
+    const answering = (refreshToken: string, hold: boolean): typeof fetch => async (input, init) => {
+      const req = new Request(input, init);
+      if (!await isRefresh(req)) return fixture.fetcher(req);
+      if (hold) { stall.enter(); await stall.held; }
+      return Response.json({ access_token: "frank", refresh_token: refreshToken, token_type: "Bearer", expires_in: 3600 });
+    };
+    const stalled = instance(answering("issued-to-stalled", true)), successor = instance(answering("issued-to-successor", false));
+    const first = stalled.call("frank", id, request, signal, async () => {});
+    await stall.entered;
+    // The stalled instance's lease runs out, and another instance refreshes.
+    await pool.query("update google_connection set refresh_lease_until = now() - interval '1 second' where id=$1", [id]);
+    await successor.call("frank", id, request, signal, async () => {});
+    assert.equal((await storedRow("frank", id)).data!.tokens!.refresh_token, "issued-to-successor");
+    const epoch = (await storedRow("frank", id)).epoch;
+    stall.open();
+    // It carries on with the successor's tokens.
+    await first;
+    const after = await storedRow("frank", id);
+    assert.equal(after.data!.tokens!.refresh_token, "issued-to-successor"); assert.equal(after.epoch, epoch);
+    assert.equal(await leaseOf(id), null);
+  });
+
+  await t.test("a cancelled call stops waiting for a shared refresh, which carries on for the others", async () => {
+    const { connection_id: id } = await grantWith(manager, "frank");
+    await expire("frank", id);
+    const refresh = gate();
+    let refreshes = 0;
+    const slow = instance(async (input, init) => {
+      const req = new Request(input, init);
+      if (await isRefresh(req)) { refreshes++; refresh.enter(); await refresh.held; }
+      return fixture.fetcher(req);
+    });
+    const controllers = Array.from({ length: 4 }, () => new AbortController());
+    const waiting = controllers.map(controller => slow.call("frank", id, request, controller.signal, async () => assert.fail("a cancelled call dispatched")));
+    await refresh.entered;
+    const started = Date.now();
+    for (const controller of controllers) controller.abort();
+    for (const call of waiting) await assert.rejects(call, { name: "AbortError" });
+    assert.ok(Date.now() - started < 500, "cancellation must not wait for the refresh");
+    // All four admission slots are free again while the refresh is still in the air.
+    const next = slow.call("frank", id, request, signal, async () => {});
+    refresh.open();
+    await next;
+    assert.equal(refreshes, 1);
+  });
+
   await t.test("two calls rejected with 401 share one forced refresh and each retry once", async () => {
     const { connection_id: id } = await grantWith(manager, "grace");
     let apiAttempts = 0, refreshes = 0;
