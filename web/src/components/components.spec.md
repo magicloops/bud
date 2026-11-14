@@ -101,9 +101,13 @@ capability, polls serially, and aborts reads/ignores writes after unmount.
 One Enable automation action approves the saved proposal; decline remains
 available independently. Unknown mutation outcomes retain the exact version and
 idempotency key for retry. Terminal server state replaces pending decisions.
-Compact inline actions expose the consequential scope; the shared native dialog exposes full instructions, target, sources, scopes/history and limits without a second decision controller.
-Decision rows put red Deny left, blue borderless View details center, and green
-Enable/Process contacts right; uncertain outcomes retain the original retry.
+The card shows the operation, name, instruction and trigger (or contact count and
+repeat warning), with a quiet Deny on the left and Review on the right. Review opens
+the shared native dialog with full instructions, target, sources, scopes/history and
+limits; Enable/Update/Process contacts is at its end, so approval follows the detail
+(bud-mobile `plan/chat-card-simplification.md`, Phase 4W). The dialog closes once the
+decision is saved. Uncertain outcomes retain the original retry, on the card and in
+the dialog.
 
 The same component also handles validated `bp_` existing-contact review IDs through
 the separate existing-contact endpoint and capability. It rejects a mismatched
