@@ -169,9 +169,12 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 ## Future / Long-Term
 
 - [ ] **Google call admission with parallel tools and horizontal scaling.** Keep the current
-  four concurrent calls per user per service process as a sufficient local guard for now
+  four concurrent calls per user in each Bud service process, across Calendar, Gmail and
+  Drive together, as a sufficient local guard for now
   ([PR #185](https://github.com/magicloops/bud/pull/185)). It does not depend on tool calls
   being sequential, and excess calls return retryable `google_busy` without dispatch.
+  `google_busy` is not only the admission signal: a connection row locked for two seconds
+  and a 45-second wait on another instance's token refresh return it too.
   When adding parallel tool execution and agent routing/failover across instances, revisit
   scheduler backpressure, fairness across a user's conversations, and whether admission
   belongs to an agent owner or needs a shared per-user budget. WebSocket affinity alone
