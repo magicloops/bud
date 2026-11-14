@@ -1,6 +1,6 @@
 # Google connection concurrency
 
-Status: option B built 2026-11-14 (see the plan). Written as a proposal on 2026-11-13. Applies to `service/src/google/connections.ts` on
+Status: options B and C built 2026-11-14 (see the plan). Written as a proposal on 2026-11-13. Applies to `service/src/google/connections.ts` on
 `prashanth/googleservices` (PR #182) at `3b8fb7c`. "Today" below means that commit.
 
 ## Question

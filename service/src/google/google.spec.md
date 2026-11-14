@@ -130,11 +130,15 @@ lease, and calls for one account run together (at most four per owner per proces
   the epoch. If it changed the request is not sent: the call reports the missing
   access when access is gone, and otherwise retryable `google_connection_changed`
   (the account may differ from the one the request was prepared for).
-- A refresh is shared: one per connection per process. Its result is saved onto the
-  current row only if the epoch is unchanged, so it cannot undo a disconnect or
-  drop a pending connect flow. A second service instance could refresh at the same
-  time; Google's documentation does not describe a refresh replacing the refresh
-  token, and production runs one instance.
+- A refresh happens once however many calls or service instances need it. Callers
+  in one process share one attempt. Across instances, the one that sets
+  `refresh_lease_until` (30 s on the database's clock, longer than a refresh can
+  take) asks Google and clears it when done or failed; the others poll every
+  250 ms for its tokens, or carry on with a token that still has five seconds
+  left. A lease left by an instance that died ends by itself. The result is saved
+  onto the current row only if the epoch is unchanged, so it cannot undo a
+  disconnect or drop a pending connect flow. This lease covers the token request
+  only: calls never wait on each other.
 - The OAuth callback consumes its state in one edit, exchanges the code outside any
   transaction, and applies the grant in a second edit only if the epoch is
   unchanged. A newer connect flow that began meanwhile stays pending and falls

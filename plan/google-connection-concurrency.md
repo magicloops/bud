@@ -232,3 +232,33 @@ database; the other Google suites pass 35; the full service suite passes 899 wit
 database-gated tests skipped; `tsc --noEmit` is clean; `drizzle-kit generate` reports no
 schema changes against the edited 0070 snapshot. Not run: the database-gated tests outside
 `src/google`, and anything against real Google.
+
+## Refresh lease across instances (design option C, 2026-11-14)
+
+Added on the same branch because the service is expected to run on more than one instance.
+Without it, two instances that both find the token expired each ask Google, and if Google
+ever hands out a replacement refresh token to one of them the other's save could lose it.
+
+- `refresh_lease_until` (nullable timestamp) on `google_connection`, in migration 0070.
+- `refreshOnce` claims it in an `edit` before asking Google: 30 s from the database's
+  clock (`now()` is read in the edit's own select, so instances agree). The token request
+  is cut off at 20 s, so the lease only ever expires on an instance that died.
+- An instance that finds a live lease waits, polling every 250 ms, until the tokens
+  appear or the lease ends; it gives up as retryable `google_busy` after the 45 s
+  operation limit. If the stored token still has five seconds of life and wasn't the one
+  Google rejected, it is used at once and nothing waits.
+- The holder clears the lease when it saves the tokens, when the refresh fails, and when
+  its result is discarded for a changed epoch. It clears only its own lease (matched by
+  value). Disconnect clears it with the credentials.
+- An `edit` that changes nothing no longer writes the row (`Snapshot.unchanged`); the
+  polling relies on this.
+- Calls still never wait on each other. The per-process sharing of one attempt stays in
+  front of the lease.
+
+Not changed: the per-owner cap of four is still per process, so N instances allow 4N.
+
+Tests added (two `GoogleConnections` objects on one database stand for two instances):
+one refresh request for two instances; a lease left by a dead instance delays the next
+refresh only until it ends; a failed refresh gives the lease back; a token with life left
+is used during another instance's refresh; a call rejected with 401 during another
+instance's refresh waits for that instance's token. `connections.test.ts` passes 25.

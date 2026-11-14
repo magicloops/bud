@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { googleConnectionTable as connections } from "../db/schema.js";
@@ -12,13 +12,22 @@ import type { GoogleRequest } from "./tool-contracts.js";
 
 type Connection = typeof connections.$inferSelect;
 /** `bump` marks a change of authorization: the save raises `grant_epoch`. */
-type Snapshot = { row: Connection; data: GoogleCredentials; key?: Buffer; bump?: boolean };
+type Snapshot = { row: Connection; data: GoogleCredentials; key?: Buffer; bump?: boolean;
+  /** Set by an edit that changed nothing, to skip the write. */
+  unchanged?: boolean };
 /** The longest one call or OAuth exchange may take, network included. */
 const OPERATION_MS = 45_000;
 /** How long an edit retries a row another transaction holds. Edits are local, so this is only reached when the database is in trouble. */
 const LOCK_WAIT_MS = 2_000;
-const usable = (tokens: GoogleCredentials["tokens"]) =>
-  Boolean(tokens?.access_token && tokens.expiry_date && tokens.expiry_date > Date.now() + 60_000);
+/**
+ * How long one instance may hold the right to refresh a connection's tokens. Longer than a
+ * refresh can take (the token request is cut off at 20 s), so it only ever expires on an
+ * instance that died.
+ */
+const REFRESH_LEASE_MS = 30_000;
+const validFor = (tokens: GoogleCredentials["tokens"], ms: number) =>
+  Boolean(tokens?.access_token && tokens.expiry_date && tokens.expiry_date > Date.now() + ms);
+const usable = (tokens: GoogleCredentials["tokens"]) => validFor(tokens, 60_000);
 const aad = (row: Connection) => JSON.stringify([row.createdByUserId, row.id, row.oauthClientId]);
 const scopeAccess = (scopes: string[], service: GoogleService): GoogleServiceAccess =>
   !serviceGranted(scopes, service) ? "none" : serviceWriteGranted(scopes, service) ? "read_write" : "read_only";
@@ -70,7 +79,7 @@ export class GoogleConnections {
     return error instanceof GoogleError && ["google_credentials_unreadable", "google_encryption_key_required", "google_encryption_key_invalid"].includes(error.code);
   }
   private clearConnection(row: Connection) {
-    this.clearFlow(row); row.status = "disconnected"; row.encryptedCredentials = null;
+    this.clearFlow(row); row.status = "disconnected"; row.encryptedCredentials = null; row.refreshLeaseUntil = null;
     row.accountSubject = null; row.accountEmail = null; row.grantedScopes = [];
   }
   private snapshot(row: Connection, recoverUnreadable: boolean): Snapshot {
@@ -96,7 +105,7 @@ export class GoogleConnections {
     const saved = await target.update(connections).set({ status: row.status, oauthClientId: row.oauthClientId,
       accountSubject: row.accountSubject, accountEmail: row.accountEmail, grantedScopes: row.grantedScopes,
       encryptedCredentials: encrypted, oauthStateHash: row.oauthStateHash, oauthSessionHash: row.oauthSessionHash,
-      oauthExpiresAt: row.oauthExpiresAt, grantEpoch, updatedAt: new Date() }).where(and(eq(connections.id, row.id),
+      oauthExpiresAt: row.oauthExpiresAt, grantEpoch, refreshLeaseUntil: row.refreshLeaseUntil, updatedAt: new Date() }).where(and(eq(connections.id, row.id),
       eq(connections.createdByUserId, row.createdByUserId))).returning({ id: connections.id });
     if (!saved.length) throw new GoogleError("google_connection_changed");
     row.encryptedCredentials = encrypted; row.grantEpoch = grantEpoch; state.bump = false;
@@ -119,18 +128,19 @@ export class GoogleConnections {
    * A row another transaction holds is retried without waiting inside PostgreSQL, so a stalled
    * lock never keeps a pool client.
    */
-  private async edit<T>(owner: string, id: string, change: (state: Snapshot) => T | Promise<T>,
+  private async edit<T>(owner: string, id: string, change: (state: Snapshot, now: Date) => T | Promise<T>,
     recoverUnreadable = false, signal?: AbortSignal): Promise<T> {
     const deadline = Date.now() + LOCK_WAIT_MS;
     for (;;) {
       signal?.throwIfAborted();
       const outcome = await this.database.transaction(async tx => {
-        const [row] = await tx.select().from(connections)
+        // The database's clock, so instances agree on when a refresh lease ends.
+        const [found] = await tx.select({ row: connections, now: sql<Date>`now()` }).from(connections)
           .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner))).for("update", { noWait: true });
-        if (!row) throw new GoogleError("google_not_found");
-        const state = this.snapshot(row, recoverUnreadable);
-        const result = await change(state);
-        await this.save(tx, state);
+        if (!found) throw new GoogleError("google_not_found");
+        const state = this.snapshot(found.row, recoverUnreadable);
+        const result = await change(state, new Date(found.now));
+        if (!state.unchanged || state.bump) await this.save(tx, state);
         return { busy: false as const, result };
       }).catch((error: unknown) => {
         // Drizzle may wrap pg's lock_not_available.
@@ -163,26 +173,72 @@ export class GoogleConnections {
    * `rejected` is a token Google just answered 401 to: it is not handed back.
    */
   private refreshShared(owner: string, id: string, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
+    // Within this process, callers share one attempt.
     const running = this.refreshes.get(id);
     if (running) return running;
-    const flight = (async () => {
-      const state = await this.read(owner, id), tokens = state.data.tokens;
-      if (!tokens) throw new GoogleError("google_reconnect_required");
-      const isRejected = rejected !== undefined && tokens.access_token === rejected.access_token && tokens.expiry_date === rejected.expiry_date;
-      // Another call, or another instance, already refreshed.
-      if (usable(tokens) && !isRejected) return state;
-      // Not the first caller's signal: the others share this request.
-      const refreshed = await this.oauth.refresh(tokens, AbortSignal.timeout(this.operationMs));
-      return this.edit(owner, id, current => {
+    const flight = this.refreshOnce(owner, id, rejected).finally(() => { this.refreshes.delete(id); });
+    this.refreshes.set(id, flight);
+    return flight;
+  }
+
+  /**
+   * Across instances, one refresh at a time: the instance that sets `refresh_lease_until`
+   * asks Google, the others wait for its tokens. Google may issue a replacement refresh token,
+   * and two instances asking at once could each be handed a different one.
+   */
+  private async refreshOnce(owner: string, id: string, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
+    const isRejected = (tokens: GoogleCredentials["tokens"]) => rejected !== undefined &&
+      tokens?.access_token === rejected.access_token && tokens?.expiry_date === rejected.expiry_date;
+    const deadline = Date.now() + this.operationMs;
+    for (;;) {
+      const claim = await this.edit(owner, id, (state, now) => {
+        const tokens = state.data.tokens;
+        if (!tokens) throw new GoogleError("google_reconnect_required");
+        state.unchanged = true;
+        // Another call, or another instance, already refreshed.
+        if (usable(tokens) && !isRejected(tokens)) return { state, lease: null };
+        if (state.row.refreshLeaseUntil && state.row.refreshLeaseUntil > now) {
+          // Another instance is refreshing. A token with a little life left needs no waiting.
+          return validFor(tokens, 5_000) && !isRejected(tokens) ? { state, lease: null } : null;
+        }
+        state.unchanged = false;
+        state.row.refreshLeaseUntil = new Date(now.getTime() + REFRESH_LEASE_MS);
+        return { state, lease: state.row.refreshLeaseUntil };
+      });
+      if (!claim) {
+        if (Date.now() >= deadline) throw new GoogleError("google_busy", true);
+        await delay(250);
+        continue;
+      }
+      if (!claim.lease) return claim.state;
+      const { lease } = claim, epoch = claim.state.row.grantEpoch;
+      // Ours to give back, unless it already ended and another instance took it.
+      const release = (current: Snapshot) => {
+        const ours = current.row.refreshLeaseUntil?.getTime() === lease.getTime();
+        if (ours) current.row.refreshLeaseUntil = null;
+        current.unchanged = !ours;
+      };
+      let refreshed: NonNullable<GoogleCredentials["tokens"]>;
+      try {
+        // Not a caller's signal: the callers share this request.
+        refreshed = await this.oauth.refresh(claim.state.data.tokens!, AbortSignal.timeout(Math.min(this.operationMs, REFRESH_LEASE_MS - 5_000)));
+      } catch (error) {
+        // Best effort: an unreleased lease ends by itself.
+        await this.edit(owner, id, release).catch(() => {});
+        throw error;
+      }
+      const saved = await this.edit(owner, id, current => {
+        release(current);
         // The user disconnected, revoked or granted again meanwhile: these tokens belong to the old grant.
-        if (current.row.grantEpoch !== state.row.grantEpoch) throw new GoogleError("google_connection_changed", true);
+        if (current.row.grantEpoch !== epoch) return null;
+        current.unchanged = false;
         current.data.tokens = refreshed; // a replacement refresh token is saved here, before anyone uses the access token
         if (refreshed.scope) current.row.grantedScopes = refreshed.scope.split(/\s+/).filter(Boolean);
         return current;
       });
-    })().finally(() => { this.refreshes.delete(id); });
-    this.refreshes.set(id, flight);
-    return flight;
+      if (!saved) throw new GoogleError("google_connection_changed", true);
+      return saved;
+    }
   }
 
   async begin(owner: string, sessionId: string, returnThreadId?: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }]) {

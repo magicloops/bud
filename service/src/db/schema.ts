@@ -316,6 +316,8 @@ export const googleConnectionTable = pgTable("google_connection", {
   // Raised when authorization changes (a grant, a revoke, a disconnect, reconnect required).
   // Work that talked to Google compares it before sending or saving anything.
   grantEpoch: integer("grant_epoch").notNull().default(0),
+  // Set by the one service instance that is refreshing the tokens; the others wait for its result.
+  refreshLeaseUntil: timestamp("refresh_lease_until", { withTimezone: true }),
   createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
   tenantId: text("tenant_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

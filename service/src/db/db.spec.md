@@ -9,7 +9,8 @@ email and granted scopes describe the connected account. OAuth state/session are
 hashed and expire in 10 minutes; PKCE and tokens remain encrypted. Row locks are
 held only for local edits, never across a request to Google; `grant_epoch` rises
 when authorization changes, and refresh, API use and the OAuth callback compare
-it before sending or saving (see the Google spec, Concurrency). Encrypted per-service
+it before sending or saving. `refresh_lease_until` is set by the one service
+instance refreshing the tokens (see the Google spec, Concurrency). Encrypted per-service
 access (`none|read_only|read_write`) intersects actual scopes before dispatch;
 revocation clears pending OAuth state. Inventory filters by owner in SQL.
 Generated migration replaces the unshipped MCP prototype; reviewed SQL applied
