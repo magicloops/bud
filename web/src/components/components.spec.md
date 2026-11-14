@@ -181,7 +181,8 @@ original action; confirmed failures expose refresh. Card identity stays request
 stable across polling and settlement.
 Pending rows say what is asked in one sentence (`appAccessSummary` in
 `lib/data-sources.ts`: "Wants to read Contacts and Location, last 90 days");
-fields, precision and health types are in the details. Deny is a quiet link on
+fields, precision and health types are in the details. In a conversation the
+card also shows up to two lines of the agent's stated purpose. Deny is a quiet link on
 the left (`review-quiet`), details in the middle, Allow the standard outlined
 button on the right (bud-mobile `plan/chat-card-simplification.md`, Phase 3W),
 preserving decision and retry guards.

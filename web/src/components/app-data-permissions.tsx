@@ -109,6 +109,8 @@ export function AppPermissionCard({ request, canApprove, canMutate, inline = fal
   return <article className={`rounded border p-3 space-y-2 ${!inline && !pending ? 'app-access-row' : ''}`}>
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{request.app_label}</h3><span className="text-sm text-muted-foreground">{appPermissionStatus(request)}</span>{request.key?.last_used_at && <span className="text-xs text-muted-foreground">Used {time(request.key.last_used_at)}</span>}</div>
     {pending && <p className="text-sm">Wants to read {appAccessSummary(request.data_access)}.</p>}
+    {/* The agent's stated reason; the full text is in the details. */}
+    {pending && inline && request.purpose && <p className="line-clamp-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">{request.purpose}</p>}
     {(!inline || !pending) && details}
     {pending && <div className="review-actions">
       <button className="review-quiet" disabled={blocked || (!!retry && retry.action !== 'decline')} onClick={() => void act('decline')}>{retry?.action === 'decline' ? 'Retry decline' : 'Deny'}</button>
