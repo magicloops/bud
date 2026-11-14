@@ -38,10 +38,6 @@ export function formatAskUserQuestionsAnswer(answer: unknown): string {
         && typeof answer.radius_m === 'number'
         ? `${answer.name}${typeof answer.address === 'string' && answer.address ? `, ${answer.address},` : ''} at ${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`
         : '(answered)'
-    // The service's `display_answer` normally covers this too.
-    case 'source_access':
-      return answer.outcome === 'declined' ? 'Not now' : answer.outcome === 'unavailable' ? 'Not available on this device'
-        : answer.usable === false ? 'Not finished' : 'Allowed'
     default:
       return '(answered)'
   }

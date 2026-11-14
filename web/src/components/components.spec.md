@@ -101,9 +101,13 @@ capability, polls serially, and aborts reads/ignores writes after unmount.
 One Enable automation action approves the saved proposal; decline remains
 available independently. Unknown mutation outcomes retain the exact version and
 idempotency key for retry. Terminal server state replaces pending decisions.
-Compact inline actions expose the consequential scope; the shared native dialog exposes full instructions, target, sources, scopes/history and limits without a second decision controller.
-Decision rows put red Deny left, blue borderless View details center, and green
-Enable/Process contacts right; uncertain outcomes retain the original retry.
+The card shows the operation, name, instruction and trigger (or contact count and
+repeat warning), with a quiet Deny on the left and Review on the right. Review opens
+the shared native dialog with full instructions, target, sources, scopes/history and
+limits; Enable/Update/Process contacts is at its end, so approval follows the detail
+(bud-mobile `plan/chat-card-simplification.md`, Phase 4W). The dialog closes once the
+decision is saved. Uncertain outcomes retain the original retry, on the card and in
+the dialog.
 
 The same component also handles validated `bp_` existing-contact review IDs through
 the separate existing-contact endpoint and capability. It rejects a mismatched
@@ -155,11 +159,15 @@ change" loads `GET /api/data/access?source=` a page at a time into a table (when
 result) and `GET /api/data/sources/:source/changes` into a list. The log holds no content,
 so neither does the table.
 
-`workbench/question-request-card.tsx` renders `source_access` questions
-(`SourceAccessControl`): the agent's permission and the source's switch are changed in
-place, one click each; when no phone has reported that it can collect, it says to continue
-on the iPhone and shows each phone's reported state. Once nothing is left that the web can
-see, the answer is `granted`; the service checks it on submit.
+`message-renderers/tools/source-request.tsx` renders the agent's request for a data source
+(tool `data_source_request`, plan phase 2b) as one card: the purpose in a fixed sentence, one
+button, "Turn on *Source*", which calls `POST /api/data/source-requests/:id/allow` (the switch
+and the agent's permission together), and "Not now". When no phone has reported that it can
+collect, it says to continue on the iPhone, shows each phone's reported state and polls until
+that changes. After a click, nothing left means `granted`; the service settles the answer. A
+closed request is one line with a link to Data sources. `SourceUnavailableContent` adds a
+"Turn on" link under a personal-data read refused for a setting (`unavailable_source`),
+chosen by `getToolContentRenderer(toolName, payload)`. The question form has no source kind.
 
 ### `app-data-permissions.tsx`
 
@@ -171,8 +179,13 @@ ahead of history within each server page without changing pagination cursors.
 Expected versions and identical uncertain retry bodies remain bound to the
 original action; confirmed failures expose refresh. Card identity stays request
 stable across polling and settlement.
-Inline pending rows use the same Deny/details/Allow action order and colors as
-automation reviews, preserving decision and retry guards.
+Pending rows say what is asked in one sentence (`appAccessSummary` in
+`lib/data-sources.ts`: "Wants to read Contacts and Location, last 90 days");
+fields, precision and health types are in the details. In a conversation the
+card also shows up to two lines of the agent's stated purpose. Deny is a quiet link on
+the left (`review-quiet`), details in the middle, Allow the standard outlined
+button on the right (bud-mobile `plan/chat-card-simplification.md`, Phase 3W),
+preserving decision and retry guards.
 
 ### `review-details.tsx`
 

@@ -468,7 +468,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const toolName = (payload?.tool as string | undefined) ?? (message.display_role || 'Tool')
   const pendingQuestionRequest =
     isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
-  const ToolContentRenderer = message.metadata?.pending === true && payload?.wait_kind === 'return_control' ? BrowserHandoffContent : payload?.tool ? getToolContentRenderer(payload.tool as string) : null
+  const ToolContentRenderer = message.metadata?.pending === true && payload?.wait_kind === 'return_control' ? BrowserHandoffContent : payload?.tool ? getToolContentRenderer(payload.tool as string, payload) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
   const assistantFileSource: OpenFileSource | null = isAssistant && isFinalAssistantMessage(message)
     ? {

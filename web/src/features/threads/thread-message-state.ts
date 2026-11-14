@@ -188,6 +188,7 @@ export const buildPendingToolMessageFromState = (agentState: ApiAgentState): Api
       callId:tool.call_id,name:tool.name,args:tool.args,startedAt:tool.started_at})
   }
   if (agentState.pending_data_requests !== undefined && agentState.pending_tool?.name === 'data_request_api_key') return null
+  if (agentState.pending_source_requests !== undefined && agentState.pending_tool?.name === 'data_source_request') return null
   if (agentState.pending_questions !== undefined && agentState.pending_tool?.name === 'ask_user_questions') return null
   if (agentState.pending_bootstrap_requests !== undefined && agentState.pending_tool?.name === 'automations_request_existing_contacts') return null
   if (agentState.pending_automation_requests !== undefined && agentState.pending_tool?.name === 'automations_request_activation') return null
@@ -298,6 +299,15 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
     }))
   }
 
+  for (const request of agentState.pending_source_requests ?? []) {
+    if (!request.client_id || request.request.status !== 'pending') continue
+    if (nextMessages.some(message => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
+    nextMessages = upsertMessage(nextMessages, buildPendingToolMessageFromToolCall({
+      turnId: request.turn_id, clientId: request.client_id, callId: request.call_id,
+      name: 'data_source_request', args: request.request, startedAt: request.created_at,
+    }))
+  }
+
   for (const request of agentState.pending_automation_requests ?? []) {
     if (!request.client_id || request.proposal.status !== 'pending') continue
     if (nextMessages.some((message) => message.client_id === request.client_id && !isAgentSyntheticMessage(message))) continue
@@ -387,6 +397,7 @@ export function applyPendingRequestInventory(messages: ApiMessage[], state: ApiA
   const managed = new Set<string>()
   if (state.pending_questions !== undefined) managed.add('ask_user_questions')
   if (state.pending_data_requests !== undefined) managed.add('data_request_api_key')
+  if (state.pending_source_requests !== undefined) managed.add('data_source_request')
   if (state.pending_automation_requests !== undefined) managed.add('automations_request_activation')
   if (state.pending_bootstrap_requests !== undefined) managed.add('automations_request_existing_contacts')
   if (state.pending_browser_waits !== undefined) managed.add('browser_request_handoff')

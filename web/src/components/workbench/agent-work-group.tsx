@@ -133,7 +133,7 @@ const WorkItemDetail = ({ message, isStreaming = false }: { message: ApiMessage;
   const [showPayload, setShowPayload] = useState(false)
   if (message.role === 'tool') {
     const payload = resolveToolPayload(message)
-    const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
+    const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string, payload) : null
     const summary = payload ? browserSummary(payload) : null
     const code = payload ? browserArgs(payload).code : null
     return (

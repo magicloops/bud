@@ -399,7 +399,7 @@ test("agent state recovers persisted app and automation requests only after thre
   await registerThreadAgentRoutes(server, {
     getEnvironmentForBud: async () => buildAgentEnvironmentSnapshot({ budId: THREAD.budId, online: false }),
     durableInvocations: {
-      listForThread: async () => [], pendingQuestionsForThread: async () => [],
+      listForThread: async () => [], pendingQuestionsForThread: async () => [], pendingSourceRequestsForThread: async () => [],
       pendingDataRequestsForThread: async (owner: string, thread: string) => {
         reads++; assert.deepEqual([owner, thread], [SESSION.user.id, THREAD_ID]); return pending;
       },

@@ -6,6 +6,7 @@ export function pendingInventory(state: ApiAgentState) {
   return {
     pending_questions: state.pending_questions,
     pending_data_requests: state.pending_data_requests,
+    pending_source_requests: state.pending_source_requests,
     pending_automation_requests: state.pending_automation_requests,
     pending_bootstrap_requests: state.pending_bootstrap_requests,
     pending_browser_waits: state.pending_browser_waits,

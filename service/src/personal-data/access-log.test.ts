@@ -38,7 +38,7 @@ test("the access log lists, groups and names reads per owner, and shows what cha
   });
   await admin.query(`create schema "${namespace}"`);
   for (const table of ["data_access_log", "agent_data_grant_history", "agent_data_grant", "data_owner_state", "data_source_setting",
-    "data_source_setting_history", "data_installation_source_state", "data_installation", "data_app_key", "data_access_request", "thread",
+    "data_source_setting_history", "data_installation_source_state", "data_installation", "data_app_key", "data_access_request", "data_source_request", "thread",
     "automation", "location_observation", "location_visit", "health_workout", "health_sleep_segment", "contact"])
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
   const log = new AccessLog(db), grants = new DataGrants(db), sources = new DataSources(db, grants, log);

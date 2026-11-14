@@ -19,6 +19,7 @@ export type AgentToolCallDirective =
   | { type: "tool_call"; tool: WebTool; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: AutomationToolName; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: "data_request_api_key"; args: Record<string, unknown>; callId: string }
+  | { type: "tool_call"; tool: "data_source_request"; args: Record<string, unknown>; callId: string }
   | { type: "tool_call"; tool: PersonalDataTool; args: Record<string, unknown>; callId: string }
   | {
       type: "tool_call";
@@ -287,7 +288,21 @@ export type ExecutedBrowserTool = {
 export function isBrowserToolDirective(directive: AgentToolCallDirective): directive is ExecutedBrowserTool["directive"] {
   return isBrowserToolName(directive.tool);
 }
+export type SourceRequestToolCallDirective = Extract<AgentToolCallDirective, { tool: "data_source_request" }>;
+/** A request for a data source that was answered at once, with no card. */
+export type ExecutedSourceRequestTool = {
+  directive: SourceRequestToolCallDirective;
+  args: Record<string, unknown>;
+  summary: string;
+  outputTruncationReason: null;
+  result: { kind: "source_access"; ok: boolean; error?: string };
+  payload: Record<string, unknown>;
+};
+export function isSourceRequestToolDirective(directive: AgentToolCallDirective): directive is SourceRequestToolCallDirective {
+  return directive.tool === "data_source_request";
+}
 export type ExecutedAgentTool =
+  | ExecutedSourceRequestTool
   | ExecutedBrowserTool
   | ExecutedWebRetrievalTool
   | ExecutedAutomationTool
@@ -332,6 +347,7 @@ export function toolNameForConversation(
   | PersonalDataTool
   | WebTool
   | "data_request_api_key"
+  | "data_source_request"
   | AutomationToolName
   | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
@@ -344,6 +360,7 @@ export function toolNameForConversation(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "data_source_request":
     case "browser_exec":
     case "browser_request_handoff":
     case "web_search":
@@ -435,6 +452,7 @@ export function buildToolArgs(
     case "automations_request_existing_contacts":
     case "automations_pause":
     case "data_request_api_key":
+    case "data_source_request":
     case "browser_exec":
     case "browser_request_handoff":
     case "web_search":

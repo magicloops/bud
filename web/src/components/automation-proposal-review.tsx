@@ -1,6 +1,6 @@
 import { ReviewDetails } from './review-details'
 import './settings-layout.css'
-import { AutomationProposalSummary, automationReviewOperation, automationReviewDestination } from './automation-proposal-summary'
+import { AutomationProposalSummary, automationReviewOperation } from './automation-proposal-summary'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { ApiAutomationProposal, ApiBootstrapProposal } from '@/lib/api-types'
@@ -77,22 +77,26 @@ export function AutomationProposalReview({ id, onResolved }: { id: string; onRes
       }
     } finally { flight.current = false; if (alive.current) setBusy(false) }
   }
+  const open = proposal?.status === 'pending' && !uncertain
   return <section className="settings-surface space-y-2 rounded-lg border-2 border-border p-3" aria-label="Automation review">
     {error && <p role="alert">{error}</p>}
     {!proposal ? <p>Loading automation review…</p> : <>
       <p className="text-sm font-semibold">{automationReviewOperation(proposal)}</p>
       <h3 className="font-semibold">{proposal.definition.name}</h3>
       <p className="line-clamp-2 text-sm whitespace-pre-wrap">{proposal.definition.instruction}</p>
-      <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : describeTrigger(proposal.definition, placeNames)} · {automationReviewDestination(proposal)} · Up to {proposal.definition.max_invocations_per_day}/day</p>
-      <p className="text-xs text-muted-foreground">{proposal.definition.model} · {proposal.definition.data_access.scopes.length ? proposal.definition.data_access.scopes.map(scope => scope === 'contacts.read' ? 'Contacts' : scope === 'health.read' ? 'Health' : 'Collected location').join(', ') : 'No personal data'} · {proposal.definition.data_access.history_days}-day history · Normal terminal access</p>
+      <p className="text-sm">{'kind' in proposal ? `${proposal.member_count} existing contacts · ${proposal.group_count} runs${proposal.selection.exclude_previously_delivered ? '' : ' · May repeat previous actions'}` : describeTrigger(proposal.definition, placeNames)}</p>
       <div className="review-actions">
-      {proposal.status === 'pending' && !uncertain && <button className="review-deny" disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button>}
-      <ReviewDetails title="Automation details">
+      {open ? <button className="review-quiet" disabled={busy || !!error} onClick={() => void decide('decline')}>Deny</button> : <span />}
+      {/* Approving is inside the details: an automation runs unattended, so the detail comes first. */}
+      <ReviewDetails title="Automation details" label={open ? 'Review' : 'View details'} triggerClassName={open ? '' : undefined} closed={proposal.status !== 'pending'}>
         <AutomationProposalSummary proposal={proposal} placeNames={placeNames} />
         <Link className="underline" to="/automations" search={{ rule: proposal.automation_id }}>Adjust settings</Link>
         <p>Edits require a new review before enabling. Closing details makes no decision.</p>
+        {error && <p role="alert">{error}</p>}
+        {open && <button disabled={busy || !enabled || !!error} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process contacts' : proposal.review_operation === 'update' ? 'Update' : 'Enable'}</button>}
+        {proposal.status === 'pending' && uncertain && <button disabled={busy} onClick={() => void decide(pending.current!.decision)}>Retry original decision</button>}
+        {proposal.status === 'pending' && !enabled && <p>Starting automated work is currently unavailable. You can still decline.</p>}
       </ReviewDetails>
-      {proposal.status === 'pending' && !uncertain && <button className="review-approve" disabled={busy || !enabled || !!error} onClick={() => void decide('approve')}>{busy ? 'Saving…' : isBootstrap ? 'Process contacts' : proposal.review_operation === 'update' ? 'Update' : 'Enable'}</button>}
       </div>
       {proposal.status === 'pending' ? <>
         {!enabled && <p>Starting automated work is currently unavailable. You can still decline.</p>}

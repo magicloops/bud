@@ -112,7 +112,7 @@ export class DataSources {
     return (await this.collection(owner, sourcesOfScopes(scopes))).filter(entry => entry.state !== "ok").map(entry => ({
       source: entry.source, state: entry.state, note: COLLECTION_NOTES[entry.state as Exclude<CollectionState, "ok">],
       ...(entry.state === "permission_restricted" ? {}
-        : { next_step: "If the task needs this, ask the user with an ask_user_questions source_access question for this source." }),
+        : { next_step: "If the task needs this, ask the user with data_source_request for this source." }),
     }));
   }
 

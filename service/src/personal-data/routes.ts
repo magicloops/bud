@@ -25,6 +25,7 @@ import { PostgresIngestRepository, type IngestRepository } from "./repository.js
 import { registerAppKeyRoutes } from "./app-key-routes.js";
 import { AccessLog, GEOAPIFY } from "./access-log.js";
 import { DataSources } from "./sources.js";
+import { SourceRequests } from "./source-requests.js";
 import { AutomationProposals } from "./automation-proposals.js";
 import { registerAutomationProposalRoutes } from "./automation-proposal-routes.js";
 import { AutomationProposalMaintenance } from "./automation-proposal-maintenance.js";
@@ -59,6 +60,7 @@ type Dependencies = {
   mapsKey?: MapKitKey;
   /** Place search (default Geoapify from config); injectable for route tests. */
   placeSearch?: Pick<Geoapify, "search">;
+  sourceRequests?: Pick<SourceRequests, "get" | "allow" | "respond">;
   accessLog?: Pick<AccessLog, "list" | "changes" | "recordQuietly" | "recent" | "appReads">;
   /** Device diagnostics storage and the daily budget; injectable for route tests. */
   deviceDiagnostics?: Pick<DeviceDiagnostics, "store" | "delete">;
@@ -74,6 +76,7 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
   const healthQueries = dependencies.healthQueries ?? new HealthQueries();
   const places = dependencies.places ?? new Places();
   const grants = dependencies.grants ?? new DataGrants();
+  const sourceRequests = dependencies.sourceRequests ?? new SourceRequests();
   const automations = dependencies.automations ?? new Automations();
   const bootstrap = dependencies.bootstrap ?? new AutomationBootstrap();
   const mapsKey = dependencies.mapsKey ?? { teamId: config.appleMapsTeamId, keyId: config.appleMapsKeyId, privateKey: config.appleMapsPrivateKey };
@@ -301,6 +304,17 @@ export async function registerPersonalDataRoutes(server: FastifyInstance, depend
       reply.header("Cache-Control", "no-store");
       return accessLog.changes(viewers.get(request)!.userId, request.params.source);
     });
+    // The agent's request for a data source (plan phase 2b). Its card reads the request, turns
+    // the source on for the account and the agent with one tap, then answers. Owner only; the
+    // agent has no route here.
+    app.get<{ Params: { id: string } }>("/api/data/source-requests/:id", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return sourceRequests.get(viewers.get(request)!.userId, request.params.id);
+    });
+    app.post<{ Params: { id: string } }>("/api/data/source-requests/:id/allow", { bodyLimit: 1024 }, async request =>
+      sourceRequests.allow(viewers.get(request)!.userId, request.params.id, request.headers.authorization ? "ios" : "web"));
+    app.post<{ Params: { id: string } }>("/api/data/source-requests/:id/response", { bodyLimit: 1024 }, async request =>
+      sourceRequests.respond(viewers.get(request)!.userId, request.params.id, request.body, request.headers.authorization ? "ios" : "web"));
     app.get("/api/data/status", async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       return {

@@ -13,3 +13,10 @@ phone build that reads the switches.
 Phase 3 (the access log) is built on the same branch: `service/src/personal-data/access-log.ts`,
 migration `0068_chief_starbolt.sql`, and the "Read in the last week" section of
 `web/src/components/data-sources.tsx`. Deploy the service with the migration first.
+
+Phase 2b (the access request as its own tool and card) is built on `feature/access-request`:
+the tool `data_source_request` (`service/src/agent/source-request-tool.ts`),
+`service/src/personal-data/source-requests.ts`, migration `0069_motionless_reaper.sql`, and
+`web/src/components/message-renderers/tools/source-request.tsx`. It removes the
+`source_access` kind from `ask_user_questions`. Deploy the service with the migration first,
+then the phone build, close together: an older phone build has no card for the new tool.

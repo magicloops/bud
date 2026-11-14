@@ -109,6 +109,13 @@ export class AgentTranscriptWriter {
     this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
   }
 
+  emitSourceRequest(threadId: string, turnId: string, callId: string, clientId: string, startedAt: Date, request: Record<string, unknown>): void {
+    const pendingTool = { client_id: clientId, call_id: callId, name: "data_source_request",
+      args: request, started_at: startedAt.toISOString() };
+    const cursor = this.runtime.emit(threadId, { event: "agent.tool_call", data: { turn_id: turnId, ...pendingTool } });
+    this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+  }
+
   emitAutomationProposal(threadId: string, turnId: string, callId: string, clientId: string, startedAt: Date, proposal: Record<string, unknown>): void {
     const pendingTool = { client_id: clientId, call_id: callId, name: "automations_request_activation",
       args: proposal, started_at: startedAt.toISOString() };

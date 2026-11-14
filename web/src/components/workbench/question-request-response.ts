@@ -28,6 +28,17 @@ export function buildInitialQuestionAnswers(
   )
 }
 
+/** A lone yes/no or single choice is answered by the click: there is nothing else to fill in. */
+export function submitsOnClick(request: ApiAskUserQuestionsRequest): boolean {
+  const [only] = request.questions
+  return request.questions.length === 1 && (only.kind === 'boolean' || only.kind === 'single_choice')
+}
+
+/** Skipping everything asks first when the agent marked a question important. */
+export function needsSkipConfirmation(request: ApiAskUserQuestionsRequest): boolean {
+  return request.questions.some((question) => question.importance === 'important')
+}
+
 export function buildSkippedQuestionAnswers(
   request: ApiAskUserQuestionsRequest,
 ): Record<string, QuestionRequestAnswerState> {

@@ -27,6 +27,18 @@ the next change has something to be compared with. Metadata is generated and une
 Executed in isolated schemas by `access-log.test.ts` and applied locally in one transaction.
 Additive: deploy via `db:migrate` with the service release.
 
+### `0069_motionless_reaper.sql`
+
+The agent's request for a data source (bud-mobile `plan/data-sources-ux`, Phase 2b):
+generated table `data_source_request`, plus one hand-written trigger at the end,
+`bud_pending_source_request`, which publishes the same content-free thread hint as the other
+pending requests (`0050`), and one `UPDATE` that truncates existing `data_access_log.at` values to the
+millisecond: the log's page cursor carries milliseconds, and rows are now written at that
+precision (`AccessLog.record`). Metadata is generated and unedited. Executed in isolated schemas
+by `invocation-source-request.test.ts` and `change-listener.test.ts`, and applied locally.
+Additive: deploy via `db:migrate` with the service release, before the phone build that
+shows the card.
+
 SQL migration files generated or maintained for schema evolution.
 
 ## Purpose

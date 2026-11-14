@@ -29,6 +29,7 @@ export async function loadThreadAgentState(owner: string, thread: AuthorizedThre
       invocations: (await repository.listForThread(owner, threadId)).map(serializeInvocation),
       pending_questions: await repository.pendingQuestionsForThread(owner, threadId),
       pending_data_requests: await repository.pendingDataRequestsForThread(owner, threadId),
+      pending_source_requests: await repository.pendingSourceRequestsForThread(owner, threadId),
       pending_automation_requests: await repository.pendingAutomationProposalsForThread(owner, threadId),
       pending_bootstrap_requests: await repository.pendingBootstrapProposalsForThread(owner, threadId),
     } : {}),

@@ -11,14 +11,18 @@ export const useOpenBrowserPane = () => useContext(BrowserPaneContext)
 export const BrowserWaitActionsContext = createContext<{
   visibleSessionId?: string | null
   returnAction: { sessionId: string; disabled: boolean; returning: boolean; run: () => void } | null
+  /** The open handoff of each browser session, with the agent's reason for asking. */
+  handoffs?: BrowserHandoffs
   error: { sessionId: string; message: string } | null
   stop: (invocationId: string) => Promise<void>
 } | null>(null)
 export const useBrowserWaitActions = () => useContext(BrowserWaitActionsContext)
-type Inventory = { session_id: string; state: string; handoff: { id: string } | null }
+export type BrowserHandoffs = Record<string, { id: string; reason: string | null }>
+type Inventory = { session_id: string; state: string; handoff: { id: string; reason?: string | null } | null }
 
 export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], initialState: ApiAgentState, reveal: () => void) {
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [handoffs, setHandoffs] = useState<BrowserHandoffs>({})
   const stateFeed = useMemo(() => new BrowserStateFeed(`/api/threads/${encodeURIComponent(threadId)}/browser-state`), [threadId])
   const activity = useRef(0)
   const tracker = useRef<BrowserRevealTracker | null>(null)
@@ -60,6 +64,9 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
         const result = await apiFetchJson<{ sessions: Inventory[] }>(`/api/threads/${encodeURIComponent(threadId)}/browser-sessions`, { signal: signal })
         if (signal.aborted) return
         const sessions = result.sessions.filter(s => s.state !== 'closing' && browserSessionId(s.session_id))
+        const pendingHandoffs: BrowserHandoffs = {}
+        for (const session of sessions) if (session.handoff) pendingHandoffs[session.session_id] = { id: session.handoff.id, reason: session.handoff.reason ?? null }
+        setHandoffs(current => JSON.stringify(current) === JSON.stringify(pendingHandoffs) ? current : pendingHandoffs)
         for (const session of sessions) {
           const keys = [`open:${session.session_id}`, ...(session.handoff ? [`handoff:${session.handoff.id}`] : [])]
           let shouldOpen = false
@@ -90,5 +97,5 @@ export function useBrowserPane(threadId: string, initialMessages: ApiMessage[], 
     const observer = observeBrowserState(stateFeed, poll, { revoked: () => setSessionId(null) })
     return () => { observer.stop(); diagnostics.finish('stopped') }
   }, [threadId, open, stateFeed])
-  return { sessionId, open, notice, stateFeed }
+  return { sessionId, open, notice, stateFeed, handoffs }
 }

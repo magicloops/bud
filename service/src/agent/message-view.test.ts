@@ -60,4 +60,12 @@ test("presentation covers all interactive families without inferring unresolved 
   assert.deepEqual(toolPresentation("automations_request_activation", { proposal: { proposal_id: "p", status: "declined" } }),
     { kind: "automation_activation", id: "p", status: "declined" });
   assert.deepEqual(toolPresentation("new_tool", {}), { kind: "generic", id: null, status: null });
+  // A request for a data source, and a read refused for a setting the user can change.
+  assert.deepEqual(toolPresentation("data_source_request", { request_id: "dsr_1", source: "location" }, true),
+    { kind: "source_access", id: "dsr_1", status: "pending" });
+  assert.deepEqual(toolPresentation("data_source_request", { request: { request_id: "dsr_1", status: "declined" } }),
+    { kind: "source_access", id: "dsr_1", status: "declined" });
+  assert.deepEqual(toolPresentation("location_recent", { error: "source_off", unavailable_source: "location" }),
+    { kind: "source_unavailable", id: "location", status: null });
+  assert.deepEqual(toolPresentation("location_recent", { data: {} }), { kind: "generic", id: null, status: null });
 });

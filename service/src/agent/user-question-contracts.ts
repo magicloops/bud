@@ -13,8 +13,7 @@ export type AskUserQuestionKind =
   | "multi_choice"
   | "text"
   | "number"
-  | "place"
-  | "source_access";
+  | "place";
 
 export type AskUserQuestionImportance = "required" | "important" | "optional";
 export type AskUserQuestionAnswerStatus = "answered" | "skipped";
@@ -27,17 +26,6 @@ export type AskUserQuestionPlace = {
   query?: string;
   place_id?: string;
   radius_m?: number;
-};
-
-/**
- * A request for access to a data source (bud-mobile `plan/data-sources-ux`, Phase 2). The phone
- * shows a card that walks whatever is missing, each a tap by the user: let the agent read, turn
- * the source on, allow it in iOS. `level: "always"` asks for background location too. The agent
- * can never grant anything: it only asks for the card.
- */
-export type AskUserQuestionSource = {
-  id: "location" | "health" | "contacts";
-  level?: "always";
 };
 
 export type AskUserQuestionChoice = {
@@ -55,7 +43,6 @@ export type AskUserQuestion = {
   skippable: true;
   choices?: AskUserQuestionChoice[];
   place?: AskUserQuestionPlace;
-  source?: AskUserQuestionSource;
   default_answer?: AskUserQuestionAnswer;
   multiline?: boolean;
   placeholder?: string;
@@ -83,30 +70,7 @@ export type AskUserQuestionAnswer =
   | { kind: "multi_choice"; choice_ids: string[] }
   | { kind: "text"; value: string }
   | { kind: "number"; value: number }
-  | AskUserQuestionPlaceAnswer
-  | AskUserQuestionSourceAnswer;
-
-/**
- * The client sends what the user did (`outcome`) and, for location, the event ID of a reading
- * taken for this request. The service never trusts `outcome` for state: it adds what it holds
- * (`settleSourceAnswers`): the switch, the agent's permission, the phone's reported iOS
- * permission, and whether the reading arrived.
- */
-export type AskUserQuestionSourceAnswer = {
-  kind: "source_access";
-  outcome: "granted" | "declined" | "unavailable";
-  reading_event_id?: string;
-  source?: string;
-  enabled?: boolean;
-  agent_allowed?: boolean;
-  permission?: string | null;
-  level?: string | null;
-  caveats?: string[];
-  usable?: boolean;
-  reading?: "received" | "not_received";
-  /** `false` when the service answered without showing a card: the user had already declined. */
-  asked?: false;
-};
+  | AskUserQuestionPlaceAnswer;
 
 /** The client sends the chosen pin; the service adds `place_id` and `operation` once it has saved
  * it (`savePlaceAnswers`), so the agent learns which place was created or updated. */
@@ -144,7 +108,6 @@ export type AskUserQuestionsToolResultResponse = {
     help_text?: string;
     choices?: AskUserQuestionChoice[];
     place?: AskUserQuestionPlace;
-    source?: AskUserQuestionSource;
   };
   status: AskUserQuestionAnswerStatus;
   answer?: AskUserQuestionAnswer;
@@ -188,21 +151,15 @@ const RawPlaceSchema = z.object({
   radius_m: z.number().min(PLACE_RADIUS.min).max(PLACE_RADIUS.max).optional(),
 });
 
-const RawSourceSchema = z.object({
-  id: z.enum(["location", "health", "contacts"]),
-  level: z.enum(["always"]).optional(),
-});
-
 const RawQuestionSchema = z.object({
   question_id: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1).optional(),
-  kind: z.enum(["boolean", "single_choice", "multi_choice", "text", "number", "place", "source_access"]),
+  kind: z.enum(["boolean", "single_choice", "multi_choice", "text", "number", "place"]),
   label: z.string().trim().min(1),
   help_text: z.string().trim().min(1).optional(),
   importance: z.enum(["required", "important", "optional"]).optional(),
   choices: z.array(RawChoiceSchema).optional(),
   place: RawPlaceSchema.optional(),
-  source: RawSourceSchema.optional(),
   default_answer: z.unknown().optional(),
   multiline: z.boolean().optional(),
   placeholder: z.string().trim().min(1).optional(),
@@ -239,12 +196,6 @@ const ClientAnswerSchema = z.discriminatedUnion("kind", [
     radius_m: z.number().finite().min(PLACE_RADIUS.min).max(PLACE_RADIUS.max),
     address: z.string().trim().max(300).optional().transform(value => value || undefined),
   }),
-  // Only what the user did and the reading's ID: the service fills in the rest.
-  z.object({
-    kind: z.literal("source_access"),
-    outcome: z.enum(["granted", "declined", "unavailable"]),
-    reading_event_id: z.string().trim().min(1).max(200).optional(),
-  }),
 ]);
 
 const ClientResponseSchema = z.object({
@@ -280,7 +231,6 @@ export function normalizeAskUserQuestionsRequest(input: unknown): AskUserQuestio
 
     const choices = normalizeChoices(question);
     const place = normalizePlace(question);
-    const source = normalizeSource(question);
     const normalized: AskUserQuestion = {
       question_id: questionId,
       kind: question.kind,
@@ -290,7 +240,6 @@ export function normalizeAskUserQuestionsRequest(input: unknown): AskUserQuestio
       skippable: true,
       ...(choices ? { choices } : {}),
       ...(place ? { place } : {}),
-      ...(source ? { source } : {}),
       ...(question.multiline === true ? { multiline: true } : {}),
       ...(question.placeholder ? { placeholder: question.placeholder.trim() } : {}),
       ...(typeof question.min_length === "number" ? { min_length: question.min_length } : {}),
@@ -434,7 +383,6 @@ export function buildAskUserQuestionsToolResult(
         help_text: question.help_text,
         choices: question.choices,
         place: question.place,
-        source: question.source,
       }),
       status: answer.status,
       answer: answer.answer,
@@ -523,21 +471,6 @@ function normalizePlace(question: z.infer<typeof RawQuestionSchema>): AskUserQue
   });
 }
 
-/** A source question names the source; several sources are several questions. */
-function normalizeSource(question: z.infer<typeof RawQuestionSchema>): AskUserQuestionSource | undefined {
-  if (question.kind !== "source_access") return undefined;
-  if (!question.source) {
-    throw new AskUserQuestionsContractError("missing_source", "source_access questions require a source with an id");
-  }
-  if (question.default_answer !== undefined) {
-    throw new AskUserQuestionsContractError("invalid_default_answer", "source_access questions can't have a default answer: only the user can allow access");
-  }
-  if (question.source.level && question.source.id !== "location") {
-    throw new AskUserQuestionsContractError("invalid_source", "level applies to location only");
-  }
-  return removeUndefinedFields({ id: question.source.id, level: question.source.level });
-}
-
 function validateAnswerForQuestion(
   question: AskUserQuestion,
   input: unknown,
@@ -621,74 +554,11 @@ function formatAnswer(question: AskUserQuestion, answer: AskUserQuestionAnswer):
       return answer.value;
     case "number":
       return `${answer.value}${question.unit ? ` ${question.unit}` : ""}`;
-    case "source_access": {
-      const name = SOURCE_NAMES[question.source?.id ?? ""] ?? "The data source";
-      if (answer.outcome === "declined" && answer.asked === false)
-        return `Not asked: the user just declined ${name}. Continue without it. Ask again only if the user later says they want to share it.`;
-      if (answer.outcome === "declined") return `Declined. ${name} access was not changed. Continue without what was asked for, and ask again only if the user later says they want to share it.`;
-      if (answer.outcome === "unavailable") return `${name} can't be allowed on this device (restricted, or not this phone's to give).`;
-      if (answer.usable === false) return `${name} is still not readable: ${answer.enabled === false ? "the source is off" : "the agent isn't allowed"}.`;
-      const permission = answer.permission ? ` iOS permission: ${answer.permission.replaceAll("_", " ")}${answer.level ? ` (${answer.level.replaceAll("_", " ")})` : ""}.` : "";
-      const reading = answer.reading === "received" ? " A fresh reading was just received: query it now."
-        : answer.reading === "not_received" ? " A fresh reading was taken but hasn't arrived yet: query, and say if it is still stale." : "";
-      return `${name} is on and readable.${permission}${reading}`;
-    }
     case "place":
       return `${answer.operation === "updated" ? "Updated" : "Saved"} ${answer.name}${answer.address ? `, ${answer.address},` : ""} at `
         + `${answer.latitude.toFixed(6)}, ${answer.longitude.toFixed(6)} with a ${Math.round(answer.radius_m)} m radius`;
   }
 }
-
-/**
- * A source-access question the user skipped is a decline (bud-mobile `plan/data-sources-ux`,
- * Phase 2): it is recorded as one, so it holds for the rest of the conversation. Only for an
- * answer the user sent; a question superseded by a follow-up message stays skipped.
- */
-export function declineSkippedSources(request: AskUserQuestionsRequest, response: AskUserQuestionsResponse): AskUserQuestionsResponse {
-  return { ...response, answers: response.answers.map((answer): AskUserQuestionResponseAnswer => {
-    const question = request.questions.find(entry => entry.question_id === answer.question_id);
-    return question?.kind === "source_access" && answer.status === "skipped" && (answer.skip_reason ?? "user_skipped") === "user_skipped"
-      ? { question_id: answer.question_id, status: "answered", answer: { kind: "source_access", outcome: "declined" } } : answer;
-  }) };
-}
-
-/**
- * The sources whose latest access answer in a thread is a decline, with the turn it was given in.
- * `rows` are the thread's stored question responses, oldest first: a later answer for the same
- * source replaces an earlier one, so granting after a decline lifts it.
- */
-export function declinedSourcesIn(rows: readonly { response: unknown; turnId: string }[]): { source: string; turnId: string }[] {
-  const latest = new Map<string, { declined: boolean; turnId: string }>();
-  for (const row of rows) {
-    const answers = (row.response as { answers?: unknown } | null)?.answers;
-    if (!Array.isArray(answers)) continue;
-    for (const entry of answers) {
-      const answer = (entry as { answer?: { kind?: unknown; outcome?: unknown; source?: unknown } } | null)?.answer;
-      if (answer?.kind === "source_access" && typeof answer.source === "string")
-        latest.set(answer.source, { declined: answer.outcome === "declined", turnId: row.turnId });
-    }
-  }
-  return [...latest].filter(([, entry]) => entry.declined).map(([source, entry]) => ({ source, turnId: entry.turnId }));
-}
-
-/**
- * The answer to a request that asks again for a source the user just declined (`declined`: the
- * sources declined in the same turn), or null when it asks for none. The whole request is
- * answered at once, with no card: those sources as declined, any other question as skipped, to
- * be asked again without them.
- */
-export function refuseDeclinedSources(request: AskUserQuestionsRequest, declined: readonly string[],
-  clientResponseId: string): AskUserQuestionsResponse | null {
-  const refused = (question: AskUserQuestion) => question.kind === "source_access" && !!question.source && declined.includes(question.source.id);
-  if (!request.questions.some(refused)) return null;
-  return { schema: ASK_USER_QUESTIONS_RESPONSE_SCHEMA, client_response_id: clientResponseId,
-    answers: request.questions.map((question): AskUserQuestionResponseAnswer => refused(question)
-      ? { question_id: question.question_id, status: "answered",
-        answer: { kind: "source_access", outcome: "declined", source: question.source!.id, asked: false } }
-      : { question_id: question.question_id, status: "skipped", skip_reason: "not_applicable" }) };
-}
-
-const SOURCE_NAMES: Record<string, string> = { location: "Location", health: "Health", contacts: "Contacts" };
 
 function normalizeId(value: string): string {
   return value.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "question";

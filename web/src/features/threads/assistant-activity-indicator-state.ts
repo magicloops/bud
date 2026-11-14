@@ -67,7 +67,7 @@ export function deriveAssistantActivityIndicatorVisible(args: {
 
 /** Apply durable recovery rules at snapshot acceptance, never over newer SSE status. */
 export function getStatusFromAgentState(agentState: ApiAgentState): AssistantActivityStatus {
-  if (agentState.pending_questions?.length || agentState.pending_data_requests?.length || agentState.pending_automation_requests?.length || agentState.pending_bootstrap_requests?.length) return 'waiting_for_user'
+  if (agentState.pending_questions?.length || agentState.pending_data_requests?.length || agentState.pending_source_requests?.length || agentState.pending_automation_requests?.length || agentState.pending_bootstrap_requests?.length) return 'waiting_for_user'
   if (!invocationAllowsLiveActivity(agentState)) {
     // Durable admission can precede the process-local runtime. It is still work
     // in progress, including on the immediate post-send refresh.

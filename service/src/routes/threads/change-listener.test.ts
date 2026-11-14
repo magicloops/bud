@@ -28,7 +28,7 @@ test("migration publishes committed summary, joined-row and transcript changes t
   // Real column names and types from the pushed local schema, so a renamed
   // column fails here instead of silently dropping hints. Constraints are
   // relaxed only to allow sparse fixture rows.
-  const pendingTables = ["agent_question_request", "data_access_request", "automation_proposal",
+  const pendingTables = ["agent_question_request", "data_access_request", "data_source_request", "automation_proposal",
     "automation_bootstrap_proposal", "browser_handoff", "agent_invocation", "agent_invocation_action"];
   for (const table of pendingTables) await database.query(`CREATE TABLE ${table} (LIKE public.${table})`);
   await database.query(`DO $$ DECLARE c record; BEGIN
@@ -37,6 +37,8 @@ test("migration publishes committed summary, joined-row and transcript changes t
       EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP NOT NULL', c.table_name, c.column_name);
     END LOOP; END $$`);
   await database.query(await readFile(new URL("../../../drizzle/migrations/0050_pending_request_notifications.sql", import.meta.url), "utf8"));
+  await database.query(`CREATE TRIGGER bud_pending_source_request AFTER INSERT OR UPDATE OR DELETE ON data_source_request
+    FOR EACH ROW EXECUTE FUNCTION bud_pending_requests_changed()`);
   const hints: ThreadChange[] = [];
   let losses = 0;
   listener.subscribe(hint => hints.push(hint), () => losses++);
@@ -78,7 +80,7 @@ test("migration publishes committed summary, joined-row and transcript changes t
   assert.ok(hints.some(hint => hint.kind === "transcript"));
   assert.deepEqual(hints.filter(hint => hint.kind === "summary").map(hint => hint.owner).sort(), ["other","owner"]);
   hints.length = 0;
-  for (const table of ["agent_question_request", "data_access_request", "automation_proposal", "automation_bootstrap_proposal", "browser_handoff"]) {
+  for (const table of ["agent_question_request", "data_access_request", "data_source_request", "automation_proposal", "automation_bootstrap_proposal", "browser_handoff"]) {
     await database.query(`insert into ${table}(thread_id,created_by_user_id,status) values($1,'other','pending')`, [id]);
     await settle();
     assert.ok(hints.some(h => h.kind === "pending" && h.owner === "other" && h.thread_id === id), table);

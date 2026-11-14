@@ -31,7 +31,7 @@ test("deletion is owner-bound, atomic, retryable and terminal while retaining hi
   // Indexed isolated copies keep fixture work out of the running development worker.
   for (const table of ["automation", "automation_revision", "automation_delivery", "automation_bootstrap",
     "automation_bootstrap_group", "automation_bootstrap_member", "automation_proposal", "automation_bootstrap_proposal",
-    "agent_invocation", "agent_invocation_action", "agent_question_request", "data_access_request", "data_owner_state",
+    "agent_invocation", "agent_invocation_action", "agent_question_request", "data_access_request", "data_source_request", "data_owner_state",
     "bud", "thread", "message", "agent_data_grant", "agent_data_grant_history", "data_access_log", "data_domain_event", "contact_revision", "contact",
     "contact_source", "data_collection_epoch", "data_installation", "browser_handoff"]) {
     await admin.query(`create table "${namespace}"."${table}" (like public."${table}" including all)`);
