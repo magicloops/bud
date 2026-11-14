@@ -233,7 +233,11 @@ export class GoogleConnections {
         refreshed = await this.oauth.refresh(claim.state.data.tokens!, AbortSignal.timeout(Math.min(this.operationMs, REFRESH_LEASE_MS - 5_000)));
       } catch (error) {
         // Best effort: an unreleased lease ends by itself.
-        await this.edit(owner, id, release).catch(() => {});
+        const held = await this.edit(owner, id, release).catch(() => true);
+        // A failure only speaks for the connection while this instance holds the lease. Stalled
+        // past it, another instance may have refreshed since (and Google may have retired the
+        // token this one sent): go round again and use what that instance saved.
+        if (!held) continue;
         throw error;
       }
       const saved = await this.edit(owner, id, current => {

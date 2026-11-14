@@ -898,6 +898,32 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
     assert.equal(await leaseOf(id), null);
   });
 
+  await t.test("a refresh that fails after its lease passed to another instance does not speak for the connection", async () => {
+    for (const failure of [{ status: 400, error: "invalid_grant" }, { status: 503, error: "temporarily_unavailable" }]) {
+      const { connection_id: id } = await grantWith(manager, "frank");
+      await expire("frank", id);
+      const stall = gate();
+      const stalled = instance(async (input, init) => {
+        const req = new Request(input, init);
+        if (!await isRefresh(req)) return fixture.fetcher(req);
+        stall.enter(); await stall.held;
+        return Response.json({ error: failure.error }, { status: failure.status });
+      });
+      const first = stalled.call("frank", id, request, signal, async () => {});
+      await stall.entered;
+      await pool.query("update google_connection set refresh_lease_until = now() - interval '1 second' where id=$1", [id]);
+      await factory().call("frank", id, request, signal, async () => {});
+      const refreshed = await storedRow("frank", id);
+      stall.open();
+      // The stalled instance's failure is about a token that has since been replaced.
+      await first;
+      const after = await storedRow("frank", id);
+      assert.equal((await manager.list("frank"))[0].status, "connected");
+      assert.deepEqual(after.data!.tokens, refreshed.data!.tokens); assert.equal(after.epoch, refreshed.epoch);
+      assert.equal(await leaseOf(id), null);
+    }
+  });
+
   await t.test("a cancelled call stops waiting for a shared refresh, which carries on for the others", async () => {
     const { connection_id: id } = await grantWith(manager, "frank");
     await expire("frank", id);

@@ -274,4 +274,10 @@ instance's refresh waits for that instance's token. `connections.test.ts` passes
   call used to hold its admission slot until the shared refresh finished. It now stops
   waiting at once; the refresh carries on for the other callers.
 
-Tests: `connections.test.ts` passes 27; both new tests fail on the previous commit.
+- **A stale refresh failure is fenced the same way.** A stalled instance's refresh could
+  fail with `invalid_grant` after another instance had refreshed (Google may have retired
+  the token it sent), and the call then marked the connection `reconnect_required`. A
+  refresh failure now only counts while the instance still holds its lease; otherwise it
+  goes round again and uses the other instance's tokens.
+
+Tests: `connections.test.ts` passes 28; each new test fails on the commit before its fix.
