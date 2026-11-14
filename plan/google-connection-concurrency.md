@@ -280,4 +280,10 @@ instance's refresh waits for that instance's token. `connections.test.ts` passes
   refresh failure now only counts while the instance still holds its lease; otherwise it
   goes round again and uses the other instance's tokens.
 
-Tests: `connections.test.ts` passes 28; each new test fails on the commit before its fix.
+- **An unreadable lease is not taken as ownership.** After a refresh failure, the check of
+  whether the lease was still held swallowed a database error and treated it as "held", so
+  a stale `invalid_grant` could still mark the connection `reconnect_required` when the
+  row was locked. If the check can't be made, the call now fails as retryable `google_busy`
+  and the grant is left alone.
+
+Tests: `connections.test.ts` passes 29; each new test fails on the commit before its fix.

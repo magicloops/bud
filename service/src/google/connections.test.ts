@@ -924,6 +924,38 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
     }
   });
 
+  await t.test("a refresh failure whose lease cannot be checked concludes nothing about the grant", async () => {
+    const { connection_id: id } = await grantWith(manager, "frank");
+    await expire("frank", id);
+    const stall = gate();
+    const stalled = instance(async (input, init) => {
+      const req = new Request(input, init);
+      if (!await isRefresh(req)) return fixture.fetcher(req);
+      stall.enter(); await stall.held;
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    });
+    const first = stalled.call("frank", id, request, signal, async () => assert.fail("dispatched without tokens"));
+    await stall.entered;
+    await pool.query("update google_connection set refresh_lease_until = now() - interval '1 second' where id=$1", [id]);
+    await factory().call("frank", id, request, signal, async () => {});
+    const refreshed = await storedRow("frank", id);
+    const holder = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 1 });
+    const client = await holder.connect();
+    try {
+      await client.query("begin");
+      await client.query("select id from google_connection where id=$1 for update", [id]);
+      stall.open();
+      await assert.rejects(first, error => {
+        assert.ok(error instanceof GoogleError); assert.equal(error.code, "google_busy"); assert.equal(error.retryable, true); return true;
+      });
+      await client.query("rollback");
+    } finally { client.release(true); await holder.end(); }
+    const after = await storedRow("frank", id);
+    assert.equal((await manager.list("frank"))[0].status, "connected");
+    assert.deepEqual(after.data!.tokens, refreshed.data!.tokens); assert.equal(after.epoch, refreshed.epoch);
+    await manager.call("frank", id, request, signal, async () => {});
+  });
+
   await t.test("a cancelled call stops waiting for a shared refresh, which carries on for the others", async () => {
     const { connection_id: id } = await grantWith(manager, "frank");
     await expire("frank", id);

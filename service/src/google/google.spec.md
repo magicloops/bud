@@ -138,7 +138,9 @@ lease, and calls for one account run together (at most four per owner per proces
   left. A lease left by an instance that died ends by itself, and an instance that
   stalled past its lease finds on saving that it no longer holds it and keeps the
   other instance's tokens. The same holds for a failure: a refresh error, including
-  `invalid_grant`, only counts while the instance still holds the lease. A cancelled or timed-out call stops waiting for a
+  `invalid_grant`, only counts while the instance still holds the lease. If the
+  lease can't be read after a failure, the call fails as retryable `google_busy`
+  and nothing is concluded about the grant. A cancelled or timed-out call stops waiting for a
   shared refresh, which carries on for the others. The result is saved
   onto the current row only if the epoch is unchanged, so it cannot undo a
   disconnect or drop a pending connect flow. This lease covers the token request
