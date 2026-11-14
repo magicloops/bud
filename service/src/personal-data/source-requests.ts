@@ -32,18 +32,20 @@ const READING_WAIT_MS = 5_000;
 const requestInput = z.object({
   source: z.enum(SOURCE_IDS as [SourceId, ...SourceId[]]),
   purpose: z.string().trim().min(1).max(120),
-  level: z.enum(["always"]).optional(),
-}).strict().refine(value => value.level === undefined || value.source === "location");
+  // A strict-schema provider sends null for "not set".
+  level: z.enum(["always"]).nullish(),
+}).strict().refine(value => value.level == null || value.source === "location");
 const answerInput = z.object({
   outcome: z.enum(["granted", "declined", "unavailable"]),
   reading_event_id: z.string().min(1).max(200).optional(),
 }).strict();
 
-export function parseSourceRequestInput(input: unknown) {
+export function parseSourceRequestInput(input: unknown): { source: SourceId; purpose: string; level?: "always" } {
   const parsed = requestInput.safeParse(input);
   if (!parsed.success) throw new DataRequestError(400, "invalid_source_request",
     "Provide source (location, health or contacts), a purpose of at most 120 characters, and level always only for location");
-  return parsed.data;
+  const { level, ...rest } = parsed.data;
+  return level ? { ...rest, level } : rest;
 }
 
 const label = (source: string) => SOURCES.find(entry => entry.id === source)?.label ?? source;

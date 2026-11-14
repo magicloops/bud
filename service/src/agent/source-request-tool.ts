@@ -16,8 +16,11 @@ export const SOURCE_REQUEST_CANONICAL_TOOL: CanonicalTool = {
       source: { type: "string", enum: ["location", "health", "contacts"] },
       purpose: { type: "string", maxLength: 120,
         description: "What it is for, completing the sentence \"Your agent wants this to …\". For example: \"tell you where you are\". Lower case, no full stop." },
-      level: { type: "string", enum: ["always"],
-        description: "Optional; leave it out for most requests, including where the user is now. Location only: also asks for background access, for tasks that need arrivals or visit history." },
+      // Null is allowed on the wire: a provider with strict schemas (OpenAI) makes every property
+      // required, so "not set" has to be a value the enum permits. Validation reads null as absent.
+      level: { type: ["string", "null"], enum: ["always", null],
+        description: "Optional; leave it out (or null) for most requests, including where the user is now, and always for health and contacts. "
+          + "Location only: \"always\" also asks for background access, for tasks that need arrivals or visit history." },
     },
     required: ["source", "purpose"],
   },

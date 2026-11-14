@@ -30,13 +30,20 @@ export function SourceRequestContent({ payload }: ToolContentRendererProps) {
       if (!signal?.aborted) setMessage('Could not load this request.')
     }
   }, [id])
+  // The conversation's own record of how the request ended: the tool result, once there is one.
+  // Answered on another device or replaced by a message, it arrives here before any reload.
+  const outcome = typeof payload.outcome === 'string' ? payload.outcome : null
+  const waiting = payload.pending === true
   useEffect(() => {
     const controller = new AbortController()
     void load(controller.signal)
     return () => controller.abort()
-  }, [load])
+    // Reads again when the conversation's record changes.
+  }, [load, outcome, waiting])
 
-  const request = document?.request
+  // A closed request never offers its actions, even before the reload lands.
+  const request = document && outcome && document.request.status === 'pending'
+    ? { ...document.request, status: outcome } : document?.request
   const source = document?.source
   const pending = request?.status === 'pending'
   const steps = source ? webAccessSteps(source) : []
