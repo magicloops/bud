@@ -168,6 +168,17 @@ Updated September 8, 2026: the main functionality and phases 15–16 UI changes 
 
 ## Future / Long-Term
 
+- [ ] **Google call admission with parallel tools and horizontal scaling.** Keep the current
+  four concurrent calls per user per service process as a sufficient local guard for now
+  ([PR #185](https://github.com/magicloops/bud/pull/185)). It does not depend on tool calls
+  being sequential, and excess calls return retryable `google_busy` without dispatch.
+  When adding parallel tool execution and agent routing/failover across instances, revisit
+  scheduler backpressure, fairness across a user's conversations, and whether admission
+  belongs to an agent owner or needs a shared per-user budget. WebSocket affinity alone
+  does not guarantee all of a user's agents run in one process; N processes can admit 4N.
+  Keep the database refresh lease for credential correctness separate from call admission
+  and any provider rate limits. See the [concurrency plan](plan/google-connection-concurrency.md).
+
 - **Bud-owned browser runtime before real browsing use cases**
   - Suppress unchanged viewer frames after control-lifecycle validation; keep liveness, capture credit, input freshness and lease renewal independent of image updates. See the [media efficiency roadmap](plan/bud-owned-browser/phases.md#media-efficiency-follow-up).
   - Phase 1 normal-agent control is implemented; [setup, validation and remaining release checks](plan/bud-owned-browser/phase-1-agent-browser.md). Add identity-safe orphan/profile scavenging after hard daemon termination; current cleanup covers explicit close and graceful shutdown.
