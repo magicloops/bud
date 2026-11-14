@@ -1,6 +1,9 @@
 import { subscribeTurnTimings, subscribeInvocationChanges } from "./agent/invocation-timing.js";
 import { invocationEvents } from "./agent/invocation-events.js";
 import { registerAccessLog } from "./access-log.js";
+import { registerGoogleRoutes } from "./google/routes.js";
+import { googleConfigured } from "./google/config.js";
+import { readGoogleEncryptionKey } from "./google/credentials.js";
 import { retrievalAvailable } from "./web-retrieval/config.js";
 import { BrowserBroker } from "./browser/broker.js";
 import { BrowserMedia } from "./browser/media.js";
@@ -199,6 +202,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   };
   let releaseInvocationMode: (() => Promise<void>) | undefined;
   server.addHook("onReady", async () => {
+    if (googleConfigured()) {
+      readGoogleEncryptionKey();
+      await pool.query("select id, status, encrypted_credentials, oauth_state_hash from google_connection limit 0");
+    }
     releaseInvocationMode = await acquireInvocationMode(pool, invocationSettings.mode, () => {
       server.log.error("Invocation mode database session lost; stopping service");
       void server.close().catch(err => server.log.error({ err }, "Service shutdown failed"));
@@ -293,6 +300,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerDeviceInstallClaimRoutes(server);
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
+  await registerGoogleRoutes(server);
   ({ stop: stopPersonalData } = await registerPersonalDataRoutes(server, {
     automationActivationEnabled: invocationSettings.automationsEnabled,
     appKeysEnabled: invocationSettings.appKeysEnabled,

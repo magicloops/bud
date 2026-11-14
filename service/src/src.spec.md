@@ -29,6 +29,8 @@ Application entry point and thin Fastify composition root.
 - Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Advertise the current direct-browser method set (`GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench and mobile registration calls can use profile updates, push-endpoint upserts, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
+- Mount owner-scoped Google connection/OAuth routes; configured integrations require
+  the encryption key and migration 0067 during readiness.
 - Mount the encapsulated personal-data `/v1/events/batches` and `/api/data/status` routes
 - Mount authenticated device-install-claim issuance/read endpoints used by one-command Bud setup
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
@@ -222,6 +224,13 @@ Environment-based configuration with defaults.
 
 ## Subfolders
 
+### `google/` → [google.spec.md](./google/google.spec.md)
+
+Direct Google OAuth with owner-scoped encrypted credentials and Calendar, Gmail
+and Drive tools in durable human chats. Service-specific incremental consent is
+separate from Google login; canceled extra consent preserves existing grants.
+No external MCP service is required. See the Google spec for transfer limits.
+
 ### `web-retrieval/` → [web-retrieval.spec.md](./web-retrieval/web-retrieval.spec.md)
 
 Provider-neutral public search/read backed by Firecrawl and owner/thread-scoped
@@ -398,6 +407,7 @@ POST /api/device-auth/flows/:flowId/approve
 | Package | Purpose |
 |---------|---------|
 | `fastify` | HTTP framework |
+| `google-auth-library` | Direct Google OAuth code exchange and refresh |
 | `@fastify/websocket` | WebSocket support |
 | `@grpc/grpc-js` | Native gRPC over HTTP/2 daemon control gateway |
 | `@grpc/proto-loader` | Dynamic protobuf loading for the isolated daemon gateway adapter |

@@ -440,6 +440,8 @@ export class AgentConversationLoader {
       switch (payload.tool) {
         case "browser_exec":
         case "browser_request_handoff":
+        case "google_search_tools":
+        case "google_call":
         case "web_search":
         case "web_read":
         case "contacts_get":

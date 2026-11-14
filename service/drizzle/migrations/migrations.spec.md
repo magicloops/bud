@@ -1,5 +1,14 @@
 # migrations
 
+### `0070_google_connections.sql`
+
+Generated from main’s `0069_motionless_reaper` snapshot. Adds one owned
+Google OAuth connection per user with encrypted credentials, granted scopes,
+expiring session-bound state, ownership FK and status/flow checks. The SQL matches
+the previously reviewed Google DDL. Deploy with `pnpm db:migrate` before the
+matching service and web builds.
+See [setup](../../../docs/google-calendar.md) and [debug note](../../../debug/google-direct-oauth.md).
+
 ### `0048_lush_timeslip.sql`
 
 Generated additive thread-creation receipt table, owner/key uniqueness, fingerprint
@@ -276,7 +285,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0061` currently)
+- Snapshot files for each migration (`0000` through `0070` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 

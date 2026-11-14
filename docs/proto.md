@@ -4359,3 +4359,28 @@ Migration 0050 must precede service startup; coordinate web/mobile cursor resets
 and budget endpoint adoption. No daemon protocol changes or new auth-revocation
 guarantees. See [handoff](../plan/client-state-performance/mobile-api-handoff.md)
 and [mutation coverage](../plan/client-state-performance/mutation-coverage.md).
+
+
+## Google task consent and service access
+
+Google tools return `connect_request:{provider,thread_id,access}` when the requested
+service or access is missing. `provider` identifies the supported Google service;
+`access` is `read_only` for a read task and `read_write` for a task that changes
+Google data. The chat card requests that exact access through Google OAuth after
+an explicit click. Settings Connect requests `read_write` for the selected service.
+`POST /api/google/connect` carries `selections:[{service,access}]` and optional
+`thread_id`; canceled or partial upgrades retain usable existing access. The
+callback never performs the requested Google operation automatically.
+
+Authenticated connection inventory reports effective per-service read/write access.
+`DELETE /api/google/connection/:connection_id/services/:service` revokes Bud's access
+to that service while retaining the other services. Account-wide disconnect remains
+separate. Service revocation must not be presented as revoking individual Google
+OAuth scopes. Browser mutations require a trusted Origin for cookie authentication;
+foreign connections and return threads resolve as 404 before mutation. Credentials
+remain service-only; ownership derives from the signed-in viewer and human invocation.
+
+Google calls use normal tool results and existing transcript recovery. There is no
+per-action approval endpoint, approval card, pending-review collection or global
+write-policy switch. Deploy matching service/web for the task-access card contract;
+no new daemon message is required. See [Google setup and ownership](./google-calendar.md).
