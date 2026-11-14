@@ -9,6 +9,7 @@ export type GoogleRequest = {
   upload?: boolean;
   contentType?: string;
   rawBody?: Uint8Array<ArrayBuffer>;
+  bodyWithMimeType?: (existingMime: string) => Uint8Array<ArrayBuffer>;
   filePreflight?: { fileId: string; version: string; uploadedOnly?: boolean };
   responseMode?: "json" | "text";
 };

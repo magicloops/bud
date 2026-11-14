@@ -2,7 +2,7 @@
 
 ## Connected Google account
 
-`googleConnectionTable` / `google_connection` (0069) stores one direct Google
+`googleConnectionTable` / `google_connection` (0070) stores one direct Google
 OAuth connection per Bud user. Owner is required with cascading auth-user FK;
 tenant is nullable. AES-GCM credentials bind owner/row/OAuth client. Google subject,
 email and granted scopes describe the connected account. OAuth state/session are

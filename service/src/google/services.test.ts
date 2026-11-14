@@ -143,24 +143,24 @@ test("service-specific discovery, consent, disabled API guidance and uncertain w
   const hooks: AgentExecutionHooks = { googleEnabled: true, invocation: { id: "inv", workerId: "worker", fence: 1 }, async checkpoint() {}, async beforeTool() {}, async afterTool() {} };
   for (const service of ["gmail", "drive"] as const) {
     const discovery: GoogleToolCallDirective = { type: "tool_call", tool: "google_search_tools", callId: "discover", args: { service, query: "" } };
-    const missing = new GoogleAgentExecutor({ list: async () => [], call: async () => { throw new Error("must not dispatch"); } }, async () => true);
+    const missing = new GoogleAgentExecutor({ list: async () => [], call: async () => { throw new Error("must not dispatch"); } }, async () => "bud");
     assert.deepEqual((await missing.execute("thread", discovery, "alice", signal, hooks)).payload.connect_request,
       { provider: `google_${service}`, thread_id: "thread", access: "read_only" });
     const available = new GoogleAgentExecutor({ list: async () => [{ connection_id: "conn", email: "alice@example.com", status: "connecting", calendar_access: true,
       calendar_write_access: true, gmail_write_access: true, drive_write_access: true,
       access: { calendar: "read_write", gmail: "read_write", drive: "read_write" },
-      gmail_access: service === "gmail", drive_access: service === "drive", updated_at: "now" }], call: async () => ({}) }, async () => true);
+      gmail_access: service === "gmail", drive_access: service === "drive", updated_at: "now" }], call: async () => ({}) }, async () => "bud");
     const found = (await available.execute("thread", discovery, "alice", signal, hooks)).payload.tools as { name: string }[];
     assert.ok(found.length > 5 && found.every(t => t.name.startsWith(`${service}_`)));
     const directive: GoogleToolCallDirective = { ...discovery, tool: "google_call", args: { connection_id: "conn",
       tool_name: service === "gmail" ? "gmail_send_message" : "drive_create_folder", arguments_json: JSON.stringify(service === "gmail" ? mail : { name: "Test" }) } };
     let attempts = 0;
     for (const failure of [new GoogleError(`google_${service}_permissions_required`), new GoogleHttpError(403, "service_disabled"), new Error("network lost")]) {
-      const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before, actualService) => {
+      const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before, actualService, authorization) => {
         assert.equal(actualService, service);
         if (failure.message.endsWith("permissions_required")) throw failure;
-        await before("dispatch"); attempts++; throw failure;
-      } }, async () => true);
+        await before("dispatch"); authorization?.onDispatchChange?.(true); attempts++; throw failure;
+      } }, async () => "bud");
       if (failure.message === "network lost") await assert.rejects(executor.execute("thread", directive, "alice", signal, hooks), /google_outcome_unknown/);
       else {
         const result = await executor.execute("thread", directive, "alice", signal, hooks);

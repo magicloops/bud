@@ -49,9 +49,13 @@ export class GoogleOAuth {
     if (!tokens.refresh_token) throw new GoogleError("google_reconnect_required");
     try {
       const client = this.client(signal); client.setCredentials(tokens);
+      // The SDK emits the provider's token set, then puts the old refresh token
+      // back into its returned credentials. Keep a replacement if Google issued one.
+      let refreshToken = tokens.refresh_token;
+      client.once("tokens", issued => { refreshToken = issued.refresh_token ?? refreshToken; });
       const { credentials } = await client.refreshAccessToken();
       if (!credentials.access_token) throw new GoogleError("google_refresh_unavailable", true);
-      return { access_token: credentials.access_token, refresh_token: credentials.refresh_token ?? tokens.refresh_token,
+      return { access_token: credentials.access_token, refresh_token: refreshToken,
         expiry_date: credentials.expiry_date, scope: credentials.scope ?? tokens.scope, token_type: credentials.token_type };
     } catch (error) {
       const response = error && typeof error === "object" && "response" in error ? error.response : undefined;

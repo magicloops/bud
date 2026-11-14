@@ -21,7 +21,9 @@ export function googleFetch(base: typeof fetch = fetch, signal?: AbortSignal): t
     }
     if (!response.body) return response;
     if (Number(response.headers.get("content-length")) > 1024 * 1024) {
-      await response.body.cancel(); throw new GoogleError("google_response_too_large");
+      await response.body.cancel().catch(() => {});
+      if (!response.ok) return new Response(null, { status: response.status, headers: response.headers });
+      throw new GoogleError("google_response_too_large");
     }
     let bytes = 0;
     return new Response(response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -45,8 +47,9 @@ export async function googleJson(fetcher: typeof fetch, url: string, token: stri
     // Read only fixed reason codes. Provider messages, links and metadata can
     // contain private data and must not enter errors or model evidence.
     const body: unknown = response.status === 403 ? await response.json().catch(() => null) : null;
-    if (response.status !== 403) await response.body?.cancel();
-    throw new GoogleHttpError(response.status, serviceDisabled(body) ? "service_disabled" : undefined);
+    if (response.status !== 403) await response.body?.cancel().catch(() => {});
+    throw new GoogleHttpError(response.status, serviceDisabled(body) ? "service_disabled" : undefined,
+      headers.has("If-Match") && new URL(url).pathname.startsWith("/calendar/v3/"));
   }
   if (response.status === 204) return { deleted: true };
   if (responseMode === "text") {

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { GoogleError } from "./config.js";
 import { type GoogleRequest, type GoogleTool, objectSchema as obj, stringSchema as str } from "./tool-contracts.js";
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,256}$/);
@@ -14,15 +15,21 @@ const fileSchema = { file_id: str("ID from Drive search/get; not a URL or local 
 const matchSchema = { ...fileSchema, expected_version: str("Latest version from drive_get_file. Checked before dispatch; Google Drive offers no atomic compare-and-swap guarantee here.") };
 const page = { page_token: z.string().max(2048).optional(), page_size: z.number().int().min(1).max(25).default(10) };
 
-function upload(p: { content: string; encoding: "utf8" | "base64"; mime_type: string }, metadata: Record<string, unknown>): Pick<GoogleRequest, "rawBody" | "contentType" | "upload"> {
+function upload(p: { content: string; encoding: "utf8" | "base64"; mime_type?: string }, metadata: Record<string, unknown>): Pick<GoogleRequest, "rawBody" | "bodyWithMimeType" | "contentType" | "upload"> {
   if (p.encoding === "base64" && (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(p.content))) {
     throw new z.ZodError([{ code: "custom", path: ["content"], message: "Use canonical base64" }]);
   }
   const bytes = Buffer.from(p.content, p.encoding === "base64" ? "base64" : "utf8");
   if (bytes.length > 24000) throw new z.ZodError([{ code: "custom", path: ["content"], message: "File content exceeds 24,000 bytes" }]);
   const boundary = `bud_${randomBytes(24).toString("hex")}`;
+  const makeBody = (mediaType: string) => {
+    if (mediaType.length > 255 || !/^[a-z0-9!#$%&'*+.^_|~-]+\/[a-z0-9!#$%&'*+.^_|~-]+$/i.test(mediaType)) {
+      throw new GoogleError("google_invalid_file_mime_type");
+    }
+    return new Uint8Array(Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mediaType}\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]));
+  };
   return { upload: true, contentType: `multipart/related; boundary=${boundary}`,
-    rawBody: new Uint8Array(Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${p.mime_type}\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)])) };
+    ...(p.mime_type ? { rawBody: makeBody(p.mime_type) } : { bodyWithMimeType: makeBody }) };
 }
 
 export const DRIVE_TOOLS: GoogleTool[] = [
@@ -61,7 +68,7 @@ export const DRIVE_TOOLS: GoogleTool[] = [
   { name: "drive_update_file", access: "write", description: "Patch file name/description or replace all content using the latest version. Read metadata/content first. Content replacement is for uploaded files, not Google-native Docs/Sheets/Slides. Omitted fields stay unchanged; replacing content overwrites the entire file.",
     input_schema: obj({ ...matchSchema, name: str(), description: str(), ...contentSchema }, ["file_id", "expected_version"]), prepare(args) {
       const p = z.object({ file_id: id, expected_version: version, name: name.optional(), description: z.string().max(8000).optional(),
-        ...content, content: content.content.optional() }).strict().refine(p => p.name !== undefined || p.description !== undefined || p.content !== undefined).parse(args);
+        ...content, mime_type: mime.optional(), content: content.content.optional() }).strict().refine(p => p.name !== undefined || p.description !== undefined || p.content !== undefined).parse(args);
       const metadata = { name: p.name, description: p.description };
       return { method: "PATCH", path: `/files/${p.file_id}`, filePreflight: { fileId: p.file_id, version: p.expected_version, uploadedOnly: p.content !== undefined },
         query: { fields, supportsAllDrives: true, ...(p.content !== undefined ? { uploadType: "multipart" } : {}) },

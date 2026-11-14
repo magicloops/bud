@@ -36,7 +36,7 @@ Official references: [web-server OAuth](https://developers.google.com/identity/p
 
 ## Service configuration
 
-Apply generated migration `0069_google_connections.sql` before enabling the
+Apply generated migration `0070_google_connections.sql` before enabling the
 matching service/web build. It follows the latest main migration chain and adds
 only the owned Google connection table. Its SQL matches the previously applied
 local Calendar migration; do not replay CREATE TABLE against that local database.

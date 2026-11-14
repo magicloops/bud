@@ -60,8 +60,8 @@ a separate decision; Render settings were saved without deploying the feature.
 - Applied the reviewed additive Calendar SQL locally after canceling db:push's
   unrelated table-renaming proposal. Regenerated the migration as
   0067_google_connections.sql for the original PR. The combined task-access PR
-  regenerates it as 0069_google_connections.sql after main migrations 0067/0068;
-  the connection table remains additive.
+  now uses `0070_google_connections.sql`, generated after main’s
+  `0069_motionless_reaper` with the same additive SQL.
 - 42 focused tests, service TypeScript compilation and web production build pass.
   Frozen-lockfile validation passes with existing dependency resolutions preserved.
 - Existing Google client credentials are reused; the local encryption key and

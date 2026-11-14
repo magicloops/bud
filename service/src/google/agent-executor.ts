@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, threadTable } from "../db/schema.js";
 import type { ExecutedGoogleTool, GoogleToolCallDirective } from "../agent/contracts.js";
@@ -16,19 +17,33 @@ const tools: ServiceTool[] = [
   ...GMAIL_TOOLS.map(tool => ({ ...tool, service: "gmail" as const })),
   ...DRIVE_TOOLS.map(tool => ({ ...tool, service: "drive" as const })),
 ];
-const discoveryInput = z.object({ query: z.string().max(200), service: z.enum(GOOGLE_SERVICES).default("calendar"),
-  access: z.enum(["read_only", "read_write"]).default("read_only") }).strict();
+const discoveryInput = z.object({
+  query: z.string().max(200),
+  service: z.enum(GOOGLE_SERVICES).nullish().transform(value => value ?? "calendar"),
+  access: z.enum(["read_only", "read_write"]).nullish().transform(value => value ?? "read_only"),
+}).strict();
+
+function validationErrors(error: z.ZodError) {
+  return error.issues.slice(0, 4).map(issue => {
+    let message = issue.message;
+    if (issue.code === "invalid_enum_value") message = "Expected one of " + issue.options.join(", ");
+    if (issue.code === "unrecognized_keys") message = "Remove fields outside this tool's schema.";
+    return { field: issue.path.join(".") || "arguments", message: message.slice(0, 240) };
+  });
+}
+
 const callInput = z.object({ connection_id: z.string().min(1).max(80), tool_name: z.string().min(1).max(128),
   arguments_json: z.string().max(65536) }).strict();
-async function ownedThread(owner: string, threadId: string) {
-  return (await db.select({ id: threadTable.threadId }).from(threadTable).innerJoin(budTable, eq(threadTable.budId, budTable.budId))
+async function authorizedThreadBudId(owner: string, threadId: string): Promise<string | undefined> {
+  const [thread] = await db.select({ budId: threadTable.budId }).from(threadTable).innerJoin(budTable, eq(threadTable.budId, budTable.budId))
     .where(and(eq(threadTable.threadId, threadId), eq(threadTable.createdByUserId, owner),
-      eq(budTable.createdByUserId, owner), isNull(threadTable.deletedAt))).limit(1)).length === 1;
+      eq(budTable.createdByUserId, owner), isNull(threadTable.deletedAt))).limit(1);
+  return thread?.budId;
 }
 
 export class GoogleAgentExecutor {
   constructor(private readonly connections: Pick<GoogleConnections, "list" | "call"> = googleConnections,
-    private readonly ownsThread = ownedThread) {}
+    private readonly resolveBudId = authorizedThreadBudId) {}
 
   async execute(threadId: string, directive: GoogleToolCallDirective, owner: string | null | undefined,
     signal: AbortSignal, hooks?: AgentExecutionHooks): Promise<ExecutedGoogleTool> {
@@ -36,16 +51,23 @@ export class GoogleAgentExecutor {
       signal.throwIfAborted();
       if (!owner || !hooks?.googleEnabled || !hooks.invocation) throw new GoogleError("google_unavailable");
       await hooks.checkpoint();
-      if (!await this.ownsThread(owner, threadId)) throw new GoogleError("google_not_found");
+      const budId = await this.resolveBudId(owner, threadId);
+      if (!budId) throw new GoogleError("google_not_found");
       signal.throwIfAborted();
+      return budId;
     };
     let service: GoogleService = "calendar";
     let access: "read_only" | "read_write" = "read_only";
-    const connectRequest = () => ({ connect_request: { provider: `google_${service}`, thread_id: threadId, access },
-      note: `This task needs ${access === "read_only" ? "read" : "full"} ${SERVICE_NAMES[service]} access. Ask the user to use the access card in this chat, then send a message to continue. Pause this service's work until they connect. Do not direct them to Settings or invent an authorization link.` });
+    const connectRequest = (budId: string) => {
+      const chatUrl = new URL(`/${encodeURIComponent(budId)}/${encodeURIComponent(threadId)}`, config.appBaseUrl).href;
+      return {
+        connect_request: { provider: `google_${service}`, thread_id: threadId, access },
+        note: `This task needs ${access === "read_only" ? "read" : "full"} ${SERVICE_NAMES[service]} access. Ask the user to use the access card in this chat. Include this link in your reply so a user on mobile can open the same chat in a signed-in web browser: ${chatUrl}. After connecting, they can return here and send Continue.`,
+      };
+    };
     let dispatchedWrite = false;
     try {
-      await check();
+      const budId = await check();
       let data: Record<string, unknown>;
       if (directive.tool === "google_search_tools") {
         const input = discoveryInput.parse(directive.args), connections = await this.connections.list(owner!);
@@ -57,7 +79,7 @@ export class GoogleAgentExecutor {
         data = { service, connections, tools: connected ? tools.filter(tool => tool.service === service && terms.every(term =>
           `${tool.name} ${tool.description}`.toLowerCase().includes(term)))
           .map(({ prepare: _prepare, transform: _transform, ...tool }) => ({ ...tool, connection_id: connected.connection_id })) : [],
-          ...(connected ? { note: `${SERVICE_NAMES[service]} is connected. If no tools match, try an empty query.` } : connectRequest()) };
+          ...(connected ? { note: `${SERVICE_NAMES[service]} is connected. If no tools match, try an empty query.` } : connectRequest(budId)) };
       } else {
         const input = callInput.parse(directive.args);
         const tool = tools.find(tool => tool.name === input.tool_name);
@@ -65,11 +87,11 @@ export class GoogleAgentExecutor {
         service = tool.service;
         access = tool.access === "write" ? "read_write" : "read_only";
         let args: unknown;
-        try { args = JSON.parse(input.arguments_json); } catch { throw new GoogleError("google_invalid_arguments"); }
+        try { args = JSON.parse(input.arguments_json); } catch { throw new z.ZodError([{ code: "custom", path: ["arguments_json"], message: "Supply a valid JSON object string." }]); }
         const request = tool.prepare(args, `${owner}:${threadId}:${hooks!.invocation!.id}:${directive.callId}`);
-        const result = await this.connections.call(owner!, input.connection_id, request, signal, async phase => {
-          await check(); dispatchedWrite = phase !== "preflight" && tool.access === "write";
-        }, service, { access: tool.access });
+        const result = await this.connections.call(owner!, input.connection_id, request, signal, async () => { await check(); }, service, {
+          access: tool.access, onDispatchChange(value) { dispatchedWrite = value; },
+        });
         const transformed = tool.transform ? tool.transform(result) : result;
         const bytes = Buffer.from(JSON.stringify(transformed));
         // Gmail's structured projection fits before serialization. The fallback
@@ -86,17 +108,16 @@ export class GoogleAgentExecutor {
       // A definite 4xx rejection is safe to report. Lost replies/5xx/persistence
       // failures after a write leave the durable intent unresolved for review.
       const rejected = error instanceof GoogleHttpError && error.status >= 400 && error.status < 500 && error.status !== 408;
-      const blockedBeforeNetwork = error instanceof GoogleError &&
-        ["google_request_too_large", "google_destination_denied"].includes(error.code);
-      if (dispatchedWrite && !rejected && !blockedBeforeNetwork) throw new GoogleError("google_outcome_unknown");
+      if (dispatchedWrite && !rejected) throw new GoogleError("google_outcome_unknown");
       signal.throwIfAborted();
       const code = error instanceof GoogleError ? error.code : error instanceof z.ZodError ? "google_invalid_arguments" : "google_unavailable";
       if (code === "google_reconnect_required" || code === `google_${service}_permissions_required` ||
         code === `google_${service}_write_permissions_required`) {
-        await check();
-        return this.result(directive, connectRequest(), service, code);
+        const budId = await check();
+        return this.result(directive, connectRequest(budId), service, code);
       }
-      return this.result(directive, {}, service, code, error instanceof GoogleError && error.retryable);
+      const detail = error instanceof z.ZodError ? { validation_errors: validationErrors(error) } : {};
+      return this.result(directive, detail, service, code, !dispatchedWrite && error instanceof GoogleError && error.retryable);
     }
   }
   private result(directive: GoogleToolCallDirective, data: Record<string, unknown>, service: GoogleService, error?: string, retryable = false): ExecutedGoogleTool {

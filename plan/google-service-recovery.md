@@ -39,3 +39,14 @@ isolation and concurrency. Test large multibyte threads through tool execution,
 HTTP network-origin module loading, and mounted Settings recovery. Run service
 and web builds and focused suites. Deploy matching service/web; no migration.
 Leave fixes in the working tree for review; no merge is authorized.
+
+## Follow-up review
+
+Rebase onto current main and regenerate the Google migration after main's 0069.
+Verify a real upgrade from that state. Exercise discovery through the OpenAI
+schema, actionable field errors, web consent from native chat, and browser Back.
+Release SQL clients while awaiting Google, preserve owner-scoped ordering,
+refresh once on an explicit 401 and track writes at the network boundary.
+Validate Calendar type switches, retryable reads, conditional failures and
+Drive content types using synthetic provider requests. Run the Google, agent
+and web regression suites and both builds.

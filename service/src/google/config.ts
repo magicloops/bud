@@ -39,11 +39,12 @@ export class GoogleError extends Error {
   constructor(public readonly code: string, public readonly retryable = false) { super(code); }
 }
 export class GoogleHttpError extends GoogleError {
-  constructor(public readonly status: number, reason?: "service_disabled") {
+  constructor(public readonly status: number, reason?: "service_disabled", calendarEvent = false) {
     super(status === 403 && reason === "service_disabled" ? "google_api_disabled"
       : status === 401 ? "google_reconnect_required" : status === 403 ? "google_access_denied"
-      : status === 404 ? "google_resource_not_found" : status === 412 ? "google_event_changed"
-      : status === 429 ? "google_rate_limited" : "google_api_failed");
+      : status === 404 ? "google_resource_not_found" : status === 412 ? (calendarEvent ? "google_event_changed" : "google_precondition_failed")
+      : status === 429 ? "google_rate_limited" : "google_api_failed",
+      status === 408 || status === 429 || status >= 500 && status <= 599);
   }
 }
 

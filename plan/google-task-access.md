@@ -52,9 +52,8 @@ and uncertain writes. Real Google writes remain manual acceptance with test data
 
 Preserve current main using a three-way application of the final combined diff
 from common base 8dddc46b onto current main, then place the single final commit on
-`prashanth/googleservices`. Keep main's migrations 0067/0068 and
-regenerate the Google connection migration as `0069_google_connections.sql` using
-Drizzle; never edit generated journal/snapshot metadata manually. Verify its delta
-is only the additive connection table. Deploy migration before matching service/web;
+`prashanth/googleservices`. Preserve main’s migration chain through `0069_motionless_reaper`
+and generate `0070_google_connections.sql` from that snapshot with Drizzle.
+Verify its delta is only the additive connection table. Deploy migration before matching service/web;
 no daemon upgrade. Retarget PR182 from `prashanth/googleservices` to `main` and close PR180 as superseded.
 Do not merge the combined PR into main.

@@ -78,3 +78,32 @@ sanitized error and cannot redirect to a non-HTTP scheme.
 
 Matching service/web builds are required. These fixes need no new database
 migration or daemon upgrade.
+
+## Follow-up review
+
+Main's migration timestamp now follows the original Google migration. A database
+with main's migration applied skips that older SQL. The Google code also holds
+a row lock during remote I/O, marks writes before transport, and treats any API
+401 as revoked consent. Review found mismatched discovery null defaults, weak
+validation feedback, missing mobile consent guidance, cached browser navigation
+state, and incorrect or ambiguous Calendar/Drive update fields. Reproduce each
+case against the normal provider, executor, transport, or browser entry point
+with isolated fixtures. See the [plan](../plan/google-service-recovery.md).
+
+The migration was regenerated after main de6d6f3. On a disposable PostgreSQL
+database, applying main's migrations first created its source-request trigger
+and left Google absent. The branch migrator then applied 0070 exactly once and
+preserved the trigger. A separate empty database using db:push matched the
+migration across 14 columns, six constraints and three indexes. The local
+shared database already has the Google table but lacks main's source-request
+migration. It was inspected read-only.
+
+The full service suite with `DOTENV_CONFIG_PATH=/dev/null BUD_DATA_DB_TEST=0 pnpm test`
+reported two default-model expectation failures in the question-continuation and
+thread-list tests (`actual gpt-6-luna`, `expected gpt-5.6-luna`). Both the
+default and these fixtures come from main. With `DEFAULT_MODEL=gpt-5.6-luna`,
+the final suite passed 899 tests, with 54 environment-gated tests skipped.
+The separate Google run enabled its PostgreSQL tests and passed all 48.
+Full web validation passed 285 pure tests and 125 mounted tests. Both service
+and web production builds passed. The mobile fallback was verified through the executor and
+transcript replay. OAuth and provider traffic in these tests used fixtures.

@@ -41,14 +41,18 @@ const eventsPath = (calendar: string) => `/calendars/${encodeURIComponent(calend
 const eventPath = (calendar: string, eventId: string) => `${eventsPath(calendar)}/${encodeURIComponent(eventId)}`;
 const eventResultFields = "id,etag,status,summary,description,location,start,end,attendees,organizer,htmlLink,recurringEventId,originalStartTime,updated";
 
-function eventBody(value: z.infer<typeof changes>) {
+function eventBody(value: z.infer<typeof changes>, patch = false) {
   if (value.start && value.end) {
     const start = value.start.date_time ?? value.start.date!, end = value.end.date_time ?? value.end.date!;
     if (Boolean(value.start.date) !== Boolean(value.end.date) || new Date(end) <= new Date(start)) {
       throw new z.ZodError([{ code: "custom", path: ["end"], message: "End must be after start with matching date/time types" }]);
     }
   }
-  const time = (value: z.infer<typeof eventTime>) => ({ dateTime: value.date_time, date: value.date, timeZone: value.time_zone });
+  const time = (value: z.infer<typeof eventTime>) => ({
+    dateTime: value.date_time ?? (patch ? null : undefined),
+    date: value.date ?? (patch ? null : undefined),
+    timeZone: value.time_zone,
+  });
   return { summary: value.summary, description: value.description, location: value.location,
     start: value.start && time(value.start), end: value.end && time(value.end),
     attendees: value.attendees?.map(email => ({ email })) };
@@ -91,7 +95,7 @@ export const CALENDAR_TOOLS: Definition[] = [
     input_schema: objectSchema({ ...eventIdSchema, expected_etag: textSchema(), changes: objectSchema(eventSchemaFields), send_updates: updatesSchema }, ["calendar_id", "event_id", "expected_etag", "changes"]), prepare(args) {
       const p = z.object({ calendar_id: id, event_id: id, expected_etag: etag, changes, send_updates: sendUpdates }).strict().parse(args);
       return { method: "PATCH", path: eventPath(p.calendar_id, p.event_id), etag: p.expected_etag,
-        query: { sendUpdates: p.send_updates, fields: eventResultFields }, body: eventBody(p.changes) };
+        query: { sendUpdates: p.send_updates, fields: eventResultFields }, body: eventBody(p.changes, true) };
     } },
   { name: "calendar_delete_event", access: "write", description: "Delete only the event/recurrence instance requested by the user, using the latest etag from get_event. Check the target before deletion.",
     input_schema: objectSchema({ ...eventIdSchema, expected_etag: textSchema(), send_updates: updatesSchema }, ["calendar_id", "event_id", "expected_etag"]), prepare(args) {

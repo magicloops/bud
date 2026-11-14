@@ -18,13 +18,28 @@ function ConnectionCard({ threadId, service, access }: Props) {
   const [pending, setPending] = useState(false)
   const [revision, setRevision] = useState(0)
   const visit = useRef<AbortController | null>(null)
-  const connecting = useRef(false)
+  const consent = useRef<'idle' | 'requesting' | 'redirecting'>('idle')
   const [callbackStatus] = useState(() => new URLSearchParams(window.location.search).get('google'))
   useEffect(() => {
     const abort = new AbortController(); visit.current = abort
     const refresh = () => setRevision(value => value + 1)
+    const restore = (event: PageTransitionEvent) => {
+      if (!event.persisted) return
+      if (consent.current === 'redirecting') {
+        consent.current = 'idle'
+        setPending(false)
+      }
+      setInventory(null)
+      setError(null)
+      refresh()
+    }
     window.addEventListener('focus', refresh)
-    return () => { abort.abort(); window.removeEventListener('focus', refresh) }
+    window.addEventListener('pageshow', restore)
+    return () => {
+      abort.abort()
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('pageshow', restore)
+    }
   }, [])
   useEffect(() => {
     const abort = new AbortController()
@@ -35,16 +50,19 @@ function ConnectionCard({ threadId, service, access }: Props) {
   }, [revision, name])
   async function connect() {
     const abort = visit.current
-    if (!abort || abort.signal.aborted || connecting.current) return
-    connecting.current = true; setPending(true); setError(null)
+    if (!abort || abort.signal.aborted || consent.current !== 'idle') return
+    consent.current = 'requesting'; setPending(true); setError(null)
     try {
       const result = await apiFetchJson<{ authorization_url: string }>('/api/google/connect', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ thread_id: threadId, selections: [{ service, access }] }), signal: abort.signal,
       })
-      if (!abort.signal.aborted) window.location.assign(result.authorization_url)
+      if (!abort.signal.aborted) {
+        consent.current = 'redirecting'
+        window.location.assign(result.authorization_url)
+      }
     } catch {
-      if (!abort.signal.aborted) { connecting.current = false; setPending(false); setError('Could not start the connection. Try again.') }
+      if (!abort.signal.aborted) { consent.current = 'idle'; setPending(false); setError('Could not start the connection. Try again.') }
     }
   }
   const connection = inventory?.connections.find(item => hasGoogleAccess(item, service, access))

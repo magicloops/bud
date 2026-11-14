@@ -22,10 +22,15 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   Binary multipart bodies retain exact bytes. Text responses expose at most
   24,000 bytes with truncation; binary MIME types are rejected as text. Provider
   error messages remain private; known disabled-API reasons get static guidance.
-- `connections.ts`: one google_connection row per Bud user (migration 0069),
+- `connections.ts`: one google_connection row per Bud user (migration 0070),
   owner-filtered SQL, session-bound single-use state, 10-minute consent expiry,
-  5s lock timeout, 45s call signal and four active locked operations per owner/process.
-  Serialized refresh/API calls/disconnect prevent credential resurrection.
+  45s provider operation deadline and four admitted provider operations per owner/process.
+  Short SQL transactions claim a time-limited operation in the encrypted envelope.
+  Competing calls wait outside the database pool. OAuth exchange, refresh, Google
+  requests and invocation checkpoints run without a checked-out SQL client.
+  Before dispatch and when saving results, the encrypted envelope identifies the
+  current owner of the operation across replicas. A stale completion cannot
+  restore a disconnected or replaced grant.
   Incremental consent preserves previous grants until successful same-subject
   exchange with at least one selected service granted; canceled/denied/wrong-account
   consent cannot overwrite them. A replacement grant can omit revoked old scopes;
@@ -46,6 +51,7 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
 - `calendar.ts`: seven operations: calendars/events list, event get/create/update/
   delete and free/busy. Bounded pagination, explicit time zones/all-day dates,
   etag If-Match updates/deletes and deterministic per-action event creation ID.
+  Time patches explicitly clear the alternate date or timestamp field when switching event type.
   IDs reject literal URL dot segments so normalization cannot escape reviewed paths.
 - `gmail.ts`: message search/get, thread read, drafts CRUD/send, new mail/replies,
   user labels and message labels/trash/restore. Server-built plain-text MIME rejects
@@ -61,17 +67,22 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   Decoded uploads cap at 24,000 bytes; Docs/Slides export plain text, Sheets CSV
   exports the first sheet only. No native-document content edits, PDF/image parsing,
   large transfers, sharing changes or permanent deletion. Version preflight catches
-  already-stale edits but cannot eliminate a change between read and write.
+  already-stale edits and supplies the existing media type for a content replacement when the caller omits it. It cannot eliminate a change between read and write.
 - `agent-tools.ts`: google_search_tools(service, access, query) and google_call discovery/
-  execution. Omitted service remains Calendar for existing callers/history.
+  execution. Omitted and null discovery arguments default to Calendar and read-only access.
 - `agent-executor.ts`: reviewed catalog, service grant gating, human invocation
   lease plus live thread/Bud ownership checks before dispatch/preflight/evidence.
   Unknown write outcomes halt for needs-review; definite 4xx rejections return an
-  ordinary non-retryable error. Readable results cap at 32 KiB. Content is untrusted
+  ordinary error. Rate limits and temporary server errors are retryable on reads. Readable results cap at 32 KiB. Content is untrusted
   data in the owned transcript/model, not authority for additional actions.
   Transient refresh failures are retryable without a consent card; no write has
   dispatched at that point. Bounded Gmail results serialize intact as valid JSON;
   other oversized results use a labeled JSON preview instead of cutting JSON mid-value.
+  Validation returns bounded field paths and explanations. The write flag is set
+  at the actual fetch call. An explicit API 401 clears the flag, refreshes the
+  token and retries once with current scopes and preconditions. A second 401 or
+  invalid refresh grant requires consent. Calendar conditional updates have an
+  event-specific 412 error, with generic precondition errors elsewhere.
 - `routes.ts`: owned inventory, cookie-Origin checked connect/disconnect, and
   same-session callbacks. Connect accepts service/access selections and optional owned thread_id;
   callback reauthorizes the thread/Bud and builds its return path on the configured
@@ -83,6 +94,9 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
 Canonical Google evidence can carry `connect_request` with provider
 `google_calendar`, `google_gmail` or `google_drive`, server-stamped thread_id, and
 `access:read_only|read_write` matching the task. Settings Connect requests full access.
+When a client has no consent card, the model supplies the configured web URL of
+the same authorized chat. On mobile the user grants the exact requested scope in
+their signed-in browser and can continue from their original device.
 No OAuth URL/state/token enters evidence. The web card starts explicit consent;
 users return to the originating chat and send a new message to continue. No write
 is resumed or replayed automatically. Existing opaque tool_payload/SSE envelopes
@@ -93,7 +107,7 @@ An optional `recovery_required:true` marks unreadable saved credentials. Setting
 offers direct reconnect or **Clear saved connection** via the existing account DELETE.
 
 `DELETE /api/google/connection/:connection_id/services/:service` revokes that
-service in Bud. The normal owner-filtered connection lock serializes revocation
+service in Bud. The owner-scoped operation lease serializes revocation
 with callback/refresh/API work. There is no per-action approval layer or global
 write-policy switch; user-request and uncertain-outcome handling remain unchanged.
 
@@ -112,8 +126,8 @@ and consent-time URL validation. Recovery regressions cover key changes, missing
 old scopes, repeated temporary refresh errors, cross-owner concurrency and large
 Gmail threads. See [recovery plan](../../../plan/google-service-recovery.md).
 
-Deploy matching service/web builds after migration `0069_google_connections.sql`, generated after main
-migrations 0067/0068. No daemon upgrade is needed. Keep the stable encryption key across replicas/restarts.
+Deploy matching service/web builds after `0070_google_connections.sql`, generated from main’s
+`0069_motionless_reaper` snapshot. Keep the stable encryption key across replicas/restarts.
 The Google project owner must enable Gmail/Drive APIs and register the added
 restricted scopes; each task card requests the selected service and access level. Public verification/security
 assessment is separate from test-user setup.

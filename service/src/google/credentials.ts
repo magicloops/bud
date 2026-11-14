@@ -4,7 +4,7 @@ import { GoogleError, type GoogleSelection, type GoogleService, type GoogleServi
 
 export type GoogleCredentials = { tokens?: Credentials; verifier?: string; returnThreadId?: string;
   requestedSelections?: GoogleSelection[]; serviceAccess?: Record<GoogleService, GoogleServiceAccess>;
-  previousStatus?: "connected" | "reconnect_required" };
+  previousStatus?: "connected" | "reconnect_required"; operationExpiresAt?: number };
 export const hashGoogleSecret = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export function readGoogleEncryptionKey(raw = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY): Buffer {

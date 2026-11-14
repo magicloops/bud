@@ -113,3 +113,28 @@ test("disabled Calendar API is distinguished from denied access without exposing
       error => error instanceof GoogleHttpError && error.status === 403 && error.code === "google_access_denied");
   }
 });
+
+test("Calendar patches clear the alternate time field for timed and all-day changes", () => {
+  const update = CALENDAR_TOOLS.find(tool => tool.name === "calendar_update_event")!;
+  const patch = (changes: object) => JSON.parse(JSON.stringify(update.prepare({
+    calendar_id: "primary", event_id: "event", expected_etag: '"current"', changes,
+  }, "operation").body));
+  assert.deepEqual(patch({ start: { date: "2030-04-01" }, end: { date: "2030-04-02" } }), {
+    start: { date: "2030-04-01", dateTime: null }, end: { date: "2030-04-02", dateTime: null },
+  });
+  const start = "2030-04-01T15:00:00Z", end = "2030-04-01T16:00:00Z";
+  assert.deepEqual(patch({ start: { date_time: start }, end: { date_time: end } }), {
+    start: { date: null, dateTime: start }, end: { date: null, dateTime: end },
+  });
+  assert.deepEqual(patch({ location: "Office" }), { location: "Office" });
+});
+
+test("only a conditional Calendar request describes a 412 as a changed event", async () => {
+  const calendar = "https://www.googleapis.com/calendar/v3/calendars/primary/events/event";
+  const drive = "https://www.googleapis.com/drive/v3/files/file";
+  for (const [url, expected] of [[calendar, "google_event_changed"], [drive, "google_precondition_failed"]]) {
+    const reject = googleFetch(async () => new Response(null, { status: 412 }));
+    await assert.rejects(googleJson(reject, url, "fixture", { method: "PATCH", headers: { "If-Match": '"previous"' } }),
+      error => error instanceof GoogleHttpError && error.code === expected && error.retryable === false);
+  }
+});

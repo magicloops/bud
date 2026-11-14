@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -8,6 +9,7 @@ import Fastify from "fastify";
 import { config } from "../config.js";
 import * as schema from "../db/schema.js";
 import { GoogleConnections } from "./connections.js";
+import { googleFetch, googleJson } from "./http.js";
 import { GoogleOAuth } from "./oauth.js";
 import { registerGoogleRoutes } from "./routes.js";
 import { googleFixture } from "./test-fixture.js";
@@ -15,12 +17,22 @@ import { decryptGoogleCredentials, encryptGoogleCredentials } from "./credential
 import { GOOGLE_SERVICES, GoogleError, serviceScopes, type GoogleService, type GoogleSelection } from "./config.js";
 import { DRIVE_TOOLS } from "./drive.js";
 
+test("a rejected HTTP request keeps its known status if discarding the body fails", async () => {
+  for (const advertisedSize of [5, 2 * 1024 * 1024]) {
+    const fetcher = googleFetch(async () => new Response(new ReadableStream({
+      cancel() { throw new Error("private broken error body"); },
+    }), { status: 412, headers: { "content-length": String(advertisedSize) } }));
+    await assert.rejects(googleJson(fetcher, "https://www.googleapis.com/calendar/v3/calendars/primary/events/abc", "test",
+      { method: "PATCH", headers: { "If-Match": '"etag"' } }), /google_event_changed/);
+  }
+});
+
 test("owned Google grants: callback binding, expiry, replay, partial consent, refresh and disconnect", {
   skip: process.env.BUD_DATA_DB_TEST !== "1",
 }, async t => {
   assert.ok(["localhost", "127.0.0.1"].includes(new URL(config.databaseUrl).hostname));
   const namespace = `google_test_${randomUUID().replaceAll("-", "")}`;
-  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 8 });
+  const pool = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 1, connectionTimeoutMillis: 1500 });
   await pool.query(`create schema ${namespace}`);
   t.after(async () => { await pool.query(`drop schema ${namespace} cascade`); await pool.end(); });
   await pool.query("create table fixture_user(id text primary key); insert into fixture_user values ('alice'),('bob'),('carol'),('dave'),('erin'),('frank'),('grace'),('heidi'),('ivan'),('transient'),('limited'),('other')");
@@ -98,6 +110,20 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
   assert.deepEqual(requests.map(req => req.method), ["GET", "PATCH"]);
   assert.match(requests[1].url, /\/upload\/drive\/v3\/files\/file/);
   assert.ok(Buffer.from(await requests[1].arrayBuffer()).includes(Buffer.from("test")));
+  for (const mimeType of ["application/json", "text/csv", "application/vnd.custom+json"]) {
+    fileType = mimeType; requests.length = 0;
+    await driveManager.call("alice", alice, patch, signal, async () => {}, "drive");
+    const body = Buffer.from(await requests[1].arrayBuffer()).toString();
+    assert.ok(body.includes(`Content-Type: ${mimeType}\r\n\r\ntest`));
+  }
+  const override = DRIVE_TOOLS.find(tool => tool.name === "drive_update_file")!.prepare({
+    file_id: "file", expected_version: "123", content: "test", mime_type: "text/html" }, "operation");
+  requests.length = 0;
+  await driveManager.call("alice", alice, override, signal, async () => {}, "drive");
+  assert.match(Buffer.from(await requests[1].arrayBuffer()).toString(), /Content-Type: text\/html\r\n\r\ntest/);
+  requests.length = 0; fileType = "text/csv\r\nInjected: yes";
+  await assert.rejects(driveManager.call("alice", alice, patch, signal, async () => {}, "drive"), /google_invalid_file_mime_type/);
+  assert.deepEqual(requests.map(req => req.method), ["GET"]);
   requests.length = 0; fileVersion = "124";
   await assert.rejects(driveManager.call("alice", alice, patch, signal, async () => {}, "drive"), /google_file_changed/);
   assert.deepEqual(requests.map(req => req.method), ["GET"]);
@@ -430,6 +456,202 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
       assert.ok(error instanceof GoogleError); assert.equal(error.code, "google_reconnect_required"); assert.equal(error.retryable, false); return true;
     });
     assert.equal((await refreshing.list("transient"))[0].status, "reconnect_required");
+  });
+
+  await t.test("one 401 refreshes once and rechecks authority before retry; ambiguous writes never retry", async () => {
+    const { connection_id: id } = await grantWith(manager, "bob");
+    let responses: (number | Error)[] = [], apiAttempts = 0, refreshAttempts = 0, refreshStatus = 200;
+    const oauthFetch: typeof fetch = async (input, init) => {
+      refreshAttempts++;
+      if (refreshStatus !== 200) return Response.json({ error: refreshStatus === 400 ? "invalid_grant" : "temporarily_unavailable" }, { status: refreshStatus });
+      return fixture.fetcher(input, init);
+    };
+    const recovering = new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, oauthFetch), async () => {
+      apiAttempts++;
+      const result = responses.shift();
+      assert.ok(result, "unexpected retry");
+      if (result instanceof Error) throw result;
+      return Response.json({}, { status: result });
+    });
+    const changes: boolean[] = [];
+    const perform = (onCheck = async () => {}) => recovering.call("bob", id, write, signal, onCheck, "calendar",
+      { access: "write", onDispatchChange: value => changes.push(value) });
+    responses = [401, 200];
+    let fences = 0;
+    await perform(async () => { fences++; });
+    assert.deepEqual(changes.splice(0), [true, false, true]);
+    assert.equal(fences, 2); assert.equal(refreshAttempts, 1); assert.equal(apiAttempts, 2);
+    responses = [401]; refreshStatus = 503;
+    await assert.rejects(perform(), /google_refresh_unavailable/);
+    assert.deepEqual(changes.splice(0), [true, false]);
+    assert.equal((await recovering.list("bob"))[0].status, "connected");
+    responses = [401]; refreshStatus = 200; fences = 0;
+    await assert.rejects(perform(async () => { if (++fences === 2) throw new Error("authority changed"); }), /authority changed/);
+    assert.deepEqual(changes.splice(0), [true, false]);
+    for (const failure of [503, new Error("lost reply")]) {
+      responses = [failure]; const previousRefresh: number = refreshAttempts;
+      await assert.rejects(perform()); assert.deepEqual(changes.splice(0), [true]); assert.equal(refreshAttempts, previousRefresh);
+    }
+    responses = [401, 401];
+    await assert.rejects(perform(), /google_reconnect_required/);
+    assert.deepEqual(changes.splice(0), [true, false, true, false]);
+    assert.equal((await recovering.list("bob"))[0].status, "reconnect_required");
+
+    // No dispatch marker is published after synchronous cancellation in the final authorization fence.
+    await grantWith(manager, "bob");
+    const controller = new AbortController(), previous = apiAttempts;
+    await assert.rejects(recovering.call("bob", id, write, controller.signal, async () => controller.abort(),
+      "calendar", { access: "write", onDispatchChange: value => changes.push(value) }));
+    assert.deepEqual(changes, []); assert.equal(apiAttempts, previous);
+  });
+
+  await t.test("the real SDK persists a rotated refresh token before an ambiguous provider write", async () => {
+    const { connection_id: id } = await grantWith(manager, "bob");
+    await expire("bob", id);
+    const refresh = new GoogleOAuth(fixture.config, async input => {
+      const form = new URLSearchParams(await new Request(input).text());
+      assert.equal(form.get("refresh_token"), "refresh-bob");
+      return Response.json({ access_token: "new-bob", refresh_token: "rotated-bob", token_type: "Bearer", expires_in: 3600 });
+    });
+    const target = new GoogleConnections(fixture.config, database, () => key, refresh, async () => {
+      const row = (await pool.query("select encrypted_credentials from google_connection where id=$1", [id])).rows[0];
+      const persisted = decryptGoogleCredentials(row.encrypted_credentials, JSON.stringify(["bob", id, fixture.config.clientId]), key);
+      assert.equal(persisted.tokens?.refresh_token, "rotated-bob");
+      throw new Error("lost reply");
+    });
+    await assert.rejects(target.call("bob", id, write, signal, async () => {}), /lost reply/);
+    const row = (await pool.query("select encrypted_credentials from google_connection where id=$1", [id])).rows[0];
+    const retained = decryptGoogleCredentials(row.encrypted_credentials, JSON.stringify(["bob", id, fixture.config.clientId]), key);
+    assert.equal(retained.tokens?.refresh_token, "rotated-bob"); assert.equal(retained.operationExpiresAt, undefined);
+  });
+
+  await t.test("Drive preflight rejection refreshes without marking a write; rejected mutation repeats preflight", async () => {
+    const { connection_id: id } = await grantWith(manager, "alice", [{ service: "drive", access: "read_write" }]);
+    const responses = [401, 200, 401];
+    const markers: boolean[] = [], phases: string[] = [], methods: string[] = [];
+    const transport = new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, fixture.fetcher), async (input, init) => {
+      const method = new Request(input, init).method;
+      methods.push(method);
+      return Response.json({ version: "123", mimeType: "application/json" }, { status: responses.shift()! });
+    });
+    const send = () => transport.call("alice", id, patch, signal, async phase => { phases.push(phase); }, "drive",
+      { access: "write", onDispatchChange: value => markers.push(value) });
+    await assert.rejects(send(), /google_reconnect_required/);
+    assert.deepEqual(methods, ["GET", "GET", "PATCH"]);
+    assert.deepEqual(markers, [true, false]);
+    await grantWith(manager, "alice", [{ service: "drive", access: "read_write" }]);
+    responses.push(200, 401, 200, 200); markers.length = 0; phases.length = 0; methods.length = 0;
+    await send();
+    assert.deepEqual(methods, ["GET", "PATCH", "GET", "PATCH"]);
+    assert.deepEqual(phases, ["preflight", "dispatch", "preflight", "dispatch"]);
+    assert.deepEqual(markers, [true, false, true]);
+  });
+
+  await t.test("pending OAuth exchange releases its SQL client and cannot resurrect a cleared account", async () => {
+    let start!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { start = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+    const slowOauth = new GoogleOAuth(fixture.config, async (input, init) => {
+      const req = new Request(input, init);
+      if (new URL(req.url).pathname === "/token") { start(); await held; }
+      return fixture.fetcher(req);
+    });
+    const slow = new GoogleConnections(fixture.config, database, () => key, slowOauth, fixture.fetcher);
+    const authorization = new URL(await slow.begin("bob", "session"));
+    fixture.authorize(authorization.href, "bob");
+    const params = new URLSearchParams({ code: "bob", state: authorization.searchParams.get("state")! });
+    const callback = slow.finish("bob", "session", params);
+    await entered;
+    try {
+      await assert.rejects(manager.finish("bob", "session", params), /google_invalid_oauth_state/);
+      await manager.list("alice");
+      // A replacement key cannot decrypt the active lease. Clearing the unusable
+      // envelope must still fence the old process's successful OAuth response.
+      const replacement = new GoogleConnections(fixture.config, database, () => randomBytes(32));
+      await replacement.disconnect("bob", bob);
+    } finally { release(); }
+    await assert.rejects(callback, /google_connection_changed/);
+    assert.equal((await manager.list("bob"))[0].status, "disconnected");
+  });
+
+  await t.test("a valid exchange delivered after the deadline consumes its state and preserves the prior grant", async t => {
+    await grantWith(manager, "heidi", [{ service: "calendar", access: "read_only" }]);
+    let simulatedDelay = 0;
+    const initialTime = Date.now();
+    t.mock.method(Date, "now", () => initialTime + simulatedDelay);
+    const delayed = new GoogleOAuth(fixture.config, fixture.fetcher);
+    const exchange = delayed.exchange.bind(delayed);
+    t.mock.method(delayed, "exchange", async (...args: Parameters<typeof exchange>) => {
+      const grant = await exchange(...args);
+      simulatedDelay = 46_000;
+      return grant;
+    });
+    const target = new GoogleConnections(fixture.config, database, () => key, delayed, fixture.fetcher);
+    const authorization = new URL(await target.begin("heidi", "session", undefined, [{ service: "drive", access: "read_write" }]));
+    fixture.authorize(authorization.href, "heidi");
+    const params = new URLSearchParams({ code: "heidi", state: authorization.searchParams.get("state")! });
+    await assert.rejects(target.finish("heidi", "session", params), /google_operation_timed_out/);
+    const retained = (await manager.list("heidi"))[0];
+    assert.equal(retained.status, "connected");
+    assert.deepEqual(retained.access, { calendar: "read_only", gmail: "none", drive: "none" });
+    await assert.rejects(target.finish("heidi", "session", params), /google_invalid_oauth_state/);
+  });
+
+  await t.test("a stalled PostgreSQL row lock leaves the single application pool client available", async () => {
+    const holder = new Pool({ connectionString: config.databaseUrl, options: `-c search_path=${namespace}`, max: 1 });
+    const client = await holder.connect();
+    try {
+      await client.query("begin");
+      await client.query("select id from google_connection where id=$1 for update", [alice]);
+      const controller = new AbortController();
+      const blocked = manager.call("alice", alice, request, controller.signal, async () => assert.fail("locked grant dispatched"));
+      const mustCancel = assert.rejects(blocked, { name: "AbortError" });
+      await delay(150);
+      const query = pool.query("select 1");
+      controller.abort(); await mustCancel; await query;
+      const pending = manager.call("alice", alice, request, signal, async () => {});
+      await delay(150);
+      await pool.query("select 1");
+      await client.query("rollback");
+      await pending;
+    } finally { client.release(true); await holder.end(); }
+  });
+
+  await t.test("slow provider operations release a one-client SQL pool; a different replica can wait beyond five seconds", async () => {
+    await grantWith(manager, "alice"); await grantWith(manager, "bob");
+    let start!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { start = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+    const slow = new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, fixture.fetcher), async () => {
+      start(); await held; return Response.json({});
+    });
+    const active = slow.call("alice", alice, request, signal, async () => { await pool.query("select 1"); });
+    await entered;
+    const next = manager.call("alice", alice, request, signal, async () => { await pool.query("select 1"); });
+    try {
+      await pool.query("select 1"); await manager.call("bob", bob, request, signal, async () => {});
+      await new Promise(resolve => setTimeout(resolve, 5100));
+    } finally { release(); await Promise.all([active, next]); }
+  });
+
+  await t.test("a resumed stale replica cannot send, restore credentials, or overwrite a newly connected account", async () => {
+    const { connection_id: id } = await grantWith(manager, "ivan");
+    let start!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { start = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+    const markers: boolean[] = [], before = fixture.calls.length;
+    const stalled = factory().call("ivan", id, write, signal, async () => { start(); await held; }, "calendar",
+      { access: "write", onDispatchChange: value => markers.push(value) });
+    await entered;
+    // Simulate a process pause beyond its operation lease without delaying CI by 50s.
+    const binding = JSON.stringify(["ivan", id, fixture.config.clientId]);
+    const row = (await pool.query("select encrypted_credentials from google_connection where id=$1", [id])).rows[0];
+    const value = decryptGoogleCredentials(row.encrypted_credentials, binding, key);
+    assert.ok(value.operationExpiresAt! > Date.now()); value.operationExpiresAt = Date.now() - 1;
+    await pool.query("update google_connection set encrypted_credentials=$1 where id=$2", [encryptGoogleCredentials(value, binding, key), id]);
+    await manager.disconnect("ivan", id);
+    await grantWith(manager, "ivan", [{ service: "gmail", access: "read_only" }]);
+    release();
+    await assert.rejects(stalled, /google_connection_changed/);
+    assert.deepEqual(markers, []); assert.equal(fixture.calls.length, before);
+    assert.deepEqual((await manager.list("ivan"))[0].access, { calendar: "none", gmail: "read_only", drive: "none" });
   });
 
   await t.test("one owner's four active operations do not exhaust another owner's admission", async () => {

@@ -145,6 +145,40 @@ test('consent cancellation, request failure, and focus recovery remain actionabl
   } finally { await act(async () => view.unmount()); f.restore() }
 })
 
+for (const granted of [false, true]) {
+  test(`browser Back refreshes the cached consent card when access was ${granted ? 'granted' : 'canceled'}`, async () => {
+    const f = fixture()
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(authorized(createElement(GoogleConnectCard, { threadId: 'thread', service: 'gmail', access: 'read_only' }))) })
+      await f.reply(0, disconnected)
+      await act(async () => button(view, 'Connect Gmail').props.onClick())
+      await act(async () => { f.browser.dispatchEvent(new Event('focus')) })
+      await f.reply(2, disconnected)
+      assert.equal(button(view, 'Connecting…').props.disabled, true)
+      await f.reply(1, { authorization_url: 'https://accounts.google.com/consent' })
+      await act(async () => { f.browser.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true })) })
+      assert.equal(f.requests[3].path, '/api/google/connection')
+      assert.match(JSON.stringify(view.toJSON()), /Checking connection/)
+      assert.equal(view.root.findAllByType('button').length, 0)
+      await f.reply(3, granted ? inventory({ gmail: 'read_only' }) : disconnected)
+      assert.equal(f.requests.length, 4)
+      assert.deepEqual(f.navigation, ['https://accounts.google.com/consent'])
+      if (granted) {
+        assert.match(JSON.stringify(view.toJSON()), /Send a message to continue/)
+        assert.equal(view.root.findAllByType('button').length, 0)
+      } else {
+        const retry = button(view, 'Connect Gmail')
+        assert.equal(retry.props.disabled, false)
+        await act(async () => { retry.props.onClick(); retry.props.onClick() })
+        assert.equal(f.requests.length, 5)
+        assert.equal(f.requests[4].path, '/api/google/connect')
+        assert.equal(f.requests[4].init?.body, f.requests[1].init?.body)
+      }
+    } finally { await act(async () => view.unmount()); f.restore() }
+  })
+}
+
 test('a success query alone is not connection proof; failed inventory can be retried', async () => {
   const f = fixture('?google=connected')
   let view!: ReactTestRenderer

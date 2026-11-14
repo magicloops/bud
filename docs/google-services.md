@@ -3,7 +3,7 @@
 This extends [Calendar](./google-calendar.md) using the same Google OAuth client,
 callback, encrypted connection row and human-chat tools. No MCP server, bucket,
 new environment variables, dependencies or migration are needed beyond Calendar's
-`0069_google_connections.sql`. Deploy the matching service and web builds together;
+`0070_google_connections.sql`. Deploy the matching service and web builds together;
 no daemon upgrade is needed. The daemon can be offline for these Google tools.
 
 ## What the Google Cloud project owner needs to do
@@ -80,11 +80,14 @@ Drive edits require the last-read `version`, checked by a fresh metadata read
 before dispatch. This detects an already changed file; it is **not an atomic
 compare-and-swap** with other Drive clients. Changes in the read/write interval
 can still race. Native content replacement is rejected by that preflight.
-Calendar retains its documented If-Match/etag behavior.
+Content replacement preserves the existing Drive media type unless a type is
+explicitly supplied. Calendar retains its documented If-Match/etag behavior.
 Unknown send/upload/write outcomes stop for review and are never automatically
 retried. Review Gmail/Drive before trying the action again.
 Temporary token-refresh failures preserve the saved connection and return a
-retryable error; only a missing or rejected refresh grant requires reconnecting.
+retryable error. On an explicit API 401, Bud refreshes credentials and tries
+once more after checking access and write preconditions. A repeated 401 or
+invalid refresh grant prompts for consent.
 The four-operation concurrency cap applies per Bud user, not across all users.
 
 Sources: [Gmail sending](https://developers.google.com/workspace/gmail/api/guides/sending),
@@ -133,6 +136,8 @@ consent or **Clear saved connection** using the existing account DELETE endpoint
 checks the operation's required access against both selected access and actual scopes.
 A missing grant returns `connect_request` with provider `google_calendar`,
 `google_gmail` or `google_drive`, the owned thread ID and exact required `access`.
+When chat is opened on a native client, Bud can provide the web URL of the same
+chat. Sign in there, use the card, then return to the phone to continue.
 The card requires an explicit click. Callback status is advisory: clients verify
 the effective grant from inventory. Consent never resumes a write automatically.
 

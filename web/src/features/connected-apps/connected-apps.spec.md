@@ -31,7 +31,9 @@ requests. Dependencies: React, lucide-react, shared Button and transport.
   Connect/Upgrade click POSTs that service/access plus `thread_id`, then navigates
   to Google's returned URL. Read access requires an upgrade for write tasks;
   existing full access satisfies a read task. Duplicate clicks and stale
-  navigation are fenced. Callback URL status explains consent but is never proof
+  navigation are fenced. When Back restores the cached chat after consent,
+  the card checks inventory again before offering another Connect or Upgrade.
+  Callback URL status explains consent but is never proof
   of access. Users send a message after consent to continue; connecting does not
   automatically replay a write. An unusable saved connection adds a short
   reconnect notice; the same exact-access consent click recovers it without
@@ -39,7 +41,7 @@ requests. Dependencies: React, lucide-react, shared Button and transport.
 - `google-connect-card.test.tsx` mounts chat and Settings for exact read/full
   request bodies, top-level timeline placement, effective access, upgrades,
   per-service revocation, unreadable-credential recovery/clearing, failure recovery
-  and owner/thread/access/service races.
+  browser Back, and owner/thread/access/service races.
 
 One Google account per Bud user can differ from the Bud login. Consent remains
 separate from Google sign-in. Setup is documented in
