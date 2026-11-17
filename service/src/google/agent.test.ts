@@ -37,7 +37,7 @@ function fixtureExecutor() {
       access: { calendar: "read_write", gmail: "none", drive: "none" }, updated_at: new Date().toISOString() }] : [],
     call: async (owner, id, request, signal, beforeDispatch, _service, authorization) => {
       assert.equal(owner, "alice"); assert.equal(id, "connection");
-      await beforeDispatch("dispatch");
+      await beforeDispatch("dispatch", { connection_id: "connection", email: "alice@example.com" });
       authorization?.onDispatchChange?.(true);
       const reply = await googleJson(googleFetch(fixture.fetcher, signal),
         `https://www.googleapis.com/calendar/v3${request.path}`, owner, { method: request.method,
@@ -81,7 +81,9 @@ test("agent discovery and call use the owning connection; legacy/automation/fore
   assert.equal((await executor.execute("thread", call, "bob", signal, hooks)).result.error, "google_not_found");
   assert.equal((await executor.execute("thread", { ...call, args: { ...call.args, arguments_json: '{"to":123}' } }, "alice", signal, hooks)).result.error, "google_invalid_arguments");
   assert.equal(fixture.calls.length, 0);
-  assert.equal((await executor.execute("thread", call, "alice", signal, hooks)).result.ok, true);
+  const completed = await executor.execute("thread", call, "alice", signal, hooks);
+  assert.equal(completed.result.ok, true);
+  assert.deepEqual(completed.payload.account, { connection_id: "connection", email: "alice@example.com" });
   assert.equal(fixture.calls.length, 1);
 });
 
@@ -100,7 +102,7 @@ test("oversized Gmail threads retain newest messages as valid bounded JSON with 
       body: { data: Buffer.from(`reply ${index}: ` + '最新🌱\n"'.repeat(4000)).toString("base64url") } } }));
   let requests = 0;
   const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, request, _signal, before) => {
-    await before("dispatch"); requests++;
+    await before("dispatch", { connection_id: "connection", email: "alice@example.com" }); requests++;
     return request.path === "/threads/conversation" ? { id: "conversation", messages } : messages.find(message => request.path === `/messages/${message.id}`)!;
   } }, async () => "bud");
   const invoke = (tool_name: string, args: unknown) => executor.execute("thread", { ...call, args: { connection_id: "connection", tool_name,
@@ -141,7 +143,7 @@ test("transient Google refresh failure remains retryable without an OAuth card o
 
 test("oversized non-Gmail fallback is a valid JSON preview within the existing result cap", async () => {
   const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before) => {
-    await before("dispatch"); return { id: "event", description: '🌱"\\'.repeat(12000) };
+    await before("dispatch", { connection_id: "connection", email: "alice@example.com" }); return { id: "event", description: '🌱"\\'.repeat(12000) };
   } }, async () => "bud");
   const result = await executor.execute("thread", { ...call, args: { connection_id: "connection", tool_name: "calendar_get_event",
     arguments_json: JSON.stringify({ calendar_id: "primary", event_id: "event" }) } }, "alice", new AbortController().signal, hooks);
@@ -164,11 +166,61 @@ test("task discovery requests only its exact access level and skips consent for 
         const result = await executor.execute("thread", { ...call, tool: "google_search_tools", args: { service, query: "", access: requested } },
           "alice", new AbortController().signal, hooks);
         const sufficient = granted === "read_write" || (granted === "read_only" && requested === "read_only");
-        assert.deepEqual(result.payload.connect_request, sufficient ? undefined : { provider: `google_${service}`, thread_id: "thread", access: requested });
+        assert.deepEqual(result.payload.connect_request, sufficient ? undefined : { provider: `google_${service}`, thread_id: "thread", access: requested,
+          ...(granted !== "none" ? { connection_id: "connection" } : {}) });
         assert.equal((result.payload.tools as unknown[]).length > 0, sufficient);
       }
     }
   }
+});
+
+test("Gmail, Calendar and Drive discovery require a choice and scope tools and upgrades to the chosen account", async () => {
+  const connections = [
+    { connection_id: "personal", email: "me@example.com", access: { gmail: "read_only", calendar: "read_write", drive: "read_write" } },
+    { connection_id: "work", email: "me@work.example", access: { gmail: "read_write", calendar: "read_only", drive: "read_only" } },
+  ] as const;
+  const executor = new GoogleAgentExecutor({
+    list: async () => connections.map(row => ({ ...row, status: "connected", updated_at: "now",
+      calendar_access: true, gmail_access: true, drive_access: true, gmail_write_access: row.access.gmail === "read_write",
+      calendar_write_access: row.access.calendar === "read_write", drive_write_access: row.access.drive === "read_write" })),
+    call: async () => { throw new Error("Discovery must not dispatch"); },
+  }, async () => "bud");
+  for (const service of ["gmail", "calendar", "drive"] as const) {
+    const discover = (connection_id?: string) => executor.execute("thread", { ...call, tool: "google_search_tools",
+      args: { service, query: "", access: "read_write", connection_id } }, "alice", new AbortController().signal, hooks);
+    const choose = await discover();
+    assert.equal(choose.payload.account_selection_required, true);
+    assert.deepEqual(choose.payload.tools, []);
+    assert.equal(choose.payload.connect_request, undefined);
+    assert.deepEqual((choose.payload.connections as { email: string }[]).map(row => row.email), connections.map(row => row.email));
+    for (const row of connections) {
+      const selection = await discover(row.connection_id);
+      if (row.access[service] === "read_write") {
+        const available = selection.payload.tools as { connection_id: string }[];
+        assert.ok(available.length > 0 && available.every(tool => tool.connection_id === row.connection_id));
+        assert.deepEqual(selection.payload.account, { connection_id: row.connection_id, email: row.email });
+      } else {
+        assert.deepEqual(selection.payload.tools, []);
+        assert.deepEqual(selection.payload.connect_request, { provider: `google_${service}`, thread_id: "thread",
+          connection_id: row.connection_id, access: "read_write" });
+      }
+    }
+    const foreign = await discover("another-owners-id");
+    assert.equal(foreign.result.error, "google_not_found");
+    assert.equal(foreign.payload.connections, undefined);
+  }
+});
+
+test("a request to add a Google account opens the chooser even with an existing eligible account", async () => {
+  const { executor, fixture } = fixtureExecutor();
+  const run = (extra: Record<string, unknown>) => executor.execute("thread", { ...call, tool: "google_search_tools",
+    args: { service: "calendar", query: "", access: "read_only", add_account: true, ...extra } },
+    "alice", new AbortController().signal, hooks);
+  const add = await run({});
+  assert.deepEqual(add.payload.tools, []);
+  assert.deepEqual(add.payload.connect_request, { thread_id: "thread", provider: "google_calendar", access: "read_only", add_account: true });
+  assert.equal((await run({ connection_id: "connection" })).result.error, "google_invalid_arguments");
+  assert.equal(fixture.calls.length, 0);
 });
 
 test("strict OpenAI discovery can ask for the default service and access", async () => {
@@ -181,7 +233,11 @@ test("strict OpenAI discovery can ask for the default service and access", async
     assert.ok(strict.parameters.properties[field].enum.includes(null));
   }
   const executor = new GoogleAgentExecutor({ list: async () => [], call: async () => assert.fail() }, async () => "bud");
-  for (const args of [{ query: "" }, { query: "", service: null, access: null },
+  for (const field of ["connection_id", "add_account"]) {
+    assert.ok(strict.parameters.required.includes(field));
+    assert.ok(strict.parameters.properties[field].type.includes("null"));
+  }
+  for (const args of [{ query: "" }, { query: "", service: null, access: null, connection_id: null, add_account: null },
     { query: "", service: "drive", access: null }, { query: "", service: null, access: "read_write" }]) {
     const result = await executor.execute("thread", { ...call, tool: "google_search_tools", args },
       "alice", new AbortController().signal, hooks);
@@ -207,7 +263,7 @@ test("validation reports actionable fields and malformed JSON before dispatch", 
 test("transient reads are retryable while ambiguous writes require review", async () => {
   const invoke = (status: number, write: boolean) => {
     const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_o, _id, _r, _s, before, _svc, auth) => {
-      await before("dispatch");
+      await before("dispatch", { connection_id: "connection", email: "alice@example.com" });
       if (write) auth?.onDispatchChange?.(true);
       throw new GoogleHttpError(status);
     } }, async () => "bud");
@@ -224,7 +280,7 @@ test("transient reads are retryable while ambiguous writes require review", asyn
 test("cancellation after the write checkpoint but before fetch keeps the cancellation reason", async () => {
   const controller = new AbortController();
   const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_o, _id, _r, signal, before) => {
-    await before("dispatch");
+    await before("dispatch", { connection_id: "connection", email: "alice@example.com" });
     controller.abort(new Error("canceled before fetch"));
     signal.throwIfAborted();
     assert.fail("a canceled write should never reach fetch");
@@ -240,14 +296,14 @@ test("actual tool access controls upgrade cards including read-only POST free/bu
     arguments_json: JSON.stringify({ calendar_ids: ["primary"], time_min: "2030-11-13T15:00:00-08:00", time_max: "2030-11-13T16:00:00-08:00" }) } }]) {
     const result = await executor.execute("thread", directive, "alice", new AbortController().signal, hooks);
     assert.deepEqual(result.payload.connect_request, { provider: "google_calendar", thread_id: "thread",
-      access: directive === call ? "read_write" : "read_only" });
+      access: directive === call ? "read_write" : "read_only", connection_id: "connection" });
   }
 });
 
 test("disabled Calendar API gives setup guidance and remains a definite write rejection", async () => {
   let requests = 0;
   const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, request, signal, beforeDispatch, _service, authorization) => {
-    await beforeDispatch("dispatch");
+    await beforeDispatch("dispatch", { connection_id: "connection", email: "alice@example.com" });
       authorization?.onDispatchChange?.(true);
     return googleJson(googleFetch(async () => {
       requests++;
@@ -271,7 +327,8 @@ test("missing or revoked Calendar access offers in-chat consent only to the owni
   const discovery = { ...call, tool: "google_search_tools" as const, args: { query: "calendar" } };
   for (const directive of [discovery, call]) {
     const result = await executor.execute("thread", directive, "alice", signal, hooks);
-    assert.deepEqual(result.payload.connect_request, { provider: "google_calendar", thread_id: "thread", access: directive.tool === "google_call" ? "read_write" : "read_only" });
+    assert.deepEqual(result.payload.connect_request, { provider: "google_calendar", thread_id: "thread", access: directive.tool === "google_call" ? "read_write" : "read_only",
+      ...(directive.tool === "google_call" ? { connection_id: "connection" } : {}) });
     assert.match(String(result.payload.note), /in this chat/);
     assert.doesNotMatch(JSON.stringify(result.payload), /authorization_url|code_verifier|oauth_state/);
     for (const [owner, context] of [["bob", hooks], ["alice", { ...hooks, googleEnabled: false }]] as const) {
@@ -283,7 +340,7 @@ test("missing or revoked Calendar access offers in-chat consent only to the owni
   failure = "google_not_found";
   assert.equal((await executor.execute("thread", call, "alice", signal, hooks)).payload.connect_request, undefined);
   const rejected = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before) => {
-    await before("dispatch"); throw new GoogleHttpError(401);
+    await before("dispatch", { connection_id: "connection", email: "alice@example.com" }); throw new GoogleHttpError(401);
   } }, async () => "bud");
   assert.ok((await rejected.execute("thread", call, "alice", signal, hooks)).payload.connect_request);
   const { executor: connected } = fixtureExecutor();

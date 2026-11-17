@@ -323,7 +323,7 @@ export const googleConnectionTable = pgTable("google_connection", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => ({
-  ownerKey: unique("google_connection_owner_key").on(t.createdByUserId),
+  ownerSubjectKey: unique("google_connection_owner_subject_key").on(t.createdByUserId, t.accountSubject),
   stateKey: uniqueIndex("google_connection_oauth_state_idx").on(t.oauthStateHash),
   statusCheck: check("google_connection_status_check", sql`${t.status} in ('connecting','connected','reconnect_required','disconnected')`),
   credentialsCheck: check("google_connection_credentials_check", sql`${t.status} <> 'disconnected' or ${t.encryptedCredentials} is null`),

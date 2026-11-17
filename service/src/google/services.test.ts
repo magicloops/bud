@@ -159,12 +159,13 @@ test("service-specific discovery, consent, disabled API guidance and uncertain w
       const executor = new GoogleAgentExecutor({ list: async () => [], call: async (_owner, _id, _request, _signal, before, actualService, authorization) => {
         assert.equal(actualService, service);
         if (failure.message.endsWith("permissions_required")) throw failure;
-        await before("dispatch"); authorization?.onDispatchChange?.(true); attempts++; throw failure;
+        await before("dispatch", { connection_id: "conn", email: "alice@example.com" });
+        authorization?.onDispatchChange?.(true); attempts++; throw failure;
       } }, async () => "bud");
       if (failure.message === "network lost") await assert.rejects(executor.execute("thread", directive, "alice", signal, hooks), /google_outcome_unknown/);
       else {
         const result = await executor.execute("thread", directive, "alice", signal, hooks);
-        if (failure.message.endsWith("permissions_required")) assert.deepEqual(result.payload.connect_request, { provider: `google_${service}`, thread_id: "thread", access: "read_write" });
+        if (failure.message.endsWith("permissions_required")) assert.deepEqual(result.payload.connect_request, { provider: `google_${service}`, thread_id: "thread", access: "read_write", connection_id: "conn" });
         else assert.match(result.summary, service === "gmail" ? /Enable Gmail API/ : /Enable Google Drive API/);
       }
     }

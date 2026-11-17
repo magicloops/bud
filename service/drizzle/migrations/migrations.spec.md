@@ -1,5 +1,13 @@
 # migrations
 
+### `0072_multiple_google_accounts.sql`
+
+Changes the unique constraint on `google_connection` to cover both the Bud owner
+and the verified Google subject. Existing rows, credentials, grant epochs and
+refresh leases carry forward. Pending Google choosers can share a null subject.
+Apply via `pnpm db:migrate` before deploying matching service and web builds.
+See the [implementation plan](../../../plan/multiple-google-accounts.md).
+
 ### `0070_google_connections.sql`
 
 Generated from main’s `0069_motionless_reaper` snapshot. Adds one owned
@@ -295,7 +303,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0071` currently)
+- Snapshot files for each migration (`0000` through `0072` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 

@@ -2,8 +2,9 @@
 
 ## Connected Google account
 
-`googleConnectionTable` / `google_connection` (0070) stores one direct Google
-OAuth connection per Bud user. Owner is required with cascading auth-user FK;
+`googleConnectionTable` / `google_connection` (0070) stores direct Google OAuth
+connections. Migration 0072 changes uniqueness to (Bud owner, verified Google subject).
+Pending Add attempts have a null subject and remain hidden from inventory. Owner is required with cascading auth-user FK;
 tenant is nullable. AES-GCM credentials bind owner/row/OAuth client. Google subject,
 email and granted scopes describe the connected account. OAuth state/session are
 hashed and expire in 10 minutes; PKCE and tokens remain encrypted. Row locks are
@@ -13,8 +14,9 @@ it before sending or saving. `refresh_lease_until` is set by the one service
 instance refreshing the tokens (see the Google spec, Concurrency). Encrypted per-service
 access (`none|read_only|read_write`) intersects actual scopes before dispatch;
 revocation clears pending OAuth state. Inventory filters by owner in SQL.
-Generated migration replaces the unshipped MCP prototype; reviewed SQL applied
-locally while preserving file-upload tables. See debug/google-direct-oauth.md.
+Migration 0072 changes only the unique constraint. `google-accounts-migration.test.ts`
+checks existing encrypted grants, pending consent, refresh leases, and account uniqueness.
+See [validation](../../../debug/multiple-google-accounts-validation.md).
 
 `googleDriveWriteLeaseTable` / `google_drive_write_lease` (0071) coordinates
 Bud writes to a shared Drive file across service instances. Its primary key

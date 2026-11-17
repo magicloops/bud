@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
 import { googleConnectionTable as connections, googleDriveWriteLeaseTable as driveLeases } from "../db/schema.js";
@@ -12,10 +12,12 @@ import type { GoogleRequest } from "./tool-contracts.js";
 
 type Connection = typeof connections.$inferSelect;
 type DriveWrite = { fileKey: string; holder: string; preflightTime?: string; acquired: boolean; awaitingOutcome: boolean };
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+type DispatchAccount = { connection_id: string; email: string | null };
 /** `bump` marks a change of authorization: the save raises `grant_epoch`. */
 type Snapshot = { row: Connection; data: GoogleCredentials; key?: Buffer; bump?: boolean;
   /** Set by an edit that changed nothing, to skip the write. */
-  unchanged?: boolean };
+  unchanged?: boolean; remove?: boolean };
 /** The longest one call or OAuth exchange may take, network included. */
 const OPERATION_MS = 45_000;
 /** How long an edit retries a row another transaction holds. Edits are local, so this is only reached when the database is in trouble. */
@@ -54,11 +56,11 @@ function effectiveAccess(scopes: string[], data: GoogleCredentials): Record<Goog
 
 // Return context is exposed only after validating the owner/session-bound state.
 export class GoogleCallbackError extends GoogleError {
-  constructor(code: string, readonly returnThreadId?: string) { super(code); }
+  constructor(code: string, readonly returnThreadId?: string, readonly connectionId?: string, retryable = false) { super(code, retryable); }
 }
 export class GoogleConnections {
   private readonly active = new Map<string, number>();
-  /** One refresh per connection in this process; callers that need one share it. */
+  /** Calls made under the same grant share a refresh in this process. */
   private readonly refreshes = new Map<string, Promise<Snapshot>>();
   constructor(readonly config: GoogleConfig = googleConfig(), private readonly database: Database = db,
     private readonly key = readGoogleEncryptionKey, private readonly oauth = new GoogleOAuth(config),
@@ -67,7 +69,8 @@ export class GoogleConnections {
   async list(owner: string) {
     const rows = await this.database.select({ id: connections.id, status: connections.status, clientId: connections.oauthClientId,
       email: connections.accountEmail, scopes: connections.grantedScopes, encrypted: connections.encryptedCredentials, updatedAt: connections.updatedAt })
-      .from(connections).where(eq(connections.createdByUserId, owner));
+      .from(connections).where(and(eq(connections.createdByUserId, owner), isNotNull(connections.accountSubject)))
+      .orderBy(connections.createdAt, connections.id);
     return rows.map(row => {
       let data: GoogleCredentials = {}, recoveryRequired = false;
       try { if (row.encrypted) data = decryptGoogleCredentials(row.encrypted, JSON.stringify([owner, row.id, row.clientId]), this.key()); }
@@ -91,10 +94,6 @@ export class GoogleConnections {
   private credentialUnavailable(error: unknown) {
     return error instanceof GoogleError && ["google_credentials_unreadable", "google_encryption_key_required", "google_encryption_key_invalid"].includes(error.code);
   }
-  private clearConnection(row: Connection) {
-    this.clearFlow(row); row.status = "disconnected"; row.encryptedCredentials = null; row.refreshLeaseUntil = null;
-    row.accountSubject = null; row.accountEmail = null; row.grantedScopes = [];
-  }
   private snapshot(row: Connection, recoverUnreadable: boolean): Snapshot {
     let key: Buffer | undefined, data: GoogleCredentials = {}, bump = false;
     try {
@@ -103,7 +102,9 @@ export class GoogleConnections {
     } catch (error) {
       if (!this.credentialUnavailable(error)) throw error;
       if (!recoverUnreadable) throw new GoogleError("google_reconnect_required");
-      this.clearConnection(row); bump = true;
+      // Reconnecting must still verify the saved subject after token loss or a client change.
+      this.clearFlow(row); row.status = "reconnect_required"; row.encryptedCredentials = null;
+      row.refreshLeaseUntil = null; row.grantedScopes = []; bump = true;
     }
     // Written by the operation lease this design replaced; dropped on the next save.
     delete (data as { operationExpiresAt?: number }).operationExpiresAt;
@@ -127,7 +128,7 @@ export class GoogleConnections {
   /** The connection as stored, without a lock. Calls work from this and recheck `grant_epoch` before each request. */
   private async read(owner: string, id: string): Promise<Snapshot> {
     const [row] = await this.database.select().from(connections)
-      .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner)));
+      .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner), isNotNull(connections.accountSubject)));
     if (!row) throw new GoogleError("google_not_found");
     return this.snapshot(row, false);
   }
@@ -141,19 +142,26 @@ export class GoogleConnections {
    * A row another transaction holds is retried without waiting inside PostgreSQL, so a stalled
    * lock never keeps a pool client.
    */
-  private async edit<T>(owner: string, id: string, change: (state: Snapshot, now: Date) => T | Promise<T>,
-    recoverUnreadable = false, signal?: AbortSignal): Promise<T> {
+  private async edit<T>(owner: string, id: string, change: (state: Snapshot, now: Date, tx: Transaction) => T | Promise<T>,
+    recoverUnreadable = false, signal?: AbortSignal, accountMembership = false): Promise<T> {
     const deadline = Date.now() + LOCK_WAIT_MS;
     for (;;) {
       signal?.throwIfAborted();
       const outcome = await this.database.transaction(async tx => {
+        // Two provisional rows can identify the same account. Order promotions and removals
+        // across replicas before taking any row locks. Google requests never take this lock.
+        if (accountMembership) {
+          const lock = await tx.execute<{ acquired: boolean }>(sql`select pg_try_advisory_xact_lock(hashtextextended(${"google-accounts:" + owner}, 0)) as acquired`);
+          if (!lock.rows[0].acquired) return { busy: true as const };
+        }
         // The database's clock, so instances agree on when a refresh lease ends.
         const [found] = await tx.select({ row: connections, now: sql<Date>`now()` }).from(connections)
           .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner))).for("update", { noWait: true });
         if (!found) throw new GoogleError("google_not_found");
         const state = this.snapshot(found.row, recoverUnreadable);
-        const result = await change(state, new Date(found.now));
-        if (!state.unchanged || state.bump) await this.save(tx, state);
+        const result = await change(state, new Date(found.now), tx);
+        if (state.remove) await tx.delete(connections).where(and(eq(connections.id, id), eq(connections.createdByUserId, owner)));
+        else if (!state.unchanged || state.bump) await this.save(tx, state);
         return { busy: false as const, result };
       }).catch((error: unknown) => {
         // Drizzle may wrap pg's lock_not_available.
@@ -224,12 +232,12 @@ export class GoogleConnections {
    * A usable access token for the connection, refreshing at most once however many calls ask.
    * `rejected` is a token Google just answered 401 to: it is not handed back.
    */
-  private refreshShared(owner: string, id: string, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
-    // Within this process, callers share one attempt.
-    const running = this.refreshes.get(id);
+  private refreshShared(owner: string, id: string, epoch: number, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
+    const grant = `${id}:${epoch}`;
+    const running = this.refreshes.get(grant);
     if (running) return running;
-    const flight = this.refreshOnce(owner, id, rejected).finally(() => { this.refreshes.delete(id); });
-    this.refreshes.set(id, flight);
+    const flight = this.refreshOnce(owner, id, epoch, rejected).finally(() => { this.refreshes.delete(grant); });
+    this.refreshes.set(grant, flight);
     return flight;
   }
 
@@ -238,15 +246,16 @@ export class GoogleConnections {
    * asks Google, the others wait for its tokens. Google may issue a replacement refresh token,
    * and two instances asking at once could each be handed a different one.
    */
-  private async refreshOnce(owner: string, id: string, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
+  private async refreshOnce(owner: string, id: string, epoch: number, rejected?: GoogleCredentials["tokens"]): Promise<Snapshot> {
     const isRejected = (tokens: GoogleCredentials["tokens"]) => rejected !== undefined &&
       tokens?.access_token === rejected.access_token && tokens?.expiry_date === rejected.expiry_date;
     const deadline = Date.now() + this.operationMs;
     for (;;) {
       const claim = await this.edit(owner, id, (state, now) => {
+        state.unchanged = true;
+        if (state.row.grantEpoch !== epoch) return { state, lease: null };
         const tokens = state.data.tokens;
         if (!tokens) throw new GoogleError("google_reconnect_required");
-        state.unchanged = true;
         // Another call, or another instance, already refreshed.
         if (usable(tokens) && !isRejected(tokens)) return { state, lease: null };
         if (state.row.refreshLeaseUntil && state.row.refreshLeaseUntil > now) {
@@ -263,13 +272,14 @@ export class GoogleConnections {
         continue;
       }
       if (!claim.lease) return claim.state;
-      const { lease } = claim, epoch = claim.state.row.grantEpoch;
+      const { lease } = claim;
       // Ours to give back, unless it already ended and another instance took it.
       const release = (current: Snapshot) => {
         const ours = current.row.refreshLeaseUntil?.getTime() === lease.getTime();
         if (ours) current.row.refreshLeaseUntil = null;
         current.unchanged = !ours;
-        return ours;
+        if (current.row.grantEpoch !== epoch) return "changed";
+        return ours ? "held" : "superseded";
       };
       let refreshed: NonNullable<GoogleCredentials["tokens"]>;
       try {
@@ -279,22 +289,20 @@ export class GoogleConnections {
         // A failure only speaks for the connection while this instance holds the lease. Stalled
         // past it, another instance may have refreshed since (and Google may have retired the
         // token this one sent): go round again and use what that instance saved.
-        const held = await this.edit(owner, id, release).catch((unverified: unknown) => {
+        const result = await this.edit(owner, id, release).catch((unverified: unknown) => {
           // Whether the lease is still ours could not be read, so the failure can't be trusted
           // either way. Nothing is concluded about the grant; the caller may try again. (A lease
           // left set ends by itself.)
           throw unverified instanceof GoogleError && unverified.code === "google_not_found" ? unverified : new GoogleError("google_busy", true);
         });
-        if (!held) continue;
+        if (result === "changed") throw new GoogleError("google_connection_changed", true);
+        if (result === "superseded") continue;
         throw error;
       }
       const saved = await this.edit(owner, id, current => {
-        const held = release(current);
-        // The user disconnected, revoked or granted again meanwhile: these tokens belong to the old grant.
-        if (current.row.grantEpoch !== epoch) return "changed" as const;
-        // This instance stalled past its lease and another one refreshed. Nothing cuts off a
-        // paused process, so the lease is checked here, under the row lock: the later tokens stay.
-        if (!held) return "superseded" as const;
+        const result = release(current);
+        // Keep the later tokens if another grant or lease superseded this refresh.
+        if (result !== "held") return result;
         current.data.tokens = refreshed; // a replacement refresh token is saved here, before anyone uses the access token
         if (refreshed.scope) current.row.grantedScopes = refreshed.scope.split(/\s+/).filter(Boolean);
         return current;
@@ -306,37 +314,61 @@ export class GoogleConnections {
     }
   }
 
-  async begin(owner: string, sessionId: string, returnThreadId?: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }]) {
+  async begin(owner: string, sessionId: string, returnThreadId?: string, selections: GoogleSelection[] = [{ service: "calendar", access: "read_write" }], connectionId?: string) {
     if (!this.config.clientId || !this.config.clientSecret) throw new GoogleError("google_not_configured");
     validateGoogleRedirectUri(this.config);
     if (!selections.length || new Set(selections.map(selection => selection.service)).size !== selections.length ||
       selections.some(selection => !GOOGLE_SERVICES.includes(selection.service) || !["read_only", "read_write"].includes(selection.access))) {
       throw new GoogleError("google_invalid_selection");
     }
-    this.key();
-    await this.database.insert(connections).values({ id: `google_${ulid()}`, oauthClientId: this.config.clientId,
-      status: "disconnected", createdByUserId: owner }).onConflictDoNothing({ target: connections.createdByUserId });
-    const [found] = await this.database.select({ id: connections.id }).from(connections).where(eq(connections.createdByUserId, owner));
-    return this.edit(owner, found.id, async snapshot => {
+    const key = this.key();
+    const start = async (hint?: string) => {
+      const state = randomBytes(32).toString("base64url");
+      const { url, verifier } = await this.oauth.authorize(state, selections, hint);
+      return { url, context: { requestedSelections: selections, returnThreadId, verifier },
+        fields: { oauthStateHash: hashGoogleSecret(state), oauthSessionHash: hashGoogleSecret(sessionId),
+          oauthExpiresAt: new Date(Date.now() + 10 * 60_000) } };
+    };
+    if (!connectionId) {
+      // Claimed choosers have no state/expiry while Google is answering. Keep them for the exchange deadline.
+      await this.deleteChoosers(this.database, owner, or(lte(connections.oauthExpiresAt, new Date()),
+        and(isNull(connections.oauthExpiresAt), lte(connections.updatedAt, new Date(Date.now() - this.operationMs)))));
+      const id = `google_${ulid()}`, { url, context, fields } = await start();
+      const data: GoogleCredentials = { ...context, serviceAccess: effectiveAccess([], {}) };
+      await this.database.insert(connections).values({ id, createdByUserId: owner, oauthClientId: this.config.clientId,
+        ...fields, status: "connecting", encryptedCredentials: encryptGoogleCredentials(data, JSON.stringify([owner, id, this.config.clientId]), key) });
+      return url;
+    }
+    return this.edit(owner, connectionId, async snapshot => {
       const { row, data } = snapshot;
+      if (!row.accountSubject) throw new GoogleError("google_not_found");
       if (row.oauthClientId !== this.config.clientId) {
-        delete data.tokens; row.accountSubject = null; row.accountEmail = null; row.grantedScopes = [];
+        delete data.tokens; row.refreshLeaseUntil = null; row.grantedScopes = [];
         data.serviceAccess = effectiveAccess([], {});
         data.previousStatus = "reconnect_required";
         snapshot.bump = true;
       } else if (row.status !== "connecting") {
         data.previousStatus = row.status === "connected" ? "connected" : "reconnect_required";
       }
-      delete data.verifier; delete data.returnThreadId;
-      data.requestedSelections = selections;
-      if (returnThreadId) data.returnThreadId = returnThreadId;
+      const { url, context, fields } = await start(row.accountEmail ?? row.accountSubject);
+      Object.assign(data, context); Object.assign(row, fields);
       row.oauthClientId = this.config.clientId; row.status = "connecting";
-      const state = randomBytes(32).toString("base64url");
-      row.oauthStateHash = hashGoogleSecret(state); row.oauthSessionHash = hashGoogleSecret(sessionId);
-      row.oauthExpiresAt = new Date(Date.now() + 10 * 60_000);
-      const auth = await this.oauth.authorize(state, selections, row.accountEmail ?? undefined); data.verifier = auth.verifier;
-      return auth.url;
+      return url;
     }, true);
+  }
+
+  private hasAccess(row: Connection, selections: GoogleSelection[]) {
+    try {
+      const current = this.snapshot(row, false);
+      if (row.oauthClientId !== this.config.clientId || !current.data.tokens ||
+        (row.status === "connecting" ? current.data.previousStatus : row.status) !== "connected") return false;
+      const access = effectiveAccess(row.grantedScopes, current.data);
+      return selections.every(selection => access[selection.service] === "read_write" ||
+        selection.access === "read_only" && access[selection.service] === "read_only");
+    } catch (error) {
+      if (error instanceof GoogleError && error.code === "google_reconnect_required") return false;
+      throw error;
+    }
   }
 
   async finish(owner: string, sessionId: string, params: URLSearchParams) {
@@ -345,36 +377,54 @@ export class GoogleConnections {
       .where(and(eq(connections.createdByUserId, owner), eq(connections.oauthStateHash, stateHash)));
     if (!found) throw new GoogleError("google_invalid_oauth_state");
     // Consume the session-bound state before the exchange leaves the service.
-    const flow = await this.edit(owner, found.id, ({ row, data }) => {
+    const flow = await this.edit(owner, found.id, snapshot => {
+      const { row, data } = snapshot;
       if (row.status !== "connecting" || row.oauthStateHash !== stateHash ||
-        row.oauthSessionHash !== hashGoogleSecret(sessionId) || !row.oauthExpiresAt || row.oauthExpiresAt <= new Date()) {
+        row.oauthSessionHash !== hashGoogleSecret(sessionId) || !row.oauthExpiresAt) {
         throw new GoogleError("google_invalid_oauth_state");
       }
+      const expired = row.oauthExpiresAt <= new Date();
+      snapshot.remove = expired && !row.accountSubject;
       this.clearFlow(row); row.status = data.previousStatus ?? "reconnect_required";
-      const taken = { returnThreadId: data.returnThreadId, verifier: data.verifier, clientId: row.oauthClientId, epoch: row.grantEpoch,
+      const taken = { expired, chooser: !row.accountSubject, returnThreadId: data.returnThreadId, verifier: data.verifier, clientId: row.oauthClientId, epoch: row.grantEpoch,
         selections: data.requestedSelections ?? [{ service: "calendar", access: "read_write" } as const] };
       delete data.returnThreadId; delete data.verifier; delete data.requestedSelections; delete data.previousStatus;
       return taken;
     });
+    if (flow.expired) throw new GoogleError("google_invalid_oauth_state");
     const timeout = AbortSignal.timeout(this.operationMs);
     try {
       if (flow.clientId !== this.config.clientId) throw new GoogleError("google_client_changed");
       if (params.has("error") || !params.get("code")) throw new GoogleError("google_consent_canceled");
       if (!flow.verifier) throw new GoogleError("google_missing_verifier");
       const grant = await this.oauth.exchange(params.get("code")!, flow.verifier, timeout);
-      return await this.edit(owner, found.id, state => {
+      const apply = () => this.edit(owner, found.id, async (state, now, tx) => {
         const { row, data } = state;
         // The user disconnected or revoked while Google was answering: the grant is not applied.
         if (row.grantEpoch !== flow.epoch) throw new GoogleError("google_connection_changed");
         if (row.accountSubject && grant.subject !== row.accountSubject) throw new GoogleError("google_account_mismatch");
+        if (flow.chooser) {
+          const [existing] = await tx.select().from(connections).where(and(eq(connections.createdByUserId, owner),
+            eq(connections.accountSubject, grant.subject))).for("update", { noWait: true });
+          if (existing) {
+            // The chooser never witnessed this account's grant epoch. Keep its current authorization
+            // and direct a missing permission through the user's explicit, account-targeted upgrade.
+            state.remove = true;
+            return { connected: this.hasAccess(existing, flow.selections), connectionId: existing.id };
+          }
+        }
         // A valid new grant is authoritative even when Google revoked older service scopes.
         // Do not overwrite the previous credentials unless a selected service was accepted.
         const accepted = flow.selections.filter(selection => serviceGranted(grant.scopes, selection.service));
         if (!accepted.length) throw new GoogleError(`google_${flow.selections[0].service}_permissions_required`);
         const refreshToken = grant.tokens.refresh_token ?? data.tokens?.refresh_token;
         if (!refreshToken) throw new GoogleError("google_offline_access_required");
-        grant.tokens.refresh_token = refreshToken;
-        data.tokens = grant.tokens;
+        if (!grant.tokens.refresh_token && row.refreshLeaseUntil && row.refreshLeaseUntil > now) {
+          // This exchange needs the saved token, which a refresh may be replacing right now.
+          state.unchanged = true;
+          return { waitForRefresh: true as const };
+        }
+        data.tokens = { ...grant.tokens, refresh_token: refreshToken };
         data.serviceAccess = effectiveAccess(grant.scopes, data);
         for (const selection of accepted) {
           data.serviceAccess![selection.service] = selection.access === "read_write" && serviceWriteGranted(grant.scopes, selection.service)
@@ -385,39 +435,66 @@ export class GoogleConnections {
         // `connected` with flow fields set); this grant is what it falls back to.
         if (row.status === "connecting") data.previousStatus = "connected"; else row.status = "connected";
         state.bump = true;
-        return flow.returnThreadId;
-      });
+        return { connected: true, connectionId: row.id };
+      }, false, timeout, flow.chooser);
+      let result = await apply();
+      while (result.waitForRefresh) {
+        try {
+          await delay(250, undefined, { signal: timeout });
+          result = await apply();
+        } catch (error) {
+          if (timeout.aborted && !(error instanceof GoogleError)) throw new GoogleError("google_busy", true);
+          throw error;
+        }
+      }
+      if (!result.connected) throw new GoogleCallbackError("google_account_already_connected", flow.returnThreadId, result.connectionId);
+      return { returnThreadId: flow.returnThreadId, connectionId: result.connectionId };
     } catch (error) {
-      const code = error instanceof GoogleError ? error.code : "google_connection_failed";
+      if (error instanceof GoogleCallbackError) throw error;
+      if (flow.chooser) await this.deleteChoosers(this.database, owner, eq(connections.id, found.id));
+      const code = error instanceof GoogleError ? (error.code === "google_not_found" ? "google_connection_changed" : error.code) : "google_connection_failed";
       // The exchange reports an aborted request as a failed authorization.
-      throw new GoogleCallbackError(timeout.aborted && code === "google_authorization_failed" ? "google_operation_timed_out" : code,
-        flow.returnThreadId);
+      const timedOut = timeout.aborted && code === "google_authorization_failed";
+      throw new GoogleCallbackError(timedOut ? "google_operation_timed_out" : code, flow.returnThreadId, undefined,
+        timedOut || error instanceof GoogleError && error.retryable);
     }
   }
 
+  // A chooser has no verified subject until Google replies. A revoke/remove also cancels this
+  // owner's unfinished Add flows, including a consumed state whose exchange is still running.
+  private deleteChoosers(db: Pick<Database, "delete" | "select">, owner: string, cleanup?: SQL) {
+    // Cleanup can leave a busy row for its callback or the next sweep. Revocation must cancel
+    // every existing chooser, so NOWAIT lets edit retry the whole transaction on contention.
+    const ids = db.select({ id: connections.id }).from(connections).where(and(eq(connections.createdByUserId, owner),
+      isNull(connections.accountSubject), cleanup)).for("update", cleanup ? { skipLocked: true } : { noWait: true });
+    return db.delete(connections).where(and(eq(connections.createdByUserId, owner), inArray(connections.id, ids)));
+  }
+
   async disconnect(owner: string, id: string) {
-    return this.edit(owner, id, state => { this.clearConnection(state.row); state.bump = true; }, true);
+    return this.edit(owner, id, async (state, _now, tx) => {
+      if (!state.row.accountSubject) throw new GoogleError("google_not_found");
+      await this.deleteChoosers(tx, owner);
+      state.remove = true;
+    }, true, undefined, true);
   }
 
   async revokeService(owner: string, id: string, service: GoogleService) {
     if (!GOOGLE_SERVICES.includes(service)) throw new GoogleError("google_invalid_selection");
-    return this.edit(owner, id, state => {
+    return this.edit(owner, id, async (state, _now, tx) => {
       const { row, data } = state;
+      if (!row.accountSubject) throw new GoogleError("google_not_found");
+      await this.deleteChoosers(tx, owner);
       data.serviceAccess![service] = "none";
       state.bump = true;
-      // Invalidating every pending flow prevents a late callback from restoring access.
       this.clearFlow(row);
       if (row.status === "connecting") row.status = data.previousStatus ?? "reconnect_required";
       delete data.verifier; delete data.returnThreadId; delete data.requestedSelections; delete data.previousStatus;
-      if (GOOGLE_SERVICES.every(candidate => effectiveAccess(row.grantedScopes, data)[candidate] === "none")) {
-        delete data.tokens;
-        this.clearConnection(row);
-      }
-    }, true);
+      state.remove = GOOGLE_SERVICES.every(candidate => effectiveAccess(row.grantedScopes, data)[candidate] === "none");
+    }, true, undefined, true);
   }
 
   async call(owner: string, id: string, request: GoogleRequest, signal: AbortSignal,
-    beforeDispatch: (phase: "preflight" | "dispatch") => Promise<void>, service: GoogleService = "calendar",
+    beforeDispatch: (phase: "preflight" | "dispatch", account: DispatchAccount) => Promise<void>, service: GoogleService = "calendar",
     authorization?: { access: "read" | "write"; onDispatchChange?: (dispatched: boolean) => void }) {
     return this.admitted(owner, async () => {
       const timeout = AbortSignal.timeout(this.operationMs), callSignal = AbortSignal.any([signal, timeout]);
@@ -445,7 +522,7 @@ export class GoogleConnections {
       };
       const refresh = async (rejected?: GoogleCredentials["tokens"]) => {
         // A cancelled or timed-out call stops waiting; the refresh carries on for the others.
-        const latest = await abandonable(this.refreshShared(owner, id, rejected), callSignal);
+        const latest = await abandonable(this.refreshShared(owner, id, epoch, rejected), callSignal);
         sameGrant(latest);
         state = latest;
         assertAccess(state);
@@ -459,7 +536,7 @@ export class GoogleConnections {
         ? { fileKey: hashGoogleSecret(request.filePreflight.fileId), holder: ulid(), acquired: false, awaitingOutcome: false } : undefined;
       const driveDeadline = performance.now() + Math.min(this.operationMs, OPERATION_MS);
       const transport = (phase: "preflight" | "dispatch") => googleFetch(async (input, init) => {
-        await beforeDispatch(phase);
+        await beforeDispatch(phase, { connection_id: state.row.id, email: state.row.accountEmail });
         if (driveWrite && phase === "dispatch") await this.claimDriveWrite(driveWrite, owner, state.row.tenantId);
         // After the async invocation and ownership checks: is this still the grant the call started under?
         const [current] = await this.database.select({ epoch: connections.grantEpoch, scopes: connections.grantedScopes,

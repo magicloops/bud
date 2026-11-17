@@ -22,7 +22,8 @@ export class GoogleOAuth {
     const client = this.client(), pkce = await client.generateCodeVerifierAsync();
     return { verifier: pkce.codeVerifier, url: client.generateAuthUrl({
       scope: [...new Set(selections.flatMap(selection => serviceScopes(selection.service, selection.access)))],
-      state, access_type: "offline", prompt: "consent", include_granted_scopes: true, login_hint: loginHint,
+      state, access_type: "offline", prompt: loginHint ? "consent" : "select_account consent",
+      include_granted_scopes: true, ...(loginHint ? { login_hint: loginHint } : {}),
       code_challenge: pkce.codeChallenge, code_challenge_method: CodeChallengeMethod.S256,
     }) };
   }

@@ -34,13 +34,13 @@ export async function registerGoogleRoutes(server: FastifyInstance, manager: Goo
     const actor = await viewer(request, reply, true); if (!actor) return;
     if (!actor.sessionId || actor.authType !== "cookie") return reply.code(400).send({ error: "google_browser_session_required" });
     try {
-      const body = z.object({ thread_id: z.string().min(1).max(80).optional(),
+      const body = z.object({ connection_id: z.string().min(1).max(80).optional(), thread_id: z.string().min(1).max(80).optional(),
         selections: z.array(z.object({ service: z.enum(GOOGLE_SERVICES), access: z.enum(["read_only", "read_write"]) }).strict())
           .min(1).max(GOOGLE_SERVICES.length).refine(items => new Set(items.map(item => item.service)).size === items.length)
           .default([{ service: "calendar", access: "read_write" }]),
       }).strict().parse(request.body ?? {});
       if (body.thread_id && !await resolveReturnThread(actor, body.thread_id)) throw new GoogleError("google_not_found");
-      return { authorization_url: await manager.begin(actor.userId, actor.sessionId, body.thread_id, body.selections) };
+      return { authorization_url: await manager.begin(actor.userId, actor.sessionId, body.thread_id, body.selections, body.connection_id) };
     }
     catch (error) { return failure(reply, error); }
   });
@@ -65,11 +65,20 @@ export async function registerGoogleRoutes(server: FastifyInstance, manager: Goo
       const values = z.object({ state: z.string().min(1).max(128), code: z.string().max(4096).optional(), error: z.string().max(128).optional() }).parse(request.query);
       const params = new URLSearchParams();
       for (const [name, value] of Object.entries(values)) if (value !== undefined) params.set(name, value);
-      returnThreadId = await manager.finish(actor.userId, actor.sessionId, params); target.searchParams.set("google", "connected");
+      const connected = await manager.finish(actor.userId, actor.sessionId, params);
+      returnThreadId = connected.returnThreadId;
+      target.searchParams.set("google", "connected");
+      target.searchParams.set("google_connection_id", connected.connectionId);
     } catch (error) {
-      if (error instanceof GoogleCallbackError) returnThreadId = error.returnThreadId;
+      if (error instanceof GoogleCallbackError) {
+        returnThreadId = error.returnThreadId;
+        if (error.code === "google_account_already_connected" && error.connectionId) {
+          target.searchParams.set("google_connection_id", error.connectionId);
+        }
+      }
       target.searchParams.set("google", error instanceof GoogleError && error.code.endsWith("_permissions_required") ? "permissions_required"
-        : error instanceof GoogleError && error.code === "google_account_mismatch" ? "account_mismatch" : "failed");
+        : error instanceof GoogleError && error.code === "google_account_mismatch" ? "account_mismatch"
+        : error instanceof GoogleError && error.code === "google_account_already_connected" ? "account_already_connected" : "failed");
     }
     if (returnThreadId) {
       const thread = await resolveReturnThread(actor, returnThreadId);

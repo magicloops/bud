@@ -1,9 +1,10 @@
 # Gmail and Google Drive access
 
 This extends [Calendar](./google-calendar.md) using the same Google OAuth client,
-callback, encrypted connection row and human-chat tools. Apply
-`0070_google_connections.sql` and `0071_google_drive_write_lease.sql` before the service update.
-Deploy the matching service and web builds together. The daemon can be offline for these Google tools.
+callback and human-chat tools. Each Bud user can connect multiple Google accounts.
+Apply `0070_google_connections.sql`, `0071_google_drive_write_lease.sql`
+and `0072_multiple_google_accounts.sql` before deploying matching service and web builds.
+Existing account IDs and credentials carry forward. The daemon can be offline for these tools.
 
 ## What the Google Cloud project owner needs to do
 
@@ -31,8 +32,11 @@ Connect requests full access for the selected service. Users explicitly connect
 Gmail and Drive in Bud. API enablement alone does
 not upgrade an existing Calendar grant. Bud requests the selected services and access levels together, using Google's
 incremental authorization for later additions. Canceling/denying extra consent
-preserves the prior grant. Choosing a different Google account is rejected;
-revoke every connected service first to deliberately switch the shared account.
+preserves the prior grant. **Add Google account** opens Google's account chooser.
+If the selected identity already has the requested access, Bud reuses that connection.
+For additional access, choose the saved account to enable a service, upgrade or reconnect it.
+Those flows must return the same Google identity. Connecting one account grants
+access only to the selected services on that account.
 A successful replacement grant may omit services previously removed in Google
 Account permissions. Bud accepts the newly selected service and updates the
 others to the access actually granted, without restoring locally revoked services.
@@ -76,8 +80,8 @@ with explicit truncation/omission metadata and bounded omitted-message IDs for
 follow-up reads using `gmail_get_message`.
 
 Drive edits require the last-read `version`, checked by a fresh metadata read
-before dispatch. Bud coordinates edits to the same file across chats and service
-instances. If an overlapping edit returns `google_busy`, read the latest version
+before dispatch. Bud coordinates edits to the same file across Google accounts,
+chats and service instances. If an overlapping edit returns `google_busy`, read the latest version
 before trying again. Reads and edits to other files can proceed. An external
 Drive client can still change the file between the version check and Google's
 update. The preflight also rejects content replacement for native files.
@@ -115,38 +119,50 @@ test Google account added to the existing project's test users.
 6. While Calendar is already connected, cancel Gmail or Drive consent once;
    Calendar must still work. Restart the service and repeat reads. Settings shows
    each service independently with **Revoke access**; revoke Gmail and verify
-   Calendar/Drive still work. Revoking the last connected service removes the shared credentials.
+   Calendar/Drive still work. Revoking an account's last connected service removes that account from Bud.
 
-Use the same Google account for all three connections. Test emails/file writes
+7. Add a second test Google account to Gmail. Ask which Gmail accounts are available,
+   then ask to read a message from a named address. Check the source email in the
+   result. Remove Gmail access from one address and repeat the read on the other.
+
+Test emails/file writes
 above are manual acceptance steps; automated tests send no real mail and mutate
 no real Drive files. Public production acceptance remains separate.
 
 ## Browser and agent contract
 
 `POST /api/google/connect` accepts
-`{selections:[{service:"calendar"|"gmail"|"drive",access:"read_only"|"read_write"}],thread_id?}`.
+`{selections:[{service:"calendar"|"gmail"|"drive",access:"read_only"|"read_write"}],thread_id?,connection_id?}`.
 Cookie viewer/Origin and owned return thread/Bud are resolved before consent.
 Inventory exposes effective `access[service]` plus read/write booleans. Tokens,
-service access and pending selection/return context stay encrypted; no new columns.
+service access and pending selection/return context stay encrypted. An omitted
+`connection_id` starts an account chooser. A supplied ID must belong to the viewer.
 If credentials cannot be read, inventory still succeeds with no effective access,
 `status:"reconnect_required"` and `recovery_required:true`. Settings offers fresh
 consent or **Clear saved connection** using the existing account DELETE endpoint.
 
-`google_search_tools` accepts `service`, task-required `access` and `query`.
+`google_search_tools` accepts `service`, task-required `access`, `query` and an
+optional `connection_id`. Use `add_account: true` for an explicit request to
+connect an unlisted identity. Its results identify owned accounts by email and ID.
+Multiple accounts can require another discovery call using the account identified
+by the user. Reads across accounts are requested separately and labeled by source.
 `google_call` executes only reviewed server-defined tools; the connection boundary
 checks the operation's required access against both selected access and the latest
 stored Google scopes immediately before each request. A pending write stops if a
 refresh has reduced that service to read-only.
 A missing grant returns `connect_request` with provider `google_calendar`,
-`google_gmail` or `google_drive`, the owned thread ID and exact required `access`.
+`google_gmail` or `google_drive`, the owned thread ID, exact required `access` and the target `connection_id` when known.
 When chat is opened on a native client, Bud can provide the web URL of the same
 chat. Sign in there, use the card, then return to the phone to continue.
-The card requires an explicit click. Callback status is advisory: clients verify
-the effective grant from inventory. Consent never resumes a write automatically.
+The card requires an explicit click. On a successful callback, Bud returns the
+saved connection ID and checks that account's effective access in inventory
+before showing it as connected. Consent never resumes a write automatically.
 
 Settings offers per-service **Revoke access**, backed by
 `DELETE /api/google/connection/:connection_id/services/:service`. This disables
-that service in Bud and invalidates pending consent; other services remain usable.
+that service for the selected account. Any open Google **Add account** chooser
+for this Bud user must be reopened after a revoke or account removal. Upgrades
+already open for another saved account can finish normally.
 It does not revoke individual upstream Google scopes. Last-service revoke or
 account-wide disconnect removes saved credentials. Reconnect must be explicit.
 

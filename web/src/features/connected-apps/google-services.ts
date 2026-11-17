@@ -25,6 +25,10 @@ export type GoogleConnection = {
 } & Record<`${GoogleService}_access` | `${GoogleService}_write_access`, boolean>
 export type GoogleInventory = { configured: boolean; connections: GoogleConnection[] }
 
+export function googleAccountLabel(connection: GoogleConnection) {
+  return connection.email ?? connection.connection_id
+}
+
 export function googleAccess(connection: GoogleConnection | undefined, service: GoogleService): GoogleAccessLevel {
   return connection && ['connected', 'connecting'].includes(connection.status) ? connection.access[service] : 'none'
 }

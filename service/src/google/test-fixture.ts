@@ -5,7 +5,7 @@ import { CALENDAR_SCOPES, type GoogleConfig } from "./config.js";
 export function googleFixture() {
   const config: GoogleConfig = { clientId: "fixture.apps.googleusercontent.com", clientSecret: "fixture-secret",
     redirectUri: "https://bud.example/api/google/callback" };
-  const codes = new Map<string, { challenge: string; scopes: string[] }>();
+  const codes = new Map<string, { account: string; challenge: string; scopes: string[] }>();
   const grants = new Map<string, string[]>();
   const calls: { owner: string; method: string; url: string; body: unknown; etag: string | null }[] = [];
   let refreshCount = 0, loseReply = false, status = 200, partialScopes = false, omitRefresh = false;
@@ -26,9 +26,9 @@ export function googleFixture() {
       const flow = codes.get(code)!;
       assert.equal(createHash("sha256").update(body.get("code_verifier")!).digest("base64url"), flow.challenge);
       codes.delete(code);
-      const scopes = explicitScopes ?? (partialScopes ? ["openid", "email"] : [...new Set([...(grants.get(code) ?? []), ...flow.scopes])]);
-      if (!partialScopes) grants.set(code, scopes);
-      return Response.json({ access_token: code, ...(!omitRefresh ? { refresh_token: `refresh-${code}` } : {}), token_type: "Bearer", expires_in: 3600,
+      const scopes = explicitScopes ?? (partialScopes ? ["openid", "email"] : [...new Set([...(grants.get(flow.account) ?? []), ...flow.scopes])]);
+      if (!partialScopes) grants.set(flow.account, scopes);
+      return Response.json({ access_token: flow.account, ...(!omitRefresh ? { refresh_token: `refresh-${flow.account}` } : {}), token_type: "Bearer", expires_in: 3600,
         scope: scopes.join(" ") });
     }
     const owner = request.headers.get("authorization")?.replace("Bearer ", "") ?? "";
@@ -45,9 +45,9 @@ export function googleFixture() {
     return Response.json({ items: [{ id: "event", summary: `event for ${owner}`, etag: '"etag1"' }], nextPageToken: "next-page" });
   };
   return { config, fetcher, calls, get refreshCount() { return refreshCount; },
-    authorize(url: string, owner: string) {
+    authorize(url: string, owner: string, code = owner) {
       const params = new URL(url).searchParams;
-      codes.set(owner, { challenge: params.get("code_challenge")!, scopes: params.get("scope")!.split(" ") });
+      codes.set(code, { account: owner, challenge: params.get("code_challenge")!, scopes: params.get("scope")!.split(" ") });
     },
     loseReply() { loseReply = true; }, reject(code: number) { status = code; },
     grantOnly(scopes?: string[]) { explicitScopes = scopes; }, refreshedScopes(scopes?: string[]) { refreshedScopes = scopes; },

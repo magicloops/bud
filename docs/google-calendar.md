@@ -28,7 +28,8 @@ is no longer used. For external apps in Testing, add your Google email to Audien
 
 Google login and Calendar consent are separate flows. A user may choose a Google
 account different from the login account; Bud displays the connected Calendar
-email. One Google account per Bud user is shared across connected services.
+email for each account. Each Google identity can enable its own combination of
+Calendar, Gmail and Drive permissions.
 
 Official references: [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth),
@@ -36,9 +37,10 @@ Official references: [web-server OAuth](https://developers.google.com/identity/p
 
 ## Service configuration
 
-Apply `0070_google_connections.sql` and `0071_google_drive_write_lease.sql`
-before enabling the matching service/web build. They create the owned Google
-connection table and coordinate edits to shared Drive files.
+Apply `0070_google_connections.sql`, `0071_google_drive_write_lease.sql`
+and `0072_multiple_google_accounts.sql` before deploying matching service and web builds.
+These migrations create the owned connection table, coordinate writes to shared
+Drive files, and permit several Google identities per Bud user. Existing credentials carry forward.
 
 ```
 GOOGLE_CLIENT_ID=<existing client id>
@@ -108,8 +110,9 @@ reply finishes and after reloading. Consent never automatically replays an event
 
 A write task requests full Calendar access if the existing access is read-only.
 Settings → Connected apps requests full access when connecting and lets the user
-revoke Calendar separately. Revoke all connected services to switch the shared Google account. Since an already-connected account does not need a card, use a disconnected
-test account to test the chat flow. If Google reports redirect_uri_mismatch, the
+revoke Calendar for each account. Choose **Add Google account** to use another
+account alongside existing ones. To test the consent card, use a disconnected
+test account. If Google reports redirect_uri_mismatch, the
 exact callback above has not been registered on the configured client. Missing
 Calendar permissions produce a reconnect prompt; disabled API or account policy
 errors remain explicit API errors rather than empty schedules.
@@ -131,8 +134,9 @@ account must be on the project's test-user list.
 
 Bud stores tokens and selected service access encrypted in PostgreSQL. Tool results
 enter the selected model and normal owned-chat transcript. Revoking Calendar stops
-Calendar use in Bud and cancels pending consent without disabling Gmail or Drive.
-Revoking the last service removes Bud's saved credentials.
+Calendar use for that account. Removing access cancels its pending upgrade
+and any unfinished Add account choosers for the same Bud user.
+Revoking the last service removes that account from Bud.
 Google Account permissions can revoke the upstream grant separately; the OAuth
 client is shared with Bud sign-in.
 
@@ -156,13 +160,13 @@ credentials, revoked grants, transient refresh errors and owner-scoped concurren
 ## Chat connection contract
 
 Google tool results carry `connect_request` with
-`{provider:"google_calendar",thread_id:"<owned thread>",access:"read_only"|"read_write"}`
+`{provider:"google_calendar",thread_id:"<owned thread>",access:"read_only"|"read_write", connection_id?}`
 when the task lacks access. It contains no OAuth URL, state or credential. The
 service generates it after human invocation/thread/Bud authorization. The card
 requests exactly that access; ordinary chat content cannot create an access card.
 
 The browser sends `POST /api/google/connect` with
-`{selections:[{service:"calendar",access}],thread_id?}` using its signed-in cookie
+`{selections:[{service:"calendar",access}],thread_id?,connection_id?}` using its signed-in cookie
 and trusted Origin. The service authorizes the return thread/Bud, stores the
 selection and return thread with encrypted PKCE data, and returns `authorization_url`.
 The callback consumes owner/session-bound state, reauthorizes the saved thread,
@@ -179,7 +183,7 @@ Unreadable credentials return `status:"reconnect_required"`, no effective access
 and `recovery_required:true`; the owner can reconnect or clear the saved connection.
 
 `DELETE /api/google/connection/:connection_id/services/:service` revokes only that
-service in Bud. `DELETE /api/google/connection/:connection_id` disconnects the shared
+service in Bud. `DELETE /api/google/connection/:connection_id` disconnects the selected
 account. Both authorize the viewer and require a trusted Origin for cookie requests;
 foreign connections return 404. Service revocation invalidates pending OAuth state,
 so a stale callback cannot re-enable it. Settings reconnect is explicit.

@@ -204,8 +204,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.addHook("onReady", async () => {
     if (googleConfigured()) {
       readGoogleEncryptionKey();
-await pool.query("select id, status, encrypted_credentials, oauth_state_hash, grant_epoch, refresh_lease_until from google_connection limit 0");
+      await pool.query("select id, status, encrypted_credentials, oauth_state_hash, grant_epoch, refresh_lease_until from google_connection limit 0");
       await pool.query("select file_key, holder, created_by_user_id, expires_at from google_drive_write_lease limit 0");
+      // An unmigrated owner-only constraint rejects a second Google account.
+      await pool.query("select 'google_connection_owner_subject_key'::regclass");
     }
     releaseInvocationMode = await acquireInvocationMode(pool, invocationSettings.mode, () => {
       server.log.error("Invocation mode database session lost; stopping service");

@@ -10,8 +10,8 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ### `connected-apps/` → [connected-apps.spec.md](./connected-apps/connected-apps.spec.md)
 
-Owner-scoped Calendar, Gmail and Drive consent, task-specific access cards and
-per-service revocation controls in Settings and chat, separate from sign-in providers.
+Calendar, Gmail and Drive consent across a viewer’s saved Google accounts,
+with account-specific chat cards and per-account service controls in Settings.
 
 ### `browser/` → [browser/browser.spec.md](./browser/browser.spec.md)
 

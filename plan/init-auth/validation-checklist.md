@@ -826,3 +826,10 @@ no new rows, row stamps or private media authority.
 New budget reads use requireAuthorizedThreadAccess before runtime/context work.
 Pending hints carry kinds only on the already-authorized thread stream. This does
 not implement Phase 5 account disablement or immediate credential revocation.
+
+
+## Multiple Google accounts
+
+- [ ] With two Bud users signed in, try another viewer's connection ID for inventory-dependent discovery, targeted consent, service revocation and account removal. Expect owner-filtered inventory and 404 for the foreign ID.
+- [ ] Connect two Google identities under one Bud user. Cancel one consent flow while completing the other and verify that each address retains its own service permissions.
+- [ ] With both identities connected to the same service, verify the requested account in chat, then revoke it and repeat a read on the other account.

@@ -83,6 +83,7 @@ function loadJsonViewComponent() {
 }
 
 type ChatTimelineProps = {
+  threadId?: string
   messages: ChatMessage[]
   notices?: ChatTimelineNotice[]
   /** The active run's turn id (`agentState.active ? turn_id : null`); keeps its work group live. */
@@ -109,6 +110,7 @@ type ChatTimelineProps = {
 }
 
 const ChatTimelineComponent = ({
+  threadId,
   messages,
   notices = [],
   liveTurnId = null,
@@ -381,6 +383,7 @@ const ChatTimelineComponent = ({
         return (
           <ChatTimelineMessage
             key={item.row.message.client_id}
+            threadId={threadId}
             message={item.row.message}
             userName={userName}
             JsonView={JsonView}
@@ -430,6 +433,7 @@ const capitalize = (label: string): string =>
   label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label
 
 type ChatTimelineMessageProps = {
+  threadId?: string
   workOwner?: string
   message: ChatMessage
   userName: string | null
@@ -444,6 +448,7 @@ type ChatTimelineMessageProps = {
 }
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
+  threadId,
   workOwner,
   message,
   userName,
@@ -534,10 +539,10 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   }
 
   const googleRequest = googleConnectRequest(payload)
-  if (googleRequest) {
+  if (googleRequest && threadId === googleRequest.thread_id) {
     return <div className={TRANSCRIPT_COLUMN_CLASSES}>
       <div className="border-l-[3px] border-transparent px-4 py-2.5">
-        <GoogleConnectCard threadId={googleRequest.thread_id} service={googleRequest.service} access={googleRequest.access} />
+        <GoogleConnectCard threadId={threadId} messageId={message.client_id} service={googleRequest.service} access={googleRequest.access} connectionId={googleRequest.connection_id} addAccount={googleRequest.add_account} />
       </div>
     </div>
   }

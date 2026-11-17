@@ -3,89 +3,118 @@ import { CalendarDays, Check, Mail, FolderOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { apiFetchJson } from '@/lib/transport'
-import { GOOGLE_SERVICES, googleAccess, hasGoogleAccess, type GoogleAccess, type GoogleInventory, type GoogleService } from './google-services'
+import { googleCallbackNotice, googleCardCallback, googleConsentUrl, rememberConsentCard } from './google-consent'
+import { GOOGLE_SERVICES, googleAccess, googleAccessLabel, googleAccountLabel, hasGoogleAccess, type GoogleAccess, type GoogleInventory, type GoogleService } from './google-services'
 
-type Props = { threadId: string; service: GoogleService; access: GoogleAccess }
+type Props = { threadId: string; service: GoogleService; access: GoogleAccess; connectionId?: string; addAccount?: true; messageId?: string }
+const ADD_ACCOUNT = 'add'
+
 export function GoogleConnectCard(props: Props) {
   const { currentUser } = useAuthSession()
-  return currentUser ? <ConnectionCard key={`${currentUser.user.id}:${props.threadId}:${props.service}:${props.access}`} {...props} /> : null
+  if (!currentUser) return null
+  const key = JSON.stringify([currentUser.user.id, props.threadId, props.messageId, props.service, props.access, props.connectionId, props.addAccount])
+  return <ConnectionCard key={key} cardKey={props.messageId ? key : undefined} {...props} />
 }
-function ConnectionCard({ threadId, service, access }: Props) {
+function ConnectionCard({ threadId, service, access, connectionId, addAccount, cardKey }: Props & { cardKey?: string }) {
   const { name, shortName, readDescription, fullDescription } = GOOGLE_SERVICES[service]
   const Icon = service === 'gmail' ? Mail : service === 'drive' ? FolderOpen : CalendarDays
-  const [inventory, setInventory] = useState<GoogleInventory | null>(null)
+  const [checked, setChecked] = useState<{ inventory: GoogleInventory; callback: ReturnType<typeof googleCardCallback> } | null>(null)
+  const inventory = checked?.inventory
+  const callback = checked?.callback
+  const [choice, setChoice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [revision, setRevision] = useState(0)
   const visit = useRef<AbortController | null>(null)
   const consent = useRef<'idle' | 'requesting' | 'redirecting'>('idle')
-  const [callbackStatus] = useState(() => new URLSearchParams(window.location.search).get('google'))
+  const returnReceipt = useRef<ReturnType<typeof googleCardCallback> | null>(null)
+  const callbackNotice = googleCallbackNotice(callback?.status ?? null)
   useEffect(() => {
-    const abort = new AbortController(); visit.current = abort
+    visit.current = new AbortController()
     const refresh = () => setRevision(value => value + 1)
     const restore = (event: PageTransitionEvent) => {
       if (!event.persisted) return
-      if (consent.current === 'redirecting') {
-        consent.current = 'idle'
-        setPending(false)
-      }
-      setInventory(null)
+      visit.current?.abort()
+      visit.current = new AbortController()
+      if (consent.current === 'redirecting') rememberConsentCard()
+      consent.current = 'idle'
+      setPending(false)
+      setChecked(null)
       setError(null)
       refresh()
     }
     window.addEventListener('focus', refresh)
     window.addEventListener('pageshow', restore)
     return () => {
-      abort.abort()
+      visit.current?.abort()
       window.removeEventListener('focus', refresh)
       window.removeEventListener('pageshow', restore)
     }
   }, [])
   useEffect(() => {
     const abort = new AbortController()
+    const callback = returnReceipt.current ??= googleCardCallback(cardKey)
     apiFetchJson<GoogleInventory>('/api/google/connection', { signal: abort.signal })
-      .then(value => { if (!abort.signal.aborted) { setInventory(value); setError(null) } })
-      .catch(() => { if (!abort.signal.aborted) setError(`Could not check your ${name} connection. Try again.`) })
+      .then(value => { if (!abort.signal.aborted) { setChecked({ inventory: value, callback }); setError(null) } })
+      .catch(() => { if (!abort.signal.aborted) { setChecked(null); setError(`Could not check your ${name} connection. Try again.`) } })
     return () => abort.abort()
-  }, [revision, name])
+  }, [revision, name, cardKey])
+
+  const accounts = inventory?.connections ?? []
+  // Server-targeted evidence stays bound even after the account is removed.
+  const soleAccount = accounts.length === 1 && !callback?.returned ? accounts[0].connection_id : ''
+  const initialId = addAccount && callback?.status === 'connected' && !callback.connectionId ? ADD_ACCOUNT : soleAccount
+  const unboundId = accounts.length === 0 ? ADD_ACCOUNT : choice ?? callback?.connectionId ?? initialId
+  const newAccountOnly = addAccount && callback?.status !== 'connected' && callback?.status !== 'account_already_connected'
+  const selectedId = newAccountOnly ? ADD_ACCOUNT : connectionId ?? unboundId
+  const account = accounts.find(item => item.connection_id === selectedId)
+  const adding = selectedId === ADD_ACCOUNT && !connectionId
+  const ready = account && hasGoogleAccess(account, service, access)
+  const canConnect = inventory?.configured && !ready && (account || adding)
   async function connect() {
     const abort = visit.current
-    if (!abort || abort.signal.aborted || consent.current !== 'idle') return
+    if (!abort || abort.signal.aborted || consent.current !== 'idle' || !canConnect) return
     consent.current = 'requesting'; setPending(true); setError(null)
     try {
-      const result = await apiFetchJson<{ authorization_url: string }>('/api/google/connect', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thread_id: threadId, selections: [{ service, access }] }), signal: abort.signal,
-      })
+      const url = await googleConsentUrl(service, access, abort.signal, account?.connection_id, threadId)
       if (!abort.signal.aborted) {
+        rememberConsentCard(cardKey, account?.connection_id)
         consent.current = 'redirecting'
-        window.location.assign(result.authorization_url)
+        window.location.assign(url)
       }
     } catch {
       if (!abort.signal.aborted) { consent.current = 'idle'; setPending(false); setError('Could not start the connection. Try again.') }
     }
   }
-  const connection = inventory?.connections.find(item => hasGoogleAccess(item, service, access))
-  const upgrade = access === 'read_write' && inventory?.connections.some(item => googleAccess(item, service) === 'read_only')
-  const recoveryRequired = inventory?.connections.some(item => item.recovery_required)
+  const reconnect = account?.status === 'reconnect_required'
+  const upgrade = account && googleAccess(account, service) === 'read_only' && access === 'read_write'
   return <section aria-label={`${name} connection`} className="max-w-lg rounded-xl border-2 border-border bg-card p-4 shadow-[2px_2px_0px_var(--border)]">
     <div className="flex items-center gap-2 font-semibold"><Icon className="size-5 shrink-0" aria-hidden="true" />{access === 'read_only' ? `Read ${shortName}` : `Full ${shortName} access`}</div>
-    {connection ? <div role="status" className="mt-3 text-sm">
-      <p className="flex items-center gap-2"><Check className="size-4 shrink-0" aria-hidden="true" />Connected{connection.email ? ` as ${connection.email}` : ''}</p>
-      <p className="mt-2 text-muted-foreground">Send a message to continue your request.</p>
-    </div> : <>
-      <p className="mt-2 text-sm text-muted-foreground">{access === 'read_only' ? readDescription : fullDescription} You’ll return to this chat after connecting.</p>
-      {recoveryRequired && <p role="status" className="mt-2 text-sm">Your saved Google connection needs to be reconnected.</p>}
-      {upgrade && <p className="mt-2 text-sm">Read access is connected. This request needs full access.</p>}
-      {!inventory && !error && <p role="status" className="mt-3 text-sm">Checking connection…</p>}
-      {inventory && !inventory.configured && <p role="status" className="mt-3 text-sm">{name} is awaiting app setup.</p>}
-      {inventory?.configured && <>
-        {callbackStatus === 'failed' && <p role="status" className="mt-3 text-sm">Connection wasn’t completed. You can try again.</p>}
-        {callbackStatus === 'permissions_required' && <p role="status" className="mt-3 text-sm">The requested access was not fully granted. You can try again.</p>}
-        {callbackStatus === 'account_mismatch' && <p role="status" className="mt-3 text-sm">Choose the Google account you already connected to Bud. Your previous connection is unchanged.</p>}
-        <Button type="button" className="mt-3" disabled={pending} onClick={() => void connect()}>
-          {pending ? 'Connecting…' : upgrade ? `Upgrade ${shortName} access` : `Connect ${shortName}`}
-        </Button>
+    {!inventory && !error && <p role="status" className="mt-3 text-sm">Checking connection…</p>}
+    {inventory && <>
+      {!ready && <p className="mt-2 text-sm text-muted-foreground">{access === 'read_only' ? readDescription : fullDescription}</p>}
+      {!connectionId && !newAccountOnly && accounts.length > 0 && <label className="mt-3 block text-sm">Google account
+        <select className="mt-1 block w-full rounded border border-border bg-background px-2 py-1.5" disabled={pending}
+          value={account || adding ? selectedId : ''} onChange={event => { setChoice(event.target.value); setError(null) }}>
+          <option value="" disabled>Choose an account</option>
+          {accounts.map(item => <option key={item.connection_id} value={item.connection_id}>{googleAccountLabel(item)} · {googleAccessLabel(googleAccess(item, service))}</option>)}
+          {inventory.configured && <option value={ADD_ACCOUNT}>Add Google account</option>}
+        </select>
+      </label>}
+      {connectionId && account && !ready && <p className="mt-2 break-all text-sm">{googleAccountLabel(account)}</p>}
+      {connectionId && !account && <p role="status" className="mt-3 text-sm">This Google account is no longer connected. Ask Bud to use another account.</p>}
+      {ready && <div role="status" className="mt-3 text-sm">
+        <p className="flex items-center gap-2 break-all"><Check className="size-4 shrink-0" aria-hidden="true" />Connected as {googleAccountLabel(account)}</p>
+        <p className="mt-2 text-muted-foreground">{accounts.length > 1 ? `Send a message naming ${googleAccountLabel(account)} to continue your request.` : 'Send a message to continue your request.'}</p>
+      </div>}
+      {!ready && <>
+        {reconnect && <p className="mt-2 text-sm">This account needs to be reconnected.</p>}
+        {upgrade && <p className="mt-2 text-sm">This account has read access. Your request needs full access.</p>}
+        {!inventory.configured && <p role="status" className="mt-3 text-sm">{name} is awaiting app setup.</p>}
+        {callbackNotice && <p role="status" className="mt-3 text-sm">{callbackNotice}</p>}
+        {canConnect && <Button type="button" className="mt-3" disabled={pending} onClick={() => void connect()}>
+          {pending ? 'Connecting…' : adding ? 'Add Google account' : reconnect ? `Reconnect ${shortName}` : upgrade ? `Upgrade ${shortName} access` : `Connect ${shortName}`}
+        </Button>}
       </>}
     </>}
     {error && <div role="alert" className="mt-3 text-sm"><p>{error}</p>
