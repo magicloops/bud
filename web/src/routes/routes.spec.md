@@ -190,6 +190,9 @@ Authenticated account settings route.
 - Edits the Bud-owned `profile.username` via `PATCH /api/me/profile`
 - Shows provider-backed avatar with initials fallback
 - Shows linked-account state for GitHub and Google
+- Composes owner-keyed `ConnectedAppsSettings` for direct Google Calendar grants, separately from
+  login providers. Connect/reconnect/disconnect use authenticated owner-scoped
+  service routes; OAuth credentials never enter the browser inventory.
 - Settings cards use one compact section heading, without a repeated title below it.
 - The page background matches the thread panel's secondary tint; account identity has no pill, and the borderless username input retains a screen-reader label and keyboard focus ring.
 - Starts explicit provider linking through Better Auth client actions

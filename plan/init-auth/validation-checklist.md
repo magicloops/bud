@@ -1,5 +1,75 @@
 # Auth Validation Checklist
 
+## Direct Google Calendar
+
+- [x] Isolated PostgreSQL + injected-viewer HTTP fixtures: owner-filtered inventory,
+  anonymous 401, foreign connection 404 and hostile Origin 403.
+- [x] OAuth fixture: owner/session binding, single-use state, expiry, PKCE,
+  fixed Google destinations, encrypted restart persistence and no cross-user tokens.
+- [x] Concurrent use/disconnect fixture: completed disconnect removes credentials
+  and cannot be undone by the earlier in-flight connection operation.
+- [x] Agent fixtures: no legacy/automated/foreign dispatch; ownership loss withholds
+  evidence; uncertain writes stop with unresolved action and no trailing calls.
+- [x] Local signed-in Settings renders the configured Google Calendar card and
+  Connect button; anonymous inventory requests return 401 through Vite.
+- [x] Chat-connect injected-route/isolated-DB fixtures reject foreign/deleted return
+  threads and hostile Origin, bind encrypted return context to validated state,
+  consume it once and reauthorize callback destinations. Arbitrary URLs are rejected.
+- [x] Mounted chat fixtures fence owner/thread/unmount races, require explicit
+  click for OAuth, and verify connection from inventory rather than URL status.
+- [x] User confirmed real Calendar listing with a different email from Bud login.
+- [ ] Real disconnected-account chat consent/denial/return, including two signed-in
+  accounts and thread deletion during consent; fixture auth does not prove this gate.
+- [ ] Real Google two-account consent, refresh/restart, revocation and account switch.
+- [ ] Real Calendar read/create/edit/delete against test data, including service
+  restart, consent denial and revoked Google permission.
+
+Connections belong to the authenticated user, independent of device/thread.
+Routes resolve requireViewer before SQL; agent calls derive owner from the human
+invocation and recheck matching live thread/Bud ownership. Rows stamp owner and
+nullable tenant. OAuth tokens never enter browser inventory or model evidence.
+
+## Gmail and Drive incremental access
+
+- [x] Isolated PostgreSQL/Google fixtures: service grants checked independently,
+  existing Calendar retained during canceled/partial consent, different Google
+  subject rejected, existing refresh token reused only for the verified same account.
+- [x] Owned connection/return-thread and Origin checks apply to Gmail/Drive starts;
+  unsupported service names and foreign connections cannot dispatch.
+- [x] Gmail MIME rejects header/sender injection; Drive inputs cannot select an
+  arbitrary account, HTTP host or local path. No automatic mutation retry.
+- [x] Mounted web tests: all three cards remain outside Worked; Calendar-only
+  access cannot mark Gmail/Drive connected; owner/thread/service changes and
+  unmount fence obsolete requests/navigation. Account-wide disconnect is explicit.
+- [ ] Real two-account Gmail/Drive consent, refresh, revocation and chat return.
+- [ ] Real test-mail draft/send/reply/labels/trash and test-file upload/read/edit/
+  move/trash/restore. Hosted enablement and public OAuth verification remain pending.
+
+No new tables/routes: ownership and stamps remain those of google_connection and
+the human invocation/thread. Readable mail/file evidence enters the normal owned
+transcript and selected model; credentials remain service-only. See
+[setup and limits](../../docs/google-services.md).
+
+## Google task consent and service revocation
+
+- [ ] Two-account cookie/bearer checks: inventory exposes only the viewer's effective
+  service grants; per-service revoke returns anonymous 401 and foreign-connection
+  404, with missing/hostile cookie Origin rejected before mutation.
+- [ ] Task cards request exactly read-only or read/write access, bind the owned
+  return thread, and discard late responses on account/thread changes.
+- [ ] Canceled/partial upgrades retain existing service access; read-only consent
+  cannot authorize a mutation, and OAuth callbacks never dispatch the task.
+- [ ] Revoke one service and verify its tool calls fail before Google dispatch,
+  including in-flight consent/refresh races, while other services remain usable.
+- [ ] Explicit reconnect restores only the selected service/access; account-wide
+  disconnect still removes all credentials. Verify no tokens enter inventory,
+  chat cards, transcript or provider evidence.
+
+Connections belong to the authenticated user. New revoke writes resolve the viewer
+before owner-filtered SQL and serialize with credential changes; no client-supplied
+owner is trusted. Existing connection owner/tenant stamps remain unchanged. Agent
+calls recheck the live thread/Bud owner and effective grant before dispatch.
+
 ## Production browser capture/takeover reliability — October 13
 
 - [x] Local media fences retire idle sockets even with silent peers and coalesced

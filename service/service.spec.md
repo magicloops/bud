@@ -36,6 +36,7 @@ Package manifest:
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `fastify` | ^4.28.1 | HTTP framework |
+| `google-auth-library` | 10.9.1 | Direct Google OAuth code exchange and refresh |
 | `@fastify/websocket` | ^10.0.1 | WebSocket support |
 | `@grpc/grpc-js` | ^1.14.3 | Native gRPC over HTTP/2 daemon gateway |
 | `@grpc/proto-loader` | ^0.7.15 | Dynamic protobuf loading for the isolated daemon gateway |

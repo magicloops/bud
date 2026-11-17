@@ -8,6 +8,11 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ## Subfolders
 
+### `connected-apps/` → [connected-apps.spec.md](./connected-apps/connected-apps.spec.md)
+
+Owner-scoped Calendar, Gmail and Drive consent, task-specific access cards and
+per-service revocation controls in Settings and chat, separate from sign-in providers.
+
 ### `browser/` → [browser/browser.spec.md](./browser/browser.spec.md)
 
 Bud-owned remote browser viewer, imperative bounded canvas/media lifecycle,

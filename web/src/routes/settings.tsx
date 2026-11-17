@@ -1,4 +1,5 @@
 import { SettingsNavigation } from '@/components/settings-layout'
+import { ConnectedAppsSettings } from '@/features/connected-apps/settings'
 import { Chrome, Github, Loader2, LogOut, Save } from 'lucide-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -235,6 +236,7 @@ function SettingsView() {
           </section>
 
           <div className="flex flex-col gap-6">
+            <ConnectedAppsSettings key={currentUser.user.id} />
             <section className="rounded-xl border-2 border-border bg-card p-6 shadow-[2px_2px_0px_var(--border)]">
               <div className="space-y-2">
                 <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">

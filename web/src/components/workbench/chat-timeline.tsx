@@ -1,4 +1,6 @@
 import { BrowserHandoffContent } from '@/components/message-renderers/tools/browser-handoff'
+import { GoogleConnectCard } from '@/features/connected-apps/google-connect-card'
+import { googleConnectRequest } from '@/features/connected-apps/google-connect-request'
 import { resolveToolPayload } from './tool-payload'
 import { Link } from '@tanstack/react-router'
 import { memo, type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -527,6 +529,15 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     return <div className={TRANSCRIPT_COLUMN_CLASSES}>
       <div className="border-l-[3px] border-transparent px-4 py-2.5">
         <BrowserHandoffContent payload={payload} />
+      </div>
+    </div>
+  }
+
+  const googleRequest = googleConnectRequest(payload)
+  if (googleRequest) {
+    return <div className={TRANSCRIPT_COLUMN_CLASSES}>
+      <div className="border-l-[3px] border-transparent px-4 py-2.5">
+        <GoogleConnectCard threadId={googleRequest.thread_id} service={googleRequest.service} access={googleRequest.access} />
       </div>
     </div>
   }

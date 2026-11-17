@@ -85,6 +85,9 @@ Node-runner coverage for transcript reconciliation rules.
 Agent-work projection under [web/mobile parity](../../../../plan/web-mobile-streaming-parity.md).
 Raw messages remain canonical; presentation collects contiguous work by turn while
 preserving user, final, question, pending approval and compaction boundaries.
+Canonical Calendar, Gmail and Drive connection requests also stay top-level after final
+and reload, so a user can connect without expanding Worked. Recognition uses the
+connected-apps structured-payload helper; no display text is parsed.
 
 - `live` identifies active execution; `canFold` independently requires a nonempty
   explicitly final assistant message whose streaming has completed. Idle is not final.
