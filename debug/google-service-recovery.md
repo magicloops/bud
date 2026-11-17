@@ -107,3 +107,23 @@ The separate Google run enabled its PostgreSQL tests and passed all 48.
 Full web validation passed 285 pure tests and 125 mounted tests. Both service
 and web production builds passed. The mobile fallback was verified through the executor and
 transcript replay. OAuth and provider traffic in these tests used fixtures.
+
+## Concurrent edits after PR 185
+
+On the merged PR 182 branch at 9b7f408, two Bud chats can read the same Drive file
+version before either PATCH arrives. Both edits then report success and the
+second can replace the first. A second reproduction holds a Calendar write at
+its dispatch checkpoint, refreshes to read-only access in a different call, and
+then releases the write. Bud sends it using the original token because the
+grant epoch did not change. Both reproductions used local PostgreSQL and a
+simulated provider. The [concurrency plan](../plan/google-connection-concurrency.md)
+covers the fixes and regression tests.
+
+Validation used two service instances and a one-client PostgreSQL pool with
+simulated Google responses. Competing writers to the same Drive file, including
+a different collaborator, could not both dispatch. A late metadata response
+also stopped before dispatch. Unrelated files and reads remained available.
+A refresh to read-only allowed a Calendar read and stopped the pending write.
+The service build passed. With BUD_DATA_DB_TEST=1 and DEFAULT_MODEL=gpt-5.6-luna,
+the full service suite passed 995 tests with one skipped. The 0070 to 0071
+migration preserved an existing connection. Google-enabled readiness passed.

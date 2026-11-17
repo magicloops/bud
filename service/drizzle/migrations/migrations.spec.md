@@ -12,6 +12,13 @@ earlier 0070 takes the columns with `pnpm db:push`. Deploy with `pnpm db:migrate
 matching service and web builds.
 See [setup](../../../docs/google-calendar.md) and [debug note](../../../debug/google-direct-oauth.md).
 
+### `0071_google_drive_write_lease.sql`
+
+Creates the internal Drive file reservation table keyed by hashed file ID,
+with a holder, acting user, nullable tenant and indexed expiration time.
+Apply with `pnpm db:migrate` before deploying the service that reserves files
+for edits. Existing Google grants need no backfill.
+
 ### `0048_lush_timeslip.sql`
 
 Generated additive thread-creation receipt table, owner/key uniqueness, fingerprint
@@ -288,7 +295,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0070` currently)
+- Snapshot files for each migration (`0000` through `0071` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 

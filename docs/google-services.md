@@ -1,10 +1,9 @@
 # Gmail and Google Drive access
 
 This extends [Calendar](./google-calendar.md) using the same Google OAuth client,
-callback, encrypted connection row and human-chat tools. No MCP server, bucket,
-new environment variables, dependencies or migration are needed beyond Calendar's
-`0070_google_connections.sql`. Deploy the matching service and web builds together;
-no daemon upgrade is needed. The daemon can be offline for these Google tools.
+callback, encrypted connection row and human-chat tools. Apply
+`0070_google_connections.sql` and `0071_google_drive_write_lease.sql` before the service update.
+Deploy the matching service and web builds together. The daemon can be offline for these Google tools.
 
 ## What the Google Cloud project owner needs to do
 
@@ -77,9 +76,11 @@ with explicit truncation/omission metadata and bounded omitted-message IDs for
 follow-up reads using `gmail_get_message`.
 
 Drive edits require the last-read `version`, checked by a fresh metadata read
-before dispatch. This detects an already changed file; it is **not an atomic
-compare-and-swap** with other Drive clients. Changes in the read/write interval
-can still race. Native content replacement is rejected by that preflight.
+before dispatch. Bud coordinates edits to the same file across chats and service
+instances. If an overlapping edit returns `google_busy`, read the latest version
+before trying again. Reads and edits to other files can proceed. An external
+Drive client can still change the file between the version check and Google's
+update. The preflight also rejects content replacement for native files.
 Content replacement preserves the existing Drive media type unless a type is
 explicitly supplied. Calendar retains its documented If-Match/etag behavior.
 Unknown send/upload/write outcomes stop for review and are never automatically
@@ -133,7 +134,9 @@ consent or **Clear saved connection** using the existing account DELETE endpoint
 
 `google_search_tools` accepts `service`, task-required `access` and `query`.
 `google_call` executes only reviewed server-defined tools; the connection boundary
-checks the operation's required access against both selected access and actual scopes.
+checks the operation's required access against both selected access and the latest
+stored Google scopes immediately before each request. A pending write stops if a
+refresh has reduced that service to read-only.
 A missing grant returns `connect_request` with provider `google_calendar`,
 `google_gmail` or `google_drive`, the owned thread ID and exact required `access`.
 When chat is opened on a native client, Bud can provide the web URL of the same

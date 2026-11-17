@@ -25,12 +25,9 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
 - `connections.ts`: one google_connection row per Bud user (migration 0070),
   owner-filtered SQL, session-bound single-use state, 10-minute consent expiry,
   45s provider operation deadline and four admitted provider operations per owner/process.
-  Short SQL transactions claim a time-limited operation in the encrypted envelope.
-  Competing calls wait outside the database pool. OAuth exchange, refresh, Google
-  requests and invocation checkpoints run without a checked-out SQL client.
-  Before dispatch and when saving results, the encrypted envelope identifies the
-  current owner of the operation across replicas. A stale completion cannot
-  restore a disconnected or replaced grant.
+  OAuth exchange, token refresh, API requests and invocation checkpoints run
+  without a checked-out SQL client. The grant epoch identifies consent changes
+  across replicas, and the final dispatch check also reads current scopes.
   Incremental consent preserves previous grants until successful same-subject
   exchange with at least one selected service granted; canceled/denied/wrong-account
   consent cannot overwrite them. A replacement grant can omit revoked old scopes;
@@ -67,7 +64,7 @@ Direct Google OAuth and Calendar/Gmail/Drive tools for owner-scoped human chats.
   Decoded uploads cap at 24,000 bytes; Docs/Slides export plain text, Sheets CSV
   exports the first sheet only. No native-document content edits, PDF/image parsing,
   large transfers, sharing changes or permanent deletion. Version preflight catches
-  already-stale edits and supplies the existing media type for a content replacement when the caller omits it. It cannot eliminate a change between read and write.
+  already-stale edits and supplies the existing media type for a content replacement when the caller omits it. A shared file reservation protects overlapping Bud writes. Changes from external Drive clients can still race the update.
 - `agent-tools.ts`: google_search_tools(service, access, query) and google_call discovery/
   execution. Omitted and null discovery arguments default to Calendar and read-only access.
 - `agent-executor.ts`: reviewed catalog, service grant gating, human invocation
@@ -115,13 +112,17 @@ write-policy switch; user-request and uncertain-outcome handling remain unchange
 ## Concurrency
 
 Design: [options](../../../design/google-connection-concurrency.md),
-[plan](../../../plan/google-connection-concurrency.md). There is no operation
-lease, and calls for one account run together (at most four per owner per process).
+[plan](../../../plan/google-connection-concurrency.md). Calls for one account run
+together, up to four per owner per process.
 
-- Only the connection row is protected. Every write is `edit`: read the current
-  row under `FOR UPDATE NOWAIT`, change it, save. The change is local work only,
-  never a request to Google. A locked row is retried for two seconds without
+- For connection changes, `edit` locks the current row with `FOR UPDATE NOWAIT`
+  and saves the local change. A locked row is retried for two seconds without
   holding a pool client, then fails as retryable `google_busy`.
+- A Drive edit reads the file metadata with the caller's Google token. Before
+  sending the mutation, Bud claims the file in `google_drive_write_lease` using
+  a hash of the file ID. A competing claim or a write that finished after the
+  metadata read began invalidates that read. An uncertain provider result keeps
+  its reservation until expiry. No SQL transaction spans a Google request.
 - `grant_epoch` rises when authorization changes: a completed grant, a service
   revoke, a disconnect, a move to `reconnect_required`, cleared unreadable
   credentials, or a changed OAuth client. A token refresh does not raise it.
@@ -129,7 +130,9 @@ lease, and calls for one account run together (at most four per owner per proces
   preflight and dispatch, after the invocation and ownership checks, it compares
   the epoch. If it changed the request is not sent: the call reports the missing
   access when access is gone, and otherwise retryable `google_connection_changed`
-  (the account may differ from the one the request was prepared for).
+  (the account may differ from the one the request was prepared for). Each request
+  also checks current Google scopes against its service and required access. This
+  catches a downgrade during token refresh even when the epoch is unchanged.
 - A refresh happens once however many calls or service instances need it. Callers
   in one process share one attempt. Across instances, the one that sets
   `refresh_lease_until` (30 s on the database's clock, longer than a refresh can
@@ -144,14 +147,13 @@ lease, and calls for one account run together (at most four per owner per proces
   shared refresh, which carries on for the others. The result is saved
   onto the current row only if the epoch is unchanged, so it cannot undo a
   disconnect or drop a pending connect flow. This lease covers the token request
-  only: calls never wait on each other.
+  only.
 - The OAuth callback consumes its state in one edit, exchanges the code outside any
   transaction, and applies the grant in a second edit only if the epoch is
   unchanged. A newer connect flow that began meanwhile stays pending and falls
   back to that grant.
 - A call or exchange is cut off after 45 seconds (`google_operation_timed_out`,
-  retryable; a write already sent is still reported as unknown). Nothing is
-  checked after Google has answered.
+  retryable; a write whose outcome is uncertain is reported as unknown).
 
 ## Validation and rollout
 
@@ -168,8 +170,8 @@ and consent-time URL validation. Recovery regressions cover key changes, missing
 old scopes, repeated temporary refresh errors, cross-owner concurrency and large
 Gmail threads. See [recovery plan](../../../plan/google-service-recovery.md).
 
-Deploy matching service/web builds after `0070_google_connections.sql`, generated from main’s
-`0069_motionless_reaper` snapshot. Keep the stable encryption key across replicas/restarts.
+Apply `0070_google_connections.sql` and `0071_google_drive_write_lease.sql` before
+deploying the matching service/web builds. Keep the stable encryption key across replicas/restarts.
 The Google project owner must enable Gmail/Drive APIs and register the added
 restricted scopes; each task card requests the selected service and access level. Public verification/security
 assessment is separate from test-user setup.

@@ -287,3 +287,12 @@ instance's refresh waits for that instance's token. `connections.test.ts` passes
   and the grant is left alone.
 
 Tests: `connections.test.ts` passes 29; each new test fails on the commit before its fix.
+
+## Guard concurrent writes
+
+Run two Bud edits against the same Drive file version and verify that at most one
+mutation proceeds. Keep unrelated files and reads concurrent. At the existing
+dispatch checkpoint, recheck the current Google scopes so a refresh that removed
+write access also stops writes waiting in other calls. Cover both cases with
+controlled interleavings against PostgreSQL, then run the Google and service suites.
+Update the Google spec and the Drive guide with the resulting behavior.

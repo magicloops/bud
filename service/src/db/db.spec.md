@@ -16,6 +16,13 @@ revocation clears pending OAuth state. Inventory filters by owner in SQL.
 Generated migration replaces the unshipped MCP prototype; reviewed SQL applied
 locally while preserving file-upload tables. See debug/google-direct-oauth.md.
 
+`googleDriveWriteLeaseTable` / `google_drive_write_lease` (0071) coordinates
+Bud writes to a shared Drive file across service instances. Its primary key
+is the SHA-256 hash of the Drive file ID. Each claim stores the holder,
+acting Bud user, nullable tenant and database expiry. Keeping the owner stamp
+independent of the auth user row lets an in-flight reservation survive account
+deletion. Access to file contents still requires the caller's own Google grant.
+
 ## Atomic opening-message receipt
 
 `thread_creation_receipt` reserves `(created_by_user_id, creation_key)` durably.

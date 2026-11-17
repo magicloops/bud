@@ -36,8 +36,10 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
   await pool.query(`create schema ${namespace}`);
   t.after(async () => { await pool.query(`drop schema ${namespace} cascade`); await pool.end(); });
   await pool.query("create table fixture_user(id text primary key); insert into fixture_user values ('alice'),('bob'),('carol'),('dave'),('erin'),('frank'),('grace'),('heidi'),('ivan'),('transient'),('limited'),('other')");
-  const migration = await readFile(new URL("../../drizzle/migrations/0070_google_connections.sql", import.meta.url), "utf8");
-  await pool.query(migration.replaceAll('"auth"."user"', `"${namespace}"."fixture_user"`));
+  for (const filename of ["0070_google_connections.sql", "0071_google_drive_write_lease.sql"]) {
+    const migration = await readFile(new URL(`../../drizzle/migrations/${filename}`, import.meta.url), "utf8");
+    await pool.query(migration.replaceAll('"auth"."user"', `"${namespace}"."fixture_user"`));
+  }
   const database = drizzle(pool, { schema }), fixture = googleFixture(), key = randomBytes(32);
   const factory = () => new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, fixture.fetcher), fixture.fetcher);
   let manager = factory();
@@ -578,6 +580,108 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
   const instance = (oauthFetch: typeof fetch, api: typeof fetch = fixture.fetcher) =>
     new GoogleConnections(fixture.config, database, () => key, new GoogleOAuth(fixture.config, oauthFetch), api);
 
+  await t.test("two service instances cannot apply the same Drive file version while unrelated work continues", async () => {
+    const owner = "alice";
+    const { connection_id: id } = await grantWith(manager, owner, [{ service: "drive", access: "read_write" }]);
+    const collaborator = await grantWith(manager, "other", [{ service: "drive", access: "read_write" }]);
+    const versions = new Map([["shared", 1], ["unrelated", 1]]);
+    const writes: string[] = [];
+    const stalled = gate();
+    let holdFirstPatch = true;
+    const drive: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const file = new URL(req.url).pathname.split("/").at(-1)!;
+      const version = versions.get(file);
+      assert.ok(version, `unexpected Drive file ${file}`);
+      if (req.method === "PATCH") {
+        if (file === "shared" && holdFirstPatch) {
+          holdFirstPatch = false;
+          stalled.enter();
+          await stalled.held;
+        }
+        writes.push(file);
+        versions.set(file, version + 1);
+      }
+      return Response.json({ id: file, version: String(versions.get(file)), mimeType: "text/plain" });
+    };
+    const first = instance(fixture.fetcher, drive), second = instance(fixture.fetcher, drive);
+    const rename = DRIVE_TOOLS.find(tool => tool.name === "drive_update_file")!;
+    const shared = rename.prepare({ file_id: "shared", expected_version: "1", name: "Renamed" }, "rename");
+    const trash = DRIVE_TOOLS.find(tool => tool.name === "drive_trash_file")!
+      .prepare({ file_id: "shared", expected_version: "1" }, "trash");
+    const pending = first.call(owner, id, shared, signal, async () => {}, "drive");
+    await stalled.entered;
+    try {
+      for (const [user, connection] of [[owner, id], ["other", collaborator.connection_id]]) {
+        await assert.rejects(second.call(user, connection, trash, AbortSignal.timeout(2000), async () => {}, "drive"),
+          error => error instanceof GoogleError && error.code === "google_busy" && error.retryable);
+      }
+      assert.deepEqual(writes, []);
+
+      const metadata = DRIVE_TOOLS.find(tool => tool.name === "drive_get_file")!.prepare({ file_id: "shared" }, "read");
+      const unrelated = rename.prepare({ file_id: "unrelated", expected_version: "1", name: "Independent" }, "rename-other");
+      assert.equal((await second.call(owner, id, metadata, AbortSignal.timeout(2000), async () => {}, "drive")).version, "1");
+      assert.equal((await second.call(owner, id, unrelated, AbortSignal.timeout(2000), async () => {}, "drive")).version, "2");
+    } finally {
+      stalled.open();
+      await pending;
+    }
+    await assert.rejects(second.call(owner, id, trash, signal, async () => {}, "drive"), /google_file_changed/);
+    assert.deepEqual(writes, ["unrelated", "shared"]);
+  });
+
+  await t.test("a delayed Drive preflight cannot overwrite a write confirmed before the metadata arrives", async () => {
+    const { connection_id: id } = await grantWith(manager, "alice", [{ service: "drive", access: "read_write" }]);
+    const metadata = gate();
+    let version = 123, holdFirstRead = true, patches = 0;
+    const drive: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (req.method === "PATCH") { patches++; version++; }
+      const snapshot = { version: String(version), mimeType: "text/plain" };
+      if (req.method === "GET" && holdFirstRead) {
+        holdFirstRead = false;
+        metadata.enter();
+        await metadata.held;
+      }
+      return Response.json(snapshot);
+    };
+    const first = instance(fixture.fetcher, drive), second = instance(fixture.fetcher, drive);
+    const stale = first.call("alice", id, patch, signal, async () => {}, "drive");
+    await metadata.entered;
+    try {
+      const current = await second.call("alice", id, patch, AbortSignal.timeout(2000), async () => {}, "drive");
+      assert.equal(current.version, "124");
+    } finally {
+      metadata.open();
+      await assert.rejects(stale, error => error instanceof GoogleError && error.code === "google_busy" && error.retryable);
+    }
+    assert.equal(patches, 1);
+  });
+
+  await t.test("a lost Drive reply holds the file until expiry, while a definite rejection releases it", async () => {
+    const owner = "limited";
+    const { connection_id: id } = await grantWith(manager, owner, [{ service: "drive", access: "read_write" }]);
+    let patches = 0;
+    const drive: typeof fetch = async (input, init) => {
+      if (new Request(input, init).method === "GET") return Response.json({ version: "123", mimeType: "text/plain" });
+      patches++;
+      if (patches === 1) throw new Error("lost Drive reply");
+      if (patches === 2) return new Response(null, { status: 412 });
+      return Response.json({ version: "124" });
+    };
+    const first = instance(fixture.fetcher, drive), second = instance(fixture.fetcher, drive);
+    const send = (target: GoogleConnections) => target.call(owner, id, patch, signal, async () => {}, "drive");
+    await assert.rejects(send(first), /lost Drive reply/);
+    await assert.rejects(send(second), /google_busy/);
+    assert.equal(patches, 1);
+    const expired = await pool.query(`update google_drive_write_lease set expires_at = now() - interval '1 second'
+      where created_by_user_id = $1 and expires_at between now() and now() + interval '1 minute'`, [owner]);
+    assert.equal(expired.rowCount, 1);
+    await assert.rejects(send(second), /google_precondition_failed/);
+    assert.equal((await send(second)).version, "124");
+    assert.equal(patches, 3);
+  });
+
   await t.test("pending OAuth exchange releases its SQL client and cannot resurrect a cleared account", async () => {
     const exchange = gate();
     const slowOauth = new GoogleOAuth(fixture.config, async (input, init) => {
@@ -704,6 +808,28 @@ test("owned Google grants: callback binding, expiry, replay, partial consent, re
       // The same request, started again, goes through.
       await manager.call("ivan", id, write, signal, async () => {});
     }
+  });
+
+  await t.test("pending requests use the scopes a different instance refreshed before dispatch", async () => {
+    const { connection_id: id } = await grantWith(manager, "frank");
+    const fence = gate(), markers: boolean[] = [];
+    const writer = factory();
+    const pending = writer.call("frank", id, write, signal, async () => { fence.enter(); await fence.held; }, "calendar",
+      { access: "write", onDispatchChange: value => markers.push(value) });
+    await fence.entered;
+    const before = fixture.calls.length;
+    try {
+      await expire("frank", id);
+      fixture.refreshedScopes(serviceScopes("calendar", "read_only"));
+      await manager.call("frank", id, request, signal, async () => {});
+      assert.equal((await manager.list("frank"))[0].access.calendar, "read_only");
+    } finally {
+      fixture.refreshedScopes();
+      fence.open();
+    }
+    await assert.rejects(pending, /google_calendar_write_permissions_required/);
+    assert.deepEqual(fixture.calls.slice(before).map(call => call.method), ["GET"]);
+    assert.deepEqual(markers, []);
   });
 
   await t.test("calls that find the token expired share one refresh", async () => {

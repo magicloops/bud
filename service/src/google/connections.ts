@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { and, eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, type Database } from "../db/client.js";
-import { googleConnectionTable as connections } from "../db/schema.js";
+import { googleConnectionTable as connections, googleDriveWriteLeaseTable as driveLeases } from "../db/schema.js";
 import { googleConfig, validateGoogleRedirectUri, GOOGLE_SERVICES, GoogleError, GoogleHttpError, serviceGranted, serviceWriteGranted, type GoogleConfig, type GoogleService, type GoogleSelection, type GoogleServiceAccess } from "./config.js";
 import { GoogleOAuth } from "./oauth.js";
 import { decryptGoogleCredentials, encryptGoogleCredentials, hashGoogleSecret, readGoogleEncryptionKey, type GoogleCredentials } from "./credentials.js";
@@ -11,6 +11,7 @@ import { googleFetch, googleJson } from "./http.js";
 import type { GoogleRequest } from "./tool-contracts.js";
 
 type Connection = typeof connections.$inferSelect;
+type DriveWrite = { fileKey: string; holder: string; preflightTime?: string; acquired: boolean; awaitingOutcome: boolean };
 /** `bump` marks a change of authorization: the save raises `grant_epoch`. */
 type Snapshot = { row: Connection; data: GoogleCredentials; key?: Buffer; bump?: boolean;
   /** Set by an edit that changed nothing, to skip the write. */
@@ -28,6 +29,10 @@ const REFRESH_LEASE_MS = 30_000;
 const validFor = (tokens: GoogleCredentials["tokens"], ms: number) =>
   Boolean(tokens?.access_token && tokens.expiry_date && tokens.expiry_date > Date.now() + ms);
 const usable = (tokens: GoogleCredentials["tokens"]) => validFor(tokens, 60_000);
+function lockUnavailable(error: unknown) {
+  const cause = error instanceof Error && error.cause ? error.cause : error;
+  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "55P03";
+}
 /** Stops waiting when `signal` aborts. The awaited work carries on for whoever else shares it. */
 function abandonable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -152,8 +157,7 @@ export class GoogleConnections {
         return { busy: false as const, result };
       }).catch((error: unknown) => {
         // Drizzle may wrap pg's lock_not_available.
-        const cause = error instanceof Error && error.cause ? error.cause : error;
-        if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "55P03") {
+        if (lockUnavailable(error)) {
           return { busy: true as const };
         }
         throw error;
@@ -174,6 +178,46 @@ export class GoogleConnections {
       const remaining = (this.active.get(owner) ?? 1) - 1;
       if (remaining) this.active.set(owner, remaining); else this.active.delete(owner);
     }
+  }
+
+  private async driveLeaseEdit<T>(edit: (tx: Pick<Database, "insert" | "update" | "delete">) => Promise<T>) {
+    try {
+      return await this.database.transaction(async tx => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '100ms'`);
+        return edit(tx);
+      });
+    } catch (error) {
+      if (lockUnavailable(error)) throw new GoogleError("google_busy", true);
+      throw error;
+    }
+  }
+
+  /** A writer that finished during the file metadata GET invalidates that preflight,
+   * even when the file has no active writer left. */
+  private async claimDriveWrite(write: DriveWrite, owner: string, tenantId: string | null) {
+    if (!write.preflightTime) throw new GoogleError("google_invalid_request");
+    const expiresAt = sql`clock_timestamp() + (${OPERATION_MS + 5_000} * interval '1 millisecond')`;
+    const values = { holder: write.holder, createdByUserId: owner, tenantId, expiresAt };
+    const [claimed] = await this.driveLeaseEdit(tx => tx.insert(driveLeases).values({ fileKey: write.fileKey, ...values })
+      .onConflictDoUpdate({ target: driveLeases.fileKey, set: values,
+        setWhere: sql`${driveLeases.holder} = ${write.holder} OR ${driveLeases.expiresAt} < ${write.preflightTime}::timestamptz` })
+      .returning({ holder: driveLeases.holder }));
+    if (!claimed) throw new GoogleError("google_busy", true);
+    write.acquired = true;
+  }
+
+  private async finishDriveWrite(write: DriveWrite) {
+    await this.driveLeaseEdit(async tx => {
+      // A lost response may leave Drive applying the change. Keep that claim until expiry.
+      if (!write.awaitingOutcome) {
+        await tx.update(driveLeases).set({ expiresAt: sql`clock_timestamp()` })
+          .where(and(eq(driveLeases.fileKey, write.fileKey), eq(driveLeases.holder, write.holder)));
+      }
+      // Preflights expire after 45 seconds. Age out old markers in small batches.
+      await tx.delete(driveLeases).where(sql`${driveLeases.fileKey} in (
+        select ${driveLeases.fileKey} from ${driveLeases} where ${driveLeases.expiresAt} < now() - interval '1 minute'
+        order by ${driveLeases.expiresAt} limit 32 for update skip locked)`);
+    });
   }
 
   /**
@@ -382,8 +426,8 @@ export class GoogleConnections {
         if (!["connected", "connecting"].includes(row.status) || row.status === "connecting" && data.previousStatus !== "connected" ||
           !data.tokens || row.oauthClientId !== this.config.clientId) throw new GoogleError("google_reconnect_required");
       };
-      const assertAccess = ({ row, data }: Snapshot) => {
-        const access = effectiveAccess(row.grantedScopes, data)[service];
+      const assertAccess = ({ row, data }: Snapshot, scopes = row.grantedScopes) => {
+        const access = effectiveAccess(scopes, data)[service];
         if (access === "none") throw new GoogleError(`google_${service}_permissions_required`);
         if (writes && access !== "read_write") throw new GoogleError(`google_${service}_write_permissions_required`);
       };
@@ -411,17 +455,29 @@ export class GoogleConnections {
         : "https://www.googleapis.com/calendar/v3";
       const url = new URL(`${base}${request.path}`);
       for (const [key, value] of Object.entries(request.query ?? {})) if (value !== undefined) url.searchParams.set(key, String(value));
+      const driveWrite: DriveWrite | undefined = service === "drive" && request.filePreflight
+        ? { fileKey: hashGoogleSecret(request.filePreflight.fileId), holder: ulid(), acquired: false, awaitingOutcome: false } : undefined;
+      const driveDeadline = performance.now() + Math.min(this.operationMs, OPERATION_MS);
       const transport = (phase: "preflight" | "dispatch") => googleFetch(async (input, init) => {
         await beforeDispatch(phase);
+        if (driveWrite && phase === "dispatch") await this.claimDriveWrite(driveWrite, owner, state.row.tenantId);
         // After the async invocation and ownership checks: is this still the grant the call started under?
-        const [current] = await this.database.select({ epoch: connections.grantEpoch }).from(connections)
+        const [current] = await this.database.select({ epoch: connections.grantEpoch, scopes: connections.grantedScopes,
+          ...(driveWrite && phase === "preflight" ? { preflightTime: sql<string>`clock_timestamp()::text` } : {}) }).from(connections)
           .where(and(eq(connections.id, id), eq(connections.createdByUserId, owner)));
         if (!current) throw new GoogleError("google_connection_changed");
+        if (driveWrite && phase === "preflight") driveWrite.preflightTime = current.preflightTime;
         if (current.epoch !== epoch) sameGrant(await this.read(owner, id));
+        // The epoch covers local consent changes. A token refresh can narrow Google's scopes within the same grant.
+        assertAccess(state, current.scopes);
         callSignal.throwIfAborted(); init?.signal?.throwIfAborted();
+        // The abort timer may not have fired yet when a suspended process resumes.
+        if (driveWrite && performance.now() >= driveDeadline) throw new GoogleError("google_operation_timed_out", true);
         const mutating = writes && phase === "dispatch";
+        if (mutating && driveWrite) driveWrite.awaitingOutcome = true;
         if (mutating) authorization?.onDispatchChange?.(true);
         const response = await this.baseFetch(input, init);
+        if (mutating && driveWrite && response.status >= 400 && response.status < 500 && response.status !== 408) driveWrite.awaitingOutcome = false;
         if (mutating && response.status === 401) authorization?.onDispatchChange?.(false);
         return response;
       }, callSignal);
@@ -433,6 +489,8 @@ export class GoogleConnections {
           const file = await googleJson(transport("preflight"),
             `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(request.filePreflight.fileId)}?fields=id,version,mimeType&supportsAllDrives=true`, token);
           if (file.version !== request.filePreflight.version) throw new GoogleError("google_file_changed");
+          // Drive accepts aliases such as "root". Coordinate on the canonical ID from its metadata.
+          if (driveWrite && typeof file.id === "string") driveWrite.fileKey = hashGoogleSecret(file.id);
           if (request.filePreflight.uploadedOnly && String(file.mimeType).startsWith("application/vnd.google-apps.")) {
             throw new GoogleError("google_native_content_update_unsupported");
           }
@@ -441,10 +499,12 @@ export class GoogleConnections {
             body = request.bodyWithMimeType(file.mimeType);
           }
         }
-        return googleJson(transport("dispatch"), url.href, token, {
+        const result = await googleJson(transport("dispatch"), url.href, token, {
           method: request.method, body, headers: { ...(request.etag ? { "If-Match": request.etag } : {}),
             ...(request.contentType ? { "Content-Type": request.contentType } : {}) },
         }, request.responseMode);
+        if (driveWrite) driveWrite.awaitingOutcome = false;
+        return result;
       };
       assertAccess(state); callSignal.throwIfAborted();
       try {
@@ -471,6 +531,9 @@ export class GoogleConnections {
         // sent is still reported as unknown by the executor.
         if (timeout.aborted && !signal.aborted && !(error instanceof GoogleError)) throw new GoogleError("google_operation_timed_out", true);
         throw error;
+      } finally {
+        // A cleanup failure must not change a confirmed result or replace a provider error.
+        if (driveWrite?.acquired) await this.finishDriveWrite(driveWrite).catch(() => {});
       }
     });
   }

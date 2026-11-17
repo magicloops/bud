@@ -30,7 +30,7 @@ Application entry point and thin Fastify composition root.
 - Advertise the current direct-browser method set (`GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench and mobile registration calls can use profile updates, push-endpoint upserts, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Mount owner-scoped Google connection/OAuth routes; configured integrations require
-  the encryption key and migration 0067 during readiness.
+the encryption key and migrations 0070 and 0071 during readiness.
 - Mount the encapsulated personal-data `/v1/events/batches` and `/api/data/status` routes
 - Mount authenticated device-install-claim issuance/read endpoints used by one-command Bud setup
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation

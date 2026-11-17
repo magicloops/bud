@@ -36,11 +36,9 @@ Official references: [web-server OAuth](https://developers.google.com/identity/p
 
 ## Service configuration
 
-Apply generated migration `0070_google_connections.sql` before enabling the
-matching service/web build. It follows the latest main migration chain and adds
-only the owned Google connection table. Its SQL matches the previously applied
-local Calendar migration; do not replay CREATE TABLE against that local database.
-Existing file-upload tables were preserved. See [debug note](../debug/google-direct-oauth.md).
+Apply `0070_google_connections.sql` and `0071_google_drive_write_lease.sql`
+before enabling the matching service/web build. They create the owned Google
+connection table and coordinate edits to shared Drive files.
 
 ```
 GOOGLE_CLIENT_ID=<existing client id>

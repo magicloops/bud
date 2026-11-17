@@ -330,6 +330,17 @@ export const googleConnectionTable = pgTable("google_connection", {
   flowCheck: check("google_connection_flow_check", sql`(${t.oauthStateHash} is null and ${t.oauthSessionHash} is null and ${t.oauthExpiresAt} is null) or (${t.oauthStateHash} is not null and ${t.oauthSessionHash} is not null and ${t.oauthExpiresAt} is not null and ${t.status} = 'connecting')`),
 }));
 
+export const googleDriveWriteLeaseTable = pgTable("google_drive_write_lease", {
+  fileKey: text("file_key").primaryKey(),
+  holder: text("holder").notNull(),
+  // A provider write can still be running when the owner disconnects or deletes their account.
+  createdByUserId: text("created_by_user_id").notNull(),
+  tenantId: text("tenant_id"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, t => ({
+  expiryIdx: index("google_drive_write_lease_expiry_idx").on(t.expiresAt),
+}));
+
 export const deviceAuthFlowTable = pgTable(
   "device_auth_flow",
   {
