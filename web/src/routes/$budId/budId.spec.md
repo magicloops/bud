@@ -104,6 +104,7 @@ return { messagePage, agentState, thread }
 **Major Features**:
 
 1. **Chat Timeline**
+   - Provides the mounted thread ID for matching Google consent cards to their originating thread
    - Loads the latest paged transcript window from loader data
    - Loads one `/open` response containing transcript, agent state and canonical thread summary
    - Delegates transcript/message-state ownership to `useThreadMessages(...)` in `web/src/features/threads/`

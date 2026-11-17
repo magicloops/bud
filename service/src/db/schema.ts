@@ -301,6 +301,46 @@ export const userProfileTable = pgTable(
   }),
 );
 
+// Direct Google grants belong to the Bud user, independently of login sessions.
+export const googleConnectionTable = pgTable("google_connection", {
+  id: text("id").primaryKey(),
+  oauthClientId: text("oauth_client_id").notNull(),
+  accountSubject: text("account_subject"),
+  accountEmail: text("account_email"),
+  grantedScopes: text("granted_scopes").array().notNull().default(sql`'{}'::text[]`),
+  status: text("status", { enum: ["connecting", "connected", "reconnect_required", "disconnected"] }).notNull(),
+  encryptedCredentials: text("encrypted_credentials"),
+  oauthStateHash: text("oauth_state_hash"),
+  oauthSessionHash: text("oauth_session_hash"),
+  oauthExpiresAt: timestamp("oauth_expires_at", { withTimezone: true }),
+  // Raised when authorization changes (a grant, a revoke, a disconnect, reconnect required).
+  // Work that talked to Google compares it before sending or saving anything.
+  grantEpoch: integer("grant_epoch").notNull().default(0),
+  // Set by the one service instance that is refreshing the tokens; the others wait for its result.
+  refreshLeaseUntil: timestamp("refresh_lease_until", { withTimezone: true }),
+  createdByUserId: text("created_by_user_id").notNull().references(() => authUserTable.id, { onDelete: "cascade" }),
+  tenantId: text("tenant_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => ({
+  ownerSubjectKey: unique("google_connection_owner_subject_key").on(t.createdByUserId, t.accountSubject),
+  stateKey: uniqueIndex("google_connection_oauth_state_idx").on(t.oauthStateHash),
+  statusCheck: check("google_connection_status_check", sql`${t.status} in ('connecting','connected','reconnect_required','disconnected')`),
+  credentialsCheck: check("google_connection_credentials_check", sql`${t.status} <> 'disconnected' or ${t.encryptedCredentials} is null`),
+  flowCheck: check("google_connection_flow_check", sql`(${t.oauthStateHash} is null and ${t.oauthSessionHash} is null and ${t.oauthExpiresAt} is null) or (${t.oauthStateHash} is not null and ${t.oauthSessionHash} is not null and ${t.oauthExpiresAt} is not null and ${t.status} = 'connecting')`),
+}));
+
+export const googleDriveWriteLeaseTable = pgTable("google_drive_write_lease", {
+  fileKey: text("file_key").primaryKey(),
+  holder: text("holder").notNull(),
+  // A provider write can still be running when the owner disconnects or deletes their account.
+  createdByUserId: text("created_by_user_id").notNull(),
+  tenantId: text("tenant_id"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, t => ({
+  expiryIdx: index("google_drive_write_lease_expiry_idx").on(t.expiresAt),
+}));
+
 export const deviceAuthFlowTable = pgTable(
   "device_auth_flow",
   {

@@ -1,3 +1,4 @@
+import { GOOGLE_AGENT_TOOLS } from "../google/agent-tools.js";
 import { BROWSER_REPL_TOOLS, BROWSER_TOOL_NAMES } from "./browser-tools.js";
 import { WEB_CANONICAL_TOOLS } from "./web-retrieval-tools.js";
 import { retrievalAvailable } from "../web-retrieval/config.js";
@@ -255,9 +256,10 @@ const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 export function resolveAgentToolsForEnvironment(
   environment: AgentEnvironmentSnapshot,
-  options: { browser?: boolean; browserHandoff?: boolean; webRetrieval?: boolean; appPermissions?: boolean; sourceRequests?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
+  options: { google?: boolean; browser?: boolean; browserHandoff?: boolean; webRetrieval?: boolean; appPermissions?: boolean; sourceRequests?: boolean; automations?: boolean; existingContactReviews?: boolean } = {},
 ): CanonicalTool[] {
   const tools = [...AGENT_CANONICAL_TOOLS,
+    ...(options.google ? GOOGLE_AGENT_TOOLS : []),
     ...(options.browser ? BROWSER_REPL_TOOLS.filter(tool => options.browserHandoff || tool.name !== "browser_request_handoff") : []),
     ...((options.webRetrieval ?? retrievalAvailable()) ? WEB_CANONICAL_TOOLS : []),
     ...(options.appPermissions ? [APP_PERMISSION_TOOL] : []),

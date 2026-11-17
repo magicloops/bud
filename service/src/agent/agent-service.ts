@@ -1,3 +1,6 @@
+import { GoogleAgentExecutor } from "../google/agent-executor.js";
+import { googleConfigured } from "../google/config.js";
+import { isGoogleToolDirective } from "./contracts.js";
 import { captureContextBaseline } from "./context-accounting.js";
 import { loadLatestContextUsageAnchor } from "../llm/provider-ledger.js";
 import { BrowserToolExecutor, BrowserToolWait, type BrowserAgentContext } from "./browser-tool-executor.js";
@@ -114,6 +117,7 @@ export class AgentService {
   private readonly modelRunner: AgentModelRunner;
   private readonly toolExecutor: TerminalToolExecutor;
   private readonly webViewToolExecutor: WebViewToolExecutor;
+  private readonly googleToolExecutor = new GoogleAgentExecutor();
   private readonly webRetrievalToolExecutor = new WebRetrievalToolExecutor(undefined,
     metrics => this.logger.info({ component: "web_retrieval", ...metrics }, "Web retrieval completed"));
   private readonly personalDataToolExecutor = new PersonalDataToolExecutor();
@@ -274,6 +278,8 @@ export class AgentService {
       await this.browserToolExecutor.available(context));
     const browserHandoff = Boolean(browser && this.browserToolExecutor && await this.browserToolExecutor.canHandoff(context));
     return resolveAgentToolsForEnvironment(environment, {
+      google: Boolean(ownerUserId && googleConfigured() &&
+        (hooks ? hooks.googleEnabled && hooks.invocation : this.durableInvocations)),
       browser, browserHandoff,
       appPermissions: this.appPermissionsEnabled && (hooks ? Boolean(hooks.parkAppDataRequest) : durable),
       sourceRequests: hooks ? Boolean(hooks.parkSourceRequest) : durable,
@@ -928,7 +934,7 @@ export class AgentService {
 	              sessionId: currentSessionId,
 	              threadId,
 	              tool: effectiveToolCall.tool,
-              ...((isBrowserToolDirective(effectiveToolCall) || isWebRetrievalToolDirective(effectiveToolCall)
+              ...((isGoogleToolDirective(effectiveToolCall) || isBrowserToolDirective(effectiveToolCall) || isWebRetrievalToolDirective(effectiveToolCall)
                 || isPersonalDataToolDirective(effectiveToolCall) || isAutomationToolDirective(effectiveToolCall))
                 ? {} : { args: clientArgs }),
               callId: effectiveToolCall.callId,
@@ -936,7 +942,7 @@ export class AgentService {
 
 	            if (
 	              isTerminalToolDirective(effectiveToolCall) ||
-	              (!isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall) && !isSourceRequestToolDirective(effectiveToolCall))
+	              (!isGoogleToolDirective(effectiveToolCall) && !isUserQuestionToolDirective(effectiveToolCall) && !isWebRetrievalToolDirective(effectiveToolCall) && !isPersonalDataToolDirective(effectiveToolCall) && !isAutomationToolDirective(effectiveToolCall) && !isSourceRequestToolDirective(effectiveToolCall))
 	            ) {
 	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
 	                threadId,
@@ -987,6 +993,8 @@ export class AgentService {
                 result: { kind: "source_access", ok, ...(sourceRequestFailure ? { error: sourceRequestFailure.code } : {}) },
                 payload: { tool: effectiveToolCall.tool, call_id: effectiveToolCall.callId, args: effectiveToolCall.args,
                   kind: "source_access", ok, ...data, summary } };
+            } else if (isGoogleToolDirective(effectiveToolCall)) {
+              execution = await this.googleToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, args.executionHooks);
             } else if (isWebRetrievalToolDirective(effectiveToolCall)) {
               execution = await this.webRetrievalToolExecutor.execute(threadId, effectiveToolCall, ownerUserId, controller.signal, turnId);
             } else if (isPersonalDataToolDirective(effectiveToolCall)) {

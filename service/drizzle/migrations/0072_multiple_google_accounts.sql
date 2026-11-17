@@ -1,0 +1,2 @@
+ALTER TABLE "google_connection" DROP CONSTRAINT "google_connection_owner_key";--> statement-breakpoint
+ALTER TABLE "google_connection" ADD CONSTRAINT "google_connection_owner_subject_key" UNIQUE("created_by_user_id","account_subject");

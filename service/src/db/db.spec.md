@@ -1,5 +1,30 @@
 # db
 
+## Connected Google account
+
+`googleConnectionTable` / `google_connection` (0070) stores direct Google OAuth
+connections. Migration 0072 changes uniqueness to (Bud owner, verified Google subject).
+Pending Add attempts have a null subject and remain hidden from inventory. Owner is required with cascading auth-user FK;
+tenant is nullable. AES-GCM credentials bind owner/row/OAuth client. Google subject,
+email and granted scopes describe the connected account. OAuth state/session are
+hashed and expire in 10 minutes; PKCE and tokens remain encrypted. Row locks are
+held only for local edits, never across a request to Google; `grant_epoch` rises
+when authorization changes, and refresh, API use and the OAuth callback compare
+it before sending or saving. `refresh_lease_until` is set by the one service
+instance refreshing the tokens (see the Google spec, Concurrency). Encrypted per-service
+access (`none|read_only|read_write`) intersects actual scopes before dispatch;
+revocation clears pending OAuth state. Inventory filters by owner in SQL.
+Migration 0072 changes only the unique constraint. `google-accounts-migration.test.ts`
+checks existing encrypted grants, pending consent, refresh leases, and account uniqueness.
+See [validation](../../../debug/multiple-google-accounts-validation.md).
+
+`googleDriveWriteLeaseTable` / `google_drive_write_lease` (0071) coordinates
+Bud writes to a shared Drive file across service instances. Its primary key
+is the SHA-256 hash of the Drive file ID. Each claim stores the holder,
+acting Bud user, nullable tenant and database expiry. Keeping the owner stamp
+independent of the auth user row lets an in-flight reservation survive account
+deletion. Access to file contents still requires the caller's own Google grant.
+
 ## Atomic opening-message receipt
 
 `thread_creation_receipt` reserves `(created_by_user_id, creation_key)` durably.

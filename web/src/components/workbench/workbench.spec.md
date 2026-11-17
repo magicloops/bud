@@ -77,6 +77,15 @@ parsed as tool JSON. Null/missing payloads retain plain-text rendering without
 resurrecting a tool from metadata. `tool-payload.test.ts` covers continuations,
 pending forms, null payloads and structured-payload precedence.
 
+Google `connect_request` results render dedicated connected-apps cards outside
+work disclosures. Each card requests exactly the service/access declared by the
+server for the task, when the stamped thread matches the mounted thread. The card
+honors a named connection or explicit Add request, and asks the user to select an
+account for ambiguous grants. Owner/thread/account/service/access changes cancel
+obsolete inventory reads and OAuth navigation. Consent returns to the originating
+chat without automatically resuming Google work. Mounted coverage lives in
+connected-apps/google-connect-card.test.tsx.
+
 Message list with auto-scroll and full-height message rendering.
 
 **Type**: `ChatMessage` - Thread message data keyed by stable `client_id` identity

@@ -1,5 +1,32 @@
 # migrations
 
+### `0072_multiple_google_accounts.sql`
+
+Changes the unique constraint on `google_connection` to cover both the Bud owner
+and the verified Google subject. Existing rows, credentials, grant epochs and
+refresh leases carry forward. Pending Google choosers can share a null subject.
+Apply via `pnpm db:migrate` before deploying matching service and web builds.
+See the [implementation plan](../../../plan/multiple-google-accounts.md).
+
+### `0070_google_connections.sql`
+
+Generated from main’s `0069_motionless_reaper` snapshot. Adds one owned
+Google OAuth connection per user with encrypted credentials, granted scopes,
+expiring session-bound state, ownership FK and status/flow checks. The SQL matches
+the previously reviewed Google DDL plus `grant_epoch` (integer, default 0) and
+`refresh_lease_until` (nullable timestamp), added
+in place before the table reached production: a local database that applied the
+earlier 0070 takes the columns with `pnpm db:push`. Deploy with `pnpm db:migrate` before the
+matching service and web builds.
+See [setup](../../../docs/google-calendar.md) and [debug note](../../../debug/google-direct-oauth.md).
+
+### `0071_google_drive_write_lease.sql`
+
+Creates the internal Drive file reservation table keyed by hashed file ID,
+with a holder, acting user, nullable tenant and indexed expiration time.
+Apply with `pnpm db:migrate` before deploying the service that reserves files
+for edits. Existing Google grants need no backfill.
+
 ### `0048_lush_timeslip.sql`
 
 Generated additive thread-creation receipt table, owner/key uniqueness, fingerprint
@@ -276,7 +303,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0061` currently)
+- Snapshot files for each migration (`0000` through `0072` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 

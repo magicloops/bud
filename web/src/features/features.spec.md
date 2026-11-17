@@ -8,6 +8,11 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ## Subfolders
 
+### `connected-apps/` → [connected-apps.spec.md](./connected-apps/connected-apps.spec.md)
+
+Calendar, Gmail and Drive consent across a viewer’s saved Google accounts,
+with account-specific chat cards and per-account service controls in Settings.
+
 ### `browser/` → [browser/browser.spec.md](./browser/browser.spec.md)
 
 Bud-owned remote browser viewer, imperative bounded canvas/media lifecycle,
